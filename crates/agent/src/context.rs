@@ -12,7 +12,7 @@ use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageCon
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use ref_cast::RefCast;
-use rope::{Point, Rope};
+use rope::Point;
 use text::{Anchor, OffsetRangeExt as _};
 use ui::{ElementId, IconName};
 use util::markdown::MarkdownCodeBlock;
@@ -327,8 +327,9 @@ pub struct SymbolContextHandle {
     pub buffer: Entity<Buffer>,
     pub symbol: SharedString,
     pub range: Range<Anchor>,
-    /// The range that fully contain the symbol. e.g. for function symbol, this will include not
-    /// only the signature, but also the body. Not used by `PartialEq` or `Hash` for `AgentContextKey`.
+    /// The range that fully contains the symbol. e.g. for function symbol, this will include not
+    /// only the signature, but also the body. Not used by `PartialEq` or `Hash` for
+    /// `AgentContextKey`.
     pub enclosing_range: Range<Anchor>,
     pub context_id: ContextId,
 }
@@ -352,27 +353,40 @@ impl SymbolContextHandle {
         self.range.hash(state);
     }
 
+    pub fn full_path(&self, cx: &App) -> Option<PathBuf> {
+        Some(self.buffer.read(cx).file()?.full_path(cx))
+    }
+
+    pub fn enclosing_line_range(&self, cx: &App) -> Range<Point> {
+        self.enclosing_range
+            .to_point(&self.buffer.read(cx).snapshot())
+    }
+
+    pub fn text(&self, cx: &App) -> SharedString {
+        self.buffer
+            .read(cx)
+            .text_for_range(self.enclosing_range.clone())
+            .collect::<String>()
+            .into()
+    }
+
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
         let buffer_ref = self.buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             log::error!("symbol context's file has no path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx);
-        let rope = buffer_ref
-            .text_for_range(self.enclosing_range.clone())
-            .collect::<Rope>();
+        let full_path = file.full_path(cx).into();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
+        let text = self.text(cx);
         let buffer = self.buffer.clone();
-        cx.background_spawn(async move {
-            let context = AgentContext::Symbol(SymbolContext {
-                handle: self,
-                full_path: full_path.into(),
-                line_range,
-                text: rope.to_string().into(),
-            });
-            Some((context, vec![buffer]))
-        })
+        let context = AgentContext::Symbol(SymbolContext {
+            handle: self,
+            full_path,
+            line_range,
+            text,
+        });
+        Task::ready(Some((context, vec![buffer])))
     }
 }
 
@@ -419,17 +433,20 @@ impl SelectionContextHandle {
         self.range.to_point(&self.buffer.read(cx).snapshot())
     }
 
+    pub fn text(&self, cx: &App) -> SharedString {
+        self.buffer
+            .read(cx)
+            .text_for_range(self.range.clone())
+            .collect::<String>()
+            .into()
+    }
+
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
         let Some(full_path) = self.full_path(cx) else {
             log::error!("selection context's file has no path");
             return Task::ready(None);
         };
-        let text = self
-            .buffer
-            .read(cx)
-            .text_for_range(self.range.clone())
-            .collect::<String>()
-            .into();
+        let text = self.text(cx);
         let buffer = self.buffer.clone();
         let context = AgentContext::Selection(SelectionContext {
             full_path: full_path.into(),

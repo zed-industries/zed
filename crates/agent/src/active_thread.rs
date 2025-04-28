@@ -1490,21 +1490,13 @@ impl ActiveThread {
 
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
-        let prompt_store = self.thread_store.read(cx).prompt_store().as_ref();
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
-        let added_context = if let Some(workspace) = workspace.upgrade() {
-            let project = workspace.read(cx).project().read(cx);
-            thread
-                .context_for_message(message_id)
-                .flat_map(|context| {
-                    AddedContext::new_attached(context.clone(), prompt_store, project, cx)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            return Empty.into_any();
-        };
+        let added_context = thread
+            .context_for_message(message_id)
+            .map(|context| AddedContext::new_attached(context.clone(), cx))
+            .collect::<Vec<_>>();
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
