@@ -134,9 +134,9 @@ impl PickerDelegate for FileContextPickerDelegate {
             .context_store
             .update(cx, |context_store, cx| {
                 if is_directory {
-                    context_store.add_directory(project_path, true, cx)
+                    Task::ready(context_store.add_directory(&project_path, true, cx))
                 } else {
-                    context_store.add_file_from_path(project_path, true, cx)
+                    context_store.add_file_from_path(project_path.clone(), true, cx)
                 }
             })
             .ok()
@@ -169,7 +169,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(render_file_context_entry(
-                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    ElementId::named_usize("file-ctx-picker", ix),
                     WorktreeId::from_usize(mat.worktree_id),
                     &mat.path,
                     &mat.path_prefix,
@@ -325,11 +325,11 @@ pub fn render_file_context_entry(
             path: path.clone(),
         };
         if is_directory {
-            context_store.read(cx).includes_directory(&project_path)
-        } else {
             context_store
                 .read(cx)
-                .will_include_file_path(&project_path, cx)
+                .path_included_in_directory(&project_path, cx)
+        } else {
+            context_store.read(cx).file_path_included(&project_path, cx)
         }
     });
 
@@ -357,7 +357,7 @@ pub fn render_file_context_entry(
                 })),
         )
         .when_some(added, |el, added| match added {
-            FileInclusion::Direct(_) => el.child(
+            FileInclusion::Direct => el.child(
                 h_flex()
                     .w_full()
                     .justify_end()
@@ -369,9 +369,8 @@ pub fn render_file_context_entry(
                     )
                     .child(Label::new("Added").size(LabelSize::Small)),
             ),
-            FileInclusion::InDirectory(directory_project_path) => {
-                // TODO: Consider using worktree full_path to include worktree name.
-                let directory_path = directory_project_path.path.to_string_lossy().into_owned();
+            FileInclusion::InDirectory { full_path } => {
+                let directory_full_path = full_path.to_string_lossy().into_owned();
 
                 el.child(
                     h_flex()
@@ -385,7 +384,7 @@ pub fn render_file_context_entry(
                         )
                         .child(Label::new("Included").size(LabelSize::Small)),
                 )
-                .tooltip(Tooltip::text(format!("in {directory_path}")))
+                .tooltip(Tooltip::text(format!("in {directory_full_path}")))
             }
         })
 }

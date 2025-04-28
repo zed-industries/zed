@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use collections::{BTreeMap, HashMap};
+use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -17,8 +17,8 @@ use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelImage, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
+    ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
@@ -34,8 +34,9 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
+use zed_llm_client::CompletionMode;
 
-use crate::context::{AssistantContext, ContextId, format_context_as_string};
+use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse, SharedProjectContext,
@@ -98,8 +99,7 @@ pub struct Message {
     pub id: MessageId,
     pub role: Role,
     pub segments: Vec<MessageSegment>,
-    pub context: String,
-    pub images: Vec<LanguageModelImage>,
+    pub loaded_context: LoadedContext,
 }
 
 impl Message {
@@ -138,8 +138,8 @@ impl Message {
     pub fn to_string(&self) -> String {
         let mut result = String::new();
 
-        if !self.context.is_empty() {
-            result.push_str(&self.context);
+        if !self.loaded_context.text.is_empty() {
+            result.push_str(&self.loaded_context.text);
         }
 
         for segment in &self.segments {
@@ -291,11 +291,10 @@ pub struct Thread {
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
     detailed_summary_state: DetailedSummaryState,
+    completion_mode: Option<CompletionMode>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
-    context: BTreeMap<ContextId, AssistantContext>,
-    context_by_message: HashMap<MessageId, Vec<ContextId>>,
     project_context: SharedProjectContext,
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     completion_count: usize,
@@ -342,11 +341,10 @@ impl Thread {
             summary: None,
             pending_summary: Task::ready(None),
             detailed_summary_state: DetailedSummaryState::NotGenerated,
+            completion_mode: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
-            context: BTreeMap::default(),
-            context_by_message: HashMap::default(),
             project_context: system_prompt,
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
@@ -391,8 +389,7 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use =
-            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |_| true);
+        let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
 
         Self {
             id,
@@ -400,6 +397,7 @@ impl Thread {
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
             detailed_summary_state: serialized.detailed_summary_state,
+            completion_mode: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -419,14 +417,15 @@ impl Thread {
                             }
                         })
                         .collect(),
-                    context: message.context,
-                    images: Vec::new(),
+                    loaded_context: LoadedContext {
+                        contexts: Vec::new(),
+                        text: message.context,
+                        images: Vec::new(),
+                    },
                 })
                 .collect(),
             next_message_id,
             last_prompt_id: PromptId::new(),
-            context: BTreeMap::default(),
-            context_by_message: HashMap::default(),
             project_context,
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
@@ -523,8 +522,21 @@ impl Thread {
         }
     }
 
+    pub fn completion_mode(&self) -> Option<CompletionMode> {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, mode: Option<CompletionMode>) {
+        self.completion_mode = mode;
+    }
+
     pub fn message(&self, id: MessageId) -> Option<&Message> {
-        self.messages.iter().find(|message| message.id == id)
+        let index = self
+            .messages
+            .binary_search_by(|message| message.id.cmp(&id))
+            .ok()?;
+
+        self.messages.get(index)
     }
 
     pub fn messages(&self) -> impl ExactSizeIterator<Item = &Message> {
@@ -656,21 +668,43 @@ impl Thread {
             return;
         };
         for deleted_message in self.messages.drain(message_ix..) {
-            self.context_by_message.remove(&deleted_message.id);
             self.checkpoints_by_message.remove(&deleted_message.id);
         }
         cx.notify();
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AssistantContext> {
-        self.context_by_message
-            .get(&id)
+    pub fn context_for_message(&self, id: MessageId) -> impl Iterator<Item = &AgentContext> {
+        self.messages
+            .iter()
+            .find(|message| message.id == id)
             .into_iter()
-            .flat_map(|context| {
-                context
-                    .iter()
-                    .filter_map(|context_id| self.context.get(&context_id))
+            .flat_map(|message| message.loaded_context.contexts.iter())
+    }
+
+    pub fn is_turn_end(&self, ix: usize) -> bool {
+        if self.messages.is_empty() {
+            return false;
+        }
+
+        if !self.is_generating() && ix == self.messages.len() - 1 {
+            return true;
+        }
+
+        let Some(message) = self.messages.get(ix) else {
+            return false;
+        };
+
+        if message.role != Role::Assistant {
+            return false;
+        }
+
+        self.messages
+            .get(ix + 1)
+            .and_then(|message| {
+                self.message(message.id)
+                    .map(|next_message| next_message.role == Role::User)
             })
+            .unwrap_or(false)
     }
 
     /// Returns whether all of the tool uses have finished running.
@@ -687,8 +721,11 @@ impl Thread {
         self.tool_use.tool_uses_for_message(id, cx)
     }
 
-    pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
-        self.tool_use.tool_results_for_message(id)
+    pub fn tool_results_for_message(
+        &self,
+        assistant_message_id: MessageId,
+    ) -> Vec<&LanguageModelToolResult> {
+        self.tool_use.tool_results_for_message(assistant_message_id)
     }
 
     pub fn tool_result(&self, id: &LanguageModelToolUseId) -> Option<&LanguageModelToolResult> {
@@ -703,95 +740,27 @@ impl Thread {
         self.tool_use.tool_result_card(id).cloned()
     }
 
-    pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
-        self.tool_use.message_has_tool_results(message_id)
-    }
-
-    /// Filter out contexts that have already been included in previous messages
-    pub fn filter_new_context<'a>(
-        &self,
-        context: impl Iterator<Item = &'a AssistantContext>,
-    ) -> impl Iterator<Item = &'a AssistantContext> {
-        context.filter(|ctx| self.is_context_new(ctx))
-    }
-
-    fn is_context_new(&self, context: &AssistantContext) -> bool {
-        !self.context.contains_key(&context.id())
-    }
-
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        context: Vec<AssistantContext>,
+        loaded_context: ContextLoadResult,
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        let text = text.into();
-
-        let message_id = self.insert_message(Role::User, vec![MessageSegment::Text(text)], cx);
-
-        let new_context: Vec<_> = context
-            .into_iter()
-            .filter(|ctx| self.is_context_new(ctx))
-            .collect();
-
-        if !new_context.is_empty() {
-            if let Some(context_string) = format_context_as_string(new_context.iter(), cx) {
-                if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
-                    message.context = context_string;
-                }
-            }
-
-            if let Some(message) = self.messages.iter_mut().find(|m| m.id == message_id) {
-                message.images = new_context
-                    .iter()
-                    .filter_map(|context| {
-                        if let AssistantContext::Image(image_context) = context {
-                            image_context.image_task.clone().now_or_never().flatten()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>();
-            }
-
+        if !loaded_context.referenced_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
-                // Track all buffers added as context
-                for ctx in &new_context {
-                    match ctx {
-                        AssistantContext::File(file_ctx) => {
-                            log.track_buffer(file_ctx.context_buffer.buffer.clone(), cx);
-                        }
-                        AssistantContext::Directory(dir_ctx) => {
-                            for context_buffer in &dir_ctx.context_buffers {
-                                log.track_buffer(context_buffer.buffer.clone(), cx);
-                            }
-                        }
-                        AssistantContext::Symbol(symbol_ctx) => {
-                            log.track_buffer(symbol_ctx.context_symbol.buffer.clone(), cx);
-                        }
-                        AssistantContext::Selection(selection_context) => {
-                            log.track_buffer(selection_context.context_buffer.buffer.clone(), cx);
-                        }
-                        AssistantContext::FetchedUrl(_)
-                        | AssistantContext::Thread(_)
-                        | AssistantContext::Rules(_)
-                        | AssistantContext::Image(_) => {}
-                    }
+                for buffer in loaded_context.referenced_buffers {
+                    log.track_buffer(buffer, cx);
                 }
             });
         }
 
-        let context_ids = new_context
-            .iter()
-            .map(|context| context.id())
-            .collect::<Vec<_>>();
-        self.context.extend(
-            new_context
-                .into_iter()
-                .map(|context| (context.id(), context)),
+        let message_id = self.insert_message(
+            Role::User,
+            vec![MessageSegment::Text(text.into())],
+            loaded_context.loaded_context,
+            cx,
         );
-        self.context_by_message.insert(message_id, context_ids);
 
         if let Some(git_checkpoint) = git_checkpoint {
             self.pending_checkpoint = Some(ThreadCheckpoint {
@@ -805,10 +774,19 @@ impl Thread {
         message_id
     }
 
+    pub fn insert_assistant_message(
+        &mut self,
+        segments: Vec<MessageSegment>,
+        cx: &mut Context<Self>,
+    ) -> MessageId {
+        self.insert_message(Role::Assistant, segments, LoadedContext::default(), cx)
+    }
+
     pub fn insert_message(
         &mut self,
         role: Role,
         segments: Vec<MessageSegment>,
+        loaded_context: LoadedContext,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -816,8 +794,7 @@ impl Thread {
             id,
             role,
             segments,
-            context: String::new(),
-            images: Vec::new(),
+            loaded_context,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -846,7 +823,6 @@ impl Thread {
             return false;
         };
         self.messages.remove(index);
-        self.context_by_message.remove(&id);
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageDeleted(id));
         true
@@ -933,7 +909,7 @@ impl Thread {
                                 content: tool_result.content.clone(),
                             })
                             .collect(),
-                        context: message.context.clone(),
+                        context: message.loaded_context.text.clone(),
                     })
                     .collect(),
                 initial_project_snapshot,
@@ -966,27 +942,28 @@ impl Thread {
         self.remaining_turns -= 1;
 
         let mut request = self.to_completion_request(cx);
-        if model.supports_tools() {
-            request.tools = {
-                let mut tools = Vec::new();
-                tools.extend(
-                    self.tools()
-                        .read(cx)
-                        .enabled_tools(cx)
-                        .into_iter()
-                        .filter_map(|tool| {
-                            // Skip tools that cannot be supported
-                            let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
-                            Some(LanguageModelRequestTool {
-                                name: tool.name(),
-                                description: tool.description(),
-                                input_schema,
-                            })
-                        }),
-                );
+        request.mode = if model.supports_max_mode() {
+            self.completion_mode
+        } else {
+            None
+        };
 
-                tools
-            };
+        if model.supports_tools() {
+            request.tools = self
+                .tools()
+                .read(cx)
+                .enabled_tools(cx)
+                .into_iter()
+                .filter_map(|tool| {
+                    // Skip tools that cannot be supported
+                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                    Some(LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema,
+                    })
+                })
+                .collect();
         }
 
         self.stream_completion(request, model, window, cx);
@@ -1008,6 +985,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
+            mode: None,
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -1051,29 +1029,9 @@ impl Thread {
                 cache: false,
             };
 
-            self.tool_use
-                .attach_tool_results(message.id, &mut request_message);
-
-            if !message.context.is_empty() {
-                request_message
-                    .content
-                    .push(MessageContent::Text(message.context.to_string()));
-            }
-
-            if !message.images.is_empty() {
-                // Some providers only support image parts after an initial text part
-                if request_message.content.is_empty() {
-                    request_message
-                        .content
-                        .push(MessageContent::Text("Images attached by user:".to_string()));
-                }
-
-                for image in &message.images {
-                    request_message
-                        .content
-                        .push(MessageContent::Image(image.clone()))
-                }
-            }
+            message
+                .loaded_context
+                .add_to_request_message(&mut request_message);
 
             for segment in &message.segments {
                 match segment {
@@ -1104,6 +1062,10 @@ impl Thread {
                 .attach_tool_uses(message.id, &mut request_message);
 
             request.messages.push(request_message);
+
+            if let Some(tool_results_message) = self.tool_use.tool_results_message(message.id) {
+                request.messages.push(tool_results_message);
+            }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
@@ -1120,6 +1082,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            mode: None,
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -1132,11 +1095,6 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
-
-            // Skip tool results during summarization.
-            if self.tool_use.message_has_tool_results(message.id) {
-                continue;
-            }
 
             for segment in &message.segments {
                 match segment {
@@ -1242,22 +1200,45 @@ impl Thread {
                         .ok();
                 }
 
+                let mut request_assistant_message_id = None;
+
                 while let Some(event) = events.next().await {
                     if let Some((_, response_events)) = request_callback_parameters.as_mut() {
                         response_events
                             .push(event.as_ref().map_err(|error| error.to_string()).cloned());
                     }
 
-                    let event = event?;
-
                     thread.update(cx, |thread, cx| {
-                        match event {
-                            LanguageModelCompletionEvent::StartMessage { .. } => {
-                                thread.insert_message(
-                                    Role::Assistant,
-                                    vec![MessageSegment::Text(String::new())],
+                        let event = match event {
+                            Ok(event) => event,
+                            Err(LanguageModelCompletionError::BadInputJson {
+                                id,
+                                tool_name,
+                                raw_input: invalid_input_json,
+                                json_parse_error,
+                            }) => {
+                                thread.receive_invalid_tool_json(
+                                    id,
+                                    tool_name,
+                                    invalid_input_json,
+                                    json_parse_error,
+                                    window,
                                     cx,
                                 );
+                                return Ok(());
+                            }
+                            Err(LanguageModelCompletionError::Other(error)) => {
+                                return Err(error);
+                            }
+                        };
+
+                        match event {
+                            LanguageModelCompletionEvent::StartMessage { .. } => {
+                                request_assistant_message_id =
+                                    Some(thread.insert_assistant_message(
+                                        vec![MessageSegment::Text(String::new())],
+                                        cx,
+                                    ));
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -1272,7 +1253,9 @@ impl Thread {
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant {
+                                    if last_message.role == Role::Assistant
+                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                    {
                                         last_message.push_text(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
                                             last_message.id,
@@ -1284,11 +1267,11 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
-                                            Role::Assistant,
-                                            vec![MessageSegment::Text(chunk.to_string())],
-                                            cx,
-                                        );
+                                        request_assistant_message_id =
+                                            Some(thread.insert_assistant_message(
+                                                vec![MessageSegment::Text(chunk.to_string())],
+                                                cx,
+                                            ));
                                     };
                                 }
                             }
@@ -1297,7 +1280,9 @@ impl Thread {
                                 signature,
                             } => {
                                 if let Some(last_message) = thread.messages.last_mut() {
-                                    if last_message.role == Role::Assistant {
+                                    if last_message.role == Role::Assistant
+                                        && !thread.tool_use.has_tool_results(last_message.id)
+                                    {
                                         last_message.push_thinking(&chunk, signature);
                                         cx.emit(ThreadEvent::StreamedAssistantThinking(
                                             last_message.id,
@@ -1309,25 +1294,25 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(
-                                            Role::Assistant,
-                                            vec![MessageSegment::Thinking {
-                                                text: chunk.to_string(),
-                                                signature,
-                                            }],
-                                            cx,
-                                        );
+                                        request_assistant_message_id =
+                                            Some(thread.insert_assistant_message(
+                                                vec![MessageSegment::Thinking {
+                                                    text: chunk.to_string(),
+                                                    signature,
+                                                }],
+                                                cx,
+                                            ));
                                     };
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                let last_assistant_message_id = thread
-                                    .messages
-                                    .iter_mut()
-                                    .rfind(|message| message.role == Role::Assistant)
-                                    .map(|message| message.id)
+                                let last_assistant_message_id = request_assistant_message_id
                                     .unwrap_or_else(|| {
-                                        thread.insert_message(Role::Assistant, vec![], cx)
+                                        let new_assistant_message_id =
+                                            thread.insert_assistant_message(vec![], cx);
+                                        request_assistant_message_id =
+                                            Some(new_assistant_message_id);
+                                        new_assistant_message_id
                                     });
 
                                 let tool_use_id = tool_use.id.clone();
@@ -1359,7 +1344,8 @@ impl Thread {
                         cx.notify();
 
                         thread.auto_capture_telemetry(cx);
-                    })?;
+                        Ok(())
+                    })??;
 
                     smol::future::yield_now().await;
                 }
@@ -1650,6 +1636,41 @@ impl Thread {
         pending_tool_uses
     }
 
+    pub fn receive_invalid_tool_json(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        invalid_json: Arc<str>,
+        error: String,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Thread>,
+    ) {
+        log::error!("The model returned invalid input JSON: {invalid_json}");
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            Err(anyhow!("Error parsing input JSON: {error}")),
+            cx,
+        );
+        let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
+            pending_tool_use.ui_text.clone()
+        } else {
+            log::error!(
+                "There was no pending tool use for tool use {tool_use_id}, even though it finished (with invalid input JSON)."
+            );
+            format!("Unknown tool {}", tool_use_id).into()
+        };
+
+        cx.emit(ThreadEvent::InvalidToolInput {
+            tool_use_id: tool_use_id.clone(),
+            ui_text,
+            invalid_input_json: invalid_json,
+        });
+
+        self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
+    }
+
     pub fn run_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -1725,10 +1746,10 @@ impl Thread {
         if self.all_tools_finished() {
             let model_registry = LanguageModelRegistry::read_global(cx);
             if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
-                self.attach_tool_results(cx);
                 if !canceled {
                     self.send_to_model(model, window, cx);
                 }
+                self.auto_capture_telemetry(cx);
             }
         }
 
@@ -1736,14 +1757,6 @@ impl Thread {
             tool_use_id,
             pending_tool_use,
         });
-    }
-
-    /// Insert an empty message to be populated with tool results upon send.
-    pub fn attach_tool_results(&mut self, cx: &mut Context<Self>) {
-        // Tool results are assumed to be waiting on the next message id, so they will populate
-        // this empty message before sending to model. Would prefer this to be more straightforward.
-        self.insert_message(Role::User, vec![], cx);
-        self.auto_capture_telemetry(cx);
     }
 
     /// Cancels the last pending completion, if there are any pending.
@@ -1754,22 +1767,19 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let canceled = if self.pending_completions.pop().is_some() {
-            true
-        } else {
-            let mut canceled = false;
-            for pending_tool_use in self.tool_use.cancel_pending() {
-                canceled = true;
-                self.tool_finished(
-                    pending_tool_use.id.clone(),
-                    Some(pending_tool_use),
-                    true,
-                    window,
-                    cx,
-                );
-            }
-            canceled
-        };
+        let mut canceled = self.pending_completions.pop().is_some();
+
+        for pending_tool_use in self.tool_use.cancel_pending() {
+            canceled = true;
+            self.tool_finished(
+                pending_tool_use.id.clone(),
+                Some(pending_tool_use),
+                true,
+                window,
+                cx,
+            );
+        }
+
         self.finalize_pending_checkpoint(cx);
         canceled
     }
@@ -1974,7 +1984,7 @@ impl Thread {
                             };
 
                             let remote_url = backend.remote_url("origin");
-                            let head_sha = backend.head_sha();
+                            let head_sha = backend.head_sha().await;
                             let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 
                             GitState {
@@ -2020,8 +2030,16 @@ impl Thread {
                 }
             )?;
 
-            if !message.context.is_empty() {
-                writeln!(markdown, "{}", message.context)?;
+            if !message.loaded_context.text.is_empty() {
+                writeln!(markdown, "{}", message.loaded_context.text)?;
+            }
+
+            if !message.loaded_context.images.is_empty() {
+                writeln!(
+                    markdown,
+                    "\n{} images attached as context.\n",
+                    message.loaded_context.images.len()
+                )?;
             }
 
             for segment in &message.segments {
@@ -2050,7 +2068,7 @@ impl Thread {
             }
 
             for tool_result in self.tool_results_for_message(message.id) {
-                write!(markdown, "**Tool Results: {}", tool_result.tool_use_id)?;
+                write!(markdown, "\n**Tool Results: {}", tool_result.tool_use_id)?;
                 if tool_result.is_error {
                     write!(markdown, " (Error)")?;
                 }
@@ -2099,7 +2117,7 @@ impl Thread {
     }
 
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
+        if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
             return;
         }
 
@@ -2262,6 +2280,11 @@ pub enum ThreadEvent {
         ui_text: Arc<str>,
         input: serde_json::Value,
     },
+    InvalidToolInput {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
+        invalid_input_json: Arc<str>,
+    },
     Stopped(Result<StopReason, Arc<anyhow::Error>>),
     MessageAdded(MessageId),
     MessageEdited(MessageId),
@@ -2291,7 +2314,7 @@ struct PendingCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ThreadStore, context_store::ContextStore, thread_store};
+    use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use assistant_settings::AssistantSettings;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
@@ -2322,12 +2345,14 @@ mod tests {
             .await
             .unwrap();
 
-        let context =
-            context_store.update(cx, |store, _| store.context().first().cloned().unwrap());
+        let context = context_store.update(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
 
         // Insert user message with context
         let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Please explain this code", vec![context], None, cx)
+            thread.insert_user_message("Please explain this code", loaded_context, None, cx)
         });
 
         // Check content and context in message object
@@ -2361,7 +2386,7 @@ fn main() {{
             message.segments[0],
             MessageSegment::Text("Please explain this code".to_string())
         );
-        assert_eq!(message.context, expected_context);
+        assert_eq!(message.loaded_context.text, expected_context);
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2388,48 +2413,50 @@ fn main() {{
         let (_, _thread_store, thread, context_store) =
             setup_test_environment(cx, project.clone()).await;
 
-        // Open files individually
+        // First message with context 1
         add_file_to_context(&project, &context_store, "test/file1.rs", cx)
             .await
             .unwrap();
-        add_file_to_context(&project, &context_store, "test/file2.rs", cx)
-            .await
-            .unwrap();
-        add_file_to_context(&project, &context_store, "test/file3.rs", cx)
-            .await
-            .unwrap();
-
-        // Get the context objects
-        let contexts = context_store.update(cx, |store, _| store.context().clone());
-        assert_eq!(contexts.len(), 3);
-
-        // First message with context 1
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await;
         let message1_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 1", vec![contexts[0].clone()], None, cx)
+            thread.insert_user_message("Message 1", loaded_context, None, cx)
         });
 
         // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
+        add_file_to_context(&project, &context_store, "test/file2.rs", cx)
+            .await
+            .unwrap();
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await;
         let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "Message 2",
-                vec![contexts[0].clone(), contexts[1].clone()],
-                None,
-                cx,
-            )
+            thread.insert_user_message("Message 2", loaded_context, None, cx)
         });
 
         // Third message with all three contexts (contexts 1 and 2 should be skipped)
+        //
+        add_file_to_context(&project, &context_store, "test/file3.rs", cx)
+            .await
+            .unwrap();
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await;
         let message3_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message(
-                "Message 3",
-                vec![
-                    contexts[0].clone(),
-                    contexts[1].clone(),
-                    contexts[2].clone(),
-                ],
-                None,
-                cx,
-            )
+            thread.insert_user_message("Message 3", loaded_context, None, cx)
         });
 
         // Check what contexts are included in each message
@@ -2442,16 +2469,16 @@ fn main() {{
         });
 
         // First message should include context 1
-        assert!(message1.context.contains("file1.rs"));
+        assert!(message1.loaded_context.text.contains("file1.rs"));
 
         // Second message should include only context 2 (not 1)
-        assert!(!message2.context.contains("file1.rs"));
-        assert!(message2.context.contains("file2.rs"));
+        assert!(!message2.loaded_context.text.contains("file1.rs"));
+        assert!(message2.loaded_context.text.contains("file2.rs"));
 
         // Third message should include only context 3 (not 1 or 2)
-        assert!(!message3.context.contains("file1.rs"));
-        assert!(!message3.context.contains("file2.rs"));
-        assert!(message3.context.contains("file3.rs"));
+        assert!(!message3.loaded_context.text.contains("file1.rs"));
+        assert!(!message3.loaded_context.text.contains("file2.rs"));
+        assert!(message3.loaded_context.text.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2488,7 +2515,12 @@ fn main() {{
 
         // Insert user message without any context (empty context vector)
         let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("What is the best way to learn Rust?", vec![], None, cx)
+            thread.insert_user_message(
+                "What is the best way to learn Rust?",
+                ContextLoadResult::default(),
+                None,
+                cx,
+            )
         });
 
         // Check content and context in message object
@@ -2501,7 +2533,7 @@ fn main() {{
             message.segments[0],
             MessageSegment::Text("What is the best way to learn Rust?".to_string())
         );
-        assert_eq!(message.context, "");
+        assert_eq!(message.loaded_context.text, "");
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2514,12 +2546,17 @@ fn main() {{
 
         // Add second message, also without context
         let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Are there any good books?", vec![], None, cx)
+            thread.insert_user_message(
+                "Are there any good books?",
+                ContextLoadResult::default(),
+                None,
+                cx,
+            )
         });
 
         let message2 =
             thread.read_with(cx, |thread, _| thread.message(message2_id).unwrap().clone());
-        assert_eq!(message2.context, "");
+        assert_eq!(message2.loaded_context.text, "");
 
         // Check that both messages appear in the request
         let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
@@ -2553,12 +2590,14 @@ fn main() {{
             .await
             .unwrap();
 
-        let context =
-            context_store.update(cx, |store, _| store.context().first().cloned().unwrap());
+        let context = context_store.update(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
 
         // Insert user message with the buffer as context
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", vec![context], None, cx)
+            thread.insert_user_message("Explain this code", loaded_context, None, cx)
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
@@ -2586,7 +2625,12 @@ fn main() {{
 
         // Insert another user message without context
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message("What does the code do now?", vec![], None, cx)
+            thread.insert_user_message(
+                "What does the code do now?",
+                ContextLoadResult::default(),
+                None,
+                cx,
+            )
         });
 
         // Create a new request and check for the stale buffer warning
@@ -2653,6 +2697,7 @@ fn main() {{
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
+                    None,
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
@@ -2677,15 +2722,15 @@ fn main() {{
             .unwrap();
 
         let buffer = project
-            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path.clone(), cx)
+            })
             .await
             .unwrap();
 
-        context_store
-            .update(cx, |store, cx| {
-                store.add_file_from_buffer(buffer.clone(), cx)
-            })
-            .await?;
+        context_store.update(cx, |context_store, cx| {
+            context_store.add_file_from_buffer(&buffer_path, buffer.clone(), false, cx);
+        });
 
         Ok(buffer)
     }

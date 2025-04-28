@@ -34,8 +34,8 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
-    pub merge_head_shas: Vec<String>,
     pub simulated_index_write_error_message: Option<String>,
+    pub refs: HashMap<String, String>,
 }
 
 impl FakeGitRepositoryState {
@@ -48,20 +48,13 @@ impl FakeGitRepositoryState {
             blames: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
-            merge_head_shas: Default::default(),
             simulated_index_write_error_message: Default::default(),
+            refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
         }
     }
 }
 
 impl FakeGitRepository {
-    fn with_state<F, T>(&self, write: bool, f: F) -> Result<T>
-    where
-        F: FnOnce(&mut FakeGitRepositoryState) -> T,
-    {
-        self.fs.with_git_state(&self.dot_git_path, write, f)
-    }
-
     fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<'static, Result<T>>
     where
         F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> Result<T>,
@@ -141,13 +134,13 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn head_sha(&self) -> Option<String> {
-        None
-    }
-
-    fn merge_head_shas(&self) -> Vec<String> {
-        self.with_state(false, |state| state.merge_head_shas.clone())
-            .unwrap()
+    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<Result<Vec<Option<String>>>> {
+        self.with_state_async(false, |state| {
+            Ok(revs
+                .into_iter()
+                .map(|rev| state.refs.get(&rev).cloned())
+                .collect())
+        })
     }
 
     fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {

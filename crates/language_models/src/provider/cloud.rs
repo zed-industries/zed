@@ -2,7 +2,7 @@ use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LlmClosedBeta, ZedPro};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
     stream::BoxStream,
@@ -10,11 +10,11 @@ use futures::{
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelKnownError, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
-    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
+    ModelRequestLimitReachedError, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -35,9 +35,9 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use zed_llm_client::{
-    CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionMode, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
-    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    CURRENT_PLAN_HEADER_NAME, CompletionBody, CountTokensBody, CountTokensResponse,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
@@ -324,7 +324,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             );
         }
 
-        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
+        let llm_closed_beta_models = if cx.has_flag::<LlmClosedBetaFeatureFlag>() {
             zed_cloud_provider_additional_models()
         } else {
             &[]
@@ -531,7 +531,7 @@ impl CloudLanguageModel {
             {
                 request_builder.uri(completions_url)
             } else {
-                request_builder.uri(http_client.build_zed_llm_url("/completion", &[])?.as_ref())
+                request_builder.uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
             };
             let request = request_builder
                 .header("Content-Type", "application/json")
@@ -686,7 +686,58 @@ impl LanguageModel for CloudLanguageModel {
         match self.model.clone() {
             CloudModel::Anthropic(_) => count_anthropic_tokens(request, cx),
             CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
-            CloudModel::Google(_model) => async move { Ok(0) }.boxed(),
+            CloudModel::Google(model) => {
+                let client = self.client.clone();
+                let llm_api_token = self.llm_api_token.clone();
+                let request = into_google(request, model.id().into());
+                async move {
+                    let http_client = &client.http_client();
+                    let token = llm_api_token.acquire(&client).await?;
+
+                    let request_builder = http_client::Request::builder().method(Method::POST);
+                    let request_builder =
+                        if let Ok(completions_url) = std::env::var("ZED_COUNT_TOKENS_URL") {
+                            request_builder.uri(completions_url)
+                        } else {
+                            request_builder.uri(
+                                http_client
+                                    .build_zed_llm_url("/count_tokens", &[])?
+                                    .as_ref(),
+                            )
+                        };
+                    let request_body = CountTokensBody {
+                        provider: zed_llm_client::LanguageModelProvider::Google,
+                        model: model.id().into(),
+                        provider_request: serde_json::to_value(&google_ai::CountTokensRequest {
+                            contents: request.contents,
+                        })?,
+                    };
+                    let request = request_builder
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", format!("Bearer {token}"))
+                        .body(serde_json::to_string(&request_body)?.into())?;
+                    let mut response = http_client.send(request).await?;
+                    let status = response.status();
+                    let mut response_body = String::new();
+                    response
+                        .body_mut()
+                        .read_to_string(&mut response_body)
+                        .await?;
+
+                    if status.is_success() {
+                        let response_body: CountTokensResponse =
+                            serde_json::from_str(&response_body)?;
+
+                        Ok(response_body.tokens)
+                    } else {
+                        Err(anyhow!(ApiError {
+                            status,
+                            body: response_body
+                        }))
+                    }
+                }
+                .boxed()
+            }
         }
     }
 
@@ -694,7 +745,12 @@ impl LanguageModel for CloudLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         self.stream_completion_with_usage(request, cx)
             .map(|result| result.map(|(stream, _)| stream))
             .boxed()
@@ -707,12 +763,13 @@ impl LanguageModel for CloudLanguageModel {
     ) -> BoxFuture<
         'static,
         Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
             Option<RequestUsage>,
         )>,
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
+        let mode = request.mode;
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
@@ -731,7 +788,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            mode: Some(CompletionMode::Max),
+                            mode,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -778,7 +835,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            mode: Some(CompletionMode::Max),
+                            mode,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -809,7 +866,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            mode: Some(CompletionMode::Max),
+                            mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -889,7 +946,7 @@ impl Render for ConfigurationView {
                         ),
                 ),
             )
-        } else if cx.has_flag::<ZedPro>() {
+        } else if cx.has_flag::<ZedProFeatureFlag>() {
             Some(
                 h_flex()
                     .gap_2()

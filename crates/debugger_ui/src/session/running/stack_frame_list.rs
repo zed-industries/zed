@@ -132,13 +132,6 @@ impl StackFrameList {
             .collect()
     }
 
-    pub fn _get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
-        self.stack_frames(cx)
-            .first()
-            .map(|stack_frame| stack_frame.dap.id)
-            .unwrap_or(0)
-    }
-
     pub fn selected_stack_frame_id(&self) -> Option<StackFrameId> {
         self.selected_stack_frame_id
     }
@@ -557,6 +550,7 @@ impl StackFrameList {
 impl Render for StackFrameList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())

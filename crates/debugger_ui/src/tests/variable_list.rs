@@ -215,14 +215,6 @@ async fn test_basic_fetch_initial_scope_and_variables(
                 ]);
             });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 /// This tests fetching multiple scopes and variables for them with a single stackframe
@@ -479,14 +471,6 @@ async fn test_fetch_variables_for_multiple_scopes(
                 ]);
             });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 // tests that toggling a variable will fetch its children and shows it
@@ -1261,14 +1245,6 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
                 variable_list.assert_visual_entries(vec!["> Scope 1 <=== selected", "> Scope 2"]);
             });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1501,14 +1477,6 @@ async fn test_variable_list_only_sends_requests_when_rendering(
         assert_eq!(frame_1_variables, variable_list.variables());
         assert!(made_scopes_request.load(Ordering::SeqCst));
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1854,12 +1822,4 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
 
         assert_eq!(variables, frame_2_variables,);
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

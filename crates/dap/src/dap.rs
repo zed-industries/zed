@@ -6,7 +6,7 @@ mod registry;
 pub mod transport;
 
 pub use dap_types::*;
-pub use registry::DapRegistry;
+pub use registry::{DapLocator, DapRegistry};
 pub use task::DebugRequest;
 
 pub type ScopeId = u64;

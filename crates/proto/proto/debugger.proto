@@ -543,6 +543,7 @@ message DebugLaunchRequest {
     string program = 1;
     optional string cwd = 2;
     repeated string args = 3;
+    map<string, string> env = 4;
 }
 
 message DebugAttachRequest {
@@ -558,7 +559,7 @@ message DapModuleId {
 
 message GetDebugAdapterBinary {
     uint64 project_id = 1;
-    DebugTaskDefinition task = 2;
+    DebugTaskDefinition definition = 2;
 }
 
 message DebugAdapterBinary {
@@ -575,8 +576,32 @@ message DebugAdapterBinary {
     }
 }
 
-message RunDebugLocator {
+message RunDebugLocators {
     uint64 project_id = 1;
-    string locator = 2;
-    DebugTaskDefinition task = 3;
+    SpawnInTerminal build_command = 2;
+}
+
+message DebugRequest {
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 1;
+        DebugAttachRequest debug_attach_request = 2;
+    }
+}
+
+message DebugScenario {
+    string label = 1;
+    string adapter = 2;
+    reserved 3;
+    DebugRequest request = 4;
+    optional TcpHost connection = 5;
+    optional bool stop_on_entry = 6;
+    optional string configuration = 7;
+}
+
+message SpawnInTerminal {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
 }
