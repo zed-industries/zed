@@ -8588,23 +8588,14 @@ impl Editor {
         let rows_iter = selections.iter().map(|s| s.head().row);
         let suggested_indents = snapshot.suggested_indents(rows_iter, cx);
 
-        let has_mixed_cursors = {
-            let mut in_whitespace = false;
-            let mut at_boundary = false;
-            for selection in selections.iter().filter(|selection| selection.is_empty()) {
+        let has_some_cursor_in_whitespace = selections
+            .iter()
+            .filter(|selection| selection.is_empty())
+            .any(|selection| {
                 let cursor = selection.head();
                 let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
-                if cursor.column < current_indent.len {
-                    in_whitespace = true;
-                } else if cursor.column == current_indent.len {
-                    at_boundary = true;
-                }
-                if in_whitespace && at_boundary {
-                    break;
-                }
-            }
-            in_whitespace && at_boundary
-        };
+                cursor.column < current_indent.len
+            });
 
         let mut edits = Vec::new();
         let mut prev_edited_row = 0;
@@ -8629,9 +8620,9 @@ impl Editor {
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
-                // If there exist mixed empty selections (some in the leading whitespace and
-                // some at the boundary), then skip indent for selections at the boundary.
-                if has_mixed_cursors
+                // If there exist any empty selection in the leading whitespace, then skip
+                // indent for selections at the boundary.
+                if has_some_cursor_in_whitespace
                     && cursor.column == current_indent.len
                     && current_indent.len == suggested_indent.len
                 {
