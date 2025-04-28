@@ -60,6 +60,7 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+postage.workspace = true
 project.workspace = true
 rules_library.workspace = true
 prompt_store.workspace = true

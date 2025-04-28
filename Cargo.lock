@@ -94,6 +94,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "postage",
  "project",
  "prompt_store",
  "proto",

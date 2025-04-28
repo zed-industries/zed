@@ -542,12 +542,21 @@ impl ThreadContextHandle {
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
-        let context = AgentContext::Thread(ThreadContext {
-            title: self.title(cx),
-            text: self.thread.read(cx).latest_detailed_summary_or_text(),
-            handle: self,
-        });
-        Task::ready(Some((context, vec![])))
+        cx.spawn(async move |cx| {
+            let text = Thread::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
+            let title = self
+                .thread
+                .read_with(cx, |thread, _cx| {
+                    thread.summary().unwrap_or_else(|| "New thread".into())
+                })
+                .ok()?;
+            let context = AgentContext::Thread(ThreadContext {
+                title,
+                text,
+                handle: self,
+            });
+            Some((context, vec![]))
+        })
     }
 }
 
