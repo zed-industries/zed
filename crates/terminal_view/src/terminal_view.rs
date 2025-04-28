@@ -1585,7 +1585,7 @@ impl SerializableItem for TerminalView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        delete_unloaded_items(alive_items, workspace_id, "terminals", &*TERMINAL_DB, cx)
+        delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
     }
 
     fn serialize(

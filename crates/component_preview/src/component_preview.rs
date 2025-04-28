@@ -864,7 +864,7 @@ impl SerializableItem for ComponentPreview {
             alive_items,
             workspace_id,
             "component_previews",
-            &*COMPONENT_PREVIEW_DB,
+            &COMPONENT_PREVIEW_DB,
             cx,
         )
     }

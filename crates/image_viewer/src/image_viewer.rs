@@ -248,7 +248,7 @@ impl SerializableItem for ImageView {
             alive_items,
             workspace_id,
             "image_viewers",
-            &*IMAGE_VIEWER,
+            &IMAGE_VIEWER,
             cx,
         )
     }

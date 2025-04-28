@@ -1017,7 +1017,7 @@ impl SerializableItem for Editor {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &*DB, cx)
+        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
     }
 
     fn deserialize(
