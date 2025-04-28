@@ -1,16 +1,19 @@
-use std::{ops::Range, path::Path, rc::Rc, time::Duration};
+use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use file_icons::FileIcons;
+use futures::FutureExt as _;
 use gpui::{
-    Animation, AnimationExt as _, AnyView, ClickEvent, Entity, MouseButton, pulsating_between,
+    Animation, AnimationExt as _, AnyView, ClickEvent, Entity, Image, MouseButton, Task,
+    pulsating_between,
 };
+use language_model::LanguageModelImage;
 use project::Project;
 use prompt_store::PromptStore;
 use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
 use crate::context::{
-    AgentContext, ContextHandle, ContextKind, DirectoryContext, DirectoryContextHandle,
+    AgentContext, ContextHandle, ContextId, ContextKind, DirectoryContext, DirectoryContextHandle,
     FetchedUrlContext, FileContext, FileContextHandle, ImageContext, ImageStatus, RulesContext,
     RulesContextHandle, SelectionContext, SelectionContextHandle, SymbolContext,
     SymbolContextHandle, ThreadContext, ThreadContextHandle,
@@ -264,9 +267,7 @@ pub enum ContextStatus {
     Error { message: SharedString },
 }
 
-// TODO: Component commented out due to new dependency on `Project`.
-//
-// #[derive(RegisterComponent)]
+#[derive(RegisterComponent)]
 pub struct AddedContext {
     pub handle: ContextHandle,
     pub kind: ContextKind,
@@ -678,8 +679,6 @@ impl Render for ContextPillHover {
     }
 }
 
-// TODO: Component commented out due to new dependency on `Project`.
-/*
 impl Component for AddedContext {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
@@ -689,11 +688,11 @@ impl Component for AddedContext {
         "AddedContext"
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let next_context_id = ContextId::zero();
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let mut next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
-            AddedContext::new(
+            AddedContext::new_attached(
                 AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
@@ -705,7 +704,7 @@ impl Component for AddedContext {
 
         let image_loading = (
             "Loading",
-            AddedContext::new(
+            AddedContext::new_attached(
                 AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
@@ -722,7 +721,7 @@ impl Component for AddedContext {
 
         let image_error = (
             "Error",
-            AddedContext::new(
+            AddedContext::new_attached(
                 AgentContext::Image(ImageContext {
                     context_id: next_context_id.post_inc(),
                     original_image: Arc::new(Image::empty()),
@@ -747,8 +746,5 @@ impl Component for AddedContext {
                 )
                 .into_any(),
         )
-
-        None
     }
 }
-*/
