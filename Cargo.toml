@@ -67,6 +67,7 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
+    "crates/gpui_site",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -272,6 +273,7 @@ google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false, features = [
     "http_client",
 ] }
+gpui_site = { path = "crates/gpui_site" }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
