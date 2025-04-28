@@ -15,6 +15,9 @@ impl Render for ToolbarControls {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
+        let mut can_fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
 
         if let Some(editor) = self.diagnostics() {
             let diagnostics = editor.read(cx);
@@ -27,16 +30,13 @@ impl Render for ToolbarControls {
                     .language_servers_running_disk_based_diagnostics(cx)
                     .next()
                     .is_some();
+            can_fetch_cargo_diagnostics &= diagnostics.cargo_diagnostics_task.is_none();
         }
 
-        let zed_provides_cargo_diagnostics = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-
-        let update_excerpts_tooltip = if has_stale_excerpts {
-            Some("Update excerpts")
-        } else if zed_provides_cargo_diagnostics {
+        let update_excerpts_tooltip = if can_fetch_cargo_diagnostics {
             Some("Fetch cargo diagnostics")
+        } else if has_stale_excerpts {
+            Some("Update excerpts")
         } else {
             None
         };
@@ -62,10 +62,14 @@ impl Render for ToolbarControls {
                         .shape(IconButtonShape::Square)
                         .disabled(is_updating)
                         .tooltip(Tooltip::text(update_excerpts_tooltip))
-                        .on_click(cx.listener(|this, _, window, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             if let Some(diagnostics) = this.diagnostics() {
                                 diagnostics.update(cx, |diagnostics, cx| {
-                                    diagnostics.update_all_excerpts(window, cx);
+                                    if can_fetch_cargo_diagnostics {
+                                        diagnostics.fetch_cargo_diagnostics(window, cx);
+                                    } else {
+                                        diagnostics.update_all_excerpts(window, cx);
+                                    }
                                 });
                             }
                         })),

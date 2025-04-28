@@ -1,4 +1,5 @@
 pub mod items;
+mod rust;
 mod toolbar_controls;
 
 mod diagnostic_renderer;
@@ -68,6 +69,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
+    cargo_diagnostics_task: Option<Task<()>>,
     _subscription: Subscription,
 }
 
@@ -229,6 +231,7 @@ impl ProjectDiagnosticsEditor {
             editor,
             paths_to_update: Default::default(),
             update_excerpts_task: None,
+            cargo_diagnostics_task: None,
             _subscription: project_event_subscription,
         };
         this.update_all_excerpts(window, cx);
@@ -239,11 +242,6 @@ impl ProjectDiagnosticsEditor {
         if self.update_excerpts_task.is_some() {
             return;
         }
-
-        let zed_provides_cargo_diagnostics = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        dbg!(zed_provides_cargo_diagnostics);
 
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -324,6 +322,14 @@ impl ProjectDiagnosticsEditor {
         {
             self.update_stale_excerpts(window, cx);
         }
+    }
+
+    fn fetch_cargo_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cargo_diagnostics_task =
+            Some(cx.spawn(async move |project_diagnostics_editor, cx| {
+                // TODO kb
+                // diagnostics.update_all_excerpts(window, cx);
+            }));
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
