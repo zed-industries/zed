@@ -276,6 +276,8 @@ jobs:
       FILE_DIGEST: SHA256
       TIMESTAMP_DIGEST: SHA256
       TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
@@ -301,13 +303,13 @@ jobs:
           Write-Host "Publishing version: $version on release channel nightly"
           "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
 
-      - name: Create macOS app bundle
+      - name: Create Windows installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1
 
-      # - name: Upload Zed Nightly
-      #   working-directory: ${{ env.ZED_WORKSPACE }}
-      #   run: script/upload-nightly macos
+      - name: Upload Zed Nightly
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/upload-nightly.ps1 windows
 
   update-nightly-tag:
     name: Update nightly tag
