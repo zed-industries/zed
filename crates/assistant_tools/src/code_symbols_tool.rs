@@ -6,7 +6,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use collections::IndexMap;
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Task};
 use language::{OutlineItem, ParseStatus, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, Symbol};
@@ -14,7 +14,7 @@ use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeSymbolsInput {
@@ -102,7 +102,7 @@ impl Tool for CodeSymbolsTool {
 
                 match &input.path {
                     Some(path) => {
-                        let path = MarkdownString::inline_code(path);
+                        let path = MarkdownInlineCode(path);
                         if page > 1 {
                             format!("List page {page} of code symbols for {path}")
                         } else {
@@ -128,6 +128,7 @@ impl Tool for CodeSymbolsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CodeSymbolsInput>(input) {

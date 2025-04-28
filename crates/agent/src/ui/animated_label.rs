@@ -73,6 +73,11 @@ impl LabelCommon for AnimatedLabel {
         self.base = self.base.buffer_font(cx);
         self
     }
+
+    fn inline_code(mut self, cx: &App) -> Self {
+        self.base = self.base.inline_code(cx);
+        self
+    }
 }
 
 impl RenderOnce for AnimatedLabel {

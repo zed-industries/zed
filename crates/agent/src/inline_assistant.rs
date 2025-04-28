@@ -32,6 +32,7 @@ use project::LspAction;
 use project::Project;
 use project::{CodeAction, ProjectTransaction};
 use prompt_store::PromptBuilder;
+use prompt_store::PromptStore;
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
@@ -245,9 +246,13 @@ impl InlineAssistant {
                 .map_or(false, |model| model.provider.is_authenticated(cx))
         };
 
-        let thread_store = workspace
+        let assistant_panel = workspace
             .panel::<AssistantPanel>(cx)
-            .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
+            .map(|assistant_panel| assistant_panel.read(cx));
+        let prompt_store = assistant_panel
+            .and_then(|assistant_panel| assistant_panel.prompt_store().as_ref().cloned());
+        let thread_store =
+            assistant_panel.map(|assistant_panel| assistant_panel.thread_store().downgrade());
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -257,6 +262,7 @@ impl InlineAssistant {
                             &active_editor,
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
+                            prompt_store,
                             thread_store,
                             window,
                             cx,
@@ -269,6 +275,7 @@ impl InlineAssistant {
                             &active_terminal,
                             cx.entity().downgrade(),
                             workspace.project().downgrade(),
+                            prompt_store,
                             thread_store,
                             window,
                             cx,
@@ -323,6 +330,7 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
+        prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -437,6 +445,8 @@ impl InlineAssistant {
                     range.clone(),
                     None,
                     context_store.clone(),
+                    project.clone(),
+                    prompt_store.clone(),
                     self.telemetry.clone(),
                     self.prompt_builder.clone(),
                     cx,
@@ -525,6 +535,7 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
+        prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
         cx: &mut App,
@@ -543,7 +554,7 @@ impl InlineAssistant {
         }
 
         let project = workspace.read(cx).project().downgrade();
-        let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(project.clone(), thread_store.clone()));
 
         let codegen = cx.new(|cx| {
             BufferCodegen::new(
@@ -551,6 +562,8 @@ impl InlineAssistant {
                 range.clone(),
                 initial_transaction_id,
                 context_store.clone(),
+                project,
+                prompt_store,
                 self.telemetry.clone(),
                 self.prompt_builder.clone(),
                 cx,
@@ -1328,7 +1341,7 @@ impl InlineAssistant {
                 editor.highlight_rows::<InlineAssist>(
                     row_range,
                     cx.theme().status().info_background,
-                    false,
+                    Default::default(),
                     cx,
                 );
             }
@@ -1393,7 +1406,7 @@ impl InlineAssistant {
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
-                        false,
+                        Default::default(),
                         cx,
                     );
                     editor
@@ -1789,6 +1802,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
+        let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
             let editor = editor.upgrade().context("editor was released")?;
@@ -1829,6 +1843,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 })?
                 .context("invalid range")?;
 
+            let prompt_store = prompt_store.await.ok();
             cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
                 let assist_id = assistant.suggest_assist(
                     &editor,
@@ -1837,6 +1852,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     None,
                     true,
                     workspace,
+                    prompt_store,
                     thread_store,
                     window,
                     cx,

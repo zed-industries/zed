@@ -65,6 +65,8 @@ struct GetBillingPreferencesParams {
 #[derive(Debug, Serialize)]
 struct BillingPreferencesResponse {
     max_monthly_llm_usage_spending_in_cents: i32,
+    model_request_overages_enabled: bool,
+    model_request_overages_spend_limit_in_cents: i32,
 }
 
 async fn get_billing_preferences(
@@ -81,8 +83,17 @@ async fn get_billing_preferences(
 
     Ok(Json(BillingPreferencesResponse {
         max_monthly_llm_usage_spending_in_cents: preferences
+            .as_ref()
             .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
                 preferences.max_monthly_llm_usage_spending_in_cents
+            }),
+        model_request_overages_enabled: preferences.as_ref().map_or(false, |preferences| {
+            preferences.model_request_overages_enabled
+        }),
+        model_request_overages_spend_limit_in_cents: preferences
+            .as_ref()
+            .map_or(0, |preferences| {
+                preferences.model_request_overages_spend_limit_in_cents
             }),
     }))
 }
@@ -90,7 +101,12 @@ async fn get_billing_preferences(
 #[derive(Debug, Deserialize)]
 struct UpdateBillingPreferencesBody {
     github_user_id: i32,
+    #[serde(default)]
     max_monthly_llm_usage_spending_in_cents: i32,
+    #[serde(default)]
+    model_request_overages_enabled: bool,
+    #[serde(default)]
+    model_request_overages_spend_limit_in_cents: i32,
 }
 
 async fn update_billing_preferences(
@@ -106,6 +122,8 @@ async fn update_billing_preferences(
 
     let max_monthly_llm_usage_spending_in_cents =
         body.max_monthly_llm_usage_spending_in_cents.max(0);
+    let model_request_overages_spend_limit_in_cents =
+        body.model_request_overages_spend_limit_in_cents.max(0);
 
     let billing_preferences =
         if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
@@ -116,6 +134,12 @@ async fn update_billing_preferences(
                         max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
                             max_monthly_llm_usage_spending_in_cents,
                         ),
+                        model_request_overages_enabled: ActiveValue::set(
+                            body.model_request_overages_enabled,
+                        ),
+                        model_request_overages_spend_limit_in_cents: ActiveValue::set(
+                            model_request_overages_spend_limit_in_cents,
+                        ),
                     },
                 )
                 .await?
@@ -125,18 +149,22 @@ async fn update_billing_preferences(
                     user.id,
                     &crate::db::CreateBillingPreferencesParams {
                         max_monthly_llm_usage_spending_in_cents,
+                        model_request_overages_enabled: body.model_request_overages_enabled,
+                        model_request_overages_spend_limit_in_cents,
                     },
                 )
                 .await?
         };
 
     SnowflakeRow::new(
-        "Spend Limit Updated",
+        "Billing Preferences Updated",
         Some(user.metrics_id),
         user.admin,
         None,
         json!({
             "user_id": user.id,
+            "model_request_overages_enabled": billing_preferences.model_request_overages_enabled,
+            "model_request_overages_spend_limit_in_cents": billing_preferences.model_request_overages_spend_limit_in_cents,
             "max_monthly_llm_usage_spending_in_cents": billing_preferences.max_monthly_llm_usage_spending_in_cents,
         }),
     )
@@ -149,6 +177,9 @@ async fn update_billing_preferences(
     Ok(Json(BillingPreferencesResponse {
         max_monthly_llm_usage_spending_in_cents: billing_preferences
             .max_monthly_llm_usage_spending_in_cents,
+        model_request_overages_enabled: billing_preferences.model_request_overages_enabled,
+        model_request_overages_spend_limit_in_cents: billing_preferences
+            .model_request_overages_spend_limit_in_cents,
     }))
 }
 

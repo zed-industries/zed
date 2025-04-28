@@ -1,5 +1,5 @@
 use crate::{
-    AppState, Config, RateLimiter,
+    AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
@@ -517,7 +517,6 @@ impl TestServer {
             blob_store_client: None,
             stripe_client: None,
             stripe_billing: None,
-            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             kinesis_client: None,
             config: Config {

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Task};
 use language::{self, Anchor, Buffer, BufferSnapshot, Location, Point, ToPoint, ToPointUtf16};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, ops::Range, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 use crate::schema::json_schema_for;
 
@@ -91,7 +91,7 @@ impl Tool for SymbolInfoTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<SymbolInfoToolInput>(input.clone()) {
             Ok(input) => {
-                let symbol = MarkdownString::inline_code(&input.symbol);
+                let symbol = MarkdownInlineCode(&input.symbol);
 
                 match input.command {
                     Info::Definition => {
@@ -121,6 +121,7 @@ impl Tool for SymbolInfoTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<SymbolInfoToolInput>(input) {

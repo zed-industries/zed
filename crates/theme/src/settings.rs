@@ -950,6 +950,13 @@ impl settings::Settings for ThemeSettings {
 
         root_schema
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.f32_setting("editor.fontWeight", &mut current.buffer_font_weight);
+        vscode.f32_setting("editor.fontSize", &mut current.buffer_font_size);
+        vscode.string_setting("editor.font", &mut current.buffer_font_family);
+        // TODO: possibly map editor.fontLigatures to buffer_font_features?
+    }
 }
 
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {

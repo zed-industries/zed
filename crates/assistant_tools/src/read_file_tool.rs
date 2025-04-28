@@ -1,7 +1,8 @@
 use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
+
 use indoc::formatdoc;
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -10,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return an error along with the model's symbol outline,
@@ -39,7 +40,7 @@ pub struct ReadFileToolInput {
     #[serde(default)]
     pub start_line: Option<usize>,
 
-    /// Optional line number to end reading on (1-based index)
+    /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<usize>,
 }
@@ -70,7 +71,7 @@ impl Tool for ReadFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 match (input.start_line, input.end_line) {
                     (Some(start), None) => format!("Read file {path} (from line {start})"),
                     (Some(start), Some(end)) => format!("Read file {path} (lines {start}-{end})"),
@@ -87,6 +88,7 @@ impl Tool for ReadFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -126,7 +128,7 @@ impl Tool for ReadFileTool {
                     let start = input.start_line.unwrap_or(1);
                     let lines = text.split('\n').skip(start - 1);
                     if let Some(end) = input.end_line {
-                        let count = end.saturating_sub(start).max(1); // Ensure at least 1 line
+                        let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
                         Itertools::intersperse(lines.take(count), "\n").collect()
                     } else {
                         Itertools::intersperse(lines, "\n").collect()
@@ -193,7 +195,7 @@ mod test {
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
@@ -223,7 +225,7 @@ mod test {
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
@@ -253,7 +255,7 @@ mod test {
                     "path": "root/large_file.rs"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), cx)
+                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
                     .output
             })
             .await;
@@ -277,7 +279,7 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
@@ -323,11 +325,11 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, cx)
+                    .run(input, &[], project.clone(), action_log, None, cx)
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3");
+        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
     }
 
     fn init_test(cx: &mut TestAppContext) {

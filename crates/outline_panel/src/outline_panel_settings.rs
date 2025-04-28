@@ -118,4 +118,13 @@ impl Settings for OutlinePanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        if let Some(b) = vscode.read_bool("outline.icons") {
+            current.file_icons = Some(b);
+            current.folder_icons = Some(b);
+        }
+
+        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
+    }
 }

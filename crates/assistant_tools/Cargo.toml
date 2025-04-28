@@ -14,10 +14,11 @@ path = "src/assistant_tools.rs"
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
+buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
 component.workspace = true
-feature_flags.workspace = true
+editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
@@ -37,10 +38,12 @@ ui.workspace = true
 util.workspace = true
 web_search.workspace = true
 workspace-hack.workspace = true
-worktree.workspace = true
+workspace.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
+client = { workspace = true, features = ["test-support"] }
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

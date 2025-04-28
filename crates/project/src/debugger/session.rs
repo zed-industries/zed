@@ -12,7 +12,7 @@ use super::dap_command::{
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
-use dap::adapters::DebugAdapterBinary;
+use dap::adapters::{DebugAdapterBinary, DebugTaskDefinition};
 use dap::messages::Response;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
@@ -20,7 +20,9 @@ use dap::{
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
 };
-use dap::{ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEventCategory};
+use dap::{
+    EvaluateResponse, ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEventCategory,
+};
 use futures::channel::oneshot;
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -40,7 +42,6 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::DebugTaskDefinition;
 use text::{PointUtf16, ToPointUtf16};
 use util::{ResultExt, merge_json_value_into};
 use worktree::Worktree;
@@ -123,7 +124,6 @@ enum Mode {
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     binary: DebugAdapterBinary,
-    root_binary: Option<Arc<DebugAdapterBinary>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
@@ -158,12 +158,6 @@ impl LocalMode {
             messages_tx.unbounded_send(message).ok();
         });
 
-        let root_binary = if let Some(parent_session) = parent_session.as_ref() {
-            Some(parent_session.read_with(&cx, |session, _| session.root_binary().clone())?)
-        } else {
-            None
-        };
-
         let client = Arc::new(
             if let Some(client) = parent_session
                 .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
@@ -184,7 +178,6 @@ impl LocalMode {
             breakpoint_store,
             worktree,
             tmp_breakpoint: None,
-            root_binary,
             binary,
         })
     }
@@ -641,6 +634,7 @@ impl CompletionsQuery {
     }
 }
 
+#[derive(Debug)]
 pub enum SessionEvent {
     Modules,
     LoadedSources,
@@ -648,6 +642,7 @@ pub enum SessionEvent {
     StackTrace,
     Variables,
     Threads,
+    InvalidateInlineValue,
     CapabilitiesLoaded,
 }
 
@@ -696,6 +691,7 @@ impl Session {
                 BreakpointStoreEvent::ActiveDebugLineChanged => {}
             })
             .detach();
+            cx.on_app_quit(Self::on_app_quit).detach();
 
             let this = Self {
                 mode: Mode::Building,
@@ -829,19 +825,6 @@ impl Session {
         &self.capabilities
     }
 
-    pub(crate) fn root_binary(&self) -> Arc<DebugAdapterBinary> {
-        match &self.mode {
-            Mode::Building => {
-                // todo(debugger): Implement root_binary for building mode
-                unimplemented!()
-            }
-            Mode::Running(running) => running
-                .root_binary
-                .clone()
-                .unwrap_or_else(|| Arc::new(running.binary.clone())),
-        }
-    }
-
     pub fn binary(&self) -> &DebugAdapterBinary {
         let Mode::Running(local_mode) = &self.mode else {
             panic!("Session is not local");
@@ -850,10 +833,10 @@ impl Session {
     }
 
     pub fn adapter_name(&self) -> SharedString {
-        self.definition.adapter.clone().into()
+        self.definition.adapter.clone()
     }
 
-    pub fn label(&self) -> String {
+    pub fn label(&self) -> SharedString {
         self.definition.label.clone()
     }
 
@@ -884,7 +867,7 @@ impl Session {
     }
 
     pub(super) fn request_initialize(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let adapter_id = self.definition.adapter.clone();
+        let adapter_id = String::from(self.definition.adapter.clone());
         let request = Initialize { adapter_id };
         match &self.mode {
             Mode::Running(local_mode) => {
@@ -1059,6 +1042,7 @@ impl Session {
                 .map(Into::into)
                 .filter(|_| !event.preserve_focus_hint.unwrap_or(false)),
         ));
+        cx.emit(SessionEvent::InvalidateInlineValue);
         cx.notify();
     }
 
@@ -1280,6 +1264,10 @@ impl Session {
             });
     }
 
+    pub fn any_stopped_thread(&self) -> bool {
+        self.thread_states.any_stopped_thread()
+    }
+
     pub fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
         self.thread_states.thread_status(thread_id)
     }
@@ -1499,6 +1487,16 @@ impl Session {
         } else {
             cx.emit(SessionStateEvent::Restart);
         }
+    }
+
+    fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let debug_adapter = self.adapter_client();
+
+        cx.background_spawn(async move {
+            if let Some(client) = debug_adapter {
+                client.shutdown().await.log_err();
+            }
+        })
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
@@ -1801,6 +1799,20 @@ impl Session {
             .unwrap_or_default()
     }
 
+    pub fn variables_by_stack_frame_id(&self, stack_frame_id: StackFrameId) -> Vec<dap::Variable> {
+        let Some(stack_frame) = self.stack_frames.get(&stack_frame_id) else {
+            return Vec::new();
+        };
+
+        stack_frame
+            .scopes
+            .iter()
+            .filter_map(|scope| self.variables.get(&scope.variables_reference))
+            .flatten()
+            .cloned()
+            .collect()
+    }
+
     pub fn variables(
         &mut self,
         variables_reference: VariableReference,
@@ -1866,7 +1878,7 @@ impl Session {
         frame_id: Option<u64>,
         source: Option<Source>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Option<EvaluateResponse>> {
         self.request(
             EvaluateCommand {
                 expression,
@@ -1895,7 +1907,6 @@ impl Session {
             },
             cx,
         )
-        .detach();
     }
 
     pub fn location(
@@ -1914,6 +1925,7 @@ impl Session {
         );
         self.locations.get(&reference).cloned()
     }
+
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
         let command = DisconnectCommand {
             restart: Some(false),

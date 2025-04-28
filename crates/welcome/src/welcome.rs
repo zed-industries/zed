@@ -201,7 +201,8 @@ impl Render for WelcomePage {
                                                     zed_actions::OpenSettings,
                                                 ), cx);
                                             })),
-                                    ),
+                                    )
+
                             )
                             .child(
                                 v_flex()
@@ -419,8 +420,8 @@ impl Focusable for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Welcome".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Welcome".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

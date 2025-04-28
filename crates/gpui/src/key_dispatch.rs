@@ -121,6 +121,7 @@ pub(crate) struct DispatchResult {
     pub(crate) pending: SmallVec<[Keystroke; 1]>,
     pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
+    pub(crate) context_stack: Vec<KeyContext>,
 }
 
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>;
@@ -411,15 +412,17 @@ impl DispatchTree {
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let context_stack: SmallVec<[KeyContext; 4]> = dispatch_path
+    ) -> (SmallVec<[KeyBinding; 1]>, bool, Vec<KeyContext>) {
+        let context_stack: Vec<KeyContext> = dispatch_path
             .iter()
             .filter_map(|node_id| self.node(*node_id).context.clone())
             .collect();
 
-        self.keymap
+        let (bindings, partial) = self
+            .keymap
             .borrow()
-            .bindings_for_input(input, &context_stack)
+            .bindings_for_input(input, &context_stack);
+        return (bindings, partial, context_stack);
     }
 
     /// dispatch_key processes the keystroke
@@ -436,20 +439,25 @@ impl DispatchTree {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> DispatchResult {
         input.push(keystroke.clone());
-        let (bindings, pending) = self.bindings_for_input(&input, dispatch_path);
+        let (bindings, pending, context_stack) = self.bindings_for_input(&input, dispatch_path);
 
         if pending {
             return DispatchResult {
                 pending: input,
+                context_stack,
                 ..Default::default()
             };
         } else if !bindings.is_empty() {
             return DispatchResult {
                 bindings,
+                context_stack,
                 ..Default::default()
             };
         } else if input.len() == 1 {
-            return DispatchResult::default();
+            return DispatchResult {
+                context_stack,
+                ..Default::default()
+            };
         }
         input.pop();
 
@@ -485,7 +493,7 @@ impl DispatchTree {
     ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
         for last in (0..input.len()).rev() {
-            let (bindings, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
+            let (bindings, _, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
                     keystroke: input.drain(0..=last).next_back().unwrap(),

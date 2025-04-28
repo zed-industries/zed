@@ -416,6 +416,7 @@ impl ProjectDiagnosticsEditor {
                         group,
                         buffer_snapshot.remote_id(),
                         Some(this.clone()),
+                        true,
                         cx,
                     )
                 })?;
@@ -565,6 +566,10 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Project Diagnostics".into())
+    }
+
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
+        "Diagnostics".into()
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {

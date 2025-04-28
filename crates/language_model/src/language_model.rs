@@ -76,6 +76,19 @@ pub enum LanguageModelCompletionEvent {
     UsageUpdate(TokenUsage),
 }
 
+#[derive(Error, Debug)]
+pub enum LanguageModelCompletionError {
+    #[error("received bad input JSON")]
+    BadInputJson {
+        id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 /// Indicates the format used to define the input schema for a language model tool.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum LanguageModelToolSchemaFormat {
@@ -186,13 +199,14 @@ where
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
     pub name: Arc<str>,
+    pub raw_input: String,
     pub input: serde_json::Value,
     pub is_input_complete: bool,
 }
 
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
-    pub stream: BoxStream<'static, Result<String>>,
+    pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
     // Has complete token usage after the stream has finished
     pub last_token_usage: Arc<Mutex<TokenUsage>>,
 }
@@ -226,6 +240,26 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;
 
+    /// Returns whether this model supports "max mode";
+    fn supports_max_mode(&self) -> bool {
+        if self.provider_id().0 != ZED_CLOUD_PROVIDER_ID {
+            return false;
+        }
+
+        const MAX_MODE_CAPABLE_MODELS: &[CloudModel] = &[
+            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+        ];
+
+        for model in MAX_MODE_CAPABLE_MODELS {
+            if self.id().0 == model.id() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
     }
@@ -245,7 +279,12 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    >;
 
     fn stream_completion_with_usage(
         &self,
@@ -254,7 +293,7 @@ pub trait LanguageModel: Send + Sync {
     ) -> BoxFuture<
         'static,
         Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
             Option<RequestUsage>,
         )>,
     > {

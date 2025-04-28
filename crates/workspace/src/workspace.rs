@@ -49,7 +49,7 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{LanguageRegistry, Rope};
+use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -96,7 +96,7 @@ use std::{
     sync::{Arc, LazyLock, Weak, atomic::AtomicUsize},
     time::Duration,
 };
-use task::{DebugTaskDefinition, SpawnInTerminal};
+use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -140,7 +140,15 @@ pub trait TerminalProvider {
 }
 
 pub trait DebuggerProvider {
-    fn start_session(&self, definition: DebugTaskDefinition, window: &mut Window, cx: &mut App);
+    // `active_buffer` is used to resolve build task's name against language-specific tasks.
+    fn start_session(
+        &self,
+        definition: DebugScenario,
+        task_context: TaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        window: &mut Window,
+        cx: &mut App,
+    );
 }
 
 actions!(
@@ -1452,6 +1460,27 @@ impl Workspace {
         &self.project
     }
 
+    pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
+        let mut history: HashMap<EntityId, usize> = HashMap::default();
+
+        for pane_handle in &self.panes {
+            let pane = pane_handle.read(cx);
+
+            for entry in pane.activation_history() {
+                history.insert(
+                    entry.entity_id,
+                    history
+                        .get(&entry.entity_id)
+                        .cloned()
+                        .unwrap_or(0)
+                        .max(entry.timestamp),
+                );
+            }
+        }
+
+        history
+    }
+
     pub fn recent_navigation_history_iter(
         &self,
         cx: &App,
@@ -2097,7 +2126,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
-                        item.tab_description(0, cx);
+                        item.tab_content_text(0, cx);
                         Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
@@ -5879,7 +5908,8 @@ fn resize_bottom_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE);
+    let size =
+        new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
         bottom_dock.resize_active_panel(Some(size), window, cx);
     });
@@ -9013,6 +9043,9 @@ mod tests {
 
         impl Item for TestPngItemView {
             type Event = ();
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
         }
         impl EventEmitter<()> for TestPngItemView {}
         impl Focusable for TestPngItemView {
@@ -9085,6 +9118,9 @@ mod tests {
 
         impl Item for TestIpynbItemView {
             type Event = ();
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
         }
         impl EventEmitter<()> for TestIpynbItemView {}
         impl Focusable for TestIpynbItemView {
@@ -9128,6 +9164,9 @@ mod tests {
 
         impl Item for TestAlternatePngItemView {
             type Event = ();
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
         }
 
         impl EventEmitter<()> for TestAlternatePngItemView {}
