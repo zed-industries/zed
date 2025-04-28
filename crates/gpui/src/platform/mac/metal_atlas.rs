@@ -5,10 +5,7 @@ use crate::{
 use anyhow::{Result, anyhow};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
-use etagere::{
-    BucketedAtlasAllocator,
-    euclid::num::{Ceil, Round},
-};
+use etagere::BucketedAtlasAllocator;
 use metal::Device;
 use parking_lot::Mutex;
 use std::borrow::Cow;
@@ -142,8 +139,6 @@ impl MetalAtlasState {
                 return Some(tile);
             }
         }
-
-        println!("Allocating texture of size {:?}", size);
 
         let texture = self.push_texture(size, texture_kind);
         texture.allocate(size)
@@ -287,7 +282,7 @@ impl MetalAtlasTexture {
             bounds.size.width.into(),
             bounds.size.height.into(),
         );
-        println!("-------------- upload bounds.size: {:?}", bounds.size);
+
         self.metal_texture.replace_region(
             region,
             0,
