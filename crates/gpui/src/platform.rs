@@ -1263,6 +1263,7 @@ impl PromptButton {
         PromptButton::Cancel(label.into())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_cancel(&self) -> bool {
         matches!(self, PromptButton::Cancel(_))
     }
