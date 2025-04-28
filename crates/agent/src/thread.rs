@@ -2812,6 +2812,7 @@ fn main() {{
             prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
+            language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);
