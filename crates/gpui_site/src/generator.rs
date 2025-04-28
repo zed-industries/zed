@@ -1,7 +1,7 @@
 use crate::examples::{collect_examples, read_example_file};
 use crate::markdown::read_markdown_file;
-use crate::templates::{DocInfo, ExampleInfo, SiteContent, TemplateEngine, create_template_stubs};
-use anyhow::{Context, Result};
+use crate::templates::{DocInfo, SiteContent, TemplateEngine, create_template_stubs};
+use anyhow::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -33,7 +33,8 @@ pub fn generate_site(gpui_dir: &Path, output_dir: &Path) -> Result<()> {
     };
 
     // Create template engine
-    let template_engine = TemplateEngine::new();
+    let templates_dir = output_dir.join("templates");
+    let template_engine = TemplateEngine::new(&templates_dir)?;
 
     // Generate index page
     let index_html = template_engine.render_index(&site_content)?;

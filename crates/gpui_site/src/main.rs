@@ -12,7 +12,7 @@ mod generator;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Output directory for the generated site
-    #[arg(short, long, default_value = "site")]
+    #[arg(short, long, default_value = "out")]
     output_dir: PathBuf,
 
     /// gpui crate directory
@@ -26,24 +26,39 @@ fn main() -> Result<()> {
     // Determine gpui directory
     let gpui_dir = args.gpui_dir.unwrap_or_else(|| {
         // Default to the sibling directory if not specified
-        std::env::current_dir()
-            .expect("Failed to get current directory")
+        let current_dir = std::env::current_dir()
+            .expect("Failed to get current directory");
+        current_dir
             .parent()
             .expect("Failed to get parent directory")
             .join("gpui")
     });
     
+    // Determine output directory - make it relative to the gpui_site crate directory
+    let output_dir = if args.output_dir.is_absolute() {
+        args.output_dir
+    } else {
+        // Find path to gpui_site crate directory regardless of where we're running from
+        let workspace_root = std::env::current_dir().expect("Failed to get current directory");
+        let gpui_site_dir = workspace_root.join("crates").join("gpui_site");
+        
+        // Create the output path relative to the gpui_site directory
+        gpui_site_dir.join(&args.output_dir)
+    };
+    
     // Create output directory if it doesn't exist
-    std::fs::create_dir_all(&args.output_dir)
-        .with_context(|| format!("Failed to create output directory: {}", args.output_dir.display()))?;
+    std::fs::create_dir_all(&output_dir)
+        .with_context(|| format!("Failed to create output directory: {}", output_dir.display()))?;
+    
+    println!("Output directory: {}", output_dir.display());
     
     println!("Generating gpui site from {} to {}", 
         gpui_dir.display(), 
-        args.output_dir.display());
+        output_dir.display());
     
     // Generate the site
-    generator::generate_site(&gpui_dir, &args.output_dir)?;
+    generator::generate_site(&gpui_dir, &output_dir)?;
     
     println!("Site generation complete!");
-    Ok()
+    Ok(())
 }

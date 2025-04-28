@@ -1,8 +1,8 @@
 use crate::templates::ExampleInfo;
 use anyhow::{Context, Result};
-use std::path::Path
+use std::path::Path;
 use syntect::highlighting::ThemeSet;
-use syntect::html::{highlighted_html_for_string, IncludeBackground};
+use syntect::html::highlighted_html_for_string;
 use syntect::parsing::SyntaxSet;
 
 /// Collect information about examples in the gpui crate
@@ -17,11 +17,11 @@ pub fn collect_examples(gpui_dir: &Path) -> Result<Vec<ExampleInfo>> {
 
     // Read the Cargo.toml to get example information
     let cargo_toml_path = gpui_dir.join("Cargo.toml");
-    let cargo_toml = std::fs::read_to_string(cargo_toml_path).with_context(|| {
+    let cargo_toml = std::fs::read_to_string(&cargo_toml_path).with_context(|| {
         format!(
             "Failed to read Cargo.toml from {}",
             cargo_toml_path.display()
-    )
+        )
     })?;
 
     let cargo_data: toml::Value =
@@ -34,7 +34,7 @@ pub fn collect_examples(gpui_dir: &Path) -> Result<Vec<ExampleInfo>> {
                 example.get("name").and_then(|v| v.as_str()),
                 example.get("path").and_then(|v| v.as_str()),
             ) {
-                let example_path = Path::new(path);
+                // We don't need the example_path variable here
                 let title = title_case(name);
 
                 // Read the first comment block to extract description, if any
@@ -164,16 +164,15 @@ fn highlight_rust_code(code: &str) -> Result<String> {
         .find_syntax_by_extension("rs")
         .ok_or_else(|| anyhow::anyhow!("Could not find Rust syntax"))?;
 
-    let highlighted =
-        highlighted_html_for_string(code, &syntax_set, syntax, theme, IncludeBackground::Yes)?;
+    let highlighted = highlighted_html_for_string(code, &syntax_set, syntax, theme)?;
 
     Ok(highlighted)
 }
 
 /// Extract the first comment block from a Rust file
 fn extract_first_comment(content: &str) -> Option<String> {
-    let mut in_comment = false;
     let mut comment_lines = Vec::new();
+    let mut in_multiline_comment = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -184,20 +183,18 @@ fn extract_first_comment(content: &str) -> Option<String> {
             comment_lines.push(comment_text.to_string());
         } else if trimmed.starts_with("/*") {
             // Start of multi-line comment
-            in_comment = true;
+            in_multiline_comment = true;
             let comment_text = trimmed.trim_start_matches("/*").trim();
             if !comment_text.is_empty() {
                 comment_lines.push(comment_text.to_string());
             }
-        } else if in_comment && trimmed.contains("*/") {
-            // End of multi-line comment
-            in_comment = false;
+        } else if in_multiline_comment && trimmed.contains("*/") {
             let comment_text = trimmed.split("*/").next().unwrap_or("").trim();
             if !comment_text.is_empty() {
                 comment_lines.push(comment_text.to_string());
             }
             break;
-        } else if in_comment {
+        } else if in_multiline_comment {
             // Middle of multi-line comment
             comment_lines.push(trimmed.to_string());
         } else if !trimmed.is_empty() && !comment_lines.is_empty() {
@@ -226,4 +223,3 @@ fn title_case(s: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-

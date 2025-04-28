@@ -1,9 +1,10 @@
 use anyhow::Result;
 use pulldown_cmark::{html, Options, Parser};
-use syntect::highlighting::{Style, ThemeSet};
-use syntect::html::{highlighted_html_for_string, IncludeBackground};
+use syntect::highlighting::ThemeSet;
+use syntect::html::highlighted_html_for_string;
 use syntect::parsing::SyntaxSet;
 use std::path::{Path, PathBuf};
+use html_escape;
 
 /// Process markdown content to HTML with code highlighting
 pub fn markdown_to_html(content: &str) -> Result<String> {
@@ -56,8 +57,7 @@ fn highlight_code_blocks(html: &str) -> Result<String> {
                 &unescaped_code, 
                 &syntax_set, 
                 syntax_set.find_syntax_by_extension("rs").unwrap(),
-                theme,
-                IncludeBackground::No
+                theme
             )?;
             
             // Replace the original code block with the highlighted version

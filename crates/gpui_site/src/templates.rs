@@ -1,6 +1,8 @@
 use anyhow::Result;
-use minijinja::{context, Environment, Source};
+use minijinja::{context, Environment};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::fs;
 
 /// Represents site content for templating
 pub struct SiteContent {
@@ -11,6 +13,7 @@ pub struct SiteContent {
 }
 
 /// Information about a code example
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExampleInfo {
     pub name: String,
     pub title: String,
@@ -19,6 +22,7 @@ pub struct ExampleInfo {
 }
 
 /// Information about a documentation page
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocInfo {
     pub name: String,
     pub title: String,
@@ -30,18 +34,28 @@ pub struct TemplateEngine {
 }
 
 impl TemplateEngine {
-    pub fn new() -> Self {
+    pub fn new(templates_dir: &Path) -> Result<Self> {
         let mut env = Environment::new();
         
-        // Register our templates
-        let mut source = Source::new();
-        source.add_template("base.html", include_str!("../templates/base.html")).unwrap();
-        source.add_template("index.html", include_str!("../templates/index.html")).unwrap();
-        source.add_template("example.html", include_str!("../templates/example.html")).unwrap();
-        source.add_template("doc.html", include_str!("../templates/doc.html")).unwrap();
-        env.set_source(source);
+        // Load the templates we've created from the output directory
+        // Since MiniJinja 1.0 doesn't have path_loader, we'll manually load them
+        let base_html = fs::read_to_string(templates_dir.join("base.html"))?;
+        let index_html = fs::read_to_string(templates_dir.join("index.html"))?;
+        let example_html = fs::read_to_string(templates_dir.join("example.html"))?;
+        let doc_html = fs::read_to_string(templates_dir.join("doc.html"))?;
         
-        Self { env }
+        // Convert to static lifetime strings with Box leak
+        let base_html = Box::leak(base_html.into_boxed_str());
+        let index_html = Box::leak(index_html.into_boxed_str());
+        let example_html = Box::leak(example_html.into_boxed_str());
+        let doc_html = Box::leak(doc_html.into_boxed_str());
+        
+        env.add_template("base.html", base_html)?;
+        env.add_template("index.html", index_html)?;
+        env.add_template("example.html", example_html)?;
+        env.add_template("doc.html", doc_html)?;
+        
+        Ok(Self { env })
     }
     
     /// Render the index page
@@ -86,10 +100,10 @@ impl TemplateEngine {
 // Create template stubs that we'll need to include
 pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     let templates_dir = output_dir.join("templates");
-    std::fs::create_dir_all(&templates_dir)?;
+    fs::create_dir_all(&templates_dir)?;
     
     // Create basic templates
-    std::fs::write(
+    fs::write(
         templates_dir.join("base.html"),
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -134,7 +148,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 
     <footer>
         <div class="container">
-            <p>gpui is part of the <a href="https://github.com/zed-industries/zed">Zed</a> project u00a9 Zed Industries, Inc.</p>
+            <p>gpui is part of the <a href="https://github.com/zed-industries/zed">Zed</a> project © Zed Industries, Inc.</p>
         </div>
     </footer>
     
@@ -144,7 +158,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 "#,
     )?;
     
-    std::fs::write(
+    fs::write(
         templates_dir.join("index.html"),
         r#"{% extends "base.html" %}
 
@@ -153,7 +167,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     <h1>gpui</h1>
     <p class="tagline">A fast, productive UI framework for Rust from the creators of Zed.</p>
     <div class="cta-buttons">
-        <a href="/docs/intro" class="button primary">Get Started u2192</a>
+        <a href="/docs/intro" class="button primary">Get Started →</a>
         <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui" class="button secondary">GitHub</a>
     </div>
 </section>
@@ -177,7 +191,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 "#,
     )?;
     
-    std::fs::write(
+    fs::write(
         templates_dir.join("example.html"),
         r#"{% extends "base.html" %}
 
@@ -200,7 +214,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 "#,
     )?;
     
-    std::fs::write(
+    fs::write(
         templates_dir.join("doc.html"),
         r#"{% extends "base.html" %}
 

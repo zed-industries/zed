@@ -8,7 +8,7 @@ description = "Static site generator for the gpui documentation"
 gpui = { path = "../gpui" }
 markdown = "0.3"
 pulldown-cmark = "0.9"
-syntect = "5.0"
+syntect = "5.2.0"
 minijinja = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 fs_extra = "1.3"
@@ -17,6 +17,7 @@ toml = "0.8"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+html-escape = "0.2"
 
 [[bin]]
 name = "gpui_site"
