@@ -499,12 +499,31 @@ impl LspAdapter for RustLspAdapter {
                     "kinds": [ "cargo", "shell" ],
                 },
             });
-            if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            if let Some(original_experimental) = &mut original.capabilities.experimental {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
             }
         }
+
+        let zed_provides_rustc_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .rust
+            .as_ref()
+            .map_or(false, |rust_diagnostics| {
+                rust_diagnostics.fetch_cargo_diagnostics
+            });
+        if zed_provides_rustc_diagnostics {
+            let disable_check_on_save = json!({
+                "checkOnSave": false,
+            });
+            if let Some(initialization_options) = &mut original.initialization_options {
+                merge_json_value_into(disable_check_on_save, initialization_options);
+            } else {
+                original.initialization_options = Some(disable_check_on_save);
+            }
+        }
+
         Ok(original)
     }
 }
