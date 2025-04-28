@@ -41,12 +41,28 @@ function CheckEnvironmentVariables {
     }
 }
 
+$innoDir = "$env:ZED_WORKSPACE\inno"
+
+function PrepareForBundle {
+    if (Test-Path "$innoDir") {
+        Remove-Item -Path "$innoDir" -Recurse -Force
+    }
+    New-Item -Path "$innoDir" -ItemType Directory -Force
+    New-Item -Path "$innoDir\resources" -ItemType Directory -Force
+    Copy-Item -Path "$env:ZED_WORKSPACE\crates\zed\resources\windows\*" -Destination "$innoDir\resources" -Recurse -Force
+    New-Item -Path "$innoDir\make_appx" -ItemType Directory -Force
+    New-Item -Path "$innoDir\appx" -ItemType Directory -Force
+    New-Item -Path "$innoDir\bin" -ItemType Directory -Force
+    New-Item -Path "$innoDir\tools" -ItemType Directory -Force
+}
+
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
-    # Build zed.exe and cli.exe
-    cargo build --release --package zed --package cli
-    Copy-Item -Path ".\target\release\zed.exe" -Destination ".\crates\zed\resources\windows\Zed.exe" -Force
-    Copy-Item -Path ".\target\release\cli.exe" -Destination ".\crates\zed\resources\windows\cli.exe" -Force
+    # Build zed.exe, cli.exe and auto_update_helper.exe
+    cargo build --release --package zed --package cli --package auto_update_helper
+    Copy-Item -Path ".\target\release\zed.exe" -Destination "$innoDir\Zed.exe" -Force
+    Copy-Item -Path ".\target\release\cli.exe" -Destination "$innoDir\cli.exe" -Force
+    Copy-Item -Path ".\target\release\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
     # Build explorer_command_injector.dll
     switch ($channel) {
         "stable" {
@@ -59,11 +75,10 @@ function BuildZedAndItsFriends {
             cargo build --release --package explorer_command_injector
         }
     }
-    Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination ".\crates\zed\resources\windows\zed_explorer_command_injector.dll" -Force
+    Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
 }
 
 function MakeAppx {
-    mkdir -p "$env:ZED_WORKSPACE\windows" -ErrorAction Ignore
     switch ($channel) {
         "stable" {
             $manifestFile = "$env:ZED_WORKSPACE\crates\explorer_command_injector\AppxManifest.xml"
@@ -75,30 +90,27 @@ function MakeAppx {
             $manifestFile = "$env:ZED_WORKSPACE\crates\explorer_command_injector\AppxManifest-Nightly.xml"
         }
     }
-    Copy-Item -Path "$manifestFile" -Destination "$env:ZED_WORKSPACE\windows\AppxManifest.xml"
+    Copy-Item -Path "$manifestFile" -Destination "$innoDir\make_appx\AppxManifest.xml"
     # Add makeAppx.exe to Path
     $sdk = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64"
     $env:Path += ';' + $sdk
-    makeAppx.exe pack /d "$env:ZED_WORKSPACE\windows" /p "$env:ZED_WORKSPACE\crates\zed\resources\windows\zed_explorer_command_injector.appx" /nv
+    makeAppx.exe pack /d "$innoDir\make_appx" /p "$innoDir\zed_explorer_command_injector.appx" /nv
 }
 
 function SignZedAndItsFriends {
-    $baseDir = "$env:ZED_WORKSPACE\crates\zed\resources\windows"
-    $files = "$baseDir\Zed.exe,$baseDir\cli.exe,$baseDir\zed_explorer_command_injector.dll,$baseDir\zed_explorer_command_injector.appx"
-    & "$baseDir\installer\sign.ps1" $files
+    $files = "$innoDir\Zed.exe,$innoDir\cli.exe,$innoDir\auto_update_helper.exe,$innoDir\zed_explorer_command_injector.dll,$innoDir\zed_explorer_command_injector.appx"
+    & "$innoDir\resources\sign.ps1" $files
 }
 
 function CollectFiles {
-    $windowsDir = "$env:ZED_WORKSPACE\crates\zed\resources\windows"
-    mkdir -p $windowsDir\installer\appx -ErrorAction Ignore
-    Move-Item -Path "$windowsDir\zed_explorer_command_injector.appx" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.appx" -Force
-    Move-Item -Path "$windowsDir\zed_explorer_command_injector.dll" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.dll" -Force
-    mkdir -p "$windowsDir\installer\bin" -ErrorAction Ignore
-    Move-Item -Path "$windowsDir\cli.exe" -Destination "$windowsDir\installer\bin\zed.exe" -Force
+    Move-Item -Path "$innoDir\zed_explorer_command_injector.appx" -Destination "$innoDir\appx\zed_explorer_command_injector.appx" -Force
+    Move-Item -Path "$innoDir\zed_explorer_command_injector.dll" -Destination "$innoDir\appx\zed_explorer_command_injector.dll" -Force
+    Move-Item -Path "$innoDir\cli.exe" -Destination "$innoDir\bin\zed.exe" -Force
+    Move-Item -Path "$innoDir\auto_update_helper.exe" -Destination "$innoDir\tools\auto_update_helper.exe" -Force
 }
 
 function BuildInstaller {
-    $issFilePath = "$env:ZED_WORKSPACE/crates/zed/resources/windows/installer/zed.iss"
+    $issFilePath = "$innoDir/resources/zed.iss"
     switch ($channel) {
         "stable" {
             $appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
@@ -156,14 +168,14 @@ function BuildInstaller {
 
     $definitions = @{
         "AppId"          = $appId
-        "OutputDir"      = "$env:ZED_WORKSPACE/target"
+        "OutputDir"      = "$env:ZED_WORKSPACE\target"
         "AppSetupName"   = $appSetupName
         "AppName"        = $appName
         "AppDisplayName" = $appDisplayName
         "RegValueName"   = $regValueName
         "AppMutex"       = $appMutex
         "AppExeName"     = $appExeName
-        "ResourcesDir"   = "$env:ZED_WORKSPACE/crates/zed/resources/windows"
+        "ResourcesDir"   = "$innoDir\resources"
         "ShellNameShort" = $appShellNameShort
         "AppUserId"      = $appUserId
         "Version"        = "$env:RELEASE_VERSION"
@@ -171,7 +183,7 @@ function BuildInstaller {
         "AppxFullName"   = $appAppxFullName
     }
 
-    $signTool = "pwsh.exe -ExecutionPolicy Bypass -File $env:ZED_WORKSPACE/crates/zed/resources/windows/installer/sign.ps1 `$f"
+    $signTool = "pwsh.exe -ExecutionPolicy Bypass -File $innoDir\resources\sign.ps1 `$f"
 
     $defs = @()
     foreach ($key in $definitions.Keys) {
@@ -195,12 +207,13 @@ function BuildInstaller {
     }
 }
 
-CheckEnvironmentVariables
-BuildZedAndItsFriends
-MakeAppx
-SignZedAndItsFriends
-CollectFiles
-BuildInstaller
+# CheckEnvironmentVariables
+PrepareForBundle
+# BuildZedAndItsFriends
+# MakeAppx
+# SignZedAndItsFriends
+# CollectFiles
+# BuildInstaller
 
 # TODO: upload_to_blob_store
 
