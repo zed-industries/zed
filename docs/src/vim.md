@@ -164,7 +164,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
-- You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
+- You can use `gR` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
 - You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 - You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
 
@@ -252,11 +252,11 @@ These commands jump to specific positions in the file.
 
 ### Replacement
 
-This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Also, by default, Zed always replaces all occurrences of the search pattern in the current line.
+This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Zed will replace only the first occurrence of the search pattern in the current line. To replace all matches append the `g` flag.
 
-| Command              | Description                       |
-| -------------------- | --------------------------------- |
-| `:[range]s/foo/bar/` | Replace instances of foo with bar |
+| Command                 | Description                       |
+| ----------------------- | --------------------------------- |
+| `:[range]s/foo/bar/[g]` | Replace instances of foo with bar |
 
 ### Editing
 

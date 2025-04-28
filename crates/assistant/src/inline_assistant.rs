@@ -2981,6 +2981,7 @@ impl CodegenAlternative {
         Ok(LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            mode: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),

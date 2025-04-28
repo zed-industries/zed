@@ -14,7 +14,8 @@ use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
+    WeakEntity,
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -24,9 +25,10 @@ use language_model::{
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
     TokenUsage,
 };
+use postage::stream::Stream as _;
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
-use prompt_store::PromptBuilder;
+use prompt_store::{ModelContext, PromptBuilder};
 use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,7 +36,9 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
+use zed_llm_client::CompletionMode;
 
+use crate::ThreadStore;
 use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
@@ -242,6 +246,16 @@ pub enum DetailedSummaryState {
     },
 }
 
+impl DetailedSummaryState {
+    fn text(&self) -> Option<SharedString> {
+        if let Self::Generated { text, .. } = self {
+            Some(text.clone())
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct TotalTokenUsage {
     pub total: usize,
@@ -289,7 +303,10 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
-    detailed_summary_state: DetailedSummaryState,
+    detailed_summary_task: Task<Option<()>>,
+    detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
+    detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
+    completion_mode: Option<CompletionMode>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -333,12 +350,16 @@ impl Thread {
         system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
-            detailed_summary_state: DetailedSummaryState::NotGenerated,
+            detailed_summary_task: Task::ready(None),
+            detailed_summary_tx,
+            detailed_summary_rx,
+            completion_mode: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -387,13 +408,18 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
+        let (detailed_summary_tx, detailed_summary_rx) =
+            postage::watch::channel_with(serialized.detailed_summary_state);
 
         Self {
             id,
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            detailed_summary_state: serialized.detailed_summary_state,
+            detailed_summary_task: Task::ready(None),
+            detailed_summary_tx,
+            detailed_summary_rx,
+            completion_mode: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -505,17 +531,12 @@ impl Thread {
         }
     }
 
-    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
-        self.latest_detailed_summary()
-            .unwrap_or_else(|| self.text().into())
+    pub fn completion_mode(&self) -> Option<CompletionMode> {
+        self.completion_mode
     }
 
-    fn latest_detailed_summary(&self) -> Option<SharedString> {
-        if let DetailedSummaryState::Generated { text, .. } = &self.detailed_summary_state {
-            Some(text.clone())
-        } else {
-            None
-        }
+    pub fn set_completion_mode(&mut self, mode: Option<CompletionMode>) {
+        self.completion_mode = mode;
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -728,6 +749,32 @@ impl Thread {
         self.tool_use.tool_result_card(id).cloned()
     }
 
+    /// Return tools that are both enabled and supported by the model
+    pub fn available_tools(
+        &self,
+        cx: &App,
+        model: Arc<dyn LanguageModel>,
+    ) -> Vec<LanguageModelRequestTool> {
+        if model.supports_tools() {
+            self.tools()
+                .read(cx)
+                .enabled_tools(cx)
+                .into_iter()
+                .filter_map(|tool| {
+                    // Skip tools that cannot be supported
+                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                    Some(LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::default()
+        }
+    }
+
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
@@ -903,7 +950,7 @@ impl Thread {
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage,
                 request_token_usage: this.request_token_usage.clone(),
-                detailed_summary_state: this.detailed_summary_state.clone(),
+                detailed_summary_state: this.detailed_summary_rx.borrow().clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
             })
         })
@@ -929,24 +976,7 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
-        let mut request = self.to_completion_request(cx);
-        if model.supports_tools() {
-            request.tools = self
-                .tools()
-                .read(cx)
-                .enabled_tools(cx)
-                .into_iter()
-                .filter_map(|tool| {
-                    // Skip tools that cannot be supported
-                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
-                    Some(LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema,
-                    })
-                })
-                .collect();
-        }
+        let request = self.to_completion_request(model.clone(), cx);
 
         self.stream_completion(request, model, window, cx);
     }
@@ -963,20 +993,35 @@ impl Thread {
         false
     }
 
-    pub fn to_completion_request(&self, cx: &mut Context<Self>) -> LanguageModelRequest {
+    pub fn to_completion_request(
+        &self,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
+    ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
+            mode: None,
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
         };
 
+        let available_tools = self.available_tools(cx, model.clone());
+        let available_tool_names = available_tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect();
+
+        let model_context = &ModelContext {
+            available_tools: available_tool_names,
+        };
+
         if let Some(project_context) = self.project_context.borrow().as_ref() {
             match self
                 .prompt_builder
-                .generate_assistant_system_prompt(project_context)
+                .generate_assistant_system_prompt(project_context, model_context)
             {
                 Err(err) => {
                     let message = format!("{err:?}").into();
@@ -1056,6 +1101,13 @@ impl Thread {
 
         self.attached_tracked_files_state(&mut request.messages, cx);
 
+        request.tools = available_tools;
+        request.mode = if model.supports_max_mode() {
+            self.completion_mode
+        } else {
+            None
+        };
+
         request
     }
 
@@ -1063,6 +1115,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            mode: None,
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -1356,7 +1409,7 @@ impl Thread {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
-                                let tool_uses = thread.use_pending_tools(window, cx);
+                                let tool_uses = thread.use_pending_tools(window, cx, model.clone());
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
                             StopReason::EndTurn => {}
@@ -1496,25 +1549,34 @@ impl Thread {
         });
     }
 
-    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) -> Option<Task<()>> {
-        let last_message_id = self.messages.last().map(|message| message.id)?;
+    pub fn start_generating_detailed_summary_if_needed(
+        &mut self,
+        thread_store: WeakEntity<ThreadStore>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
+            return;
+        };
 
-        match &self.detailed_summary_state {
+        match &*self.detailed_summary_rx.borrow() {
             DetailedSummaryState::Generating { message_id, .. }
             | DetailedSummaryState::Generated { message_id, .. }
                 if *message_id == last_message_id =>
             {
                 // Already up-to-date
-                return None;
+                return;
             }
             _ => {}
         }
 
-        let ConfiguredModel { model, provider } =
-            LanguageModelRegistry::read_global(cx).thread_summary_model()?;
+        let Some(ConfiguredModel { model, provider }) =
+            LanguageModelRegistry::read_global(cx).thread_summary_model()
+        else {
+            return;
+        };
 
         if !provider.is_authenticated(cx) {
-            return None;
+            return;
         }
 
         let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
@@ -1526,16 +1588,24 @@ impl Thread {
 
         let request = self.to_summarize_request(added_user_message.into());
 
-        let task = cx.spawn(async move |thread, cx| {
+        *self.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generating {
+            message_id: last_message_id,
+        };
+
+        // Replace the detailed summarization task if there is one, cancelling it. It would probably
+        // be better to allow the old task to complete, but this would require logic for choosing
+        // which result to prefer (the old task could complete after the new one, resulting in a
+        // stale summary).
+        self.detailed_summary_task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion_text(request, &cx);
             let Some(mut messages) = stream.await.log_err() else {
                 thread
-                    .update(cx, |this, _cx| {
-                        this.detailed_summary_state = DetailedSummaryState::NotGenerated;
+                    .update(cx, |thread, _cx| {
+                        *thread.detailed_summary_tx.borrow_mut() =
+                            DetailedSummaryState::NotGenerated;
                     })
-                    .log_err();
-
-                return;
+                    .ok()?;
+                return None;
             };
 
             let mut new_detailed_summary = String::new();
@@ -1547,25 +1617,56 @@ impl Thread {
             }
 
             thread
-                .update(cx, |this, _cx| {
-                    this.detailed_summary_state = DetailedSummaryState::Generated {
+                .update(cx, |thread, _cx| {
+                    *thread.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generated {
                         text: new_detailed_summary.into(),
                         message_id: last_message_id,
                     };
                 })
-                .log_err();
+                .ok()?;
+
+            // Save thread so its summary can be reused later
+            if let Some(thread) = thread.upgrade() {
+                if let Ok(Ok(save_task)) = cx.update(|cx| {
+                    thread_store
+                        .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
+                }) {
+                    save_task.await.log_err();
+                }
+            }
+
+            Some(())
         });
+    }
 
-        self.detailed_summary_state = DetailedSummaryState::Generating {
-            message_id: last_message_id,
-        };
+    pub async fn wait_for_detailed_summary_or_text(
+        this: &Entity<Self>,
+        cx: &mut AsyncApp,
+    ) -> Option<SharedString> {
+        let mut detailed_summary_rx = this
+            .read_with(cx, |this, _cx| this.detailed_summary_rx.clone())
+            .ok()?;
+        loop {
+            match detailed_summary_rx.recv().await? {
+                DetailedSummaryState::Generating { .. } => {}
+                DetailedSummaryState::NotGenerated => {
+                    return this.read_with(cx, |this, _cx| this.text().into()).ok();
+                }
+                DetailedSummaryState::Generated { text, .. } => return Some(text),
+            }
+        }
+    }
 
-        Some(task)
+    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+        self.detailed_summary_rx
+            .borrow()
+            .text()
+            .unwrap_or_else(|| self.text().into())
     }
 
     pub fn is_generating_detailed_summary(&self) -> bool {
         matches!(
-            self.detailed_summary_state,
+            &*self.detailed_summary_rx.borrow(),
             DetailedSummaryState::Generating { .. }
         )
     }
@@ -1574,9 +1675,10 @@ impl Thread {
         &mut self,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
+        model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = self.to_completion_request(cx);
+        let request = self.to_completion_request(model, cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
@@ -1762,6 +1864,14 @@ impl Thread {
 
         self.finalize_pending_checkpoint(cx);
         canceled
+    }
+
+    /// Signals that any in-progress editing should be canceled.
+    ///
+    /// This method is used to notify listeners (like ActiveThread) that
+    /// they should cancel any editing operations.
+    pub fn cancel_editing(&mut self, cx: &mut Context<Self>) {
+        cx.emit(ThreadEvent::CancelEditing);
     }
 
     pub fn feedback(&self) -> Option<ThreadFeedback> {
@@ -2282,6 +2392,7 @@ pub enum ThreadEvent {
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
+    CancelEditing,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -2296,9 +2407,11 @@ mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use assistant_settings::AssistantSettings;
+    use assistant_tool::ToolRegistry;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
@@ -2318,7 +2431,7 @@ mod tests {
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store) =
+        let (_workspace, _thread_store, thread, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         add_file_to_context(&project, &context_store, "test/code.rs", cx)
@@ -2369,7 +2482,9 @@ fn main() {{
         assert_eq!(message.loaded_context.text, expected_context);
 
         // Check message in request
-        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
 
         assert_eq!(request.messages.len(), 2);
         let expected_full_message = format!("{}Please explain this code", expected_context);
@@ -2390,7 +2505,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, context_store) =
+        let (_, _thread_store, thread, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // First message with context 1
@@ -2461,7 +2576,9 @@ fn main() {{
         assert!(message3.loaded_context.text.contains("file3.rs"));
 
         // Check entire request to make sure all contexts are properly included
-        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
 
         // The request should contain all 3 messages
         assert_eq!(request.messages.len(), 4);
@@ -2490,7 +2607,7 @@ fn main() {{
         )
         .await;
 
-        let (_, _thread_store, thread, _context_store) =
+        let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Insert user message without any context (empty context vector)
@@ -2516,7 +2633,9 @@ fn main() {{
         assert_eq!(message.loaded_context.text, "");
 
         // Check message in request
-        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
 
         assert_eq!(request.messages.len(), 2);
         assert_eq!(
@@ -2539,7 +2658,9 @@ fn main() {{
         assert_eq!(message2.loaded_context.text, "");
 
         // Check that both messages appear in the request
-        let request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
 
         assert_eq!(request.messages.len(), 3);
         assert_eq!(
@@ -2562,7 +2683,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, context_store) =
+        let (_workspace, _thread_store, thread, context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Open buffer and add it to context
@@ -2581,7 +2702,9 @@ fn main() {{
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
-        let initial_request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
+        let initial_request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
 
         // Make sure we don't have a stale file warning yet
         let has_stale_warning = initial_request.messages.iter().any(|msg| {
@@ -2614,7 +2737,9 @@ fn main() {{
         });
 
         // Create a new request and check for the stale buffer warning
-        let new_request = thread.update(cx, |thread, cx| thread.to_completion_request(cx));
+        let new_request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
 
         // We should have a stale file warning as the last message
         let last_message = new_request
@@ -2647,6 +2772,7 @@ fn main() {{
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);
+            ToolRegistry::default_global(cx);
         });
     }
 
@@ -2668,6 +2794,7 @@ fn main() {{
         Entity<ThreadStore>,
         Entity<Thread>,
         Entity<ContextStore>,
+        Arc<dyn LanguageModel>,
     ) {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2688,7 +2815,10 @@ fn main() {{
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
-        (workspace, thread_store, thread, context_store)
+        let model = FakeLanguageModel::default();
+        let model: Arc<dyn LanguageModel> = Arc::new(model);
+
+        (workspace, thread_store, thread, context_store, model)
     }
 
     async fn add_file_to_context(

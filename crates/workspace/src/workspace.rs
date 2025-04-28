@@ -62,7 +62,7 @@ use persistence::{
     model::{SerializedSshProject, SerializedWorkspace},
 };
 pub use persistence::{
-    DB as WORKSPACE_DB, WorkspaceDb,
+    DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
     model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
 };
 use postage::stream::Stream;

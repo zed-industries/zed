@@ -1479,6 +1479,21 @@ pub enum ImageFormat {
     Tiff,
 }
 
+impl ImageFormat {
+    /// Returns the mime type for the ImageFormat
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "image/png",
+            ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Webp => "image/webp",
+            ImageFormat::Gif => "image/gif",
+            ImageFormat::Svg => "image/svg+xml",
+            ImageFormat::Bmp => "image/bmp",
+            ImageFormat::Tiff => "image/tiff",
+        }
+    }
+}
+
 /// An image, with a format and certain bytes
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {

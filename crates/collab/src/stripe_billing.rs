@@ -268,7 +268,7 @@ impl StripeBilling {
         Ok(())
     }
 
-    pub async fn bill_model_usage(
+    pub async fn bill_model_token_usage(
         &self,
         customer_id: &stripe::CustomerId,
         model: &StripeModel,

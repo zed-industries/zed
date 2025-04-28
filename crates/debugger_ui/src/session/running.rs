@@ -32,7 +32,7 @@ use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
     DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
     Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, Window, div, h_flex, v_flex,
+    Styled, Tab, Tooltip, VisibleOnHover, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -106,6 +106,7 @@ pub(crate) struct SubView {
     pane_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
+    hovered: bool,
 }
 
 impl SubView {
@@ -121,6 +122,7 @@ impl SubView {
             inner: view,
             pane_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
+            hovered: false,
         })
     }
 
@@ -170,6 +172,14 @@ impl Item for SubView {
 impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .id(SharedString::from(format!(
+                "subview-container-{}",
+                self.kind.to_shared_string()
+            )))
+            .on_hover(cx.listener(|this, hovered, _, cx| {
+                this.hovered = *hovered;
+                cx.notify();
+            }))
             .size_full()
             // Add border uncoditionally to prevent layout shifts on focus changes.
             .border_1()
@@ -312,7 +322,14 @@ pub(crate) fn new_debugger_pane(
         pane.set_render_tab_bar(cx, {
             move |pane, window, cx| {
                 let active_pane_item = pane.active_item();
+                let pane_group_id: SharedString =
+                    format!("pane-zoom-button-hover-{}", cx.entity_id()).into();
+                let is_hovered = active_pane_item.as_ref().map_or(false, |item| {
+                    item.downcast::<SubView>()
+                        .map_or(false, |this| this.read(cx).hovered)
+                });
                 h_flex()
+                    .group(pane_group_id.clone())
                     .justify_between()
                     .bg(cx.theme().colors().tab_bar_background)
                     .border_b_1()
@@ -397,31 +414,40 @@ pub(crate) fn new_debugger_pane(
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new(
-                            "debug-toggle-zoom",
-                            if zoomed {
-                                IconName::Minimize
-                            } else {
-                                IconName::Maximize
-                            },
-                        )
-                        .icon_size(IconSize::XSmall)
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                let zoomed_text = if zoomed { "Zoom Out" } else { "Zoom In" };
-                                Tooltip::for_action_in(
-                                    zoomed_text,
-                                    &workspace::ToggleZoom,
-                                    &focus_handle,
-                                    window,
-                                    cx,
+                        div()
+                            .visible_on_hover(pane_group_id)
+                            .when(is_hovered, |this| this.visible())
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "debug-toggle-zoom-{}",
+                                        cx.entity_id()
+                                    )),
+                                    if zoomed {
+                                        IconName::Minimize
+                                    } else {
+                                        IconName::Maximize
+                                    },
                                 )
-                            }
-                        })
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(move |pane, _, window, cx| {
+                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                }))
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        let zoomed_text =
+                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                        Tooltip::for_action_in(
+                                            zoomed_text,
+                                            &workspace::ToggleZoom,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                            )
                     })
                     .into_any_element()
             }
