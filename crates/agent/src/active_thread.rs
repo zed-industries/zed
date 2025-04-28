@@ -1293,6 +1293,7 @@ impl ActiveThread {
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
+                    mode: None,
                     messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],

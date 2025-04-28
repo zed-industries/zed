@@ -460,6 +460,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                mode: None,
                 tools: Vec::new(),
                 stop: Vec::new(),
                 temperature: None,
