@@ -34,6 +34,7 @@ use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
+use zed_llm_client::CompletionMode;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -51,7 +52,6 @@ pub struct MessageEditor {
     thread: Entity<Thread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
-    #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     context_store: Entity<ContextStore>,
@@ -432,9 +432,21 @@ impl MessageEditor {
             return None;
         }
 
+        let active_completion_mode = self.thread.read(cx).completion_mode();
+
         Some(
             IconButton::new("max-mode", IconName::SquarePlus)
                 .icon_size(IconSize::Small)
+                .toggle_state(active_completion_mode == Some(CompletionMode::Max))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.thread.update(cx, |thread, _cx| {
+                        thread.set_completion_mode(match active_completion_mode {
+                            Some(CompletionMode::Max) => Some(CompletionMode::Normal),
+                            Some(CompletionMode::Normal) | None => Some(CompletionMode::Max),
+                        });
+                    });
+                }))
+                .tooltip(Tooltip::text("Max Mode"))
                 .into_any_element(),
         )
     }
@@ -1121,6 +1133,7 @@ impl MessageEditor {
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
+                    mode: None,
                     messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],
