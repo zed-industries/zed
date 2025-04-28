@@ -1248,6 +1248,21 @@ pub enum PromptButton {
 }
 
 impl PromptButton {
+    /// Create a button with label
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        PromptButton::Other(label.into())
+    }
+
+    /// Create an Ok button
+    pub fn ok(label: impl Into<SharedString>) -> Self {
+        PromptButton::Ok(label.into())
+    }
+
+    /// Create a Cancel button
+    pub fn cancel(label: impl Into<SharedString>) -> Self {
+        PromptButton::Cancel(label.into())
+    }
+
     pub(crate) fn is_cancel(&self) -> bool {
         matches!(self, PromptButton::Cancel(_))
     }
