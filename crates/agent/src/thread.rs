@@ -396,12 +396,16 @@ impl Thread {
         let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
 
         let configured_model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            let model = serialized.model.as_ref()?;
-            let model = SelectedModel {
-                provider: model.provider.clone().into(),
-                model: model.model.clone().into(),
-            };
-            registry.select_model(&model, cx)
+            serialized
+                .model
+                .and_then(|model| {
+                    let model = SelectedModel {
+                        provider: model.provider.clone().into(),
+                        model: model.model.clone().into(),
+                    };
+                    registry.select_model(&model, cx)
+                })
+                .or_else(|| registry.default_model())
         });
 
         Self {
@@ -499,11 +503,20 @@ impl Thread {
         self.project_context.clone()
     }
 
-    pub fn configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
+    pub fn get_or_init_configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
         if self.configured_model.is_none() {
             self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
         }
         self.configured_model.clone()
+    }
+
+    pub fn configured_model(&self) -> Option<ConfiguredModel> {
+        self.configured_model.clone()
+    }
+
+    pub fn set_configured_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+        self.configured_model = model;
+        cx.notify();
     }
 
     pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
@@ -1704,7 +1717,7 @@ impl Thread {
             tool_use_id.clone(),
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
-            cx,
+            self.configured_model.as_ref(),
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -1779,7 +1792,7 @@ impl Thread {
                             tool_use_id.clone(),
                             tool_name,
                             output,
-                            cx,
+                            thread.configured_model.as_ref(),
                         );
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
@@ -1797,10 +1810,9 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         if self.all_tools_finished() {
-            let model_registry = LanguageModelRegistry::read_global(cx);
-            if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+            if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
                 if !canceled {
-                    self.send_to_model(model, window, cx);
+                    self.send_to_model(model.clone(), window, cx);
                 }
                 self.auto_capture_telemetry(cx);
             }
@@ -2217,8 +2229,8 @@ impl Thread {
         self.cumulative_token_usage
     }
 
-    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
-        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+    pub fn token_usage_up_to_message(&self, message_id: MessageId) -> TotalTokenUsage {
+        let Some(model) = self.configured_model.as_ref() else {
             return TotalTokenUsage::default();
         };
 
@@ -2246,9 +2258,8 @@ impl Thread {
         }
     }
 
-    pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.default_model() else {
+    pub fn total_token_usage(&self) -> TotalTokenUsage {
+        let Some(model) = self.configured_model.as_ref() else {
             return TotalTokenUsage::default();
         };
 
@@ -2299,8 +2310,12 @@ impl Thread {
             "Permission to run tool action denied by user"
         ));
 
-        self.tool_use
-            .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
+        self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            err,
+            self.configured_model.as_ref(),
+        );
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
 }

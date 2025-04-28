@@ -1274,12 +1274,12 @@ impl AssistantPanel {
         let is_generating = thread.is_generating();
         let message_editor = self.message_editor.read(cx);
 
-        let conversation_token_usage = thread.total_token_usage(cx);
+        let conversation_token_usage = thread.total_token_usage();
         let (total_token_usage, is_estimating) = if let Some((editing_message_id, unsent_tokens)) =
             self.thread.read(cx).editing_message_id()
         {
             let combined = thread
-                .token_usage_up_to_message(editing_message_id, cx)
+                .token_usage_up_to_message(editing_message_id)
                 .add(unsent_tokens);
 
             (combined, unsent_tokens > 0)

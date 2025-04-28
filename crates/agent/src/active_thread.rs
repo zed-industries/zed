@@ -25,8 +25,8 @@ use gpui::{
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent,
-    RequestUsage, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, RequestUsage, Role,
+    StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
@@ -1247,7 +1247,7 @@ impl ActiveThread {
         cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
         state._update_token_count_task.take();
 
-        let Some(default_model) = LanguageModelRegistry::read_global(cx).default_model() else {
+        let Some(configured_model) = self.thread.read(cx).configured_model() else {
             state.last_estimated_token_count.take();
             return;
         };
@@ -1300,7 +1300,7 @@ impl ActiveThread {
                     temperature: None,
                 };
 
-                Some(default_model.model.count_tokens(request, cx))
+                Some(configured_model.model.count_tokens(request, cx))
             })? {
                 task.await?
             } else {
@@ -1343,7 +1343,7 @@ impl ActiveThread {
             for message_id in self.messages_after(message_id) {
                 thread.delete_message(*message_id, cx);
             }
-            thread.configured_model(cx)
+            thread.get_or_init_configured_model(cx)
         });
 
         let Some(model) = thread_model else {
