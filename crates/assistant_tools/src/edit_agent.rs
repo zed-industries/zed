@@ -1,14 +1,13 @@
 mod edit_parser;
+#[cfg(test)]
+mod evals;
 
 use crate::{Template, Templates};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use edit_parser::EditParser;
-use futures::{
-    Stream, StreamExt,
-    stream::{self, BoxStream},
-};
-use gpui::{AppContext, AsyncApp, Entity};
+use futures::{Stream, StreamExt, stream::BoxStream};
+use gpui::{AsyncApp, Entity};
 use language::{Anchor, Bias, Buffer, BufferSnapshot, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
@@ -16,7 +15,7 @@ use language_model::{
 };
 use serde::Serialize;
 use smallvec::SmallVec;
-use std::{ops::Range, path::PathBuf, sync::Arc, task::Poll};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 use streaming_diff::{CharOperation, StreamingDiff};
 
 #[derive(Serialize)]
@@ -54,22 +53,22 @@ impl EditAgent {
         edit_description: String,
         previous_messages: Vec<LanguageModelRequestMessage>,
         cx: &mut AsyncApp,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         let edit_chunks = self
             .request_edits(snapshot.clone(), edit_description, previous_messages, cx)
             .await?;
-        self.apply_edits(buffer, snapshot, edit_chunks, cx).await?;
-        Ok(())
+        let chunks = self.apply_edits(buffer, snapshot, edit_chunks, cx).await?;
+        Ok(chunks)
     }
 
     async fn apply_edits(
         &self,
         buffer: Entity<Buffer>,
-        snapshot: BufferSnapshot,
+        mut snapshot: BufferSnapshot,
         edit_chunks: impl Stream<Item = Result<String, LanguageModelCompletionError>>,
         cx: &mut AsyncApp,
-    ) -> Result<()> {
+    ) -> Result<String> {
         struct PendingEdit {
             start: usize,
             diff: StreamingDiff,
@@ -86,9 +85,11 @@ impl EditAgent {
         let mut parser = EditParser::new();
         let mut pending_edit = None;
         futures::pin_mut!(edit_chunks);
+        let mut output = String::new();
 
         while let Some(edit_chunk) = edit_chunks.next().await {
             let chunk = edit_chunk?;
+            output.push_str(&chunk);
 
             for event in parser.push(&chunk) {
                 match event {
@@ -137,7 +138,9 @@ impl EditAgent {
                                 .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
                         })?;
 
-                        if !done {
+                        if done {
+                            snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                        } else {
                             pending_edit = Some(edit);
                         }
                     }
@@ -145,7 +148,7 @@ impl EditAgent {
             }
         }
 
-        Ok(())
+        Ok(output)
     }
 
     async fn request_edits(
