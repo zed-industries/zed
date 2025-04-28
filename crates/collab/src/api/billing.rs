@@ -1308,7 +1308,7 @@ async fn sync_token_usage_with_stripe(
             .subscribe_to_model(&stripe_subscription_id, &stripe_model)
             .await?;
         stripe_billing
-            .bill_model_usage(&stripe_customer_id, &stripe_model, &event)
+            .bill_model_token_usage(&stripe_customer_id, &stripe_model, &event)
             .await?;
         llm_db.consume_billing_event(event.id).await?;
     }
