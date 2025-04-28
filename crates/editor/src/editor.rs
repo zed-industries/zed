@@ -6968,7 +6968,7 @@ impl Editor {
         // Is it a breakpoint that shows up when hovering over gutter?
         let is_phantom = self.gutter_breakpoint_indicator.0.is_some_and(
             |(point, is_visible, has_existing_breakpoint_on_line)| {
-                is_visible && point.row() == row && dbg!(!has_existing_breakpoint_on_line)
+                is_visible && point.row() == row && !has_existing_breakpoint_on_line
             },
         );
         let (color, icon) = {

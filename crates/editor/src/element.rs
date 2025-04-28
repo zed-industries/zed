@@ -966,7 +966,7 @@ impl EditorElement {
                             .breakpoint_at_row(&file.full_path(cx), as_point.row, cx)
                             .is_some()
                     });
-                dbg!(has_existing_breakpoint);
+
                 editor.gutter_breakpoint_indicator.0 =
                     Some((new_point, is_visible, has_existing_breakpoint));
 
