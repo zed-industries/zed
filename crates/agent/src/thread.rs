@@ -1866,6 +1866,14 @@ impl Thread {
         canceled
     }
 
+    /// Signals that any in-progress editing should be canceled.
+    ///
+    /// This method is used to notify listeners (like ActiveThread) that
+    /// they should cancel any editing operations.
+    pub fn cancel_editing(&mut self, cx: &mut Context<Self>) {
+        cx.emit(ThreadEvent::CancelEditing);
+    }
+
     pub fn feedback(&self) -> Option<ThreadFeedback> {
         self.feedback
     }
@@ -2384,6 +2392,7 @@ pub enum ThreadEvent {
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
+    CancelEditing,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
