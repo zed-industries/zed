@@ -228,7 +228,7 @@ impl Inner {
     fn write(
         &self,
         data: Vec<ClipboardData>,
-        selection: LinuxClipboardKind,
+        selection: ClipboardKind,
         wait: WaitConfig,
     ) -> Result<()> {
         if self.serve_stopped.load(Ordering::Relaxed) {
@@ -280,7 +280,7 @@ impl Inner {
     /// `formats` must be a slice of atoms, where each atom represents a target format.
     /// The first format from `formats`, which the clipboard owner supports will be the
     /// format of the return value.
-    fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
+    fn read(&self, formats: &[Atom], selection: ClipboardKind) -> Result<ClipboardData> {
         // if we are the current owner, we can get the current clipboard ourselves
         if self.is_owner(selection)? {
             let data = self.selection_of(selection).data.read();
@@ -318,7 +318,7 @@ impl Inner {
     fn read_single(
         &self,
         reader: &XContext,
-        selection: LinuxClipboardKind,
+        selection: ClipboardKind,
         target_format: Atom,
     ) -> Result<Vec<u8>> {
         // Delete the property so that we can detect (using property notify)
@@ -402,32 +402,32 @@ impl Inner {
         Err(Error::ContentNotAvailable)
     }
 
-    fn atom_of(&self, selection: LinuxClipboardKind) -> Atom {
+    fn atom_of(&self, selection: ClipboardKind) -> Atom {
         match selection {
-            LinuxClipboardKind::Clipboard => self.atoms.CLIPBOARD,
-            LinuxClipboardKind::Primary => self.atoms.PRIMARY,
-            LinuxClipboardKind::Secondary => self.atoms.SECONDARY,
+            ClipboardKind::Clipboard => self.atoms.CLIPBOARD,
+            ClipboardKind::Primary => self.atoms.PRIMARY,
+            ClipboardKind::Secondary => self.atoms.SECONDARY,
         }
     }
 
-    fn selection_of(&self, selection: LinuxClipboardKind) -> &Selection {
+    fn selection_of(&self, selection: ClipboardKind) -> &Selection {
         match selection {
-            LinuxClipboardKind::Clipboard => &self.clipboard,
-            LinuxClipboardKind::Primary => &self.primary,
-            LinuxClipboardKind::Secondary => &self.secondary,
+            ClipboardKind::Clipboard => &self.clipboard,
+            ClipboardKind::Primary => &self.primary,
+            ClipboardKind::Secondary => &self.secondary,
         }
     }
 
-    fn kind_of(&self, atom: Atom) -> Option<LinuxClipboardKind> {
+    fn kind_of(&self, atom: Atom) -> Option<ClipboardKind> {
         match atom {
-            a if a == self.atoms.CLIPBOARD => Some(LinuxClipboardKind::Clipboard),
-            a if a == self.atoms.PRIMARY => Some(LinuxClipboardKind::Primary),
-            a if a == self.atoms.SECONDARY => Some(LinuxClipboardKind::Secondary),
+            a if a == self.atoms.CLIPBOARD => Some(ClipboardKind::Clipboard),
+            a if a == self.atoms.PRIMARY => Some(ClipboardKind::Primary),
+            a if a == self.atoms.SECONDARY => Some(ClipboardKind::Secondary),
             _ => None,
         }
     }
 
-    fn is_owner(&self, selection: LinuxClipboardKind) -> Result<bool> {
+    fn is_owner(&self, selection: ClipboardKind) -> Result<bool> {
         let current = self
             .server
             .conn
@@ -705,12 +705,12 @@ impl Inner {
             return Ok(());
         }
 
-        if !self.is_owner(LinuxClipboardKind::Clipboard)? {
+        if !self.is_owner(ClipboardKind::Clipboard)? {
             // We are not owning the clipboard, nothing to do.
             return Ok(());
         }
         if self
-            .selection_of(LinuxClipboardKind::Clipboard)
+            .selection_of(ClipboardKind::Clipboard)
             .data
             .read()
             .is_none()
@@ -909,7 +909,7 @@ impl Clipboard {
     pub(crate) fn set_text(
         &self,
         message: Cow<'_, str>,
-        selection: LinuxClipboardKind,
+        selection: ClipboardKind,
         wait: WaitConfig,
     ) -> Result<()> {
         let data = vec![ClipboardData {
@@ -923,7 +923,7 @@ impl Clipboard {
     pub(crate) fn set_image(
         &self,
         image: Image,
-        selection: LinuxClipboardKind,
+        selection: ClipboardKind,
         wait: WaitConfig,
     ) -> Result<()> {
         let format = match image.format {
@@ -942,7 +942,7 @@ impl Clipboard {
         self.inner.write(data, selection, wait)
     }
 
-    pub(crate) fn get_any(&self, selection: LinuxClipboardKind) -> Result<ClipboardItem> {
+    pub(crate) fn get_any(&self, selection: ClipboardKind) -> Result<ClipboardItem> {
         const IMAGE_FORMAT_COUNT: usize = 7;
         let image_format_atoms: [Atom; IMAGE_FORMAT_COUNT] = [
             self.inner.atoms.PNG__MIME,
@@ -1009,7 +1009,7 @@ impl Clipboard {
         return Ok(ClipboardItem::new_string(text));
     }
 
-    pub fn is_owner(&self, selection: LinuxClipboardKind) -> bool {
+    pub fn is_owner(&self, selection: ClipboardKind) -> bool {
         return self.inner.is_owner(selection).unwrap_or(false);
     }
 }
@@ -1087,7 +1087,7 @@ fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 /// See <https://specifications.freedesktop.org/clipboards-spec/clipboards-0.1.txt> for a better
 /// description of the different clipboards.
 #[derive(Copy, Clone, Debug)]
-pub enum LinuxClipboardKind {
+pub enum ClipboardKind {
     /// Typically used selection for explicit cut/copy/paste actions (ie. windows/macos like
     /// clipboard behavior)
     Clipboard,

@@ -40,8 +40,9 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail, get_valuator_axis_index,
-    modifiers_from_state, pressed_button_from_mask,
+    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail,
+    clipboard::{self, Clipboard},
+    get_valuator_axis_index, modifiers_from_state, pressed_button_from_mask,
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
@@ -53,7 +54,6 @@ use crate::platform::{
         LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
         platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
         reveal_path_internal,
-        x11::clipboard::Clipboard,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
     scap_screen_capture::scap_screen_sources,
@@ -1499,8 +1499,8 @@ impl LinuxClient for X11Client {
             .clipboard
             .set_text(
                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
-                super::clipboard::LinuxClipboardKind::Primary,
-                super::clipboard::WaitConfig::None,
+                clipboard::ClipboardKind::Primary,
+                clipboard::WaitConfig::None,
             )
             .context("Failed to write to clipboard (primary)")
             .log_with_level(log::Level::Debug);
@@ -1512,8 +1512,8 @@ impl LinuxClient for X11Client {
             .clipboard
             .set_text(
                 std::borrow::Cow::Owned(item.text().unwrap_or_default()),
-                super::clipboard::LinuxClipboardKind::Clipboard,
-                super::clipboard::WaitConfig::None,
+                clipboard::ClipboardKind::Clipboard,
+                clipboard::WaitConfig::None,
             )
             .context("Failed to write to clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
@@ -1524,7 +1524,7 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow_mut();
         return state
             .clipboard
-            .get_any(super::clipboard::LinuxClipboardKind::Primary)
+            .get_any(clipboard::ClipboardKind::Primary)
             .context("Failed to read from clipboard (primary)")
             .log_with_level(log::Level::Debug);
     }
@@ -1535,13 +1535,13 @@ impl LinuxClient for X11Client {
         // which has metadata attached.
         if state
             .clipboard
-            .is_owner(super::clipboard::LinuxClipboardKind::Clipboard)
+            .is_owner(clipboard::ClipboardKind::Clipboard)
         {
             return state.clipboard_item.clone();
         }
         return state
             .clipboard
-            .get_any(super::clipboard::LinuxClipboardKind::Clipboard)
+            .get_any(clipboard::ClipboardKind::Clipboard)
             .context("Failed to read from clipboard (clipboard)")
             .log_with_level(log::Level::Debug);
     }
