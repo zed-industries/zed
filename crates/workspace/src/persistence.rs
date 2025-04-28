@@ -739,6 +739,7 @@ impl WorkspaceDb {
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+        log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
@@ -909,6 +910,7 @@ impl WorkspaceDb {
         {
             Ok(project)
         } else {
+            log::debug!("Inserting SSH project at host {host}");
             self.insert_ssh_project(host, port, paths, user)
                 .await?
                 .ok_or_else(|| anyhow!("failed to insert ssh project"))
@@ -1209,6 +1211,9 @@ impl WorkspaceDb {
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
+        if parent.is_none() {
+            log::debug!("Saving a pane group for workspace {workspace_id:?}");
+        }
         match pane_group {
             SerializedPaneGroup::Group {
                 axis,
@@ -1387,6 +1392,10 @@ impl WorkspaceDb {
         relative_worktree_path: String,
         toolchain: Toolchain,
     ) -> Result<()> {
+        log::debug!(
+            "Setting toolchain for workspace, worktree: {worktree_id:?}, relative path: {relative_worktree_path:?}, toolchain: {}",
+            toolchain.name
+        );
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(

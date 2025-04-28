@@ -6,7 +6,6 @@ function upload_to_blob_store_with_acl
     acl="$4"
 
     date=$(date +"%a, %d %b %Y %T %z")
-    acl="x-amz-acl:public-read"
     content_type="application/octet-stream"
     storage_type="x-amz-storage-class:STANDARD"
     string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${bucket_name}/${blob_store_key}"

@@ -99,7 +99,7 @@ impl Item for ImageView {
         Some(file_path.into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
 
         let label_color = if ItemSettings::get_global(cx).git_status {
@@ -121,18 +121,21 @@ impl Item for ImageView {
             params.text_color()
         };
 
-        let title = self
-            .image_item
-            .read(cx)
-            .file
-            .file_name(cx)
-            .to_string_lossy()
-            .to_string();
-        Label::new(title)
+        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
             .single_line()
             .color(label_color)
             .when(params.preview, |this| this.italic())
             .into_any_element()
+    }
+
+    fn tab_content_text(&self, _: usize, cx: &App) -> SharedString {
+        self.image_item
+            .read(cx)
+            .file
+            .file_name(cx)
+            .to_string_lossy()
+            .to_string()
+            .into()
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -261,6 +264,7 @@ impl SerializableItem for ImageView {
 
         Some(cx.background_spawn({
             async move {
+                log::debug!("Saving image at path {image_path:?}");
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)
                     .await
@@ -399,18 +403,6 @@ mod persistence {
     }
 
     impl ImageViewerDb {
-        query! {
-           pub async fn update_workspace_id(
-                new_id: WorkspaceId,
-                old_id: WorkspaceId,
-                item_id: ItemId
-            ) -> Result<()> {
-                UPDATE image_viewers
-                SET workspace_id = ?
-                WHERE workspace_id = ? AND item_id = ?
-            }
-        }
-
         query! {
             pub async fn save_image_path(
                 item_id: ItemId,

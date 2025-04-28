@@ -110,11 +110,38 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use client::Client;
     use clock::FakeSystemClock;
     use http_client::FakeHttpClient;
+    use schemars::JsonSchema;
+    use serde::Serialize;
 
-    use super::*;
+    #[test]
+    fn test_json_schema() {
+        #[derive(Serialize, JsonSchema)]
+        struct GetWeatherTool {
+            location: String,
+        }
+
+        let schema = schema::json_schema_for::<GetWeatherTool>(
+            language_model::LanguageModelToolSchemaFormat::JsonSchema,
+        )
+        .unwrap();
+
+        assert_eq!(
+            schema,
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string"
+                    }
+                },
+                "required": ["location"],
+            })
+        );
+    }
 
     #[gpui::test]
     fn test_builtin_tool_schema_compatibility(cx: &mut App) {

@@ -160,8 +160,8 @@ impl Item for SettingsPage {
         Some(Icon::new(IconName::Settings))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Settings".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Settings".into()
     }
 
     fn show_toolbar(&self) -> bool {

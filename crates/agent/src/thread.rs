@@ -34,6 +34,7 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
+use zed_llm_client::CompletionMode;
 
 use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
@@ -290,6 +291,7 @@ pub struct Thread {
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
     detailed_summary_state: DetailedSummaryState,
+    completion_mode: Option<CompletionMode>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -339,6 +341,7 @@ impl Thread {
             summary: None,
             pending_summary: Task::ready(None),
             detailed_summary_state: DetailedSummaryState::NotGenerated,
+            completion_mode: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -394,6 +397,7 @@ impl Thread {
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
             detailed_summary_state: serialized.detailed_summary_state,
+            completion_mode: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -516,6 +520,14 @@ impl Thread {
         } else {
             None
         }
+    }
+
+    pub fn completion_mode(&self) -> Option<CompletionMode> {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, mode: Option<CompletionMode>) {
+        self.completion_mode = mode;
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -930,27 +942,28 @@ impl Thread {
         self.remaining_turns -= 1;
 
         let mut request = self.to_completion_request(cx);
-        if model.supports_tools() {
-            request.tools = {
-                let mut tools = Vec::new();
-                tools.extend(
-                    self.tools()
-                        .read(cx)
-                        .enabled_tools(cx)
-                        .into_iter()
-                        .filter_map(|tool| {
-                            // Skip tools that cannot be supported
-                            let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
-                            Some(LanguageModelRequestTool {
-                                name: tool.name(),
-                                description: tool.description(),
-                                input_schema,
-                            })
-                        }),
-                );
+        request.mode = if model.supports_max_mode() {
+            self.completion_mode
+        } else {
+            None
+        };
 
-                tools
-            };
+        if model.supports_tools() {
+            request.tools = self
+                .tools()
+                .read(cx)
+                .enabled_tools(cx)
+                .into_iter()
+                .filter_map(|tool| {
+                    // Skip tools that cannot be supported
+                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                    Some(LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema,
+                    })
+                })
+                .collect();
         }
 
         self.stream_completion(request, model, window, cx);
@@ -972,6 +985,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
+            mode: None,
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -1068,6 +1082,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            mode: None,
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
@@ -1969,7 +1984,7 @@ impl Thread {
                             };
 
                             let remote_url = backend.remote_url("origin");
-                            let head_sha = backend.head_sha();
+                            let head_sha = backend.head_sha().await;
                             let diff = backend.diff(DiffType::HeadToWorktree).await.ok();
 
                             GitState {
@@ -2102,7 +2117,7 @@ impl Thread {
     }
 
     pub fn auto_capture_telemetry(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<feature_flags::ThreadAutoCapture>() {
+        if !cx.has_flag::<feature_flags::ThreadAutoCaptureFeatureFlag>() {
             return;
         }
 

@@ -922,6 +922,7 @@ impl RulesLibrary {
                                 LanguageModelRequest {
                                     thread_id: None,
                                     prompt_id: None,
+                                    mode: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
