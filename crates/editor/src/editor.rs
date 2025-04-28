@@ -815,6 +815,16 @@ struct InlineBlamePopover {
     popover_state: InlineBlamePopoverState,
 }
 
+/// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
+/// a breakpoint on them.
+#[derive(Clone, Copy, Debug)]
+struct PhantomBreakpointIndicator {
+    display_row: DisplayRow,
+    /// There's a small debounce between hovering over the line and showing the indicator.
+    /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
+    is_active: bool,
+    collides_with_existing_breakpoint: bool,
+}
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -963,10 +973,7 @@ pub struct Editor {
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
-    /// Allow's a user to create a breakpoint by selecting this indicator
-    /// It should be None while a user is not hovering over the gutter
-    /// Otherwise it represents the point that the breakpoint will be shown
-    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool, bool)>, Option<Task<()>>),
+    gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -6967,8 +6974,12 @@ impl Editor {
     ) -> IconButton {
         // Is it a breakpoint that shows up when hovering over gutter?
         let is_phantom = self.gutter_breakpoint_indicator.0.is_some_and(
-            |(point, is_visible, has_existing_breakpoint_on_line)| {
-                is_visible && point.row() == row && !has_existing_breakpoint_on_line
+            |PhantomBreakpointIndicator {
+                 is_active,
+                 display_row,
+                 collides_with_existing_breakpoint,
+             }| {
+                is_active && display_row == row && !collides_with_existing_breakpoint
             },
         );
         let (color, icon) = {
