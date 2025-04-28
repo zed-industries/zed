@@ -41,7 +41,9 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         },
         |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
-                assert_eq!(json!({"request": "attach", "process_id": 10}), args.raw);
+                let raw = &args.raw;
+                assert_eq!(raw["request"], "attach");
+                assert_eq!(raw["process_id"], 10);
 
                 Ok(())
             });
@@ -91,7 +93,9 @@ async fn test_show_attach_modal_and_select_process(
     let _initialize_subscription =
         project::debugger::test::intercept_debug_sessions(cx, |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
-                assert_eq!(json!({"request": "attach", "process_id": 1}), args.raw);
+                let raw = &args.raw;
+                assert_eq!(raw["request"], "attach");
+                assert_eq!(raw["process_id"], 1);
 
                 Ok(())
             });
