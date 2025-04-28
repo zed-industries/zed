@@ -1,8 +1,8 @@
 use anyhow::Result;
 use minijinja::{context, Environment};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Represents site content for templating
 pub struct SiteContent {
@@ -36,7 +36,7 @@ pub struct TemplateEngine {
 impl TemplateEngine {
     pub fn new(templates_dir: &Path) -> Result<Self> {
         let mut env = Environment::new();
-        
+
         // Load the templates we've created from the output directory
         // Since MiniJinja 1.0 doesn't have path_loader, we'll manually load them
         let base_html = fs::read_to_string(templates_dir.join("base.html"))?;
@@ -44,23 +44,23 @@ impl TemplateEngine {
         let index_html = fs::read_to_string(templates_dir.join("index.html"))?;
         let example_html = fs::read_to_string(templates_dir.join("example.html"))?;
         let doc_html = fs::read_to_string(templates_dir.join("doc.html"))?;
-        
+
         // Convert to static lifetime strings with Box leak
         let base_html = Box::leak(base_html.into_boxed_str());
         let base_subdir_html = Box::leak(base_subdir_html.into_boxed_str());
         let index_html = Box::leak(index_html.into_boxed_str());
         let example_html = Box::leak(example_html.into_boxed_str());
         let doc_html = Box::leak(doc_html.into_boxed_str());
-        
+
         env.add_template("base.html", base_html)?;
         env.add_template("base_subdir.html", base_subdir_html)?;
         env.add_template("index.html", index_html)?;
         env.add_template("example.html", example_html)?;
         env.add_template("doc.html", doc_html)?;
-        
+
         Ok(Self { env })
     }
-    
+
     /// Render the index page
     pub fn render_index(&self, content: &SiteContent) -> Result<String> {
         let template = self.env.get_template("index.html")?;
@@ -72,9 +72,14 @@ impl TemplateEngine {
         })?;
         Ok(rendered)
     }
-    
+
     /// Render an example page
-    pub fn render_example(&self, example: &ExampleInfo, code: &str, content: &SiteContent) -> Result<String> {
+    pub fn render_example(
+        &self,
+        example: &ExampleInfo,
+        code: &str,
+        content: &SiteContent,
+    ) -> Result<String> {
         let template = self.env.get_template("example.html")?;
         let rendered = template.render(context! {
             title => &example.title,
@@ -85,9 +90,14 @@ impl TemplateEngine {
         })?;
         Ok(rendered)
     }
-    
+
     /// Render a documentation page
-    pub fn render_doc(&self, doc: &DocInfo, content: &str, site_content: &SiteContent) -> Result<String> {
+    pub fn render_doc(
+        &self,
+        doc: &DocInfo,
+        content: &str,
+        site_content: &SiteContent,
+    ) -> Result<String> {
         let template = self.env.get_template("doc.html")?;
         let rendered = template.render(context! {
             title => &doc.title,
@@ -104,7 +114,7 @@ impl TemplateEngine {
 pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     let templates_dir = output_dir.join("templates");
     fs::create_dir_all(&templates_dir)?;
-    
+
     // Create basic templates
     // First create the main base template
     fs::write(
@@ -155,13 +165,13 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
             <p>gpui is part of the <a href="https://github.com/zed-industries/zed">Zed</a> project © Zed Industries, Inc.</p>
         </div>
     </footer>
-    
+
     <script src="js/main.js"></script>
 </body>
 </html>
 "#,
     )?;
-    
+
     // Create a base template for pages in subdirectories (examples/, docs/)
     fs::write(
         templates_dir.join("base_subdir.html"),
@@ -211,26 +221,18 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
             <p>gpui is part of the <a href="https://github.com/zed-industries/zed">Zed</a> project © Zed Industries, Inc.</p>
         </div>
     </footer>
-    
+
     <script src="../js/main.js"></script>
 </body>
 </html>
 "#,
     )?;
-    
+
     fs::write(
         templates_dir.join("index.html"),
         r#"{% extends "base.html" %}
 
 {% block content %}
-<section class="hero">
-    <h1>gpui</h1>
-    <p class="tagline">A fast, productive UI framework for Rust from the creators of Zed.</p>
-    <div class="cta-buttons">
-        <a href="docs/intro.html" class="button primary">Get Started →</a>
-        <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui" class="button secondary">GitHub</a>
-    </div>
-</section>
 
 <section class="content">
     {{ content | safe }}
@@ -250,7 +252,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 {% endblock %}
 "#,
     )?;
-    
+
     fs::write(
         templates_dir.join("example.html"),
         r#"{% extends "base_subdir.html" %}
@@ -259,11 +261,11 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 <article class="example">
     <h1>{{ example.title }}</h1>
     <p>{{ example.description }}</p>
-    
+
     <div class="code-container">
         {{ code | safe }}
     </div>
-    
+
     <div class="example-info">
         <h3>Running this example</h3>
         <p>You can run this example with:</p>
@@ -273,7 +275,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 {% endblock %}
 "#,
     )?;
-    
+
     fs::write(
         templates_dir.join("doc.html"),
         r#"{% extends "base_subdir.html" %}
@@ -288,6 +290,6 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
 {% endblock %}
 "#,
     )?;
-    
+
     Ok(())
 }
