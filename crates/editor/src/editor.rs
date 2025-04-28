@@ -2526,6 +2526,8 @@ impl Editor {
         self.snippet_stack
             .invalidate(&self.selections.disjoint_anchors(), buffer);
         self.take_rename(false, window, cx);
+        self.refresh_selected_text_highlights(window, cx);
+        refresh_matching_bracket_highlights(self, window, cx);
 
         let new_cursor_position = self.selections.newest_anchor().head();
 
@@ -2616,8 +2618,6 @@ impl Editor {
             }
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
-            self.refresh_selected_text_highlights(window, cx);
-            refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
