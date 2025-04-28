@@ -183,12 +183,20 @@ impl BladeAtlasState {
         min_size: Size<DevicePixels>,
         kind: AtlasTextureKind,
     ) -> &mut BladeAtlasTexture {
+        const MIN_SIZE: i32 = 1024;
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(1024),
-            height: DevicePixels(1024),
+            width: DevicePixels(MIN_SIZE),
+            height: DevicePixels(MIN_SIZE),
         };
 
-        let size = min_size.max(&DEFAULT_ATLAS_SIZE);
+        let mut size = min_size.max(&DEFAULT_ATLAS_SIZE);
+
+        // Make sure the size is a multiple of MAX_SIZE, to avoid waste VRAM by creating too many textures.
+        //
+        // See also same thing in Metal.
+        size.width = (((size.width.0 + MIN_SIZE) / MIN_SIZE) * MIN_SIZE).into();
+        size.height = (((size.height.0 + MIN_SIZE) / MIN_SIZE) * MIN_SIZE).into();
+
         let format;
         let usage;
         match kind {
