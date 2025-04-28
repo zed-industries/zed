@@ -239,6 +239,12 @@ impl ProjectDiagnosticsEditor {
         if self.update_excerpts_task.is_some() {
             return;
         }
+
+        let zed_provides_cargo_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+        dbg!(zed_provides_cargo_diagnostics);
+
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()

@@ -114,6 +114,14 @@ pub struct DiagnosticsSettings {
     pub rust: Option<RustDiagnosticsSettings>,
 }
 
+impl DiagnosticsSettings {
+    pub fn fetch_cargo_diagnostics(&self) -> bool {
+        self.rust
+            .as_ref()
+            .map_or(false, |rust| rust.fetch_cargo_diagnostics)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct InlineDiagnosticsSettings {
     /// Whether or not to show inline diagnostics

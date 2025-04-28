@@ -506,14 +506,10 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        let zed_provides_rustc_diagnostics = ProjectSettings::get_global(cx)
+        let zed_provides_cargo_diagnostics = ProjectSettings::get_global(cx)
             .diagnostics
-            .rust
-            .as_ref()
-            .map_or(false, |rust_diagnostics| {
-                rust_diagnostics.fetch_cargo_diagnostics
-            });
-        if zed_provides_rustc_diagnostics {
+            .fetch_cargo_diagnostics();
+        if zed_provides_cargo_diagnostics {
             let disable_check_on_save = json!({
                 "checkOnSave": false,
             });
