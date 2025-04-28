@@ -322,16 +322,35 @@ async fn create_billing_subscription(
         CustomerId::from_str(&existing_customer.stripe_customer_id)
             .context("failed to parse customer ID")?
     } else {
-        let customer = Customer::create(
-            &stripe_client,
-            CreateCustomer {
-                email: user.email_address.as_deref(),
-                ..Default::default()
-            },
-        )
-        .await?;
+        let existing_customer = if let Some(email) = user.email_address.as_deref() {
+            let customers = Customer::list(
+                &stripe_client,
+                &stripe::ListCustomers {
+                    email: Some(email),
+                    ..Default::default()
+                },
+            )
+            .await?;
 
-        customer.id
+            customers.data.first().cloned()
+        } else {
+            None
+        };
+
+        if let Some(existing_customer) = existing_customer {
+            existing_customer.id
+        } else {
+            let customer = Customer::create(
+                &stripe_client,
+                CreateCustomer {
+                    email: user.email_address.as_deref(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customer.id
+        }
     };
 
     let success_url = format!(
