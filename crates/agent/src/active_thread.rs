@@ -903,6 +903,11 @@ impl ActiveThread {
         cx: &mut Context<Self>,
     ) {
         match event {
+            ThreadEvent::CancelEditing => {
+                if self.editing_message.is_some() {
+                    self.cancel_editing_message(&menu::Cancel, window, cx);
+                }
+            }
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }

@@ -245,6 +245,10 @@ impl MessageEditor {
             return;
         }
 
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_editing(cx);
+        });
+
         if self.thread.read(cx).is_generating() {
             self.stop_current_and_send_new_message(window, cx);
             return;
@@ -337,6 +341,10 @@ impl MessageEditor {
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread.update(cx, |thread, cx| {
+            thread.cancel_editing(cx);
+        });
+
         let cancelled = self.thread.update(cx, |thread, cx| {
             thread.cancel_last_completion(Some(window.window_handle()), cx)
         });
