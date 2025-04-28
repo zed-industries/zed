@@ -386,7 +386,7 @@ pub fn map_to_language_model_completion_events(
                                                     LanguageModelToolUse {
                                                         id: entry.id.clone().into(),
                                                         name: entry.name.as_str().into(),
-                                                        is_input_complete: false, // Mark as not complete yet
+                                                        is_input_complete: false,
                                                         input: value.clone(),
                                                         raw_input: entry.arguments.clone(),
                                                     },
