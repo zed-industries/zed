@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use itertools::Itertools;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return the file's symbol outline instead of its contents,
@@ -82,7 +82,7 @@ impl Tool for ContentsTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ContentsToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
 
                 match (input.start, input.end) {
                     (Some(start), None) => format!("Read {path} (from line {start})"),
@@ -102,6 +102,7 @@ impl Tool for ContentsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<ContentsToolInput>(input) {
@@ -209,7 +210,7 @@ impl Tool for ContentsTool {
                     })?;
 
                     action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
+                        log.track_buffer(buffer, cx);
                     })?;
 
                     Ok(result)
@@ -221,14 +222,14 @@ impl Tool for ContentsTool {
                         let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                         action_log.update(cx, |log, cx| {
-                            log.buffer_read(buffer, cx);
+                            log.track_buffer(buffer, cx);
                         })?;
 
                         Ok(result)
                     } else {
                         // File is too big, so return its outline and a suggestion to
                         // read again with a line number range specified.
-                        let outline = file_outline(project, file_path, action_log, None, 0, cx).await?;
+                        let outline = file_outline(project, file_path, action_log, None, cx).await?;
 
                         Ok(format!("This file was too big to read all at once. Here is an outline of its symbols:\n\n{outline}\n\nUsing the line numbers in this outline, you can call this tool again while specifying the start and end fields to see the implementations of symbols in the outline."))
                     }

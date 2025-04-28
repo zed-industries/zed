@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use ui::IconName;
 use util::command::new_smol_command;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
@@ -55,17 +55,14 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownString::inline_code(&first_line).0,
-                    1 => {
-                        MarkdownString::inline_code(&format!(
-                            "{} - {} more line",
-                            first_line, remaining_line_count
-                        ))
-                        .0
-                    }
-                    n => {
-                        MarkdownString::inline_code(&format!("{} - {} more lines", first_line, n)).0
-                    }
+                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    1 => MarkdownInlineCode(&format!(
+                        "{} - {} more line",
+                        first_line, remaining_line_count
+                    ))
+                    .to_string(),
+                    n => MarkdownInlineCode(&format!("{} - {} more lines", first_line, n))
+                        .to_string(),
                 }
             }
             Err(_) => "Run terminal command".to_string(),
@@ -78,6 +75,7 @@ impl Tool for TerminalTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input: TerminalToolInput = match serde_json::from_value(input) {

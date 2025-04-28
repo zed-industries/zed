@@ -33,7 +33,7 @@ impl DebugSessionState {
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
-    label: OnceLock<String>,
+    label: OnceLock<SharedString>,
     dap_store: WeakEntity<DapStore>,
     _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
@@ -88,6 +88,12 @@ impl DebugSession {
         }
     }
 
+    pub fn session(&self, cx: &App) -> Entity<Session> {
+        match &self.mode {
+            DebugSessionState::Running(entity) => entity.read(cx).session().clone(),
+        }
+    }
+
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
         match &self.mode {
             DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
@@ -98,9 +104,15 @@ impl DebugSession {
         &self.mode
     }
 
-    pub(crate) fn label(&self, cx: &App) -> String {
+    pub(crate) fn running_state(&self) -> Entity<RunningState> {
+        match &self.mode {
+            DebugSessionState::Running(running_state) => running_state.clone(),
+        }
+    }
+
+    pub(crate) fn label(&self, cx: &App) -> SharedString {
         if let Some(label) = self.label.get() {
-            return label.to_owned();
+            return label.clone();
         }
 
         let session_id = match &self.mode {
@@ -111,17 +123,11 @@ impl DebugSession {
             .dap_store
             .read_with(cx, |store, _| store.session_by_id(session_id))
         else {
-            return "".to_owned();
+            return "".into();
         };
 
         self.label
-            .get_or_init(|| {
-                session
-                    .read(cx)
-                    .as_local()
-                    .expect("Remote Debug Sessions are not implemented yet")
-                    .label()
-            })
+            .get_or_init(|| session.read(cx).label())
             .to_owned()
     }
 
@@ -164,6 +170,9 @@ impl Focusable for DebugSession {
 
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Debugger".into()
+    }
 }
 
 impl FollowableItem for DebugSession {

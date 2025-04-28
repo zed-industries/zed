@@ -536,13 +536,6 @@ List of `string` values
 - Setting: `selection_highlight`
 - Default: `true`
 
-## Selection Highlight Debounce
-
-- Description: The debounce delay before querying highlights based on the selected text.
-
-- Setting: `selection_highlight_debounce`
-- Default: `50`
-
 ## LSP Highlight Debounce
 
 - Description: The debounce delay before querying highlights from the language server based on the current cursor location.
@@ -599,7 +592,49 @@ List of `string` values
 
 **Options**
 
-`boolean` values
+1. Never hide the mouse cursor:
+
+```json
+"hide_mouse": "never"
+```
+
+2. Hide only when typing:
+
+```json
+"hide_mouse": "on_typing"
+```
+
+3. Hide on both typing and cursor movement:
+
+```json
+"hide_mouse": "on_typing_and_movement"
+```
+
+## Snippet Sort Order
+
+- Description: Determines how snippets are sorted relative to other completion items.
+- Setting: `snippet_sort_order`
+- Default: `inline`
+
+**Options**
+
+1. Place snippets at the top of the completion list:
+
+```json
+"snippet_sort_order": "top"
+```
+
+2. Place snippets normally without any preference:
+
+```json
+"snippet_sort_order": "inline"
+```
+
+3. Place snippets at the bottom of the completion list:
+
+```json
+"snippet_sort_order": "bottom"
+```
 
 ## Editor Scrollbar
 
@@ -2185,7 +2220,7 @@ Examples:
 
 ## Show Whitespaces
 
-- Description: Whether or not to show render whitespace characters in the editor.
+- Description: Whether or not to render whitespace characters in the editor.
 - Setting: `show_whitespaces`
 - Default: `selection`
 

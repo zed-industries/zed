@@ -8,9 +8,8 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
-use http_client::http::{HeaderMap, HeaderValue};
 pub use init::*;
-use inline_completion::DataCollectionState;
+use inline_completion::{DataCollectionState, EditPredictionUsage};
 use license_detection::LICENSE_FILES_TO_CHECK;
 pub use license_detection::is_license_eligible_for_data_collection;
 pub use rate_completion_modal::*;
@@ -55,9 +54,8 @@ use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 use zed_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsBody,
-    PredictEditsResponse, UsageLimit,
+    PredictEditsResponse,
 };
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -75,32 +73,6 @@ const MAX_EVENT_TOKENS: usize = 500;
 const MAX_EVENT_COUNT: usize = 16;
 
 actions!(edit_prediction, [ClearHistory]);
-
-#[derive(Debug, Clone, Copy)]
-pub struct Usage {
-    pub limit: UsageLimit,
-    pub amount: i32,
-}
-
-impl Usage {
-    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
-        let limit = headers
-            .get(EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME)
-            .ok_or_else(|| {
-                anyhow!("missing {EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME:?} header")
-            })?;
-        let limit = UsageLimit::from_str(limit.to_str()?)?;
-
-        let amount = headers
-            .get(EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME)
-            .ok_or_else(|| {
-                anyhow!("missing {EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME:?} header")
-            })?;
-        let amount = amount.to_str()?.parse::<i32>()?;
-
-        Ok(Self { limit, amount })
-    }
-}
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
@@ -216,6 +188,7 @@ pub struct Zeta {
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
+    last_usage: Option<EditPredictionUsage>,
     /// Whether the terms of service have been accepted.
     tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
@@ -291,6 +264,7 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
+            last_usage: None,
             tos_accepted: user_store
                 .read(cx)
                 .current_user_has_accepted_terms()
@@ -387,7 +361,9 @@ impl Zeta {
     ) -> Task<Result<Option<InlineCompletion>>>
     where
         F: FnOnce(PerformPredictEditsParams) -> R + 'static,
-        R: Future<Output = Result<(PredictEditsResponse, Option<Usage>)>> + Send + 'static,
+        R: Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>>
+            + Send
+            + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
         let diagnostic_groups = snapshot.diagnostic_groups(None);
@@ -427,7 +403,7 @@ impl Zeta {
             None
         };
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let request_sent_at = Instant::now();
 
             struct BackgroundValues {
@@ -532,11 +508,10 @@ impl Zeta {
             log::debug!("completion response: {}", &response.output_excerpt);
 
             if let Some(usage) = usage {
-                let limit = match usage.limit {
-                    UsageLimit::Limited(limit) => limit.to_string(),
-                    UsageLimit::Unlimited => "unlimited".to_string(),
-                };
-                log::info!("edit prediction usage: {} / {}", usage.amount, limit);
+                this.update(cx, |this, _cx| {
+                    this.last_usage = Some(usage);
+                })
+                .ok();
             }
 
             Self::process_completion_response(
@@ -750,7 +725,7 @@ and then another
 
     fn perform_predict_edits(
         params: PerformPredictEditsParams,
-    ) -> impl Future<Output = Result<(PredictEditsResponse, Option<Usage>)>> {
+    ) -> impl Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>> {
         async move {
             let PerformPredictEditsParams {
                 client,
@@ -796,7 +771,7 @@ and then another
                 }
 
                 if response.status().is_success() {
-                    let usage = Usage::from_headers(response.headers()).ok();
+                    let usage = EditPredictionUsage::from_headers(response.headers()).ok();
 
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
@@ -1007,7 +982,7 @@ and then another
             output_excerpt = completion.output_excerpt,
             feedback
         );
-        self.client.telemetry().flush_events();
+        self.client.telemetry().flush_events().detach();
         cx.notify();
     }
 
@@ -1438,6 +1413,10 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
         self.provider_data_collection.toggle(cx);
+    }
+
+    fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.zeta.read(cx).last_usage
     }
 
     fn is_enabled(

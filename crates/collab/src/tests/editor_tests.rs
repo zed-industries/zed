@@ -680,6 +680,7 @@ async fn test_collaborating_with_code_actions(
         editor.toggle_code_actions(
             &ToggleCodeActions {
                 deployed_from_indicator: None,
+                quick_launch: false,
             },
             window,
             cx,
@@ -1544,6 +1545,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    show_value_hints: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
                     show_type_hints: true,
@@ -1559,6 +1561,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1778,6 +1781,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: false,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1794,6 +1798,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,

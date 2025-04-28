@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use collections::{HashSet, IndexMap};
-use feature_flags::{Assistant2FeatureFlag, ZedPro};
+use feature_flags::{Assistant2FeatureFlag, ZedProFeatureFlag};
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
 };
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
+    LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
@@ -29,9 +30,16 @@ pub struct LanguageModelSelector {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Clone, Copy)]
+pub enum ModelType {
+    Default,
+    InlineAssistant,
+}
+
 impl LanguageModelSelector {
     pub fn new(
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+        model_type: ModelType,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -44,8 +52,9 @@ impl LanguageModelSelector {
             language_model_selector: cx.entity().downgrade(),
             on_model_changed: on_model_changed.clone(),
             all_models: Arc::new(all_models),
-            selected_index: Self::get_active_model_index(&entries, cx),
+            selected_index: Self::get_active_model_index(&entries, model_type, cx),
             filtered_entries: entries,
+            model_type,
         };
 
         let picker = cx.new(|cx| {
@@ -194,8 +203,27 @@ impl LanguageModelSelector {
         }
     }
 
-    fn get_active_model_index(entries: &[LanguageModelPickerEntry], cx: &App) -> usize {
-        let active_model = LanguageModelRegistry::read_global(cx).default_model();
+    pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        let model_type = self.picker.read(cx).delegate.model_type;
+        Self::active_model_by_type(model_type, cx)
+    }
+
+    fn active_model_by_type(model_type: ModelType, cx: &App) -> Option<ConfiguredModel> {
+        match model_type {
+            ModelType::Default => LanguageModelRegistry::read_global(cx).default_model(),
+            ModelType::InlineAssistant => {
+                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+            }
+        }
+    }
+
+    fn get_active_model_index(
+        entries: &[LanguageModelPickerEntry],
+        model_type: ModelType,
+        cx: &App,
+    ) -> usize {
+        let active_model = Self::active_model_by_type(model_type, cx);
+
         entries
             .iter()
             .position(|entry| {
@@ -300,6 +328,7 @@ pub struct LanguageModelPickerDelegate {
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
+    model_type: ModelType,
 }
 
 struct GroupedModels {
@@ -493,7 +522,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .into_any_element(),
             ),
             LanguageModelPickerEntry::Model(model_info) => {
-                let active_model = LanguageModelRegistry::read_global(cx).default_model();
+                let active_model = LanguageModelSelector::active_model_by_type(self.model_type, cx);
 
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
                 let active_model_id = active_model.map(|m| m.model.id());
@@ -555,7 +584,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedPro>(), |this| {
+                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
                     this.child(match plan {
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)

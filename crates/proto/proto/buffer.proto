@@ -270,6 +270,7 @@ message Diagnostic {
         Hint = 4;
     }
     optional string data = 12;
+    optional string code_description = 13;
 }
 
 message SearchQuery {
@@ -279,6 +280,7 @@ message SearchQuery {
     bool case_sensitive = 5;
     string files_to_include = 6;
     string files_to_exclude = 7;
+    bool match_full_paths = 9;
     bool include_ignored = 8;
 }
 

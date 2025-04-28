@@ -10,14 +10,16 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::AnyElement;
+use gpui::AnyWindowHandle;
 use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
+use workspace::Workspace;
 
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;
@@ -30,6 +32,7 @@ pub fn init(cx: &mut App) {
 
 #[derive(Debug, Clone)]
 pub enum ToolUseStatus {
+    InputStillStreaming,
     NeedsConfirmation,
     Pending,
     Running,
@@ -41,6 +44,7 @@ impl ToolUseStatus {
     pub fn text(&self) -> SharedString {
         match self {
             ToolUseStatus::NeedsConfirmation => "".into(),
+            ToolUseStatus::InputStillStreaming => "".into(),
             ToolUseStatus::Pending => "".into(),
             ToolUseStatus::Running => "".into(),
             ToolUseStatus::Finished(out) => out.clone(),
@@ -63,6 +67,7 @@ pub trait ToolCard: 'static + Sized {
         &mut self,
         status: &ToolUseStatus,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement;
 }
@@ -74,6 +79,7 @@ pub struct AnyToolCard {
         entity: gpui::AnyEntity,
         status: &ToolUseStatus,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> AnyElement,
 }
@@ -84,11 +90,14 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
             entity: gpui::AnyEntity,
             status: &ToolUseStatus,
             window: &mut Window,
+            workspace: WeakEntity<Workspace>,
             cx: &mut App,
         ) -> AnyElement {
             let entity = entity.downcast::<T>().unwrap();
             entity.update(cx, |entity, cx| {
-                entity.render(status, window, cx).into_any_element()
+                entity
+                    .render(status, window, workspace, cx)
+                    .into_any_element()
             })
         }
 
@@ -100,8 +109,14 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
 }
 
 impl AnyToolCard {
-    pub fn render(&self, status: &ToolUseStatus, window: &mut Window, cx: &mut App) -> AnyElement {
-        (self.render)(self.entity.clone(), status, window, cx)
+    pub fn render(
+        &self,
+        status: &ToolUseStatus,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> AnyElement {
+        (self.render)(self.entity.clone(), status, window, workspace, cx)
     }
 }
 
@@ -148,6 +163,12 @@ pub trait Tool: 'static + Send + Sync {
     /// Returns markdown to be displayed in the UI for this tool.
     fn ui_text(&self, input: &serde_json::Value) -> String;
 
+    /// Returns markdown to be displayed in the UI for this tool, while the input JSON is still streaming
+    /// (so information may be missing).
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        self.ui_text(input)
+    }
+
     /// Runs the tool with the provided input.
     fn run(
         self: Arc<Self>,
@@ -155,6 +176,7 @@ pub trait Tool: 'static + Send + Sync {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult;
 }

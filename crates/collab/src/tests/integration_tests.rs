@@ -1824,6 +1824,8 @@ async fn test_active_call_events(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    executor.run_until_parked();
+
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
@@ -5091,6 +5093,7 @@ async fn test_project_search(
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),

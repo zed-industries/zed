@@ -331,15 +331,19 @@ impl ProjectPanel {
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx);
+                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
                     this.marked_entries.clear();
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    this.reveal_entry(project.clone(), *entry_id, false, cx);
-                    cx.emit(PanelEvent::Activate);
+                    if let Some(()) = this
+                        .reveal_entry(project.clone(), *entry_id, false, cx)
+                        .log_err()
+                    {
+                        cx.emit(PanelEvent::Activate);
+                    }
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -1385,63 +1389,81 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(SelectedEntry {
-            worktree_id,
-            entry_id,
-        }) = self.selection
+        let Some((worktree_id, entry_id)) = self
+            .selection
+            .map(|entry| (entry.worktree_id, entry.entry_id))
+            .or_else(|| {
+                let entry_id = self.last_worktree_root_id?;
+                let worktree_id = self
+                    .project
+                    .read(cx)
+                    .worktree_for_entry(entry_id, cx)?
+                    .read(cx)
+                    .id();
+
+                self.selection = Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+
+                Some((worktree_id, entry_id))
+            })
+        else {
+            return;
+        };
+
+        let directory_id;
+        let new_entry_id = self.resolve_entry(entry_id);
+        if let Some((worktree, expanded_dir_ids)) = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .zip(self.expanded_dir_ids.get_mut(&worktree_id))
         {
-            let directory_id;
-            let new_entry_id = self.resolve_entry(entry_id);
-            if let Some((worktree, expanded_dir_ids)) = self
-                .project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
-            {
-                let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
-                    loop {
-                        if entry.is_dir() {
-                            if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                                expanded_dir_ids.insert(ix, entry.id);
-                            }
-                            directory_id = entry.id;
-                            break;
-                        } else {
-                            if let Some(parent_path) = entry.path.parent() {
-                                if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
-                                    entry = parent_entry;
-                                    continue;
-                                }
-                            }
-                            return;
+            let worktree = worktree.read(cx);
+            if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
+                loop {
+                    if entry.is_dir() {
+                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                            expanded_dir_ids.insert(ix, entry.id);
                         }
+                        directory_id = entry.id;
+                        break;
+                    } else {
+                        if let Some(parent_path) = entry.path.parent() {
+                            if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
+                                entry = parent_entry;
+                                continue;
+                            }
+                        }
+                        return;
                     }
-                } else {
-                    return;
-                };
+                }
             } else {
                 return;
             };
-            self.marked_entries.clear();
-            self.edit_state = Some(EditState {
-                worktree_id,
-                entry_id: directory_id,
-                leaf_entry_id: None,
-                is_dir,
-                processing_filename: None,
-                previously_focused: self.selection,
-                depth: 0,
-                validation_state: ValidationState::None,
-            });
-            self.filename_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-                window.focus(&editor.focus_handle(cx));
-            });
-            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
-            self.autoscroll(cx);
-            cx.notify();
-        }
+        } else {
+            return;
+        };
+
+        self.marked_entries.clear();
+        self.edit_state = Some(EditState {
+            worktree_id,
+            entry_id: directory_id,
+            leaf_entry_id: None,
+            is_dir,
+            processing_filename: None,
+            previously_focused: self.selection,
+            depth: 0,
+            validation_state: ValidationState::None,
+        });
+        self.filename_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+            window.focus(&editor.focus_handle(cx));
+        });
+        self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+        self.autoscroll(cx);
+        cx.notify();
     }
 
     fn unflatten_entry_id(&self, leaf_entry_id: ProjectEntryId) -> ProjectEntryId {
@@ -4422,7 +4444,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         skip_ignored: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<()> {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
             if skip_ignored
@@ -4430,7 +4452,9 @@ impl ProjectPanel {
                     .entry_for_id(entry_id)
                     .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
             {
-                return;
+                return Err(anyhow!(
+                    "can't reveal an ignored entry in the project panel"
+                ));
             }
 
             let worktree_id = worktree.id();
@@ -4443,6 +4467,11 @@ impl ProjectPanel {
             });
             self.autoscroll(cx);
             cx.notify();
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "can't reveal a non-existent entry in the project panel"
+            ))
         }
     }
 

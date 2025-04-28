@@ -44,8 +44,8 @@ use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
     IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    PopoverMenu, PopoverMenuHandle, ScrollableHandle, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
 
@@ -502,6 +502,7 @@ impl Pane {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.was_focused {
             self.was_focused = true;
+            self.update_history(self.active_item_index);
             cx.emit(Event::Focus);
             cx.notify();
         }
@@ -1095,17 +1096,7 @@ impl Pane {
                     prev_item.deactivated(window, cx);
                 }
             }
-            if let Some(newly_active_item) = self.items.get(index) {
-                self.activation_history
-                    .retain(|entry| entry.entity_id != newly_active_item.item_id());
-                self.activation_history.push(ActivationHistoryEntry {
-                    entity_id: newly_active_item.item_id(),
-                    timestamp: self
-                        .next_activation_timestamp
-                        .fetch_add(1, Ordering::SeqCst),
-                });
-            }
-
+            self.update_history(index);
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
 
@@ -1124,6 +1115,19 @@ impl Pane {
             }
 
             cx.notify();
+        }
+    }
+
+    fn update_history(&mut self, index: usize) {
+        if let Some(newly_active_item) = self.items.get(index) {
+            self.activation_history
+                .retain(|entry| entry.entity_id != newly_active_item.item_id());
+            self.activation_history.push(ActivationHistoryEntry {
+                entity_id: newly_active_item.item_id(),
+                timestamp: self
+                    .next_activation_timestamp
+                    .fetch_add(1, Ordering::SeqCst),
+            });
         }
     }
 
@@ -2147,6 +2151,7 @@ impl Pane {
                 detail: Some(detail),
                 selected: is_active,
                 preview: is_preview,
+                deemphasized: !self.has_focus(window, cx),
             },
             window,
             cx,
@@ -2633,7 +2638,7 @@ impl Pane {
             .items
             .iter()
             .enumerate()
-            .zip(tab_details(&self.items, cx))
+            .zip(tab_details(&self.items, window, cx))
             .map(|((ix, item), detail)| {
                 self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
             })
@@ -2662,10 +2667,20 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
+                let content_width = self
+                    .tab_bar_scroll_handle
+                    .content_size()
+                    .map(|content_size| content_size.size.width)
+                    .unwrap_or(px(0.));
+                let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
+                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                let is_scrollable = content_width > viewport_width;
+                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
                 h_flex()
                     .children(pinned_tabs)
-                    .border_r_2()
-                    .border_color(cx.theme().colors().border)
+                    .when(is_scrollable && is_scrolled, |this| {
+                        this.border_r_1().border_color(cx.theme().colors().border)
+                    })
             }))
             .child(
                 h_flex()
@@ -3621,7 +3636,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;
@@ -3630,15 +3645,12 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
 
         // Store item indices by their tab description.
         for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            if let Some(description) = item.tab_description(*detail, cx) {
-                if *detail == 0
-                    || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
-                {
-                    tab_descriptions
-                        .entry(description)
-                        .or_insert(Vec::new())
-                        .push(ix);
-                }
+            let description = item.tab_content_text(*detail, cx);
+            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
+                tab_descriptions
+                    .entry(description)
+                    .or_insert(Vec::new())
+                    .push(ix);
             }
         }
 
@@ -3677,6 +3689,7 @@ impl Render for DraggedTab {
                 detail: Some(self.detail),
                 selected: false,
                 preview: false,
+                deemphasized: false,
             },
             window,
             cx,

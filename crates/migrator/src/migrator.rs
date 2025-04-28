@@ -128,6 +128,14 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_04_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_15,
         ),
+        (
+            migrations::m_2025_04_21::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_04_21,
+        ),
+        (
+            migrations::m_2025_04_23::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_04_23,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -205,6 +213,14 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_04_15,
     migrations::m_2025_04_15::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_04_21,
+    migrations::m_2025_04_21::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_04_23,
+    migrations::m_2025_04_23::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -631,7 +647,7 @@ mod tests {
                                 "name": "Custom",
                                 "tools": {
                                     "diagnostics": true,
-                                    "path_search": true,
+                                    "find_path": true,
                                     "read_file": true
                                 }
                             }
@@ -641,5 +657,41 @@ mod tests {
             "#,
             None,
         )
+    }
+
+    #[test]
+    fn test_rename_path_search_to_find_path() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "default": {
+                                "tools": {
+                                    "path_search": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "default": {
+                                "tools": {
+                                    "find_path": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            ),
+        );
     }
 }

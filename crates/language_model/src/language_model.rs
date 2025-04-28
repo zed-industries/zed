@@ -65,10 +65,28 @@ pub struct LanguageModelCacheConfiguration {
 pub enum LanguageModelCompletionEvent {
     Stop(StopReason),
     Text(String),
-    Thinking(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
     ToolUse(LanguageModelToolUse),
-    StartMessage { message_id: String },
+    StartMessage {
+        message_id: String,
+    },
     UsageUpdate(TokenUsage),
+}
+
+#[derive(Error, Debug)]
+pub enum LanguageModelCompletionError {
+    #[error("received bad input JSON")]
+    BadInputJson {
+        id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 /// Indicates the format used to define the input schema for a language model tool.
@@ -181,12 +199,14 @@ where
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
     pub name: Arc<str>,
+    pub raw_input: String,
     pub input: serde_json::Value,
+    pub is_input_complete: bool,
 }
 
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
-    pub stream: BoxStream<'static, Result<String>>,
+    pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
     // Has complete token usage after the stream has finished
     pub last_token_usage: Arc<Mutex<TokenUsage>>,
 }
@@ -239,7 +259,12 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    >;
 
     fn stream_completion_with_usage(
         &self,
@@ -248,7 +273,7 @@ pub trait LanguageModel: Send + Sync {
     ) -> BoxFuture<
         'static,
         Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
             Option<RequestUsage>,
         )>,
     > {
@@ -302,7 +327,7 @@ pub trait LanguageModel: Send + Sync {
                             match result {
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
-                                Ok(LanguageModelCompletionEvent::Thinking(_)) => None,
+                                Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                                 Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
@@ -365,6 +390,7 @@ pub trait LanguageModelProvider: 'static {
         IconName::ZedAssistant
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         Vec::new()

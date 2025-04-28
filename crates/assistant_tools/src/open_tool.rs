@@ -1,14 +1,14 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownEscaped;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OpenToolInput {
@@ -41,7 +41,7 @@ impl Tool for OpenTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<OpenToolInput>(input.clone()) {
-            Ok(input) => format!("Open `{}`", MarkdownString::escape(&input.path_or_url)),
+            Ok(input) => format!("Open `{}`", MarkdownEscaped(&input.path_or_url)),
             Err(_) => "Open file or URL".to_string(),
         }
     }
@@ -52,6 +52,7 @@ impl Tool for OpenTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input: OpenToolInput = match serde_json::from_value(input) {

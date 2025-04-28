@@ -1,32 +1,33 @@
+use std::hash::{Hash, Hasher};
 use std::{ops::Range, path::Path, sync::Arc};
 
-use gpui::{App, Entity, SharedString};
-use language::{Buffer, File};
-use language_model::LanguageModelRequestMessage;
-use project::{ProjectPath, Worktree};
-use rope::Point;
-use serde::{Deserialize, Serialize};
-use text::{Anchor, BufferId};
-use ui::IconName;
-use util::post_inc;
+use collections::HashSet;
+use futures::future;
+use futures::{FutureExt, future::Shared};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
+use language::Buffer;
+use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+use project::{Project, ProjectEntryId, ProjectPath, Worktree};
+use prompt_store::{PromptStore, UserPromptId};
+use ref_cast::RefCast;
+use rope::{Point, Rope};
+use text::{Anchor, OffsetRangeExt as _};
+use ui::{ElementId, IconName};
+use util::{ResultExt as _, post_inc};
 
 use crate::thread::Thread;
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct ContextId(pub(crate) usize);
+pub const RULES_ICON: IconName = IconName::Context;
 
-impl ContextId {
-    pub fn post_inc(&mut self) -> Self {
-        Self(post_inc(&mut self.0))
-    }
-}
 pub enum ContextKind {
     File,
     Directory,
     Symbol,
-    Excerpt,
+    Selection,
     FetchedUrl,
     Thread,
+    Rules,
+    Image,
 }
 
 impl ContextKind {
@@ -35,244 +36,770 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Excerpt => IconName::Code,
+            ContextKind::Selection => IconName::Context,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
+            ContextKind::Rules => RULES_ICON,
+            ContextKind::Image => IconName::Image,
         }
     }
 }
 
+/// Handle for context that can be added to a user message.
+///
+/// This uses IDs that are stable enough for tracking renames and identifying when context has
+/// already been added to the thread. To use this in a set, wrap it in `AgentContextKey` to opt in
+/// to `PartialEq` and `Hash` impls that use the subset of the fields used for this stable identity.
 #[derive(Debug, Clone)]
-pub enum AssistantContext {
+pub enum AgentContext {
     File(FileContext),
     Directory(DirectoryContext),
     Symbol(SymbolContext),
+    Selection(SelectionContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
-    Excerpt(ExcerptContext),
+    Rules(RulesContext),
+    Image(ImageContext),
 }
 
-impl AssistantContext {
-    pub fn id(&self) -> ContextId {
+impl AgentContext {
+    fn id(&self) -> ContextId {
         match self {
-            Self::File(file) => file.id,
-            Self::Directory(directory) => directory.id,
-            Self::Symbol(symbol) => symbol.id,
-            Self::FetchedUrl(url) => url.id,
-            Self::Thread(thread) => thread.id,
-            Self::Excerpt(excerpt) => excerpt.id,
+            Self::File(context) => context.context_id,
+            Self::Directory(context) => context.context_id,
+            Self::Symbol(context) => context.context_id,
+            Self::Selection(context) => context.context_id,
+            Self::FetchedUrl(context) => context.context_id,
+            Self::Thread(context) => context.context_id,
+            Self::Rules(context) => context.context_id,
+            Self::Image(context) => context.context_id,
         }
+    }
+
+    pub fn element_id(&self, name: SharedString) -> ElementId {
+        ElementId::NamedInteger(name, self.id().0)
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct FileContext {
-    pub id: ContextId,
-    pub context_buffer: ContextBuffer,
+/// ID created at time of context add, for use in ElementId. This is not the stable identity of a
+/// context, instead that's handled by the `PartialEq` and `Hash` impls of `AgentContextKey`.
+#[derive(Debug, Copy, Clone)]
+pub struct ContextId(u64);
+
+impl ContextId {
+    pub fn zero() -> Self {
+        ContextId(0)
+    }
+
+    fn for_lookup() -> Self {
+        ContextId(u64::MAX)
+    }
+
+    pub fn post_inc(&mut self) -> Self {
+        Self(post_inc(&mut self.0))
+    }
 }
 
+/// File context provides the entire contents of a file.
+///
+/// This holds an `Entity<Buffer>` so that file path renames affect its display and so that it can
+/// be opened even if the file has been deleted. An alternative might be to use `ProjectEntryId`,
+/// but then when deleted there is no path info or ability to open.
+#[derive(Debug, Clone)]
+pub struct FileContext {
+    pub buffer: Entity<Buffer>,
+    pub context_id: ContextId,
+}
+
+impl FileContext {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.buffer == other.buffer
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.buffer.hash(state)
+    }
+
+    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let file = self.buffer.read(cx).file()?;
+        Some(ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
+    }
+
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+        let buffer_ref = self.buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            log::error!("file context missing path");
+            return None;
+        };
+        let full_path = file.full_path(cx);
+        let rope = buffer_ref.as_rope().clone();
+        let buffer = self.buffer.clone();
+        Some(
+            cx.background_spawn(
+                async move { (to_fenced_codeblock(&full_path, rope, None), buffer) },
+            ),
+        )
+    }
+}
+
+/// Directory contents provides the entire contents of text files in a directory.
+///
+/// This has a `ProjectEntryId` so that it follows renames.
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
-    pub id: ContextId,
-    pub worktree: Entity<Worktree>,
-    pub path: Arc<Path>,
-    /// Buffers of the files within the directory.
-    pub context_buffers: Vec<ContextBuffer>,
+    pub entry_id: ProjectEntryId,
+    pub context_id: ContextId,
 }
 
 impl DirectoryContext {
-    pub fn project_path(&self, cx: &App) -> ProjectPath {
-        ProjectPath {
-            worktree_id: self.worktree.read(cx).id(),
-            path: self.path.clone(),
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.entry_id == other.entry_id
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.entry_id.hash(state)
+    }
+
+    fn load(
+        &self,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Option<Task<Vec<(String, Entity<Buffer>)>>> {
+        let worktree = project.read(cx).worktree_for_entry(self.entry_id, cx)?;
+        let worktree_ref = worktree.read(cx);
+        let entry = worktree_ref.entry_for_id(self.entry_id)?;
+        if entry.is_file() {
+            log::error!("DirectoryContext unexpectedly refers to a file.");
+            return None;
         }
+
+        let file_paths = collect_files_in_path(worktree_ref, entry.path.as_ref());
+        let texts_future = future::join_all(file_paths.into_iter().map(|path| {
+            load_file_path_text_as_fenced_codeblock(project.clone(), worktree.clone(), path, cx)
+        }));
+
+        Some(cx.background_spawn(async move {
+            texts_future.await.into_iter().flatten().collect::<Vec<_>>()
+        }))
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct SymbolContext {
-    pub id: ContextId,
-    pub context_symbol: ContextSymbol,
+    pub buffer: Entity<Buffer>,
+    pub symbol: SharedString,
+    pub range: Range<Anchor>,
+    /// The range that fully contain the symbol. e.g. for function symbol, this will include not
+    /// only the signature, but also the body. Not used by `PartialEq` or `Hash` for `AgentContextKey`.
+    pub enclosing_range: Range<Anchor>,
+    pub context_id: ContextId,
+}
+
+impl SymbolContext {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.buffer == other.buffer && self.symbol == other.symbol && self.range == other.range
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.buffer.hash(state);
+        self.symbol.hash(state);
+        self.range.hash(state);
+    }
+
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+        let buffer_ref = self.buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            log::error!("symbol context's file has no path");
+            return None;
+        };
+        let full_path = file.full_path(cx);
+        let rope = buffer_ref
+            .text_for_range(self.enclosing_range.clone())
+            .collect::<Rope>();
+        let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
+        let buffer = self.buffer.clone();
+        Some(cx.background_spawn(async move {
+            (
+                to_fenced_codeblock(&full_path, rope, Some(line_range)),
+                buffer,
+            )
+        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectionContext {
+    pub buffer: Entity<Buffer>,
+    pub range: Range<Anchor>,
+    pub context_id: ContextId,
+}
+
+impl SelectionContext {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.buffer == other.buffer && self.range == other.range
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.buffer.hash(state);
+        self.range.hash(state);
+    }
+
+    fn load(&self, cx: &App) -> Option<Task<(String, Entity<Buffer>)>> {
+        let buffer_ref = self.buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            log::error!("selection context's file has no path");
+            return None;
+        };
+        let full_path = file.full_path(cx);
+        let rope = buffer_ref
+            .text_for_range(self.range.clone())
+            .collect::<Rope>();
+        let line_range = self.range.to_point(&buffer_ref.snapshot());
+        let buffer = self.buffer.clone();
+        Some(cx.background_spawn(async move {
+            (
+                to_fenced_codeblock(&full_path, rope, Some(line_range)),
+                buffer,
+            )
+        }))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct FetchedUrlContext {
-    pub id: ContextId,
     pub url: SharedString,
+    /// Text contents of the fetched url. Unlike other context types, the contents of this gets
+    /// populated when added rather than when sending the message. Not used by `PartialEq` or `Hash`
+    /// for `AgentContextKey`.
     pub text: SharedString,
+    pub context_id: ContextId,
+}
+
+impl FetchedUrlContext {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.url == other.url
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.url.hash(state);
+    }
+
+    pub fn lookup_key(url: SharedString) -> AgentContextKey {
+        AgentContextKey(AgentContext::FetchedUrl(FetchedUrlContext {
+            url,
+            text: "".into(),
+            context_id: ContextId::for_lookup(),
+        }))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct ThreadContext {
-    pub id: ContextId,
-    // TODO: Entity<Thread> holds onto the thread even if the thread is deleted. Should probably be
-    // a WeakEntity and handle removal from the UI when it has dropped.
     pub thread: Entity<Thread>,
-    pub text: SharedString,
+    pub context_id: ContextId,
 }
 
 impl ThreadContext {
-    pub fn summary(&self, cx: &App) -> SharedString {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.thread == other.thread
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.thread.hash(state)
+    }
+
+    pub fn name(&self, cx: &App) -> SharedString {
         self.thread
             .read(cx)
             .summary()
-            .unwrap_or("New thread".into())
+            .unwrap_or_else(|| "New thread".into())
     }
-}
 
-#[derive(Clone)]
-pub struct ContextBuffer {
-    pub id: BufferId,
-    // TODO: Entity<Buffer> holds onto the thread even if the thread is deleted. Should probably be
-    // a WeakEntity and handle removal from the UI when it has dropped.
-    pub buffer: Entity<Buffer>,
-    pub file: Arc<dyn File>,
-    pub version: clock::Global,
-    pub text: SharedString,
-}
-
-impl std::fmt::Debug for ContextBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ContextBuffer")
-            .field("id", &self.id)
-            .field("buffer", &self.buffer)
-            .field("version", &self.version)
-            .field("text", &self.text)
-            .finish()
+    pub fn load(&self, cx: &App) -> String {
+        let name = self.name(cx);
+        let contents = self.thread.read(cx).latest_detailed_summary_or_text();
+        let mut text = String::new();
+        text.push_str(&name);
+        text.push('\n');
+        text.push_str(&contents.trim());
+        text.push('\n');
+        text
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct ContextSymbol {
-    pub id: ContextSymbolId,
-    pub buffer: Entity<Buffer>,
-    pub buffer_version: clock::Global,
-    /// The range that the symbol encloses, e.g. for function symbol, this will
-    /// include not only the signature, but also the body
-    pub enclosing_range: Range<Anchor>,
-    pub text: SharedString,
+pub struct RulesContext {
+    pub prompt_id: UserPromptId,
+    pub context_id: ContextId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ContextSymbolId {
-    pub path: ProjectPath,
-    pub name: SharedString,
-    pub range: Range<Anchor>,
+impl RulesContext {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.prompt_id == other.prompt_id
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.prompt_id.hash(state)
+    }
+
+    pub fn lookup_key(prompt_id: UserPromptId) -> AgentContextKey {
+        AgentContextKey(AgentContext::Rules(RulesContext {
+            prompt_id,
+            context_id: ContextId::for_lookup(),
+        }))
+    }
+
+    pub fn load(
+        &self,
+        prompt_store: &Option<Entity<PromptStore>>,
+        cx: &App,
+    ) -> Task<Option<String>> {
+        let Some(prompt_store) = prompt_store.as_ref() else {
+            return Task::ready(None);
+        };
+        let prompt_store = prompt_store.read(cx);
+        let prompt_id = self.prompt_id.into();
+        let Some(metadata) = prompt_store.metadata(prompt_id) else {
+            return Task::ready(None);
+        };
+        let contents_task = prompt_store.load(prompt_id, cx);
+        cx.background_spawn(async move {
+            let contents = contents_task.await.ok()?;
+            let mut text = String::new();
+            if let Some(title) = metadata.title {
+                text.push_str("Rules title: ");
+                text.push_str(&title);
+                text.push('\n');
+            }
+            text.push_str("``````\n");
+            text.push_str(contents.trim());
+            text.push_str("\n``````\n");
+            Some(text)
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct ExcerptContext {
-    pub id: ContextId,
-    pub range: Range<Anchor>,
-    pub line_range: Range<Point>,
-    pub context_buffer: ContextBuffer,
+pub struct ImageContext {
+    pub original_image: Arc<gpui::Image>,
+    // TODO: handle this elsewhere and remove `ignore-interior-mutability` opt-out in clippy.toml
+    // needed due to a false positive of `clippy::mutable_key_type`.
+    pub image_task: Shared<Task<Option<LanguageModelImage>>>,
+    pub context_id: ContextId,
 }
 
-/// Formats a collection of contexts into a string representation
-pub fn format_context_as_string<'a>(
-    contexts: impl Iterator<Item = &'a AssistantContext>,
-    cx: &App,
-) -> Option<String> {
-    let mut file_context = Vec::new();
-    let mut directory_context = Vec::new();
-    let mut symbol_context = Vec::new();
-    let mut excerpt_context = Vec::new();
-    let mut fetch_context = Vec::new();
-    let mut thread_context = Vec::new();
+pub enum ImageStatus {
+    Loading,
+    Error,
+    Ready,
+}
 
-    for context in contexts {
-        match context {
-            AssistantContext::File(context) => file_context.push(context),
-            AssistantContext::Directory(context) => directory_context.push(context),
-            AssistantContext::Symbol(context) => symbol_context.push(context),
-            AssistantContext::Excerpt(context) => excerpt_context.push(context),
-            AssistantContext::FetchedUrl(context) => fetch_context.push(context),
-            AssistantContext::Thread(context) => thread_context.push(context),
+impl ImageContext {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.original_image.id == other.original_image.id
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.original_image.id.hash(state);
+    }
+
+    pub fn image(&self) -> Option<LanguageModelImage> {
+        self.image_task.clone().now_or_never().flatten()
+    }
+
+    pub fn status(&self) -> ImageStatus {
+        match self.image_task.clone().now_or_never() {
+            None => ImageStatus::Loading,
+            Some(None) => ImageStatus::Error,
+            Some(Some(_)) => ImageStatus::Ready,
         }
     }
+}
 
-    if file_context.is_empty()
-        && directory_context.is_empty()
-        && symbol_context.is_empty()
-        && excerpt_context.is_empty()
-        && fetch_context.is_empty()
-        && thread_context.is_empty()
-    {
-        return None;
+#[derive(Debug, Clone, Default)]
+pub struct ContextLoadResult {
+    pub loaded_context: LoadedContext,
+    pub referenced_buffers: HashSet<Entity<Buffer>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoadedContext {
+    pub contexts: Vec<AgentContext>,
+    pub text: String,
+    pub images: Vec<LanguageModelImage>,
+}
+
+impl LoadedContext {
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty() && self.images.is_empty()
     }
 
-    let mut result = String::new();
-    result.push_str("\n<context>\n\
-        The following items were attached by the user. You don't need to use other tools to read them.\n\n");
-
-    if !file_context.is_empty() {
-        result.push_str("<files>\n");
-        for context in file_context {
-            result.push_str(&context.context_buffer.text);
+    pub fn add_to_request_message(&self, request_message: &mut LanguageModelRequestMessage) {
+        if !self.text.is_empty() {
+            request_message
+                .content
+                .push(MessageContent::Text(self.text.to_string()));
         }
-        result.push_str("</files>\n");
-    }
 
-    if !directory_context.is_empty() {
-        result.push_str("<directories>\n");
-        for context in directory_context {
-            for context_buffer in &context.context_buffers {
-                result.push_str(&context_buffer.text);
+        if !self.images.is_empty() {
+            // Some providers only support image parts after an initial text part
+            if request_message.content.is_empty() {
+                request_message
+                    .content
+                    .push(MessageContent::Text("Images attached by user:".to_string()));
+            }
+
+            for image in &self.images {
+                request_message
+                    .content
+                    .push(MessageContent::Image(image.clone()))
             }
         }
-        result.push_str("</directories>\n");
     }
-
-    if !symbol_context.is_empty() {
-        result.push_str("<symbols>\n");
-        for context in symbol_context {
-            result.push_str(&context.context_symbol.text);
-            result.push('\n');
-        }
-        result.push_str("</symbols>\n");
-    }
-
-    if !excerpt_context.is_empty() {
-        result.push_str("<excerpts>\n");
-        for context in excerpt_context {
-            result.push_str(&context.context_buffer.text);
-            result.push('\n');
-        }
-        result.push_str("</excerpts>\n");
-    }
-
-    if !fetch_context.is_empty() {
-        result.push_str("<fetched_urls>\n");
-        for context in &fetch_context {
-            result.push_str(&context.url);
-            result.push('\n');
-            result.push_str(&context.text);
-            result.push('\n');
-        }
-        result.push_str("</fetched_urls>\n");
-    }
-
-    if !thread_context.is_empty() {
-        result.push_str("<conversation_threads>\n");
-        for context in &thread_context {
-            result.push_str(&context.summary(cx));
-            result.push('\n');
-            result.push_str(&context.text);
-            result.push('\n');
-        }
-        result.push_str("</conversation_threads>\n");
-    }
-
-    result.push_str("</context>\n");
-    Some(result)
 }
 
-pub fn attach_context_to_message<'a>(
-    message: &mut LanguageModelRequestMessage,
-    contexts: impl Iterator<Item = &'a AssistantContext>,
-    cx: &App,
-) {
-    if let Some(context_string) = format_context_as_string(contexts, cx) {
-        message.content.push(context_string.into());
+/// Loads and formats a collection of contexts.
+pub fn load_context(
+    contexts: Vec<AgentContext>,
+    project: &Entity<Project>,
+    prompt_store: &Option<Entity<PromptStore>>,
+    cx: &mut App,
+) -> Task<ContextLoadResult> {
+    let mut file_tasks = Vec::new();
+    let mut directory_tasks = Vec::new();
+    let mut symbol_tasks = Vec::new();
+    let mut selection_tasks = Vec::new();
+    let mut fetch_context = Vec::new();
+    let mut thread_context = Vec::new();
+    let mut rules_tasks = Vec::new();
+    let mut image_tasks = Vec::new();
+
+    for context in contexts.iter().cloned() {
+        match context {
+            AgentContext::File(context) => file_tasks.extend(context.load(cx)),
+            AgentContext::Directory(context) => {
+                directory_tasks.extend(context.load(project.clone(), cx))
+            }
+            AgentContext::Symbol(context) => symbol_tasks.extend(context.load(cx)),
+            AgentContext::Selection(context) => selection_tasks.extend(context.load(cx)),
+            AgentContext::FetchedUrl(context) => fetch_context.push(context),
+            AgentContext::Thread(context) => thread_context.push(context.load(cx)),
+            AgentContext::Rules(context) => rules_tasks.push(context.load(prompt_store, cx)),
+            AgentContext::Image(context) => image_tasks.push(context.image_task.clone()),
+        }
+    }
+
+    cx.background_spawn(async move {
+        let (
+            file_context,
+            directory_context,
+            symbol_context,
+            selection_context,
+            rules_context,
+            images,
+        ) = futures::join!(
+            future::join_all(file_tasks),
+            future::join_all(directory_tasks),
+            future::join_all(symbol_tasks),
+            future::join_all(selection_tasks),
+            future::join_all(rules_tasks),
+            future::join_all(image_tasks)
+        );
+
+        let directory_context = directory_context.into_iter().flatten().collect::<Vec<_>>();
+        let rules_context = rules_context.into_iter().flatten().collect::<Vec<_>>();
+        let images = images.into_iter().flatten().collect::<Vec<_>>();
+
+        let mut referenced_buffers = HashSet::default();
+        let mut text = String::new();
+
+        if file_context.is_empty()
+            && directory_context.is_empty()
+            && symbol_context.is_empty()
+            && selection_context.is_empty()
+            && fetch_context.is_empty()
+            && thread_context.is_empty()
+            && rules_context.is_empty()
+        {
+            return ContextLoadResult {
+                loaded_context: LoadedContext {
+                    contexts,
+                    text,
+                    images,
+                },
+                referenced_buffers,
+            };
+        }
+
+        text.push_str(
+            "\n<context>\n\
+            The following items were attached by the user. \
+            You don't need to use other tools to read them.\n\n",
+        );
+
+        if !file_context.is_empty() {
+            text.push_str("<files>");
+            for (file_text, buffer) in file_context {
+                text.push('\n');
+                text.push_str(&file_text);
+                referenced_buffers.insert(buffer);
+            }
+            text.push_str("</files>\n");
+        }
+
+        if !directory_context.is_empty() {
+            text.push_str("<directories>");
+            for (file_text, buffer) in directory_context {
+                text.push('\n');
+                text.push_str(&file_text);
+                referenced_buffers.insert(buffer);
+            }
+            text.push_str("</directories>\n");
+        }
+
+        if !symbol_context.is_empty() {
+            text.push_str("<symbols>");
+            for (symbol_text, buffer) in symbol_context {
+                text.push('\n');
+                text.push_str(&symbol_text);
+                referenced_buffers.insert(buffer);
+            }
+            text.push_str("</symbols>\n");
+        }
+
+        if !selection_context.is_empty() {
+            text.push_str("<selections>");
+            for (selection_text, buffer) in selection_context {
+                text.push('\n');
+                text.push_str(&selection_text);
+                referenced_buffers.insert(buffer);
+            }
+            text.push_str("</selections>\n");
+        }
+
+        if !fetch_context.is_empty() {
+            text.push_str("<fetched_urls>");
+            for context in fetch_context {
+                text.push('\n');
+                text.push_str(&context.url);
+                text.push('\n');
+                text.push_str(&context.text);
+            }
+            text.push_str("</fetched_urls>\n");
+        }
+
+        if !thread_context.is_empty() {
+            text.push_str("<conversation_threads>");
+            for thread_text in thread_context {
+                text.push('\n');
+                text.push_str(&thread_text);
+            }
+            text.push_str("</conversation_threads>\n");
+        }
+
+        if !rules_context.is_empty() {
+            text.push_str(
+                "<user_rules>\n\
+                The user has specified the following rules that should be applied:\n",
+            );
+            for rules_text in rules_context {
+                text.push('\n');
+                text.push_str(&rules_text);
+            }
+            text.push_str("</user_rules>\n");
+        }
+
+        text.push_str("</context>\n");
+
+        ContextLoadResult {
+            loaded_context: LoadedContext {
+                contexts,
+                text,
+                images,
+            },
+            referenced_buffers,
+        }
+    })
+}
+
+fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+    let mut files = Vec::new();
+
+    for entry in worktree.child_entries(path) {
+        if entry.is_dir() {
+            files.extend(collect_files_in_path(worktree, &entry.path));
+        } else if entry.is_file() {
+            files.push(entry.path.clone());
+        }
+    }
+
+    files
+}
+
+fn load_file_path_text_as_fenced_codeblock(
+    project: Entity<Project>,
+    worktree: Entity<Worktree>,
+    path: Arc<Path>,
+    cx: &mut App,
+) -> Task<Option<(String, Entity<Buffer>)>> {
+    let worktree_ref = worktree.read(cx);
+    let worktree_id = worktree_ref.id();
+    let full_path = worktree_ref.full_path(&path);
+
+    let open_task = project.update(cx, |project, cx| {
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            let project_path = ProjectPath { worktree_id, path };
+            buffer_store.open_buffer(project_path, cx)
+        })
+    });
+
+    let rope_task = cx.spawn(async move |cx| {
+        let buffer = open_task.await.log_err()?;
+        let rope = buffer
+            .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
+            .log_err()?;
+        Some((rope, buffer))
+    });
+
+    cx.background_spawn(async move {
+        let (rope, buffer) = rope_task.await?;
+        Some((to_fenced_codeblock(&full_path, rope, None), buffer))
+    })
+}
+
+fn to_fenced_codeblock(
+    full_path: &Path,
+    content: Rope,
+    line_range: Option<Range<Point>>,
+) -> String {
+    let line_range_text = line_range.map(|range| {
+        if range.start.row == range.end.row {
+            format!(":{}", range.start.row + 1)
+        } else {
+            format!(":{}-{}", range.start.row + 1, range.end.row + 1)
+        }
+    });
+
+    let path_extension = full_path.extension().and_then(|ext| ext.to_str());
+    let path_string = full_path.to_string_lossy();
+    let capacity = 3
+        + path_extension.map_or(0, |extension| extension.len() + 1)
+        + path_string.len()
+        + line_range_text.as_ref().map_or(0, |text| text.len())
+        + 1
+        + content.len()
+        + 5;
+    let mut buffer = String::with_capacity(capacity);
+
+    buffer.push_str("```");
+
+    if let Some(extension) = path_extension {
+        buffer.push_str(extension);
+        buffer.push(' ');
+    }
+    buffer.push_str(&path_string);
+
+    if let Some(line_range_text) = line_range_text {
+        buffer.push_str(&line_range_text);
+    }
+
+    buffer.push('\n');
+    for chunk in content.chunks() {
+        buffer.push_str(chunk);
+    }
+
+    if !buffer.ends_with('\n') {
+        buffer.push('\n');
+    }
+
+    buffer.push_str("```\n");
+
+    debug_assert!(
+        buffer.len() == capacity - 1 || buffer.len() == capacity,
+        "to_fenced_codeblock calculated capacity of {}, but length was {}",
+        capacity,
+        buffer.len(),
+    );
+
+    buffer
+}
+
+/// Wraps `AgentContext` to opt-in to `PartialEq` and `Hash` impls which use a subset of fields
+/// needed for stable context identity.
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
+pub struct AgentContextKey(pub AgentContext);
+
+impl AsRef<AgentContext> for AgentContextKey {
+    fn as_ref(&self) -> &AgentContext {
+        &self.0
+    }
+}
+
+impl Eq for AgentContextKey {}
+
+impl PartialEq for AgentContextKey {
+    fn eq(&self, other: &Self) -> bool {
+        match &self.0 {
+            AgentContext::File(context) => {
+                if let AgentContext::File(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::Directory(context) => {
+                if let AgentContext::Directory(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::Symbol(context) => {
+                if let AgentContext::Symbol(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::Selection(context) => {
+                if let AgentContext::Selection(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::FetchedUrl(context) => {
+                if let AgentContext::FetchedUrl(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::Thread(context) => {
+                if let AgentContext::Thread(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::Rules(context) => {
+                if let AgentContext::Rules(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+            AgentContext::Image(context) => {
+                if let AgentContext::Image(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
+        }
+        false
+    }
+}
+
+impl Hash for AgentContextKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            AgentContext::File(context) => context.hash_for_key(state),
+            AgentContext::Directory(context) => context.hash_for_key(state),
+            AgentContext::Symbol(context) => context.hash_for_key(state),
+            AgentContext::Selection(context) => context.hash_for_key(state),
+            AgentContext::FetchedUrl(context) => context.hash_for_key(state),
+            AgentContext::Thread(context) => context.hash_for_key(state),
+            AgentContext::Rules(context) => context.hash_for_key(state),
+            AgentContext::Image(context) => context.hash_for_key(state),
+        }
     }
 }
