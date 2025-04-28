@@ -619,9 +619,12 @@ impl Item for Editor {
         None
     }
 
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
-        let path = path_for_buffer(&self.buffer, detail, true, cx)?;
-        Some(path.to_string_lossy().to_string().into())
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
+            path.to_string_lossy().to_string().into()
+        } else {
+            "untitled".into()
+        }
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {

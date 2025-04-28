@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
@@ -66,11 +66,11 @@ impl Tool for DiagnosticsTool {
         if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
             .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
+                Some(path) if !path.is_empty() => Some(path),
                 _ => None,
             })
         {
-            format!("Check diagnostics for {path}")
+            format!("Check diagnostics for {}", MarkdownInlineCode(&path))
         } else {
             "Check project diagnostics".to_string()
         }

@@ -1,5 +1,4 @@
 use std::hash::{Hash, Hasher};
-use std::usize;
 use std::{ops::Range, path::Path, sync::Arc};
 
 use collections::HashSet;
@@ -85,7 +84,7 @@ impl AgentContext {
 /// ID created at time of context add, for use in ElementId. This is not the stable identity of a
 /// context, instead that's handled by the `PartialEq` and `Hash` impls of `AgentContextKey`.
 #[derive(Debug, Copy, Clone)]
-pub struct ContextId(usize);
+pub struct ContextId(u64);
 
 impl ContextId {
     pub fn zero() -> Self {
@@ -93,7 +92,7 @@ impl ContextId {
     }
 
     fn for_lookup() -> Self {
-        ContextId(usize::MAX)
+        ContextId(u64::MAX)
     }
 
     pub fn post_inc(&mut self) -> Self {

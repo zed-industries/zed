@@ -476,7 +476,7 @@ impl AssistantPanel {
                         {
                             return;
                         }
-                        context.custom_summary(new_summary, cx)
+                        context.set_custom_summary(new_summary, cx)
                     });
                 });
             }
