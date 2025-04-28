@@ -48,8 +48,7 @@ function PrepareForBundle {
         Remove-Item -Path "$innoDir" -Recurse -Force
     }
     New-Item -Path "$innoDir" -ItemType Directory -Force
-    New-Item -Path "$innoDir\resources" -ItemType Directory -Force
-    Copy-Item -Path "$env:ZED_WORKSPACE\crates\zed\resources\windows\*" -Destination "$innoDir\resources" -Recurse -Force
+    Copy-Item -Path "$env:ZED_WORKSPACE\crates\zed\resources\windows\*" -Destination "$innoDir" -Recurse -Force
     New-Item -Path "$innoDir\make_appx" -ItemType Directory -Force
     New-Item -Path "$innoDir\appx" -ItemType Directory -Force
     New-Item -Path "$innoDir\bin" -ItemType Directory -Force
@@ -99,7 +98,7 @@ function MakeAppx {
 
 function SignZedAndItsFriends {
     $files = "$innoDir\Zed.exe,$innoDir\cli.exe,$innoDir\auto_update_helper.exe,$innoDir\zed_explorer_command_injector.dll,$innoDir\zed_explorer_command_injector.appx"
-    & "$innoDir\resources\sign.ps1" $files
+    & "$innoDir\sign.ps1" $files
 }
 
 function CollectFiles {
@@ -110,7 +109,7 @@ function CollectFiles {
 }
 
 function BuildInstaller {
-    $issFilePath = "$innoDir/resources/zed.iss"
+    $issFilePath = "$innoDir\zed.iss"
     switch ($channel) {
         "stable" {
             $appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
@@ -175,7 +174,7 @@ function BuildInstaller {
         "RegValueName"   = $regValueName
         "AppMutex"       = $appMutex
         "AppExeName"     = $appExeName
-        "ResourcesDir"   = "$innoDir\resources"
+        "ResourcesDir"   = "$innoDir"
         "ShellNameShort" = $appShellNameShort
         "AppUserId"      = $appUserId
         "Version"        = "$env:RELEASE_VERSION"
@@ -183,7 +182,7 @@ function BuildInstaller {
         "AppxFullName"   = $appAppxFullName
     }
 
-    $signTool = "pwsh.exe -ExecutionPolicy Bypass -File $innoDir\resources\sign.ps1 `$f"
+    $signTool = "powershell.exe -ExecutionPolicy Bypass -File $innoDir\sign.ps1 `$f"
 
     $defs = @()
     foreach ($key in $definitions.Keys) {

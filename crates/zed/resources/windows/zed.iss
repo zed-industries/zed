@@ -37,8 +37,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\installer\messages\en.isl"; LicenseFile: "script\terms\terms.rtf"
-Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\installer\messages\Default.zh-cn.isl,{#ResourcesDir}\installer\messages\zh-cn.isl"; LicenseFile: "script\terms\terms.rtf"
+Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\messages\en.isl"; LicenseFile: "script\terms\terms.rtf"
+Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\messages\Default.zh-cn.isl,{#ResourcesDir}\messages\zh-cn.isl"; LicenseFile: "script\terms\terms.rtf"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -52,9 +52,9 @@ Name: "{app}"; AfterInstall: DisableAppDirInheritance
 
 [Files]
 Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{code:GetInstallDir}"; Flags: ignoreversion
-Source: "{#ResourcesDir}\installer\bin\*"; DestDir: "{code:GetInstallDir}\bin"; Flags: ignoreversion
-Source: "{#ResourcesDir}\installer\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
-Source: "{#ResourcesDir}\installer\appx\*"; DestDir: "{app}\appx";  BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
+Source: "{#ResourcesDir}\bin\*"; DestDir: "{code:GetInstallDir}\bin"; Flags: ignoreversion
+Source: "{#ResourcesDir}\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "{#ResourcesDir}\appx\*"; DestDir: "{app}\appx";  BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}.exe"; AppUserModelID: "{#AppUserId}"
