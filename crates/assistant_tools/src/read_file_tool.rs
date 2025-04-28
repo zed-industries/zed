@@ -40,7 +40,7 @@ pub struct ReadFileToolInput {
     #[serde(default)]
     pub start_line: Option<usize>,
 
-    /// Optional line number to end reading on (1-based index)
+    /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<usize>,
 }
@@ -128,7 +128,7 @@ impl Tool for ReadFileTool {
                     let start = input.start_line.unwrap_or(1);
                     let lines = text.split('\n').skip(start - 1);
                     if let Some(end) = input.end_line {
-                        let count = end.saturating_sub(start).max(1); // Ensure at least 1 line
+                        let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
                         Itertools::intersperse(lines.take(count), "\n").collect()
                     } else {
                         Itertools::intersperse(lines, "\n").collect()
@@ -329,7 +329,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3");
+        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
     }
 
     fn init_test(cx: &mut TestAppContext) {

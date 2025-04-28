@@ -1045,6 +1045,10 @@ mod tests {
         fn include_in_nav_history() -> bool {
             false
         }
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
+        }
     }
 
     impl EventEmitter<()> for AtMentionEditor {}

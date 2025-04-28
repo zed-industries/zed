@@ -815,6 +815,16 @@ struct InlineBlamePopover {
     popover_state: InlineBlamePopoverState,
 }
 
+/// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
+/// a breakpoint on them.
+#[derive(Clone, Copy, Debug)]
+struct PhantomBreakpointIndicator {
+    display_row: DisplayRow,
+    /// There's a small debounce between hovering over the line and showing the indicator.
+    /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
+    is_active: bool,
+    collides_with_existing_breakpoint: bool,
+}
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -963,10 +973,7 @@ pub struct Editor {
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
-    /// Allow's a user to create a breakpoint by selecting this indicator
-    /// It should be None while a user is not hovering over the gutter
-    /// Otherwise it represents the point that the breakpoint will be shown
-    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool)>, Option<Task<()>>),
+    gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -2616,7 +2623,7 @@ impl Editor {
             }
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
-            self.refresh_selected_text_highlights(window, cx);
+            self.refresh_selected_text_highlights(false, window, cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
@@ -5814,7 +5821,12 @@ impl Editor {
         })
     }
 
-    fn refresh_selected_text_highlights(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    fn refresh_selected_text_highlights(
+        &mut self,
+        on_buffer_edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
         else {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
@@ -5823,12 +5835,13 @@ impl Editor {
             return;
         };
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        if self
-            .quick_selection_highlight_task
-            .as_ref()
-            .map_or(true, |(prev_anchor_range, _)| {
-                prev_anchor_range != &query_range
-            })
+        if on_buffer_edit
+            || self
+                .quick_selection_highlight_task
+                .as_ref()
+                .map_or(true, |(prev_anchor_range, _)| {
+                    prev_anchor_range != &query_range
+                })
         {
             let multi_buffer_visible_start = self
                 .scroll_manager
@@ -5853,12 +5866,13 @@ impl Editor {
                 ),
             ));
         }
-        if self
-            .debounced_selection_highlight_task
-            .as_ref()
-            .map_or(true, |(prev_anchor_range, _)| {
-                prev_anchor_range != &query_range
-            })
+        if on_buffer_edit
+            || self
+                .debounced_selection_highlight_task
+                .as_ref()
+                .map_or(true, |(prev_anchor_range, _)| {
+                    prev_anchor_range != &query_range
+                })
         {
             let multi_buffer_start = multi_buffer_snapshot
                 .anchor_before(0)
@@ -6969,6 +6983,21 @@ impl Editor {
         breakpoint: &Breakpoint,
         cx: &mut Context<Self>,
     ) -> IconButton {
+        // Is it a breakpoint that shows up when hovering over gutter?
+        let (is_phantom, collides_with_existing) = self.gutter_breakpoint_indicator.0.map_or(
+            (false, false),
+            |PhantomBreakpointIndicator {
+                 is_active,
+                 display_row,
+                 collides_with_existing_breakpoint,
+             }| {
+                (
+                    is_active && display_row == row,
+                    collides_with_existing_breakpoint,
+                )
+            },
+        );
+
         let (color, icon) = {
             let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
                 (false, false) => ui::IconName::DebugBreakpoint,
@@ -6977,11 +7006,7 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
-            let color = if self
-                .gutter_breakpoint_indicator
-                .0
-                .is_some_and(|(point, is_visible)| is_visible && point.row() == row)
-            {
+            let color = if is_phantom {
                 Color::Hint
             } else {
                 Color::Debugger
@@ -6992,6 +7017,24 @@ impl Editor {
 
         let breakpoint = Arc::from(breakpoint.clone());
 
+        let alt_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let primary_action_text = if breakpoint.is_disabled() {
+            "enable"
+        } else if is_phantom && !collides_with_existing {
+            "set"
+        } else {
+            "unset"
+        };
+        let mut primary_text = format!("Click to {primary_action_text}");
+        if collides_with_existing && !breakpoint.is_disabled() {
+            use std::fmt::Write;
+            write!(primary_text, ", {alt_as_text}-click to disable").ok();
+        }
+        let primary_text = SharedString::from(primary_text);
+        let focus_handle = self.focus_handle.clone();
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
@@ -7025,6 +7068,16 @@ impl Editor {
                     cx,
                 );
             }))
+            .tooltip(move |window, cx| {
+                Tooltip::with_meta_in(
+                    primary_text.clone(),
+                    None,
+                    "Right-click for more options",
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            })
     }
 
     fn build_tasks_context(
@@ -8624,6 +8677,15 @@ impl Editor {
         let rows_iter = selections.iter().map(|s| s.head().row);
         let suggested_indents = snapshot.suggested_indents(rows_iter, cx);
 
+        let has_some_cursor_in_whitespace = selections
+            .iter()
+            .filter(|selection| selection.is_empty())
+            .any(|selection| {
+                let cursor = selection.head();
+                let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+                cursor.column < current_indent.len
+            });
+
         let mut edits = Vec::new();
         let mut prev_edited_row = 0;
         let mut row_delta = 0;
@@ -8647,6 +8709,15 @@ impl Editor {
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
+                // If there exist any empty selection in the leading whitespace, then skip
+                // indent for selections at the boundary.
+                if has_some_cursor_in_whitespace
+                    && cursor.column == current_indent.len
+                    && current_indent.len == suggested_indent.len
+                {
+                    continue;
+                }
+
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
@@ -17689,6 +17760,8 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
+                self.refresh_selected_text_highlights(true, window, cx);
+                refresh_matching_bracket_highlights(self, window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
