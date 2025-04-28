@@ -7075,7 +7075,7 @@ impl Element for EditorElement {
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
                     if cx.has_flag::<DebuggerFeatureFlag>() {
-                        self.editor.update(cx, |editor, cx| {
+                        self.editor.update(cx, |editor, _| {
                             if let Some(phantom_breakpoint) = &mut editor
                                 .gutter_breakpoint_indicator
                                 .0
