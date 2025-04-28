@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use language::OffsetRangeExt;
+use language::{OffsetRangeExt, ParseStatus, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
     Project,
@@ -13,8 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
+use util::{RangeExt, markdown::MarkdownString};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GrepToolInput {
@@ -102,6 +102,7 @@ impl Tool for GrepTool {
         cx: &mut App,
     ) -> ToolResult {
         const CONTEXT_LINES: u32 = 2;
+        const MAX_ANCESTOR_LINES: u32 = 10;
 
         let input = match serde_json::from_value::<GrepToolInput>(input) {
             Ok(input) => input,
@@ -140,7 +141,7 @@ impl Tool for GrepTool {
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
 
-        cx.spawn(async move|cx|  {
+        cx.spawn(async move |cx|  {
             futures::pin_mut!(results);
 
             let mut output = String::new();
@@ -148,68 +149,99 @@ impl Tool for GrepTool {
             let mut matches_found = 0;
             let mut has_more_matches = false;
 
-            while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
+            'outer: while let Some(SearchResult::Buffer { buffer, ranges }) = results.next().await {
                 if ranges.is_empty() {
                     continue;
                 }
 
-                buffer.read_with(cx, |buffer, cx| -> Result<(), anyhow::Error> {
-                    if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
-                        let mut file_header_written = false;
-                        let mut ranges = ranges
-                            .into_iter()
-                            .map(|range| {
-                                let mut point_range = range.to_point(buffer);
-                                point_range.start.row =
-                                    point_range.start.row.saturating_sub(CONTEXT_LINES);
-                                point_range.start.column = 0;
-                                point_range.end.row = cmp::min(
-                                    buffer.max_point().row,
-                                    point_range.end.row + CONTEXT_LINES,
-                                );
-                                point_range.end.column = buffer.line_len(point_range.end.row);
-                                point_range
-                            })
-                            .peekable();
+                let (Some(path), mut parse_status) = buffer.read_with(cx, |buffer, cx| {
+                    (buffer.file().map(|file| file.full_path(cx)), buffer.parse_status())
+                })? else {
+                    continue;
+                };
 
-                        while let Some(mut range) = ranges.next() {
-                            if skips_remaining > 0 {
-                                skips_remaining -= 1;
-                                continue;
+
+                while *parse_status.borrow() != ParseStatus::Idle {
+                    parse_status.changed().await?;
+                }
+
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                let mut file_header_written = false;
+                let mut ranges = ranges
+                    .into_iter()
+                    .map(|range| {
+                        let matched = range.to_point(&snapshot);
+                        let matched_end_line_len = snapshot.line_len(matched.end.row);
+                        let full_lines = Point::new(matched.start.row, 0)..Point::new(matched.end.row, matched_end_line_len);
+                        let ancestor_node = snapshot.syntax_ancestor(full_lines.clone());
+
+                        if let Some(ancestor_node) = &ancestor_node {
+                            let full_ancestor_range = ancestor_node.byte_range().to_point(&snapshot);
+
+                            let end_row = full_ancestor_range.end.row.min(full_ancestor_range.start.row + MAX_ANCESTOR_LINES);
+                            let end_col = snapshot.line_len(end_row);
+                            let capped_ancestor_range = Point::new(full_ancestor_range.start.row, 0)..Point::new(end_row, end_col);
+
+                            if capped_ancestor_range.contains_inclusive(&full_lines) {
+                                return (capped_ancestor_range, Some(full_ancestor_range))
                             }
+                        }
 
-                            // We'd already found a full page of matches, and we just found one more.
-                            if matches_found >= RESULTS_PER_PAGE {
-                                has_more_matches = true;
-                                return Ok(());
-                            }
+                        let mut matched = matched;
+                        matched.start.column = 0;
+                        matched.start.row =
+                            matched.start.row.saturating_sub(CONTEXT_LINES);
+                        matched.end.row = cmp::min(
+                            snapshot.max_point().row,
+                            matched.end.row + CONTEXT_LINES,
+                        );
+                        matched.end.column = snapshot.line_len(matched.end.row);
 
-                            while let Some(next_range) = ranges.peek() {
-                                if range.end.row >= next_range.start.row {
-                                    range.end = next_range.end;
-                                    ranges.next();
-                                } else {
-                                    break;
-                                }
-                            }
+                        (matched, None)
+                    })
+                    .peekable();
 
-                            if !file_header_written {
-                                writeln!(output, "\n## Matches in {}", path.display())?;
-                                file_header_written = true;
-                            }
+                while let Some((mut range, ancestor_range)) = ranges.next(){
+                    if skips_remaining > 0 {
+                        skips_remaining -= 1;
+                        continue;
+                    }
 
-                            let start_line = range.start.row + 1;
-                            let end_line = range.end.row + 1;
-                            writeln!(output, "\n### Lines {start_line}-{end_line}\n```")?;
-                            output.extend(buffer.text_for_range(range));
-                            output.push_str("\n```\n");
+                    // We'd already found a full page of matches, and we just found one more.
+                    if matches_found >= RESULTS_PER_PAGE {
+                        has_more_matches = true;
+                        break 'outer;
+                    }
 
-                            matches_found += 1;
+                    while let Some((next_range, _)) = ranges.peek() {
+                        if range.end.row >= next_range.start.row {
+                            range.end = next_range.end;
+                            ranges.next();
+                        } else {
+                            break;
                         }
                     }
 
-                    Ok(())
-                })??;
+                    if !file_header_written {
+                        writeln!(output, "\n## Matches in {}", path.display())?;
+                        file_header_written = true;
+                    }
+
+                    let end_row = range.end.row;
+                    writeln!(output, "\n### Lines {}-{}\n```", range.start.row + 1, range.end.row + 1)?;
+                    output.extend(snapshot.text_for_range(range));
+                    output.push_str("\n```\n");
+
+                    if let Some(ancestor_range) = ancestor_range {
+                        if end_row < ancestor_range.end.row {
+                            let remaining_lines = ancestor_range.end.row - end_row;
+                            writeln!(output, "\n{} lines remaining in ancestor node. Read file to see all of it.", remaining_lines)?;
+                        }
+                    }
+
+                    matches_found += 1;
+                }
             }
 
             if matches_found == 0 {
@@ -233,6 +265,7 @@ mod tests {
     use super::*;
     use assistant_tool::Tool;
     use gpui::{AppContext, TestAppContext};
+    use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use settings::SettingsStore;
     use util::path;
@@ -240,6 +273,7 @@ mod tests {
     #[gpui::test]
     async fn test_grep_tool_with_include_pattern(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.executor().allow_parking();
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
@@ -327,6 +361,7 @@ mod tests {
     #[gpui::test]
     async fn test_grep_tool_with_case_sensitivity(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.executor().allow_parking();
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
@@ -401,6 +436,283 @@ mod tests {
         );
     }
 
+    /// Helper function to set up a syntax test environment
+    async fn setup_syntax_test(cx: &mut TestAppContext) -> Entity<Project> {
+        use unindent::Unindent;
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.executor().clone());
+
+        // Create test file with syntax structures
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "test_syntax.rs": r#"
+                    fn top_level_function() {
+                        println!("This is at the top level");
+                    }
+
+                    fn function_with_multiline_args(
+                        first_arg: String,
+                        second_arg: i32,
+                        third_arg: bool,
+                    ) {
+                        println!("Function with multiline args");
+                    }
+
+                    fn function_with_body() {
+                        let x = 5;
+                        let y = 10;
+                        println!("Inside function body");
+                        let z = x + y;
+                    }
+
+                    fn function_with_if_block() {
+                        let condition = true;
+                        if condition {
+                            println!("Inside if block");
+                            let x = 42;
+                        } else {
+                            println!("Inside else block");
+                        }
+                    }
+
+                    fn very_long_function() {
+                        println!("Line 1");
+                        println!("Line 2");
+                        println!("Line 3");
+                        println!("Line 4");
+                        println!("Line 5");
+                        println!("Line 6");
+                        println!("Line 7");
+                        println!("Line 8");
+                        println!("Line 9");
+                        println!("Line 10");
+                        println!("Line 11");
+                        println!("Line 12");
+                        println!("Line 13");
+                        println!("Line 14");
+                        println!("Line 15");
+                        println!("End of long function"); // This should exceed MAX_ANCESTOR_LINES
+                    }
+                "#.unindent().trim(),
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        project.update(cx, |project, _cx| {
+            project.languages().add(rust_lang().into())
+        });
+
+        project
+    }
+
+    #[gpui::test]
+    async fn test_grep_top_level_function(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line at the top level of the file
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "This is at the top level".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### Lines 1-3
+            ```
+            fn top_level_function() {
+                println!("This is at the top level");
+            }
+            ```
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_ancestor_remaining_lines_message(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line in the middle of a long function - should show message about remaining lines
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "Line 5".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### Lines 30-40
+            ```
+            fn very_long_function() {
+                println!("Line 1");
+                println!("Line 2");
+                println!("Line 3");
+                println!("Line 4");
+                println!("Line 5");
+                println!("Line 6");
+                println!("Line 7");
+                println!("Line 8");
+                println!("Line 9");
+                println!("Line 10");
+            ```
+
+            7 lines remaining in ancestor node. Read file to see all of it.
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_function_arguments(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line with a function argument
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "second_arg".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### Lines 5-9
+            ```
+            fn function_with_multiline_args(
+                first_arg: String,
+                second_arg: i32,
+                third_arg: bool,
+            ) {
+            ```
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_function_body(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line inside a function body
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "Inside function body".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### Lines 13-18
+            ```
+            fn function_with_body() {
+                let x = 5;
+                let y = 10;
+                println!("Inside function body");
+                let z = x + y;
+            }
+            ```
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_if_block(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line inside an if block
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "Inside if block".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### Lines 22-25
+            ```
+                if condition {
+                    println!("Inside if block");
+                    let x = 42;
+                } else {
+            ```
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_long_function(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line at the end of a long function
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "End of long function".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### Lines 44-47
+            ```
+                println!("Line 14");
+                println!("Line 15");
+                println!("End of long function"); // This should exceed MAX_ANCESTOR_LINES
+            }
+            ```
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
     async fn run_grep_tool(
         input: serde_json::Value,
         project: Entity<Project>,
@@ -423,5 +735,19 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
         });
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
     }
 }
