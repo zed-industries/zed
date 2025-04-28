@@ -114,6 +114,11 @@ impl HistoryStore {
         self.recently_opened_entries.push(entry);
     }
 
+    pub fn remove_recently_opened_entry(&mut self, id: RecentEntryId) {
+        self.recently_opened_entries
+            .retain(|old_entry| old_entry.id != id);
+    }
+
     pub fn recently_opened_entries(
         &self,
         limit: usize,

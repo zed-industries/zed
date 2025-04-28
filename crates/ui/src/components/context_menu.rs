@@ -1,6 +1,6 @@
 use crate::{
-    Icon, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
-    h_flex, prelude::*, utils::WithRemSize, v_flex,
+    Icon, IconButtonShape, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator,
+    ListSubHeader, h_flex, prelude::*, utils::WithRemSize, v_flex,
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -10,6 +10,8 @@ use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use settings::Settings;
 use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
+
+use super::Tooltip;
 
 pub enum ContextMenuItem {
     Separator,
@@ -47,6 +49,10 @@ pub struct ContextMenuEntry {
     action: Option<Box<dyn Action>>,
     disabled: bool,
     documentation_aside: Option<Rc<dyn Fn(&mut App) -> AnyElement>>,
+    end_slot_icon: Option<IconName>,
+    end_slot_title: Option<SharedString>,
+    end_slot_action: Option<Box<dyn Action>>,
+    end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
 }
 
 impl ContextMenuEntry {
@@ -62,6 +68,10 @@ impl ContextMenuEntry {
             action: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_action: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }
     }
 
@@ -339,6 +349,39 @@ impl ContextMenu {
             action,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_action: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+        }));
+        self
+    }
+
+    pub fn entry_with_end_slot(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_action: Box<dyn Action>,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: None,
+            icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_action: Some(end_slot_action),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
         }));
         self
     }
@@ -362,6 +405,10 @@ impl ContextMenu {
             action,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_action: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -413,6 +460,10 @@ impl ContextMenu {
             icon_color: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_action: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -438,6 +489,10 @@ impl ContextMenu {
             icon_color: None,
             disabled: true,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_action: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -454,6 +509,10 @@ impl ContextMenu {
             icon_color: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_action: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -707,6 +766,10 @@ impl ContextMenu {
             action,
             disabled,
             documentation_aside,
+            end_slot_icon,
+            end_slot_action,
+            end_slot_title,
+            end_slot_handler,
         } = entry;
 
         let handler = handler.clone();
@@ -817,6 +880,49 @@ impl ContextMenu {
                                     )
                                 },
                             ),
+                    )
+                    .when_some(
+                        end_slot_icon
+                            .as_ref()
+                            .zip(end_slot_action.as_ref())
+                            .zip(end_slot_title.as_ref())
+                            .zip(end_slot_handler.as_ref()),
+                        |el, (((icon, action), title), handler)| {
+                            el.end_slot(
+                                IconButton::new("end-slot-icon", *icon)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip({
+                                        let action_context = self.action_context.clone();
+                                        let title = title.clone();
+                                        let action = action.boxed_clone();
+                                        move |window, cx| {
+                                            action_context
+                                                .as_ref()
+                                                .map(|focus| {
+                                                    Tooltip::for_action_in(
+                                                        title.clone(),
+                                                        &*action,
+                                                        focus,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    Tooltip::for_action(
+                                                        title.clone(),
+                                                        &*action,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                        }
+                                    })
+                                    .on_click({
+                                        let handler = handler.clone();
+                                        move |_, window, cx| handler(None, window, cx)
+                                    }),
+                            )
+                        },
                     )
                     .on_click({
                         let context = self.action_context.clone();

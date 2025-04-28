@@ -48,9 +48,9 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AddContextServer, AgentDiff, ExpandMessageEditor, InlineAssistant, NewTextThread, NewThread,
-    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent, ToggleContextPicker,
-    ToggleNavigationMenu,
+    AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
+    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
+    ToggleContextPicker, ToggleNavigationMenu,
 };
 
 pub fn init(cx: &mut App) {
@@ -288,6 +288,7 @@ pub struct AssistantPanel {
     history: Entity<ThreadHistory>,
     assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
+    assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
 }
@@ -418,6 +419,81 @@ impl AssistantPanel {
             }
         });
 
+        cx.defer_in(window, move |this, window, cx| {
+            let panel = cx.weak_entity();
+            let assistant_navigation_menu =
+                ContextMenu::build_persistent(window, cx, move |menu, window, cx| {
+                    let recently_opened = panel.update(cx, |this, cx| {
+                        this.history_store.update(cx, |history_store, cx| {
+                            let active_entry_id = match &this.active_view {
+                                ActiveView::Thread { .. } => Some(RecentEntryId::Thread(
+                                    this.active_thread(cx).read(cx).id().clone(),
+                                )),
+                                ActiveView::PromptEditor { context_editor, .. } => context_editor
+                                    .read(cx)
+                                    .context()
+                                    .read(cx)
+                                    .path()
+                                    .map(|path| RecentEntryId::Context(path.into())),
+                                ActiveView::History | ActiveView::Configuration => None,
+                            };
+                            history_store.recently_opened_entries(
+                                6,
+                                |entry| Some(&entry.id) != active_entry_id.as_ref(),
+                                cx,
+                            )
+                        });
+                    });
+                    if recently_opened.is_empty() {
+                        return menu.action("View All", Box::new(OpenHistory));
+                    }
+                    let mut menu = menu.header("Recently Opened");
+                    for entry in recently_opened.iter() {
+                        menu = menu.entry_with_end_slot(
+                            &entry.title,
+                            None,
+                            {
+                                let panel = panel.clone();
+                                let entry = entry.clone();
+                                move |window, cx| {
+                                    panel
+                                        .update(cx, {
+                                            let entry = entry.clone();
+                                            move |this, cx| match entry.id {
+                                                RecentEntryId::Thread(thread_id) => this
+                                                    .open_thread(&thread_id, window, cx)
+                                                    .detach_and_log_err(cx),
+                                                RecentEntryId::Context(path) => this
+                                                    .open_saved_prompt_editor(path, window, cx)
+                                                    .detach_and_log_err(cx),
+                                            }
+                                        })
+                                        .ok();
+                                }
+                            },
+                            IconName::Close,
+                            "Close Entry".into(),
+                            DeleteRecentlyOpenThread.boxed_clone(),
+                            {
+                                let panel = panel.clone();
+                                let entry = entry.clone();
+                                move |_window, cx| {
+                                    panel
+                                        .update(cx, |this, cx| {
+                                            this.history_store.update(cx, |history_store, _| {
+                                                history_store
+                                                    .remove_recently_opened_entry(entry.id.clone());
+                                            });
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+                    }
+                    menu.separator().action("View All", Box::new(OpenHistory))
+                });
+        });
+
         Self {
             active_view,
             workspace,
@@ -446,6 +522,7 @@ impl AssistantPanel {
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
+            assistant_navigation_menu: None,
             width: None,
             height: None,
         }
@@ -1235,36 +1312,56 @@ impl AssistantPanel {
             .menu({
                 let this = cx.entity();
                 move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                        if recently_opened.is_empty() {
-                            return menu.action("View All", Box::new(OpenHistory));
-                        }
-                        let mut menu = menu.header("Recently Opened");
-                        for entry in recently_opened.iter() {
-                            menu = menu.entry(&entry.title, None, {
-                                let this = this.clone();
-                                let entry = entry.clone();
-                                move |window, cx| {
-                                    this.update(cx, {
-                                        let entry = entry.clone();
-                                        move |this, cx| match entry.id {
-                                            RecentEntryId::Thread(thread_id) => this
-                                                .open_thread(&thread_id, window, cx)
-                                                .detach_and_log_err(cx),
-                                            RecentEntryId::Context(path) => this
-                                                .open_saved_prompt_editor(path, window, cx)
-                                                .detach_and_log_err(cx),
-                                        }
-                                    })
-                                }
-                            });
-                        }
-                        menu.separator().action("View All", Box::new(OpenHistory))
-                    }))
+                    Some(this.update(cx, |this, _| this.assistant_navigation_menu.clone()))
+                    //Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                    //    if recently_opened.is_empty() {
+                    //        return menu.action("View All", Box::new(OpenHistory));
+                    //    }
+                    //    let mut menu = menu.header("Recently Opened");
+                    //    for entry in recently_opened.iter() {
+                    //        menu = menu.entry_with_end_slot(
+                    //            &entry.title,
+                    //            None,
+                    //            {
+                    //                let this = this.clone();
+                    //                let entry = entry.clone();
+                    //                move |window, cx| {
+                    //                    this.update(cx, {
+                    //                        let entry = entry.clone();
+                    //                        move |this, cx| match entry.id {
+                    //                            RecentEntryId::Thread(thread_id) => this
+                    //                                .open_thread(&thread_id, window, cx)
+                    //                                .detach_and_log_err(cx),
+                    //                            RecentEntryId::Context(path) => this
+                    //                                .open_saved_prompt_editor(path, window, cx)
+                    //                                .detach_and_log_err(cx),
+                    //                        }
+                    //                    })
+                    //                }
+                    //            },
+                    //            IconName::Close,
+                    //            "Close Entry".into(),
+                    //            DeleteRecentlyOpenThread.boxed_clone(),
+                    //            {
+                    //                let this = this.clone();
+                    //                let entry = entry.clone();
+                    //                move |_window, cx| {
+                    //                    this.update(cx, |this, cx| {
+                    //                        this.history_store.update(cx, |history_store, _| {
+                    //                            history_store
+                    //                                .remove_recently_opened_entry(entry.id.clone());
+                    //                        });
+                    //                    });
+                    //                }
+                    //            },
+                    //        );
+                    //    }
+                    //    menu.separator().action("View All", Box::new(OpenHistory))
+                    //}))
                 }
             });
 
-        let assistant_menu = PopoverMenu::new("assistant-menu")
+        let agent_extra_menu = PopoverMenu::new("assistant-menu")
             .trigger_with_tooltip(
                 IconButton::new("new", IconName::Ellipsis)
                     .icon_size(IconSize::Small)
@@ -1354,7 +1451,7 @@ impl AssistantPanel {
                                         );
                                     }),
                             )
-                            .child(assistant_menu),
+                            .child(agent_extra_menu),
                     ),
             )
     }

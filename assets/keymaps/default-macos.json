@@ -291,6 +291,7 @@
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-ctrl-a": "agent::ToggleNavigationMenu",
+      "shift-delete": "agent::DeleteRecentlyOpenThread",
       "shift-escape": "agent::ExpandMessageEditor",
       "cmd-e": "agent::ChatMode",
       "cmd-alt-e": "agent::RemoveAllContext"
