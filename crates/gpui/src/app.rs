@@ -24,7 +24,7 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
-use http_client::HttpClient;
+use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
@@ -1890,7 +1890,7 @@ impl HttpClient for NullHttpClient {
         async move { Err(anyhow!("No HttpClient available")) }.boxed()
     }
 
-    fn proxy(&self) -> Option<&http_client::Uri> {
+    fn proxy(&self) -> Option<&Url> {
         None
     }
 
