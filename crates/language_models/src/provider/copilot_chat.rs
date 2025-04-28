@@ -20,7 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -390,8 +391,6 @@ impl CopilotChatLanguageModel {
         &self,
         request: LanguageModelRequest,
     ) -> Result<CopilotChatRequest> {
-        let model = self.model.clone();
-
         let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
         for message in request.messages {
             if let Some(last_message) = request_messages.last_mut() {
@@ -485,9 +484,9 @@ impl CopilotChatLanguageModel {
         Ok(CopilotChatRequest {
             intent: true,
             n: 1,
-            stream: model.uses_streaming(),
+            stream: self.model.uses_streaming(),
             temperature: 0.1,
-            model,
+            model: self.model.id().to_string(),
             messages,
             tools,
             tool_choice: None,

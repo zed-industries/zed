@@ -115,7 +115,7 @@ pub struct Request {
     pub n: usize,
     pub stream: bool,
     pub temperature: f32,
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<ChatMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
@@ -410,8 +410,6 @@ async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Ve
         // models, which are likely the best choice (e.g. gpt-4o rather than gpt-4o-2024-11-20)
         .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
         .collect();
-
-    dbg!(&models);
 
     Ok(models)
 }
