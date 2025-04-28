@@ -5,7 +5,10 @@ use crate::{
 use anyhow::{Result, anyhow};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
-use etagere::BucketedAtlasAllocator;
+use etagere::{
+    BucketedAtlasAllocator,
+    euclid::num::{Ceil, Round},
+};
 use metal::Device;
 use parking_lot::Mutex;
 use std::borrow::Cow;
@@ -140,6 +143,8 @@ impl MetalAtlasState {
             }
         }
 
+        println!("Allocating texture of size {:?}", size);
+
         let texture = self.push_texture(size, texture_kind);
         texture.allocate(size)
     }
@@ -149,16 +154,31 @@ impl MetalAtlasState {
         min_size: Size<DevicePixels>,
         kind: AtlasTextureKind,
     ) -> &mut MetalAtlasTexture {
+        const MIN_SIZE: i32 = 1024;
+        const MAX_SIZE: i32 = 16 * MIN_SIZE;
+
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(1024),
-            height: DevicePixels(1024),
+            width: DevicePixels(MIN_SIZE),
+            height: DevicePixels(MIN_SIZE),
         };
         // Max texture size on all modern Apple GPUs. Anything bigger than that crashes in validateWithDevice.
         const MAX_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(16384),
-            height: DevicePixels(16384),
+            width: DevicePixels(MAX_SIZE),
+            height: DevicePixels(MAX_SIZE),
         };
-        let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
+
+        let mut size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
+
+        // Make sure the size is a multiple of MAX_SIZE, to avoid waste VRAM by creating too many textures.
+        //
+        // In most cases, the `min_size` (This actually size of the imgs, icons or paths etc.), it less than 1024x1024.
+        //
+        // But sometimes, there may have a larger size, for example render a full screen Path and it is resizeable.
+        // In this case, we need to ensure the size is a multiple of MAX_SIZE to avoid creating too many textures
+        // when user resize that Path. Then if we resize the texture to 4k, there will create max 4 textures.
+        size.width = (((size.width.0 + MIN_SIZE) / MIN_SIZE) * MIN_SIZE).into();
+        size.height = (((size.height.0 + MIN_SIZE) / MIN_SIZE) * MIN_SIZE).into();
+
         let texture_descriptor = metal::TextureDescriptor::new();
         texture_descriptor.set_width(size.width.into());
         texture_descriptor.set_height(size.height.into());
@@ -267,6 +287,7 @@ impl MetalAtlasTexture {
             bounds.size.width.into(),
             bounds.size.height.into(),
         );
+        println!("-------------- upload bounds.size: {:?}", bounds.size);
         self.metal_texture.replace_region(
             region,
             0,
