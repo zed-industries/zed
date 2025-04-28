@@ -1107,16 +1107,13 @@ impl AssistantPanel {
                 if is_empty {
                     Label::new(Thread::DEFAULT_SUMMARY.clone())
                         .truncate()
-                        .ml_2()
                         .into_any_element()
                 } else if summary.is_none() {
                     Label::new(LOADING_SUMMARY_PLACEHOLDER)
-                        .ml_2()
                         .truncate()
                         .into_any_element()
                 } else {
                     div()
-                        .ml_2()
                         .w_full()
                         .child(change_title_editor.clone())
                         .into_any_element()
@@ -1133,18 +1130,15 @@ impl AssistantPanel {
                 match summary {
                     None => Label::new(AssistantContext::DEFAULT_SUMMARY.clone())
                         .truncate()
-                        .ml_2()
                         .into_any_element(),
                     Some(summary) => {
                         if summary.done {
                             div()
-                                .ml_2()
                                 .w_full()
                                 .child(title_editor.clone())
                                 .into_any_element()
                         } else {
                             Label::new(LOADING_SUMMARY_PLACEHOLDER)
-                                .ml_2()
                                 .truncate()
                                 .into_any_element()
                         }
