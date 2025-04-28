@@ -11,6 +11,7 @@ use editor::{
     ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, MultiBuffer,
 };
+use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -419,6 +420,25 @@ impl MessageEditor {
         }
     }
 
+    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !cx.has_flag::<NewBillingFeatureFlag>() {
+            return None;
+        }
+
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model.clone())?;
+        if !model.supports_max_mode() {
+            return None;
+        }
+
+        Some(
+            IconButton::new("max-mode", IconName::SquarePlus)
+                .icon_size(IconSize::Small)
+                .into_any_element(),
+        )
+    }
+
     fn render_editor(
         &self,
         font_size: Rems,
@@ -579,6 +599,7 @@ impl MessageEditor {
                                             }),
                                         )
                                     })
+                                    .children(self.render_max_mode_toggle(cx))
                                     .child(self.model_selector.clone())
                                     .map({
                                         let focus_handle = focus_handle.clone();
