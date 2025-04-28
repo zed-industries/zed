@@ -35,10 +35,11 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
-    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator, current_platform, hash, init_app_menus,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle,
+    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
+    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
+    WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
+    init_app_menus,
 };
 
 mod async_context;
@@ -1552,7 +1553,7 @@ impl App {
         ) -> RenderablePromptHandle
         + 'static,
     ) {
-        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)));
     }
 
     /// Reset the prompt builder to the default implementation.
