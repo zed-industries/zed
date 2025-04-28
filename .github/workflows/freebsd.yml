@@ -1,11 +1,11 @@
-name: Test
+name: FreeBSD
 
 on: [push]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    name: A job to run test in FreeBSD
+    name: Build Zed on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
     #   MYTOKEN2: "value2"
@@ -19,7 +19,7 @@ jobs:
           usesh: true
           prepare: |
             pkg install -y \
-              curl git rustup-init cmake llvm pkgconfig protobuf # ibx11 alsa-lib
+              curl git rustup-init cmake llvm protobuf # ibx11 alsa-lib
           run: |
             pwd
             ls -lah
