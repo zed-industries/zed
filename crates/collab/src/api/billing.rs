@@ -1243,9 +1243,9 @@ async fn find_or_create_billing_customer(
     Ok(Some(billing_customer))
 }
 
-const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
+const SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
-pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
+pub fn sync_llm_token_usage_with_stripe_periodically(app: Arc<AppState>) {
     let Some(stripe_billing) = app.stripe_billing.clone() else {
         log::warn!("failed to retrieve Stripe billing object");
         return;
@@ -1260,17 +1260,19 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
         let executor = executor.clone();
         async move {
             loop {
-                sync_with_stripe(&app, &llm_db, &stripe_billing)
+                sync_token_usage_with_stripe(&app, &llm_db, &stripe_billing)
                     .await
                     .context("failed to sync LLM usage to Stripe")
                     .trace_err();
-                executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
+                executor
+                    .sleep(SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL)
+                    .await;
             }
         }
     });
 }
 
-async fn sync_with_stripe(
+async fn sync_token_usage_with_stripe(
     app: &Arc<AppState>,
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
@@ -1306,7 +1308,7 @@ async fn sync_with_stripe(
             .subscribe_to_model(&stripe_subscription_id, &stripe_model)
             .await?;
         stripe_billing
-            .bill_model_usage(&stripe_customer_id, &stripe_model, &event)
+            .bill_model_token_usage(&stripe_customer_id, &stripe_model, &event)
             .await?;
         llm_db.consume_billing_event(event.id).await?;
     }
