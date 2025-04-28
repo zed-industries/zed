@@ -1468,7 +1468,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
             "second.rs": "First line\nSecond line\nThird line\nFourth line",
@@ -1476,10 +1476,10 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-    let project_path = Path::new("/project");
+    let project_path = Path::new(path!("/project"));
     let worktree = project
         .update(cx, |project, cx| project.find_worktree(project_path, cx))
         .expect("This worktree should exist in project")
