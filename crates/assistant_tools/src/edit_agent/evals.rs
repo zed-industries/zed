@@ -70,6 +70,60 @@ fn eval_extract_handle_command_output() {
     );
 }
 
+#[test]
+fn eval_delete_run_git_blame() {
+    let input_file_path = "root/blame.rs";
+    let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
+    let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
+    let edit_description = "Delete the `run_git_blame` function.";
+    eval(
+        100,
+        0.9,
+        EvalInput {
+            conversation: vec![
+                message(
+                    User,
+                    [text(indoc! {"
+                        Read the `{input_file_path}` file and delete `run_git_blame`. Just that
+                        one function, not its usages.
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: None,
+                            end_line: None,
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result("tool_1", "read_file", input_file_content)],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_2",
+                        "edit_file",
+                        EditFileToolInput {
+                            display_description: edit_description.into(),
+                            path: input_file_path.into(),
+                        },
+                    )],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: input_file_content.into(),
+            edit_description: edit_description.into(),
+            expected_output: output_file_content.into(),
+        },
+    );
+}
+
 fn message(
     role: Role,
     contents: impl IntoIterator<Item = MessageContent>,
