@@ -1333,7 +1333,7 @@ impl ActiveThread {
             return;
         };
         let edited_text = state.editor.read(cx).text(cx);
-        self.thread.update(cx, |thread, cx| {
+        let thread_model = self.thread.update(cx, |thread, cx| {
             thread.edit_message(
                 message_id,
                 Role::User,
@@ -1343,9 +1343,10 @@ impl ActiveThread {
             for message_id in self.messages_after(message_id) {
                 thread.delete_message(*message_id, cx);
             }
+            thread.configured_model(cx)
         });
 
-        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+        let Some(model) = thread_model else {
             return;
         };
 

@@ -21,8 +21,8 @@ use language_model::{
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
-    TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
+    StopReason, TokenUsage,
 };
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
@@ -38,8 +38,8 @@ use zed_llm_client::CompletionMode;
 
 use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
-    SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
-    SerializedToolUse, SharedProjectContext,
+    SerializedLanguageModel, SerializedMessage, SerializedMessageSegment, SerializedThread,
+    SerializedToolResult, SerializedToolUse, SharedProjectContext,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
@@ -317,6 +317,7 @@ pub struct Thread {
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
     remaining_turns: u32,
+    configured_model: Option<ConfiguredModel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,6 +336,8 @@ impl Thread {
         system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
     ) -> Self {
+        let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -370,6 +373,7 @@ impl Thread {
             last_auto_capture_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
+            configured_model,
         }
     }
 
@@ -390,6 +394,15 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
+
+        let configured_model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            let model = serialized.model.as_ref()?;
+            let model = SelectedModel {
+                provider: model.provider.clone().into(),
+                model: model.model.clone().into(),
+            };
+            registry.select_model(&model, cx)
+        });
 
         Self {
             id,
@@ -446,6 +459,7 @@ impl Thread {
             last_auto_capture_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
+            configured_model,
         }
     }
 
@@ -483,6 +497,13 @@ impl Thread {
 
     pub fn project_context(&self) -> SharedProjectContext {
         self.project_context.clone()
+    }
+
+    pub fn configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
+        if self.configured_model.is_none() {
+            self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        }
+        self.configured_model.clone()
     }
 
     pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
@@ -943,6 +964,13 @@ impl Thread {
                 request_token_usage: this.request_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_state.clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
+                model: this
+                    .configured_model
+                    .as_ref()
+                    .map(|model| SerializedLanguageModel {
+                        provider: model.provider.id().0.to_string(),
+                        model: model.model.id().0.to_string(),
+                    }),
             })
         })
     }

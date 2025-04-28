@@ -153,6 +153,17 @@ impl MessageEditor {
             }),
         ];
 
+        let model_selector = cx.new(|cx| {
+            AssistantModelSelector::new(
+                fs.clone(),
+                model_selector_menu_handle,
+                editor.focus_handle(cx),
+                ModelType::Default,
+                window,
+                cx,
+            )
+        });
+
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
@@ -165,16 +176,7 @@ impl MessageEditor {
             context_picker_menu_handle,
             context_load_task: None,
             last_loaded_context: None,
-            model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(
-                    fs.clone(),
-                    model_selector_menu_handle,
-                    editor.focus_handle(cx),
-                    ModelType::Default,
-                    window,
-                    cx,
-                )
-            }),
+            model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
             waiting_for_summaries_to_send: false,
