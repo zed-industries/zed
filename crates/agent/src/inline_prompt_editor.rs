@@ -48,6 +48,7 @@ pub struct PromptEditor<T> {
     editor_subscriptions: Vec<Subscription>,
     _context_strip_subscription: Subscription,
     show_rate_limit_notice: bool,
+    pub margin_left: Pixels,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -58,27 +59,7 @@ impl<T: 'static> Render for PromptEditor<T> {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
 
-        let left_gutter_width = match &self.mode {
-            PromptEditorMode::Buffer {
-                id: _,
-                codegen,
-                gutter_dimensions,
-            } => {
-                let codegen = codegen.read(cx);
-
-                if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(&codegen, cx));
-                }
-
-                let gutter_dimensions = gutter_dimensions.lock();
-
-                gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
-            }
-            PromptEditorMode::Terminal { .. } => {
-                // Give the equivalent of the same left-padding that we're using on the right
-                Pixels::from(40.0)
-            }
-        };
+        let left_gutter_width = self.margin_left;
 
         let bottom_padding = match &self.mode {
             PromptEditorMode::Buffer { .. } => Pixels::from(0.),
@@ -794,7 +775,6 @@ pub enum PromptEditorMode {
     Buffer {
         id: InlineAssistId,
         codegen: Entity<BufferCodegen>,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     },
     Terminal {
         id: TerminalInlineAssistId,
@@ -826,7 +806,6 @@ impl InlineAssistId {
 impl PromptEditor<BufferCodegen> {
     pub fn new_buffer(
         id: InlineAssistId,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
@@ -838,11 +817,7 @@ impl PromptEditor<BufferCodegen> {
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
-        let mode = PromptEditorMode::Buffer {
-            id,
-            codegen,
-            gutter_dimensions,
-        };
+        let mode = PromptEditorMode::Buffer { id, codegen };
 
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -904,6 +879,7 @@ impl PromptEditor<BufferCodegen> {
             _context_strip_subscription: context_strip_subscription,
             show_rate_limit_notice: false,
             mode,
+            margin_left: px(0.),
             _phantom: Default::default(),
         };
 
@@ -956,15 +932,6 @@ impl PromptEditor<BufferCodegen> {
     pub fn codegen(&self) -> &Entity<BufferCodegen> {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => codegen,
-            PromptEditorMode::Terminal { .. } => unreachable!(),
-        }
-    }
-
-    pub fn gutter_dimensions(&self) -> &Arc<Mutex<GutterDimensions>> {
-        match &self.mode {
-            PromptEditorMode::Buffer {
-                gutter_dimensions, ..
-            } => gutter_dimensions,
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
@@ -1055,6 +1022,7 @@ impl PromptEditor<TerminalCodegen> {
             _codegen_subscription: codegen_subscription,
             editor_subscriptions: Vec::new(),
             _context_strip_subscription: context_strip_subscription,
+            margin_left: px(40.0),
             mode,
             show_rate_limit_notice: false,
             _phantom: Default::default(),

@@ -453,11 +453,9 @@ impl InlineAssistant {
                 )
             });
 
-            let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
             let prompt_editor = cx.new(|cx| {
                 PromptEditor::new_buffer(
                     assist_id,
-                    gutter_dimensions.clone(),
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
@@ -570,11 +568,9 @@ impl InlineAssistant {
             )
         });
 
-        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new_buffer(
                 assist_id,
-                gutter_dimensions.clone(),
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen.clone(),
@@ -1586,9 +1582,10 @@ fn build_assist_editor_renderer(editor: &Entity<PromptEditor<BufferCodegen>>) ->
     let editor = editor.clone();
 
     Arc::new(move |cx: &mut BlockContext| {
-        let gutter_dimensions = editor.read(cx).gutter_dimensions();
-
-        *gutter_dimensions.lock() = *cx.gutter_dimensions;
+        editor.update(cx, |editor, _| {
+            editor.margin_left =
+                cx.gutter_dimensions.full_width() + (cx.gutter_dimensions.margin / 2.0);
+        });
         editor.clone().into_any_element()
     })
 }
