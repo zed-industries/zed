@@ -9,6 +9,7 @@ use futures::{
 };
 use gpui::{
     AnyWindowHandle, App, AppContext, Entity, StyledText, Task, TextLayout, WeakEntity, Window,
+    prelude::FluentBuilder,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -341,51 +342,51 @@ impl ToolCard for TerminalToolCard {
     }
 }
 
-impl IntoElement for TerminalToolCardElement {
-    type Element = Self;
+// impl IntoElement for TerminalToolCardElement {
+//     type Element = Self;
 
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
+//     fn into_element(self) -> Self::Element {
+//         self
+//     }
+// }
 
-impl Element for TerminalToolCardElement {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
+// impl Element for TerminalToolCardElement {
+//     type RequestLayoutState = ();
+//     type PrepaintState = ();
 
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
+//     fn id(&self) -> Option<ElementId> {
+//         None
+//     }
 
-    fn request_layout(
-        &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        todo!()
-    }
+//     fn request_layout(
+//         &mut self,
+//         id: Option<&gpui::GlobalElementId>,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+//         todo!()
+//     }
 
-    fn prepaint(
-        &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        bounds: gpui::Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self::PrepaintState {
-        todo!()
-    }
+//     fn prepaint(
+//         &mut self,
+//         id: Option<&gpui::GlobalElementId>,
+//         bounds: gpui::Bounds<Pixels>,
+//         request_layout: &mut Self::RequestLayoutState,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> Self::PrepaintState {
+//         todo!()
+//     }
 
-    fn paint(
-        &mut self,
-        id: Option<&gpui::GlobalElementId>,
-        bounds: gpui::Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        todo!()
-    }
-}
+//     fn paint(
+//         &mut self,
+//         id: Option<&gpui::GlobalElementId>,
+//         bounds: gpui::Bounds<Pixels>,
+//         request_layout: &mut Self::RequestLayoutState,
+//         prepaint: &mut Self::PrepaintState,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) {
+//         todo!()
+//     }
+// }
