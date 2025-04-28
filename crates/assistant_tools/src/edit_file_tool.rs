@@ -54,39 +54,6 @@ pub struct EditFileToolInput {
     /// `frontend/db.js`
     /// </example>
     pub path: PathBuf,
-
-    /// Edit instructions that will be interpreted by a less intelligent model,
-    /// which will quickly apply the edits. You should make it clear what the
-    /// edits are, while also minimizing the unchanged code you write. The model
-    /// does not have access to this conversation, so you must make sure the
-    /// instructions are self-contained and do not rely on external context.
-    ///
-    /// You must convey the edits as code and only display how you want the
-    /// final code to look like. Insert `// ... existing code ...` comments in
-    /// your output to represent unchanged code ABOVE, BELOW, and IN BETWEEN
-    /// edited lines. You can also add other comments to explain how certain
-    /// lines must be changed.
-    ///
-    /// Bias towards repeating as few lines of the original file as possible to
-    /// convey the change. However, each edit should contain sufficient context
-    /// of unchanged lines to resolve ambiguity. When you want to delete a piece
-    /// of code, indicate a few lines above and below the code you want to
-    /// delete and surround them with the `// ... existing code ...` marker.
-    ///
-    /// Never forget to include `// ... existing code ...` comments to represent
-    /// unchanged lines, otherwise the small model may not understand the
-    /// context of your edit and will delete important code!
-    ///
-    /// <your_output>
-    /// // ... existing code ...
-    /// FIRST_EDIT
-    /// // ... existing code ...
-    /// SECOND_EDIT
-    /// // ... existing code ...
-    /// THIRD_EDIT
-    /// // ... existing code ...
-    /// </your_output>
-    pub edit_instructions: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -148,7 +115,7 @@ impl Tool for EditFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         window: Option<AnyWindowHandle>,
@@ -191,10 +158,11 @@ impl Tool for EditFileTool {
         let models = LanguageModelRegistry::read_global(cx);
         let model = models
             .available_models(cx)
-            .find(|model| model.id().0 == "gemini-2.0-flash")
+            .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
             .unwrap();
         let provider = models.provider(&model.provider_id()).unwrap();
         let authenticated = provider.authenticate(cx);
+        let messages = messages.to_vec();
 
         // todo!("reuse templates")
         let edit_agent = EditAgent::new(model, action_log, Templates::new());
@@ -212,7 +180,12 @@ impl Tool for EditFileTool {
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             edit_agent
-                .edit(buffer.clone(), input.edit_instructions.clone(), cx)
+                .edit(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    messages,
+                    cx,
+                )
                 .await?;
             let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             project

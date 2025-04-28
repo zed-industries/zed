@@ -6,5 +6,3 @@ Before using this tool:
 
 2. Verify the directory path is correct (only applicable when creating new files):
    - Use the `list_directory` tool to verify the parent directory exists and is the correct location
-
-Group coherent edits together and include all of them in a single call to this tool. Add the full context needed for a small model to understand the edits.
