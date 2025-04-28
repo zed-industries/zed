@@ -254,7 +254,7 @@ impl TabSwitcherDelegate {
                 PaneEvent::AddItem { .. }
                 | PaneEvent::RemovedItem { .. }
                 | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    let query = tab_switcher.picker.read(cx).query(cx);
+                    let query = picker.query(cx);
                     picker.delegate.update_matches(query, window, cx);
                     cx.notify();
                 }),
@@ -290,15 +290,18 @@ impl TabSwitcherDelegate {
             }
         }
 
-
         let matches = if query.is_empty() {
             let history = workspace.read(cx).recently_activated_items(cx);
-            for item in &all_items
-            {
-                eprintln!("{:?} {:?}", item.item.tab_content_text(0, cx), (Reverse(history.get(&item.item.item_id())), item.item_index))
+            for item in &all_items {
+                eprintln!(
+                    "{:?} {:?}",
+                    item.item.tab_content_text(0, cx),
+                    (Reverse(history.get(&item.item.item_id())), item.item_index)
+                )
             }
             eprintln!("");
-            all_items.sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
+            all_items
+                .sort_by_key(|tab| (Reverse(history.get(&tab.item.item_id())), tab.item_index));
             all_items
         } else {
             let candidates = all_items
@@ -490,11 +493,14 @@ impl PickerDelegate for TabSwitcherDelegate {
         let Some(selected_match) = self.matches.get(self.selected_index()) else {
             return;
         };
-        selected_match.pane.update(cx, |pane, cx| {
-            if let Some(index) = pane.index_for_item(selected_match.item.as_ref()) {
-                pane.activate_item(index, true, true, window, cx);
-            }
-        }).ok();
+        selected_match
+            .pane
+            .update(cx, |pane, cx| {
+                if let Some(index) = pane.index_for_item(selected_match.item.as_ref()) {
+                    pane.activate_item(index, true, true, window, cx);
+                }
+            })
+            .ok();
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
