@@ -1432,7 +1432,7 @@ impl LocalLspStore {
                     };
 
                     let Some(language_server) = language_server else {
-                        log::warn!(
+                        log::debug!(
                             "No language server found to format buffer '{:?}'. Skipping",
                             buffer_path_abs.as_path().to_string_lossy()
                         );
