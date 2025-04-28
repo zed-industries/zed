@@ -5,6 +5,7 @@ use client::{Client, UserStore};
 use collections::HashSet;
 use fs::FakeFs;
 use gpui::{AppContext, TestAppContext};
+use indoc::indoc;
 use language_model::{LanguageModelRegistry, LanguageModelToolUse, LanguageModelToolUseId};
 use project::Project;
 use rand::prelude::*;
@@ -20,53 +21,53 @@ fn eval_extract_handle_command_output() {
     let output_file_content = include_str!("evals/fixtures/extract_handle_command_output/after.rs");
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
-            100,
-            0.9,
-            EvalInput {
-                conversation: vec![
-                    message(
-                        User,
-                        [text(format!(
-                            "Read the `{input_file_path}` file and extract a method in
-                            the final stanza of `run_git_blame` to deal with command failures,
-                            call it `handle_command_output`. Add it right next to `run_git_blame` and
-                            copy it verbatim from `run_git_blame`."
-                        ))],
-                    ),
-                    message(
-                        Assistant,
-                        [tool_use(
-                            "tool_1",
-                            "read_file",
-                            ReadFileToolInput {
-                                path: input_file_path.into(),
-                                start_line: None,
-                                end_line: None,
-                            },
-                        )],
-                    ),
-                    message(
-                        User,
-                        [tool_result("tool_1", "read_file", input_file_content)],
-                    ),
-                    message(
-                        Assistant,
-                        [tool_use(
-                            "tool_2",
-                            "edit_file",
-                            EditFileToolInput {
-                                display_description: edit_description.into(),
-                                path: input_file_path.into(),
-                            },
-                        )],
-                    ),
-                ],
-                input_path: input_file_path.into(),
-                input_content: input_file_content.into(),
-                edit_description: edit_description.into(),
-                expected_output: output_file_content.into(),
-            },
-        );
+        100,
+        0.9,
+        EvalInput {
+            conversation: vec![
+                message(
+                    User,
+                    [text(indoc! {"
+                        Read the `{input_file_path}` file and extract a method in
+                        the final stanza of `run_git_blame` to deal with command failures,
+                        call it `handle_command_output`. Add it right next to `run_git_blame` and
+                        copy it verbatim from `run_git_blame`.
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: None,
+                            end_line: None,
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result("tool_1", "read_file", input_file_content)],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_2",
+                        "edit_file",
+                        EditFileToolInput {
+                            display_description: edit_description.into(),
+                            path: input_file_path.into(),
+                        },
+                    )],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: input_file_content.into(),
+            edit_description: edit_description.into(),
+            expected_output: output_file_content.into(),
+        },
+    );
 }
 
 fn message(
