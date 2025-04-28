@@ -11,7 +11,6 @@ use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerDescriptorRegistry, ContextServerTool};
-use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt as _, StreamExt as _};
