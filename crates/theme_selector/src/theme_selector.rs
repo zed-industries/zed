@@ -151,8 +151,8 @@ impl ThemeSelectorDelegate {
             matches,
             original_theme: original_theme.clone(),
             selected_index: 0,
-            selected_theme: None,
             selection_completed: false,
+            selected_theme: None,
             selector,
         };
 
@@ -164,13 +164,21 @@ impl ThemeSelectorDelegate {
         &mut self,
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) -> Option<Arc<Theme>> {
-        self.matches.get(self.selected_index).and_then(|mat| {
-            ThemeRegistry::global(cx)
-                .get(&mat.string)
-                .inspect(|theme| Self::set_theme(theme.clone(), cx))
-                .inspect_err(|error| log::error!("error loading theme {}: {}", mat.string, error))
-                .ok()
-        })
+        if let Some(mat) = self.matches.get(self.selected_index) {
+            let registry = ThemeRegistry::global(cx);
+            match registry.get(&mat.string) {
+                Ok(theme) => {
+                    Self::set_theme(theme.clone(), cx);
+                    Some(theme)
+                }
+                Err(error) => {
+                    log::error!("error loading theme {}: {}", mat.string, error);
+                    None
+                }
+            }
+        } else {
+            None
+        }
     }
 
     fn select_if_matching(&mut self, theme_name: &str) {
