@@ -48,7 +48,7 @@ use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{any::TypeId, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
     ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
@@ -618,6 +618,7 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
+            ContextEvent::SummaryGenerated => {}
             ContextEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(
@@ -2179,13 +2180,8 @@ impl ContextEditor {
         });
     }
 
-    pub fn title(&self, cx: &App) -> Cow<str> {
-        self.context
-            .read(cx)
-            .summary()
-            .map(|summary| summary.text.clone())
-            .map(Cow::Owned)
-            .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
+    pub fn title(&self, cx: &App) -> SharedString {
+        self.context.read(cx).summary_or_default()
     }
 
     fn render_patch_block(
