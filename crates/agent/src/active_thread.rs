@@ -1540,23 +1540,25 @@ impl ActiveThread {
         const RESPONSE_PADDING_X: Pixels = px(18.);
 
         let feedback_container = h_flex()
+            .group("feedback_container")
             .py_2()
             .px(RESPONSE_PADDING_X)
             .gap_1()
             .flex_wrap()
-            .justify_between();
+            .justify_end();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
-                    Label::new(match feedback {
-                        ThreadFeedback::Positive => "Thanks for your feedback!",
-                        ThreadFeedback::Negative => {
-                            "We appreciate your feedback and will use it to improve."
-                        }
-                    })
+                    div().mr_1().visible_on_hover("feedback_container").child(
+                        Label::new(match feedback {
+                            ThreadFeedback::Positive => "Thanks for your feedback!",
+                            ThreadFeedback::Negative => {
+                                "We appreciate your feedback and will use it to improve."
+                            }
+                        })
                     .color(Color::Muted)
                     .size(LabelSize::XSmall)
-                    .truncate(),
+                    .truncate())
                 )
                 .child(
                     h_flex()
@@ -1603,12 +1605,13 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(
-                    Label::new(
-                        "Rating the thread sends all of your current conversation to the Zed team.",
-                    )
-                    .color(Color::Muted)
+                    div().mr_1().visible_on_hover("feedback_container").child(
+                        Label::new(
+                            "Rating the thread sends all of your current conversation to the Zed team.",
+                        )
+                        .color(Color::Muted)
                     .size(LabelSize::XSmall)
-                    .truncate(),
+                    .truncate())
                 )
                 .child(
                     h_flex()
