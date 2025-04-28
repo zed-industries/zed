@@ -352,12 +352,18 @@ impl AssistantConfiguration {
                                             }
                                             ToggleState::Selected => {
                                                 // Check if this server is already starting
-                                                if self.starting_servers.get(&server_id).copied().unwrap_or(false) {
+                                                if self
+                                                    .starting_servers
+                                                    .get(&server_id)
+                                                    .copied()
+                                                    .unwrap_or(false)
+                                                {
                                                     return;
                                                 }
 
                                                 // Mark server as starting
-                                                self.starting_servers.insert(server_id.clone(), true);
+                                                self.starting_servers
+                                                    .insert(server_id.clone(), true);
 
                                                 cx.spawn({
                                                     let context_server_manager =
@@ -381,8 +387,10 @@ impl AssistantConfiguration {
 
                                                         // Mark server as no longer starting
                                                         this.update(cx, |this, _cx| {
-                                                            this.starting_servers.remove(&server_id);
-                                                        }).ok();
+                                                            this.starting_servers
+                                                                .remove(&server_id);
+                                                        })
+                                                        .ok();
                                                     }
                                                 })
                                                 .detach();
