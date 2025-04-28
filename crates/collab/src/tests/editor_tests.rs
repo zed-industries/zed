@@ -680,6 +680,7 @@ async fn test_collaborating_with_code_actions(
         editor.toggle_code_actions(
             &ToggleCodeActions {
                 deployed_from_indicator: None,
+                quick_launch: false,
             },
             window,
             cx,
@@ -694,15 +695,7 @@ async fn test_collaborating_with_code_actions(
     // Confirming the code action will trigger a resolve request.
     let confirm_action = editor_b
         .update_in(cx_b, |editor, window, cx| {
-            Editor::confirm_code_action(
-                editor,
-                &ConfirmCodeAction {
-                    item_ix: Some(0),
-                    from_mouse_context_menu: false,
-                },
-                window,
-                cx,
-            )
+            Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, window, cx)
         })
         .unwrap();
     fake_language_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
@@ -1552,6 +1545,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    show_value_hints: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
                     show_type_hints: true,
@@ -1567,6 +1561,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1786,6 +1781,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: false,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1802,6 +1798,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,

@@ -11,7 +11,7 @@ use language::{
     proto::{deserialize_anchor, serialize_anchor},
 };
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
-use settings::{InvalidSettingsError, SettingsLocation, TaskKind};
+use settings::{InvalidSettingsError, SettingsLocation};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
@@ -264,7 +264,6 @@ impl TaskStore {
         &self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
-        task_type: TaskKind,
         cx: &mut Context<Self>,
     ) -> Result<(), InvalidSettingsError> {
         let task_inventory = match self {
@@ -276,7 +275,26 @@ impl TaskStore {
             .filter(|json| !json.is_empty());
 
         task_inventory.update(cx, |inventory, _| {
-            inventory.update_file_based_tasks(location, raw_tasks_json, task_type)
+            inventory.update_file_based_tasks(location, raw_tasks_json)
+        })
+    }
+
+    pub(super) fn update_user_debug_scenarios(
+        &self,
+        location: TaskSettingsLocation<'_>,
+        raw_tasks_json: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), InvalidSettingsError> {
+        let task_inventory = match self {
+            TaskStore::Functional(state) => &state.task_inventory,
+            TaskStore::Noop => return Ok(()),
+        };
+        let raw_tasks_json = raw_tasks_json
+            .map(|json| json.trim())
+            .filter(|json| !json.is_empty());
+
+        task_inventory.update(cx, |inventory, _| {
+            inventory.update_file_based_scenarios(location, raw_tasks_json)
         })
     }
 }

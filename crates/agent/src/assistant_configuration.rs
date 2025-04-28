@@ -9,11 +9,14 @@ use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use fs::Fs;
-use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
+use gpui::{
+    Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription,
+};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use settings::{Settings, update_settings_file};
 use ui::{
-    Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip, prelude::*,
+    Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
+    Switch, SwitchColor, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -31,6 +34,8 @@ pub struct AssistantConfiguration {
     expanded_context_server_tools: HashMap<Arc<str>, bool>,
     tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
+    scroll_handle: ScrollHandle,
+    scrollbar_state: ScrollbarState,
 }
 
 impl AssistantConfiguration {
@@ -60,6 +65,9 @@ impl AssistantConfiguration {
             },
         );
 
+        let scroll_handle = ScrollHandle::new();
+        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
+
         let mut this = Self {
             fs,
             focus_handle,
@@ -68,6 +76,8 @@ impl AssistantConfiguration {
             expanded_context_server_tools: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
+            scroll_handle,
+            scrollbar_state,
         };
         this.build_provider_configuration_views(window, cx);
         this
@@ -109,7 +119,7 @@ pub enum AssistantConfigurationEvent {
 impl EventEmitter<AssistantConfigurationEvent> for AssistantConfiguration {}
 
 impl AssistantConfiguration {
-    fn render_provider_configuration(
+    fn render_provider_configuration_block(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut Context<Self>,
@@ -122,7 +132,11 @@ impl AssistantConfiguration {
             .cloned();
 
         v_flex()
+            .pt_3()
+            .pb_1()
             .gap_1p5()
+            .border_t_1()
+            .border_color(cx.theme().colors().border.opacity(0.6))
             .child(
                 h_flex()
                     .justify_between()
@@ -134,7 +148,7 @@ impl AssistantConfiguration {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new(provider_name.clone())),
+                            .child(Label::new(provider_name.clone()).size(LabelSize::Large)),
                     )
                     .when(provider.is_authenticated(cx), |parent| {
                         parent.child(
@@ -159,39 +173,54 @@ impl AssistantConfiguration {
                         )
                     }),
             )
+            .map(|parent| match configuration_view {
+                Some(configuration_view) => parent.child(configuration_view),
+                None => parent.child(div().child(Label::new(format!(
+                    "No configuration view for {provider_name}",
+                )))),
+            })
+    }
+
+    fn render_provider_configuration_section(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let providers = LanguageModelRegistry::read_global(cx).providers();
+
+        v_flex()
+            .p(DynamicSpacing::Base16.rems(cx))
+            .pr(DynamicSpacing::Base20.rems(cx))
+            .gap_4()
+            .flex_1()
             .child(
-                div()
-                    .p(DynamicSpacing::Base08.rems(cx))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .rounded_sm()
-                    .map(|parent| match configuration_view {
-                        Some(configuration_view) => parent.child(configuration_view),
-                        None => parent.child(div().child(Label::new(format!(
-                            "No configuration view for {provider_name}",
-                        )))),
-                    }),
+                v_flex()
+                    .gap_0p5()
+                    .child(Headline::new("LLM Providers"))
+                    .child(
+                        Label::new("Add at least one provider to use AI-powered features.")
+                            .color(Color::Muted),
+                    ),
+            )
+            .children(
+                providers
+                    .into_iter()
+                    .map(|provider| self.render_provider_configuration_block(&provider, cx)),
             )
     }
 
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
-        const HEADING: &str = "Allow running tools without asking for confirmation";
+        const HEADING: &str = "Allow running editing tools without asking for confirmation";
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
+            .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2()
             .flex_1()
-            .child(Headline::new("General Settings").size(HeadlineSize::Small))
+            .child(Headline::new("General Settings"))
             .child(
                 h_flex()
-                    .p_2p5()
-                    .rounded_sm()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
                     .gap_4()
                     .justify_between()
                     .flex_wrap()
@@ -207,6 +236,7 @@ impl AssistantConfiguration {
                             "always-allow-tool-actions-switch",
                             always_allow_tool_actions.into(),
                         )
+                        .color(SwitchColor::Accent)
                         .on_click({
                             let fs = self.fs.clone();
                             move |state, _window, cx| {
@@ -233,15 +263,13 @@ impl AssistantConfiguration {
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
+            .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2()
             .flex_1()
             .child(
                 v_flex()
                     .gap_0p5()
-                    .child(
-                        Headline::new("Model Context Protocol (MCP) Servers")
-                            .size(HeadlineSize::Small),
-                    )
+                    .child(Headline::new("Model Context Protocol (MCP) Servers"))
                     .child(Label::new(SUBHEADING).color(Color::Muted)),
             )
             .children(context_servers.into_iter().map(|context_server| {
@@ -262,9 +290,9 @@ impl AssistantConfiguration {
                 v_flex()
                     .id(SharedString::from(context_server.id()))
                     .border_1()
-                    .rounded_sm()
+                    .rounded_md()
                     .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
+                    .bg(cx.theme().colors().background.opacity(0.25))
                     .child(
                         h_flex()
                             .p_1()
@@ -305,41 +333,44 @@ impl AssistantConfiguration {
                                     ),
                             )
                             .child(
-                                Switch::new("context-server-switch", is_running.into()).on_click({
-                                    let context_server_manager =
-                                        self.context_server_manager.clone();
-                                    let context_server = context_server.clone();
-                                    move |state, _window, cx| match state {
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            context_server_manager.update(cx, |this, cx| {
-                                                this.stop_server(context_server.clone(), cx)
-                                                    .log_err();
-                                            });
-                                        }
-                                        ToggleState::Selected => {
-                                            cx.spawn({
-                                                let context_server_manager =
-                                                    context_server_manager.clone();
-                                                let context_server = context_server.clone();
-                                                async move |cx| {
-                                                    if let Some(start_server_task) =
-                                                        context_server_manager
-                                                            .update(cx, |this, cx| {
-                                                                this.start_server(
-                                                                    context_server,
-                                                                    cx,
-                                                                )
-                                                            })
-                                                            .log_err()
-                                                    {
-                                                        start_server_task.await.log_err();
+                                Switch::new("context-server-switch", is_running.into())
+                                    .color(SwitchColor::Accent)
+                                    .on_click({
+                                        let context_server_manager =
+                                            self.context_server_manager.clone();
+                                        let context_server = context_server.clone();
+                                        move |state, _window, cx| match state {
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    this.stop_server(context_server.clone(), cx)
+                                                        .log_err();
+                                                });
+                                            }
+                                            ToggleState::Selected => {
+                                                cx.spawn({
+                                                    let context_server_manager =
+                                                        context_server_manager.clone();
+                                                    let context_server = context_server.clone();
+                                                    async move |cx| {
+                                                        if let Some(start_server_task) =
+                                                            context_server_manager
+                                                                .update(cx, |this, cx| {
+                                                                    this.start_server(
+                                                                        context_server,
+                                                                        cx,
+                                                                    )
+                                                                })
+                                                                .log_err()
+                                                        {
+                                                            start_server_task.await.log_err();
+                                                        }
                                                     }
-                                                }
-                                            })
-                                            .detach();
+                                                })
+                                                .detach();
+                                            }
                                         }
-                                    }
-                                }),
+                                    }),
                             ),
                     )
                     .map(|parent| {
@@ -347,34 +378,28 @@ impl AssistantConfiguration {
                             return parent;
                         }
 
-                        parent.child(v_flex().children(tools.into_iter().enumerate().map(
-                            |(ix, tool)| {
+                        parent.child(v_flex().py_1p5().px_1().gap_1().children(
+                            tools.into_iter().enumerate().map(|(ix, tool)| {
                                 h_flex()
-                                    .id("tool-item")
-                                    .pl_2()
-                                    .pr_1()
-                                    .py_1()
+                                    .id(("tool-item", ix))
+                                    .px_1()
                                     .gap_2()
                                     .justify_between()
-                                    .when(ix < tool_count - 1, |element| {
-                                        element
-                                            .border_b_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                    })
+                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                    .rounded_sm()
                                     .child(
                                         Label::new(tool.name())
                                             .buffer_font(cx)
                                             .size(LabelSize::Small),
                                     )
                                     .child(
-                                        IconButton::new(("tool-description", ix), IconName::Info)
-                                            .shape(ui::IconButtonShape::Square)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Ignored)
-                                            .tooltip(Tooltip::text(tool.description())),
+                                        Icon::new(IconName::Info)
+                                            .size(IconSize::Small)
+                                            .color(Color::Ignored),
                                     )
-                            },
-                        )))
+                                    .tooltip(Tooltip::text(tool.description()))
+                            }),
+                        ))
                     })
             }))
             .child(
@@ -383,7 +408,7 @@ impl AssistantConfiguration {
                     .gap_2()
                     .child(
                         h_flex().w_full().child(
-                            Button::new("add-context-server", "Add MCPs Directly")
+                            Button::new("add-context-server", "Add Custom Server")
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::ModalSurface)
                                 .full_width()
@@ -426,39 +451,51 @@ impl AssistantConfiguration {
 
 impl Render for AssistantConfiguration {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
-
         v_flex()
             .id("assistant-configuration")
             .key_context("AgentConfiguration")
             .track_focus(&self.focus_handle(cx))
-            .bg(cx.theme().colors().panel_background)
+            .relative()
             .size_full()
-            .overflow_y_scroll()
-            .child(self.render_command_permission(cx))
-            .child(Divider::horizontal().color(DividerColor::Border))
-            .child(self.render_context_servers_section(cx))
-            .child(Divider::horizontal().color(DividerColor::Border))
+            .pb_8()
+            .bg(cx.theme().colors().panel_background)
             .child(
                 v_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .mt_1()
-                    .gap_6()
-                    .flex_1()
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(Headline::new("LLM Providers").size(HeadlineSize::Small))
-                            .child(
-                                Label::new("Add at least one provider to use AI-powered features.")
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .children(
-                        providers
-                            .into_iter()
-                            .map(|provider| self.render_provider_configuration(&provider, cx)),
-                    ),
+                    .id("assistant-configuration-content")
+                    .track_scroll(&self.scroll_handle)
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(self.render_command_permission(cx))
+                    .child(Divider::horizontal().color(DividerColor::Border))
+                    .child(self.render_context_servers_section(cx))
+                    .child(Divider::horizontal().color(DividerColor::Border))
+                    .child(self.render_provider_configuration_section(cx)),
+            )
+            .child(
+                div()
+                    .id("assistant-configuration-scrollbar")
+                    .occlude()
+                    .absolute()
+                    .right(px(3.))
+                    .top_0()
+                    .bottom_0()
+                    .pb_6()
+                    .w(px(12.))
+                    .cursor_default()
+                    .on_mouse_move(cx.listener(|_, _, _window, cx| {
+                        cx.notify();
+                        cx.stop_propagation()
+                    }))
+                    .on_hover(|_, _window, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_any_mouse_down(|_, _window, cx| {
+                        cx.stop_propagation();
+                    })
+                    .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
+                        cx.notify();
+                    }))
+                    .children(Scrollbar::vertical(self.scrollbar_state.clone())),
             )
     }
 }

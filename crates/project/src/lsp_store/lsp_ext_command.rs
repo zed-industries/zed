@@ -393,6 +393,7 @@ impl lsp::request::Request for Runnables {
 #[serde(rename_all = "camelCase")]
 pub struct RunnablesParams {
     pub text_document: lsp::TextDocumentIdentifier,
+    #[serde(default)]
     pub position: Option<lsp::Position>,
 }
 
@@ -400,7 +401,7 @@ pub struct RunnablesParams {
 #[serde(rename_all = "camelCase")]
 pub struct Runnable {
     pub label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<lsp::LocationLink>,
     pub kind: RunnableKind,
     pub args: RunnableArgs,
@@ -424,26 +425,30 @@ pub enum RunnableKind {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CargoRunnableArgs {
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub environment: HashMap<String, String>,
     pub cwd: PathBuf,
     /// Command to be executed instead of cargo
+    #[serde(default)]
     pub override_cargo: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<PathBuf>,
     // command, --package and --lib stuff
+    #[serde(default)]
     pub cargo_args: Vec<String>,
     // stuff after --
+    #[serde(default)]
     pub executable_args: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellRunnableArgs {
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub environment: HashMap<String, String>,
     pub cwd: PathBuf,
     pub program: String,
+    #[serde(default)]
     pub args: Vec<String>,
 }
 
@@ -531,7 +536,31 @@ impl LspCommand for GetLspRunnables {
                     task_template.args.extend(cargo.cargo_args);
                     if !cargo.executable_args.is_empty() {
                         task_template.args.push("--".to_string());
-                        task_template.args.extend(cargo.executable_args);
+                        task_template.args.extend(
+                            cargo
+                                .executable_args
+                                .into_iter()
+                                // rust-analyzer's doctest data may be smth. like
+                                // ```
+                                // command: "cargo",
+                                // args: [
+                                //     "test",
+                                //     "--doc",
+                                //     "--package",
+                                //     "cargo-output-parser",
+                                //     "--",
+                                //     "X<T>::new",
+                                //     "--show-output",
+                                // ],
+                                // ```
+                                // and `X<T>::new` will cause troubles if not escaped properly, as later
+                                // the task runs as `$SHELL -i -c "cargo test ..."`.
+                                //
+                                // We cannot escape all shell arguments unconditionally, as we use this for ssh commands, which may involve paths starting with `~`.
+                                // That bit is not auto-expanded when using single quotes.
+                                // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
+                                .map(|extra_arg| format!("'{extra_arg}'")),
+                        );
                     }
                 }
                 RunnableArgs::Shell(shell) => {

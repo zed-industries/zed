@@ -1,8 +1,7 @@
 use adapters::latest_github_release;
-use dap::adapters::TcpArguments;
+use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::AsyncApp;
-use std::path::PathBuf;
-use task::DebugTaskDefinition;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::*;
 
@@ -19,20 +18,18 @@ impl PhpDebugAdapter {
         config: &DebugTaskDefinition,
     ) -> Result<dap::StartDebuggingRequestArguments> {
         match &config.request {
-            dap::DebugRequestType::Attach(_) => {
+            dap::DebugRequest::Attach(_) => {
                 anyhow::bail!("php adapter does not support attaching")
             }
-            dap::DebugRequestType::Launch(launch_config) => {
-                Ok(dap::StartDebuggingRequestArguments {
-                    configuration: json!({
-                        "program": launch_config.program,
-                        "cwd": launch_config.cwd,
-                        "args": launch_config.args,
-                        "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
-                    }),
-                    request: config.request.to_dap(),
-                })
-            }
+            dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
+                configuration: json!({
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                    "args": launch_config.args,
+                    "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
+                }),
+                request: config.request.to_dap(),
+            }),
         }
     }
 }
@@ -94,24 +91,26 @@ impl DebugAdapter for PhpDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delegate
                 .node_runtime()
                 .binary_path()
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                format!("--server={}", port).into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--server={}", port),
+            ],
             connection: Some(TcpArguments {
                 port,
                 host,
                 timeout,
             }),
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })
     }

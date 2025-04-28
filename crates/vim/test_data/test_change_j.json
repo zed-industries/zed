@@ -14,3 +14,7 @@
 {"Key":"c"}
 {"Key":"j"}
 {"Get":{"state":"The quick\nbrown fox\nˇ","mode":"Normal"}}
+{"Put":{"state":"The quick\n  ˇbrown fox\n  jumps over"}}
+{"Key":"c"}
+{"Key":"j"}
+{"Get":{"state":"The quick\n  ˇ","mode":"Insert"}}

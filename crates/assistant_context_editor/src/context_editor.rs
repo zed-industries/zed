@@ -8,8 +8,8 @@ use assistant_slash_commands::{
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
-    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
+    ProposedChangeLocation, ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
@@ -39,7 +39,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType, ToggleModelSelector,
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -155,7 +155,8 @@ pub trait AssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -297,6 +298,7 @@ impl ContextEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
+                    ModelType::Default,
                     window,
                     cx,
                 )
@@ -1800,23 +1802,45 @@ impl ContextEditor {
             return;
         };
 
-        let Some(creases) = selections_creases(workspace, cx) else {
+        let Some((selections, buffer)) = maybe!({
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))?;
+
+            let buffer = editor.read(cx).buffer().clone();
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let selections = editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .all_adjusted(cx)
+                    .into_iter()
+                    .filter_map(|s| {
+                        (!s.is_empty())
+                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            Some((selections, buffer))
+        }) else {
             return;
         };
 
-        if creases.is_empty() {
+        if selections.is_empty() {
             return;
         }
 
-        assistant_panel_delegate.quote_selection(workspace, creases, window, cx);
+        assistant_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
-    pub fn quote_creases(
+    pub fn quote_ranges(
         &mut self,
-        creases: Vec<(String, String)>,
+        ranges: Vec<Range<Point>>,
+        snapshot: MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let creases = selections_creases(ranges, snapshot, cx);
+
         self.editor.update(cx, |editor, cx| {
             editor.insert("\n", window, cx);
             for (text, crease_title) in creases {
@@ -2065,7 +2089,7 @@ impl ContextEditor {
                         continue;
                     };
                     let image_id = image.id();
-                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+                    let image_task = LanguageModelImage::from_image(Arc::new(image), cx).shared();
 
                     for image_position in image_positions.iter() {
                         context.insert_content(

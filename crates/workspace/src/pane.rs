@@ -44,8 +44,8 @@ use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
     IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    PopoverMenu, PopoverMenuHandle, ScrollableHandle, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
 
@@ -2147,6 +2147,7 @@ impl Pane {
                 detail: Some(detail),
                 selected: is_active,
                 preview: is_preview,
+                deemphasized: !self.has_focus(window, cx),
             },
             window,
             cx,
@@ -2662,10 +2663,20 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
+                let content_width = self
+                    .tab_bar_scroll_handle
+                    .content_size()
+                    .map(|content_size| content_size.size.width)
+                    .unwrap_or(px(0.));
+                let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
+                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                let is_scrollable = content_width > viewport_width;
+                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
                 h_flex()
                     .children(pinned_tabs)
-                    .border_r_2()
-                    .border_color(cx.theme().colors().border)
+                    .when(is_scrollable && is_scrolled, |this| {
+                        this.border_r_1().border_color(cx.theme().colors().border)
+                    })
             }))
             .child(
                 h_flex()
@@ -3677,6 +3688,7 @@ impl Render for DraggedTab {
                 detail: Some(self.detail),
                 selected: false,
                 preview: false,
+                deemphasized: false,
             },
             window,
             cx,

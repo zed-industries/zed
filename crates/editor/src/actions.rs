@@ -78,6 +78,10 @@ pub struct ToggleCodeActions {
     #[serde(default)]
     #[serde(skip)]
     pub deployed_from_indicator: Option<DisplayRow>,
+    // Run first available task if there is only one.
+    #[serde(default)]
+    #[serde(skip)]
+    pub quick_launch: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -99,9 +103,6 @@ pub struct ComposeCompletion {
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
-    #[serde(default)]
-    #[serde(skip)]
-    pub from_mouse_context_menu: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -306,6 +307,8 @@ actions!(
         GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
+        GoToNextChange,
+        GoToPreviousChange,
         GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
@@ -420,6 +423,7 @@ actions!(
         OpenGitBlameCommit,
         ToggleIndentGuides,
         ToggleInlayHints,
+        ToggleInlineValues,
         ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,

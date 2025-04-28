@@ -1,4 +1,5 @@
 use collections::HashMap;
+use dap::Capabilities;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{Axis, Context, Entity, EntityId, Focusable, Subscription, WeakEntity, Window};
 use project::Project;
@@ -8,20 +9,46 @@ use util::ResultExt;
 use workspace::{Member, Pane, PaneAxis, Workspace};
 
 use crate::session::running::{
-    self, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
-    module_list::ModuleList, stack_frame_list::StackFrameList, variable_list::VariableList,
+    self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
+    loaded_source_list::LoadedSourceList, module_list::ModuleList,
+    stack_frame_list::StackFrameList, variable_list::VariableList,
 };
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Hash, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum DebuggerPaneItem {
     Console,
     Variables,
     BreakpointList,
     Frames,
     Modules,
+    LoadedSources,
+    Terminal,
 }
 
 impl DebuggerPaneItem {
+    pub(crate) fn all() -> &'static [DebuggerPaneItem] {
+        static VARIANTS: &[DebuggerPaneItem] = &[
+            DebuggerPaneItem::Console,
+            DebuggerPaneItem::Variables,
+            DebuggerPaneItem::BreakpointList,
+            DebuggerPaneItem::Frames,
+            DebuggerPaneItem::Modules,
+            DebuggerPaneItem::LoadedSources,
+            DebuggerPaneItem::Terminal,
+        ];
+        VARIANTS
+    }
+
+    pub(crate) fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        match self {
+            DebuggerPaneItem::Modules => capabilities.supports_modules_request.unwrap_or_default(),
+            DebuggerPaneItem::LoadedSources => capabilities
+                .supports_loaded_sources_request
+                .unwrap_or_default(),
+            _ => true,
+        }
+    }
+
     pub(crate) fn to_shared_string(self) -> SharedString {
         match self {
             DebuggerPaneItem::Console => SharedString::new_static("Console"),
@@ -29,7 +56,15 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::BreakpointList => SharedString::new_static("Breakpoints"),
             DebuggerPaneItem::Frames => SharedString::new_static("Frames"),
             DebuggerPaneItem::Modules => SharedString::new_static("Modules"),
+            DebuggerPaneItem::LoadedSources => SharedString::new_static("Sources"),
+            DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
         }
+    }
+}
+
+impl From<DebuggerPaneItem> for SharedString {
+    fn from(item: DebuggerPaneItem) -> Self {
+        item.to_shared_string()
     }
 }
 
@@ -136,6 +171,8 @@ pub(crate) fn deserialize_pane_layout(
     module_list: &Entity<ModuleList>,
     console: &Entity<Console>,
     breakpoint_list: &Entity<BreakpointList>,
+    loaded_sources: &Entity<LoadedSourceList>,
+    terminal: &Entity<DebugTerminal>,
     subscriptions: &mut HashMap<EntityId, Subscription>,
     window: &mut Window,
     cx: &mut Context<RunningState>,
@@ -157,6 +194,8 @@ pub(crate) fn deserialize_pane_layout(
                     module_list,
                     console,
                     breakpoint_list,
+                    loaded_sources,
+                    terminal,
                     subscriptions,
                     window,
                     cx,
@@ -191,7 +230,7 @@ pub(crate) fn deserialize_pane_layout(
                 .iter()
                 .map(|child| match child {
                     DebuggerPaneItem::Frames => Box::new(SubView::new(
-                        pane.focus_handle(cx),
+                        stack_frame_list.focus_handle(cx),
                         stack_frame_list.clone().into(),
                         DebuggerPaneItem::Frames,
                         None,
@@ -212,13 +251,19 @@ pub(crate) fn deserialize_pane_layout(
                         cx,
                     )),
                     DebuggerPaneItem::Modules => Box::new(SubView::new(
-                        pane.focus_handle(cx),
+                        module_list.focus_handle(cx),
                         module_list.clone().into(),
                         DebuggerPaneItem::Modules,
                         None,
                         cx,
                     )),
-
+                    DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
+                        loaded_sources.focus_handle(cx),
+                        loaded_sources.clone().into(),
+                        DebuggerPaneItem::LoadedSources,
+                        None,
+                        cx,
+                    )),
                     DebuggerPaneItem::Console => Box::new(SubView::new(
                         pane.focus_handle(cx),
                         console.clone().into(),
@@ -231,6 +276,13 @@ pub(crate) fn deserialize_pane_layout(
                                     .unwrap_or_default()
                             }
                         })),
+                        cx,
+                    )),
+                    DebuggerPaneItem::Terminal => Box::new(SubView::new(
+                        pane.focus_handle(cx),
+                        terminal.clone().into(),
+                        DebuggerPaneItem::Terminal,
+                        None,
                         cx,
                     )),
                 })

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use assistant_tool::{Tool, ToolWorkingSet, ToolWorkingSetEvent};
+use assistant_tool::{Tool, ToolSource, ToolWorkingSet, ToolWorkingSetEvent};
 use collections::HashMap;
 use gpui::{App, Context, Entity, IntoElement, Render, Subscription, Window};
 use language_model::{LanguageModel, LanguageModelToolSchemaFormat};
@@ -73,7 +73,12 @@ impl Render for IncompatibleToolsTooltip {
                         .children(
                             self.incompatible_tools
                                 .iter()
-                                .map(|tool| Label::new(tool.name()).size(LabelSize::Small).buffer_font(cx)),
+                                .map(|tool| h_flex().gap_4().child(Label::new(tool.name()).size(LabelSize::Small)).map(|parent|
+                                    match tool.source() {
+                                        ToolSource::Native => parent,
+                                        ToolSource::ContextServer { id } => parent.child(Label::new(id).size(LabelSize::Small).color(Color::Muted)),
+                                    }
+                                )),
                         ),
                 )
                 .child(Label::new("What To Do Instead").size(LabelSize::Small))

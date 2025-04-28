@@ -49,11 +49,7 @@ messages!(
     (ChannelMessageUpdate, Foreground),
     (CloseBuffer, Foreground),
     (Commit, Background),
-    (ComputeEmbeddings, Background),
-    (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountLanguageModelTokens, Background),
-    (CountLanguageModelTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -82,8 +78,6 @@ messages!(
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
-    (GetCachedEmbeddings, Background),
-    (GetCachedEmbeddingsResponse, Background),
     (GetChannelMembers, Foreground),
     (GetChannelMembersResponse, Foreground),
     (GetChannelMessages, Background),
@@ -302,6 +296,10 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
+    (GetDebugAdapterBinary, Background),
+    (DebugAdapterBinary, Background),
+    (RunDebugLocators, Background),
+    (DebugRequest, Background),
 );
 
 request_messages!(
@@ -315,7 +313,6 @@ request_messages!(
     (CancelCall, Ack),
     (Commit, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (ComputeEmbeddings, ComputeEmbeddingsResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -328,7 +325,6 @@ request_messages!(
     (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
-    (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
     (GetChannelMembers, GetChannelMembersResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannelMessagesById, GetChannelMessagesResponse),
@@ -376,7 +372,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
@@ -460,6 +455,8 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
+    (GetDebugAdapterBinary, DebugAdapterBinary),
+    (RunDebugLocators, DebugRequest),
 );
 
 entity_messages!(
@@ -579,6 +576,8 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
+    RunDebugLocators,
+    GetDebugAdapterBinary,
 );
 
 entity_messages!(

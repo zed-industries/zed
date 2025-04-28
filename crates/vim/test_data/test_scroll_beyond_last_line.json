@@ -1,6 +1,5 @@
 {"SetOption":{"value":"scrolloff=3"}}
 {"SetOption":{"value":"lines=12"}}
-{"SetOption":{"value":"scrolloff=0"}}
 {"Put":{"state":"ˇaa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz"}}
 {"Key":"shift-g"}
 {"Key":"k"}
@@ -10,4 +9,4 @@
 {"Key":"shift-g"}
 {"Get":{"state":"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nˇzz","mode":"Normal"}}
 {"Key":"ctrl-u"}
-{"Get":{"state":"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nˇuu\nvv\nww\nxx\nyy\nzz","mode":"Normal"}}
+{"Get":{"state":"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nˇrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz","mode":"Normal"}}

@@ -1270,7 +1270,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/e".as_ref(), true, cx)
+                .create_entry("a/e".as_ref(), true, None, cx)
         })
         .await
         .unwrap()
@@ -1319,7 +1319,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/d.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1353,7 +1353,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/d.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/d.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1373,7 +1373,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("a/b/c/e.txt".as_ref(), false, cx)
+                .create_entry("a/b/c/e.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1391,7 +1391,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .update(cx, |tree, cx| {
             tree.as_local_mut()
                 .unwrap()
-                .create_entry("d/e/f/g.txt".as_ref(), false, cx)
+                .create_entry("d/e/f/g.txt".as_ref(), false, None, cx)
         })
         .await
         .unwrap()
@@ -1739,7 +1739,7 @@ fn randomly_mutate_worktree(
                     if is_dir { "dir" } else { "file" },
                     child_path,
                 );
-                let task = worktree.create_entry(child_path, is_dir, cx);
+                let task = worktree.create_entry(child_path, is_dir, None, cx);
                 cx.background_spawn(async move {
                     task.await?;
                     Ok(())
