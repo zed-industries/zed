@@ -119,20 +119,24 @@ impl Tool for TerminalTool {
 /// Also stream each line through a channel that can be accessed via the returned
 /// receiver, the channel will only receive updates if the future is awaited.
 fn spawn_command_and_stream(
-    working_dir: Arc<Path>,
+    working_dir: Option<Arc<Path>>,
     command: String,
     mut line_sender: UnboundedSender<Result<String>>,
     cx: &mut App,
 ) -> Result<Task<Result<String>>> {
     let shell = get_system_shell();
 
-    let mut cmd = new_smol_command(&shell)
-        .args(["-c", &command])
-        .current_dir(working_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("Failed to execute terminal command")?;
+    let mut cmd = {
+        let mut cmd = new_smol_command(&shell);
+        if let Some(dir) = working_dir {
+            cmd.current_dir(dir);
+        }
+        cmd.args(["-c", &command])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("Failed to execute terminal command")?
+    };
 
     let mut line_stream = SelectAll::new();
     line_stream.push(
@@ -232,24 +236,24 @@ fn working_dir(
     input: &TerminalToolInput,
     project: &Entity<Project>,
     input_path: &Path,
-) -> Result<Arc<Path>, &'static str> {
+) -> Result<Option<Arc<Path>>, &'static str> {
     let project = project.read(cx);
+
     if input.cd == "." {
         // Accept "." as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
-        let only_worktree = match worktrees.next() {
-            Some(worktree) => worktree,
-            None => return Err("No worktrees found in the project"),
-        };
-
-        if worktrees.next().is_some() {
-            return Err(
-                "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
-            );
+        match worktrees.next() {
+            Some(worktree) => {
+                if worktrees.next().is_some() {
+                    return Err(
+                        "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
+                    );
+                }
+                Ok(Some(worktree.read(cx).abs_path()))
+            }
+            None => Ok(None),
         }
-
-        Ok(only_worktree.read(cx).abs_path())
     } else if input_path.is_absolute() {
         // Absolute paths are allowed, but only if they're in one of the project's worktrees.
         if !project
@@ -259,13 +263,13 @@ fn working_dir(
             return Err("The absolute path must be within one of the project's worktrees");
         }
 
-        Ok(input_path.into())
+        Ok(Some(input_path.into()))
     } else {
         let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
             return Err("`cd` directory {} not found in the project");
         };
 
-        Ok(worktree.read(cx).abs_path())
+        Ok(Some(worktree.read(cx).abs_path()))
     }
 }
 
@@ -329,10 +333,11 @@ impl ToolCard for TerminalToolCard {
         _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        TerminalToolCardElement {
-            // card: cx.entity(),
-            // styled_text: StyledText::,
-        }
+        self.contents.to_owned()
+        // TerminalToolCardElement {
+        //     // card: cx.entity(),
+        //     // styled_text: StyledText::,
+        // }
     }
 }
 
