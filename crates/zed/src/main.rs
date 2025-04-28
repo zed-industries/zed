@@ -167,6 +167,13 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    let args = Args::parse();
+
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return;
+    }
+
     // Check if there is a pending installer
     // If there is, run the installer and exit
     // And we don't want to run the installer if we are not the first instance
@@ -174,13 +181,6 @@ fn main() {
     let is_first_instance = crate::zed::windows_only_instance::is_first_instance();
     #[cfg(target_os = "windows")]
     if is_first_instance && auto_update::check_pending_installation() {
-        return;
-    }
-
-    let args = Args::parse();
-
-    if let Some(socket) = &args.askpass {
-        askpass::main(socket);
         return;
     }
 
