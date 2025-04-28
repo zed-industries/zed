@@ -59,6 +59,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 use project::{
+    ProjectPath,
     debugger::breakpoint_store::Breakpoint,
     project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
@@ -954,6 +955,7 @@ impl EditorElement {
             {
                 let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
                 let as_point = text::ToPoint::to_point(&buffer_anchor.text_anchor, buffer_snapshot);
+
                 let is_visible = editor
                     .gutter_breakpoint_indicator
                     .0
@@ -961,9 +963,21 @@ impl EditorElement {
 
                 let has_existing_breakpoint =
                     editor.breakpoint_store.as_ref().map_or(false, |store| {
+                        let Some(project) = &editor.project else {
+                            return false;
+                        };
+                        let Some(abs_path) = project.read(cx).absolute_path(
+                            &ProjectPath {
+                                path: file.path().clone(),
+                                worktree_id: file.worktree_id(cx),
+                            },
+                            cx,
+                        ) else {
+                            return false;
+                        };
                         store
                             .read(cx)
-                            .breakpoint_at_row(&file.full_path(cx), as_point.row, cx)
+                            .breakpoint_at_row(&abs_path, as_point.row, cx)
                             .is_some()
                     });
 

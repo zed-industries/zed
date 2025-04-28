@@ -6973,15 +6973,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         // Is it a breakpoint that shows up when hovering over gutter?
-        let is_phantom = self.gutter_breakpoint_indicator.0.is_some_and(
+        let (is_phantom, collides_with_existing) = self.gutter_breakpoint_indicator.0.map_or(
+            (false, false),
             |PhantomBreakpointIndicator {
                  is_active,
                  display_row,
                  collides_with_existing_breakpoint,
              }| {
-                is_active && display_row == row && !collides_with_existing_breakpoint
+                (
+                    is_active && display_row == row,
+                    collides_with_existing_breakpoint,
+                )
             },
         );
+
         let (color, icon) = {
             let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
                 (false, false) => ui::IconName::DebugBreakpoint,
@@ -7001,25 +7006,21 @@ impl Editor {
 
         let breakpoint = Arc::from(breakpoint.clone());
 
-        let tooltip_state_content = if breakpoint.is_enabled() {
-            "disable"
-        } else {
-            "enable"
-        };
-
         let alt_as_text = gpui::Keystroke {
             modifiers: Modifiers::secondary_key(),
             ..Default::default()
         };
-        let primary_action_text = if is_phantom { "set" } else { "unset" };
+        let primary_action_text = if breakpoint.is_disabled() {
+            "enable"
+        } else if is_phantom && !collides_with_existing {
+            "set"
+        } else {
+            "unset"
+        };
         let mut primary_text = format!("Click to {primary_action_text}");
-        if !is_phantom {
+        if collides_with_existing && !breakpoint.is_disabled() {
             use std::fmt::Write;
-            write!(
-                primary_text,
-                ", {alt_as_text}-click to {tooltip_state_content}"
-            )
-            .ok();
+            write!(primary_text, ", {alt_as_text}-click to disable").ok();
         }
         let primary_text = SharedString::from(primary_text);
         let focus_handle = self.focus_handle.clone();
