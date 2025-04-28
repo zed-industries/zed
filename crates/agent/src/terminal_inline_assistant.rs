@@ -144,7 +144,7 @@ impl TerminalInlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let assist_id = prompt_editor.read(cx).id();
+        let assist_id = prompt_editor.read(cx).terminal_inline_assist_id();
         match event {
             PromptEditorEvent::StartRequested => {
                 self.start_assist(assist_id, cx);

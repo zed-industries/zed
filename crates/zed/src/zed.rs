@@ -9,6 +9,7 @@ mod quick_action_bar;
 pub(crate) mod windows_only_instance;
 
 use agent::AgentDiffToolbar;
+use agent::batch_assist::BatchAssistToolbarItem;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
@@ -917,6 +918,8 @@ fn initialize_pane(
             toolbar.add_item(project_diff_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(|_cx| AgentDiffToolbar::new());
             toolbar.add_item(agent_diff_toolbar, window, cx);
+            let batch_assist = cx.new(|_cx| BatchAssistToolbarItem::new());
+            toolbar.add_item(batch_assist, window, cx);
         })
     });
 }

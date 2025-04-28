@@ -3,6 +3,7 @@ mod agent_diff;
 mod assistant_configuration;
 mod assistant_model_selector;
 mod assistant_panel;
+pub mod batch_assist;
 mod buffer_codegen;
 mod context;
 mod context_picker;

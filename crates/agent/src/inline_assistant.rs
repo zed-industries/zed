@@ -44,6 +44,7 @@ use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::Notifi
 use zed_actions::agent::OpenConfiguration;
 
 use crate::AssistantPanel;
+use crate::batch_assist::BatchAssistToolbarItem;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
@@ -335,12 +336,37 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // if there's multiple selections
+        // find the pane containing this editor, grab the assist toolbar off it, show it
+
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
                 editor.snapshot(window, cx),
                 editor.selections.all::<Point>(cx),
             )
         });
+        if initial_selections.len() > 1 {
+            cx.defer(move |cx| {
+                let assist = workspace
+                    .update(cx, |workspace, cx| {
+                        workspace
+                            .active_pane()
+                            .read(cx)
+                            .toolbar()
+                            .read(cx)
+                            .item_of_type::<BatchAssistToolbarItem>()
+                    })
+                    .ok()
+                    .flatten();
+                let Some(assist) = assist else {
+                    dbg!("oops");
+                    return;
+                };
+
+                assist.update(cx, |assist, cx| assist.deploy(cx));
+            });
+            return;
+        }
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;

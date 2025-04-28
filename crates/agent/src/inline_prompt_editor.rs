@@ -1,4 +1,5 @@
 use crate::assistant_model_selector::AssistantModelSelector;
+use crate::batch_assist::BatchCodegen;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
@@ -33,7 +34,7 @@ use ui::{
 use util::ResultExt;
 use workspace::Workspace;
 
-pub struct PromptEditor<T> {
+pub struct PromptEditor {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     context_store: Entity<ContextStore>,
@@ -48,12 +49,11 @@ pub struct PromptEditor<T> {
     editor_subscriptions: Vec<Subscription>,
     _context_strip_subscription: Subscription,
     show_rate_limit_notice: bool,
-    _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
+impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
-impl<T: 'static> Render for PromptEditor<T> {
+impl Render for PromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
@@ -74,6 +74,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                 gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
             }
+            PromptEditorMode::Batch { .. } => px(0.),
             PromptEditorMode::Terminal { .. } => {
                 // Give the equivalent of the same left-padding that we're using on the right
                 Pixels::from(40.0)
@@ -82,6 +83,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         let bottom_padding = match &self.mode {
             PromptEditorMode::Buffer { .. } => Pixels::from(0.),
+            PromptEditorMode::Batch { .. } => Pixels::from(0.),
             PromptEditorMode::Terminal { .. } => Pixels::from(8.0),
         };
 
@@ -208,18 +210,19 @@ impl<T: 'static> Render for PromptEditor<T> {
     }
 }
 
-impl<T: 'static> Focusable for PromptEditor<T> {
+impl Focusable for PromptEditor {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl<T: 'static> PromptEditor<T> {
+impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
     fn codegen_status<'a>(&'a self, cx: &'a App) -> &'a CodegenStatus {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => codegen.read(cx).status(cx),
+            PromptEditorMode::Batch { .. } => todo!(),
             PromptEditorMode::Terminal { codegen, .. } => &codegen.read(cx).status,
         }
     }
@@ -269,6 +272,7 @@ impl<T: 'static> PromptEditor<T> {
                     "Transform"
                 }
             }
+            PromptEditorMode::Batch { .. } => "Transform",
             PromptEditorMode::Terminal { .. } => "Generate",
         };
 
@@ -448,6 +452,7 @@ impl<T: 'static> PromptEditor<T> {
                     GenerationMode::Transform
                 }
             }
+            PromptEditorMode::Batch { .. } => GenerationMode::Transform,
             PromptEditorMode::Terminal { .. } => GenerationMode::Generate,
         };
 
@@ -535,7 +540,9 @@ impl<T: 'static> PromptEditor<T> {
                                 }))
                                 .into_any_element(),
                         ],
-                        PromptEditorMode::Buffer { .. } => vec![accept],
+                        PromptEditorMode::Buffer { .. } | PromptEditorMode::Batch { .. } => {
+                            vec![accept]
+                        }
                     }
                 }
             }
@@ -552,6 +559,9 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_prev(cx));
             }
+            PromptEditorMode::Batch { .. } => {
+                todo!()
+            }
             PromptEditorMode::Terminal { .. } => {
                 // no cycle buttons in terminal mode
             }
@@ -562,6 +572,9 @@ impl<T: 'static> PromptEditor<T> {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_next(cx));
+            }
+            PromptEditorMode::Batch { .. } => {
+                todo!()
             }
             PromptEditorMode::Terminal { .. } => {
                 // no cycle buttons in terminal mode
@@ -796,6 +809,9 @@ pub enum PromptEditorMode {
         codegen: Entity<BufferCodegen>,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     },
+    Batch {
+        codegen: Entity<BatchCodegen>,
+    },
     Terminal {
         id: TerminalInlineAssistId,
         codegen: Entity<TerminalCodegen>,
@@ -823,7 +839,7 @@ impl InlineAssistId {
     }
 }
 
-impl PromptEditor<BufferCodegen> {
+impl PromptEditor {
     pub fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -835,9 +851,9 @@ impl PromptEditor<BufferCodegen> {
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
-        cx: &mut Context<PromptEditor<BufferCodegen>>,
-    ) -> PromptEditor<BufferCodegen> {
-        let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        cx: &mut Context<PromptEditor>,
+    ) -> PromptEditor {
+        let codegen_subscription = cx.observe(&codegen, Self::handle_buffer_codegen_changed);
         let mode = PromptEditorMode::Buffer {
             id,
             codegen,
@@ -880,7 +896,7 @@ impl PromptEditor<BufferCodegen> {
         let context_strip_subscription =
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
 
-        let mut this: PromptEditor<BufferCodegen> = PromptEditor {
+        let mut this: PromptEditor = PromptEditor {
             editor: prompt_editor.clone(),
             context_store,
             context_strip,
@@ -904,17 +920,16 @@ impl PromptEditor<BufferCodegen> {
             _context_strip_subscription: context_strip_subscription,
             show_rate_limit_notice: false,
             mode,
-            _phantom: Default::default(),
         };
 
         this.subscribe_to_editor(window, cx);
         this
     }
 
-    fn handle_codegen_changed(
+    fn handle_buffer_codegen_changed(
         &mut self,
         _: Entity<BufferCodegen>,
-        cx: &mut Context<PromptEditor<BufferCodegen>>,
+        cx: &mut Context<PromptEditor>,
     ) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
@@ -949,6 +964,7 @@ impl PromptEditor<BufferCodegen> {
     pub fn id(&self) -> InlineAssistId {
         match &self.mode {
             PromptEditorMode::Buffer { id, .. } => *id,
+            PromptEditorMode::Batch { .. } => unreachable!(),
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
@@ -956,6 +972,7 @@ impl PromptEditor<BufferCodegen> {
     pub fn codegen(&self) -> &Entity<BufferCodegen> {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => codegen,
+            PromptEditorMode::Batch { .. } => unreachable!(),
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
@@ -965,6 +982,7 @@ impl PromptEditor<BufferCodegen> {
             PromptEditorMode::Buffer {
                 gutter_dimensions, ..
             } => gutter_dimensions,
+            PromptEditorMode::Batch { .. } => unreachable!(),
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
@@ -981,7 +999,7 @@ impl TerminalInlineAssistId {
     }
 }
 
-impl PromptEditor<TerminalCodegen> {
+impl PromptEditor {
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
@@ -994,7 +1012,7 @@ impl PromptEditor<TerminalCodegen> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let codegen_subscription = cx.observe(&codegen, Self::handle_terminal_codegen_changed);
         let mode = PromptEditorMode::Terminal {
             id,
             codegen,
@@ -1057,7 +1075,6 @@ impl PromptEditor<TerminalCodegen> {
             _context_strip_subscription: context_strip_subscription,
             mode,
             show_rate_limit_notice: false,
-            _phantom: Default::default(),
         };
         this.count_lines(cx);
         this.subscribe_to_editor(window, cx);
@@ -1084,12 +1101,17 @@ impl PromptEditor<TerminalCodegen> {
                     cx.emit(PromptEditorEvent::Resized { height_in_lines });
                 }
             }
+            PromptEditorMode::Batch { .. } => unreachable!(),
             PromptEditorMode::Buffer { .. } => unreachable!(),
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Entity<TerminalCodegen>, cx: &mut Context<Self>) {
-        match &self.codegen().read(cx).status {
+    fn handle_terminal_codegen_changed(
+        &mut self,
+        _: Entity<TerminalCodegen>,
+        cx: &mut Context<Self>,
+    ) {
+        match &self.terminal_codegen().read(cx).status {
             CodegenStatus::Idle => {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1106,16 +1128,18 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
-    pub fn codegen(&self) -> &Entity<TerminalCodegen> {
+    pub fn terminal_codegen(&self) -> &Entity<TerminalCodegen> {
         match &self.mode {
             PromptEditorMode::Buffer { .. } => unreachable!(),
+            PromptEditorMode::Batch { .. } => unreachable!(),
             PromptEditorMode::Terminal { codegen, .. } => codegen,
         }
     }
 
-    pub fn id(&self) -> TerminalInlineAssistId {
+    pub fn terminal_inline_assist_id(&self) -> TerminalInlineAssistId {
         match &self.mode {
             PromptEditorMode::Buffer { .. } => unreachable!(),
+            PromptEditorMode::Batch { .. } => unreachable!(),
             PromptEditorMode::Terminal { id, .. } => *id,
         }
     }
