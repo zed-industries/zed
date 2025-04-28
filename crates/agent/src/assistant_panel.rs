@@ -105,6 +105,14 @@ pub fn init(cx: &mut App) {
                             });
                         });
                     }
+                })
+                .register_action(|workspace, _: &ToggleNavigationMenu, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_navigation_menu(&ToggleNavigationMenu, window, cx);
+                        });
+                    }
                 });
         },
     )
