@@ -760,6 +760,15 @@ impl AssistantPanel {
         }
     }
 
+    pub fn toggle_navigation_menu(
+        &mut self,
+        _: &ToggleNavigationMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.assistant_navigation_menu_handle.toggle(window, cx);
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -2043,6 +2052,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::deploy_rules_library))
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
+            .on_action(cx.listener(Self::toggle_navigation_menu))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
