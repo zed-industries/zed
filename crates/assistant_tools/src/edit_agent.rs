@@ -1,19 +1,23 @@
 mod edit_parser;
 
 use crate::{Template, Templates};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::ActionLog;
 use edit_parser::EditParser;
-use futures::{Stream, StreamExt, stream};
-use gpui::{AsyncApp, Entity};
-use language::{Anchor, Bias, Buffer, BufferSnapshot};
+use futures::{
+    Stream, StreamExt,
+    stream::{self, BoxStream},
+};
+use gpui::{AppContext, AsyncApp, Entity};
+use language::{Anchor, Bias, Buffer, BufferSnapshot, ToOffset};
 use language_model::{
-    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolResult,
-    MessageContent, Role,
+    LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolResult, MessageContent, Role,
 };
 use serde::Serialize;
 use smallvec::SmallVec;
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc, task::Poll};
+use streaming_diff::{CharOperation, StreamingDiff};
 
 #[derive(Serialize)]
 pub struct EditAgentTemplate {
@@ -51,49 +55,106 @@ impl EditAgent {
         previous_messages: Vec<LanguageModelRequestMessage>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let edits = self
-            .stream_edits(buffer.clone(), edit_description, previous_messages, cx)
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+        let edit_chunks = self
+            .request_edits(snapshot.clone(), edit_description, previous_messages, cx)
             .await?;
-        self.apply_edits(buffer, edits, cx).await?;
+        self.apply_edits(buffer, snapshot, edit_chunks, cx).await?;
         Ok(())
     }
 
     async fn apply_edits(
         &self,
         buffer: Entity<Buffer>,
-        edits: impl Stream<Item = Result<(Range<Anchor>, String)>>,
+        snapshot: BufferSnapshot,
+        edit_chunks: impl Stream<Item = Result<String, LanguageModelCompletionError>>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
+        struct PendingEdit {
+            start: usize,
+            diff: StreamingDiff,
+        }
+
         // todo!("group all edits into one transaction")
+        // todo!("move to the background")
         // todo!("add tests for this")
 
         // Ensure the buffer is tracked by the action log.
         self.action_log
             .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
 
-        futures::pin_mut!(edits);
-        while let Some(edit) = edits.next().await {
-            let (range, content) = edit?;
-            // Edit the buffer and report the edit as part of the same effect cycle, otherwise
-            // the edit will be reported as if the user made it.
-            cx.update(|cx| {
-                buffer.update(cx, |buffer, cx| buffer.edit([(range, content)], None, cx));
-                self.action_log
-                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
-            })?;
+        let mut parser = EditParser::new();
+        let mut pending_edit = None;
+        futures::pin_mut!(edit_chunks);
+
+        while let Some(edit_chunk) = edit_chunks.next().await {
+            let chunk = edit_chunk?;
+
+            for event in parser.push(&chunk) {
+                match event {
+                    edit_parser::EditEvent::OldText(old_text) => {
+                        let range = Self::resolve_location(&snapshot, &old_text);
+                        pending_edit = Some(PendingEdit {
+                            start: range.start.to_offset(&snapshot),
+                            diff: StreamingDiff::new(old_text),
+                        });
+                    }
+                    edit_parser::EditEvent::NewTextChunk { chunk, done } => {
+                        let mut edit = pending_edit.take().context("no pending edit found")?;
+
+                        let mut operations = edit.diff.push_new(&chunk);
+                        if done {
+                            operations.extend(edit.diff.finish());
+                            edit.diff = StreamingDiff::new(String::new());
+                        }
+
+                        let edits = operations
+                            .into_iter()
+                            .filter_map(|operation| match operation {
+                                CharOperation::Insert { text } => {
+                                    let edit_start = snapshot.anchor_after(edit.start);
+                                    Some((edit_start..edit_start, text))
+                                }
+                                CharOperation::Delete { bytes } => {
+                                    let edit_end = edit.start + bytes;
+                                    let edit_range = snapshot.anchor_after(edit.start)
+                                        ..snapshot.anchor_before(edit_end);
+                                    edit.start = edit_end;
+                                    Some((edit_range, String::new()))
+                                }
+                                CharOperation::Keep { bytes } => {
+                                    edit.start = edit.start + bytes;
+                                    None
+                                }
+                            })
+                            .collect::<SmallVec<[_; 1]>>();
+
+                        // Edit the buffer and report the edit as part of the same effect cycle, otherwise
+                        // the edit will be reported as if the user made it.
+                        cx.update(|cx| {
+                            buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+                            self.action_log
+                                .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
+                        })?;
+
+                        if !done {
+                            pending_edit = Some(edit);
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
     }
 
-    async fn stream_edits(
+    async fn request_edits(
         &self,
-        buffer: Entity<Buffer>,
+        snapshot: BufferSnapshot,
         edit_description: String,
         mut messages: Vec<LanguageModelRequestMessage>,
         cx: &mut AsyncApp,
-    ) -> Result<impl use<> + Stream<Item = Result<(Range<Anchor>, String)>>> {
-        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+    ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
         let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
         let prompt = EditAgentTemplate {
             path,
@@ -127,34 +188,10 @@ impl EditAgent {
             messages,
             ..Default::default()
         };
-        let mut parser = EditParser::new();
-        let stream = self.model.stream_completion_text(request, cx).await?.stream;
-        Ok(stream.flat_map(move |chunk| {
-            let mut edits = SmallVec::new();
-            let mut error = None;
-            let snapshot = snapshot.clone();
-            match chunk {
-                Ok(chunk) => {
-                    print!("{}", chunk);
-                    std::io::Write::flush(&mut std::io::stdout()).ok();
-                    edits = parser.push(&chunk);
-                }
-                Err(err) => {
-                    error = Some(Err(anyhow!(err)));
-                }
-            }
-            stream::iter(
-                edits
-                    .into_iter()
-                    .map(move |edit| {
-                        let range = Self::resolve_location(&snapshot, &edit.old_text);
-                        Ok((range, edit.new_text))
-                    })
-                    .chain(error),
-            )
-        }))
+        Ok(self.model.stream_completion_text(request, cx).await?.stream)
     }
 
+    // todo!("return an offset range here.")
     fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Range<Anchor> {
         const INSERTION_COST: u32 = 3;
         const DELETION_COST: u32 = 10;

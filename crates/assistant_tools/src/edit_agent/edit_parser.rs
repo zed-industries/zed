@@ -1,10 +1,10 @@
 use smallvec::SmallVec;
 use std::mem;
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct Edit {
-    pub old_text: String,
-    pub new_text: String,
+#[derive(Debug)]
+pub enum EditEvent {
+    OldText(String),
+    NewTextChunk { chunk: String, done: bool },
 }
 
 #[derive(Debug)]
@@ -17,8 +17,8 @@ pub struct EditParser {
 enum EditParserState {
     Pending,
     WithinOldText,
-    AfterOldText { old_text: String },
-    WithinNewText { old_text: String },
+    AfterOldText,
+    WithinNewText { start: bool },
 }
 
 impl EditParser {
@@ -29,10 +29,10 @@ impl EditParser {
         }
     }
 
-    pub fn push(&mut self, chunk: &str) -> SmallVec<[Edit; 1]> {
+    pub fn push(&mut self, chunk: &str) -> SmallVec<[EditEvent; 1]> {
         self.buffer.push_str(chunk);
 
-        let mut edits = SmallVec::new();
+        let mut edit_events = SmallVec::new();
         loop {
             match &mut self.state {
                 EditParserState::Pending => {
@@ -55,45 +55,55 @@ impl EditParser {
                         }
 
                         self.buffer.drain(..end + "</old_text>".len());
-                        self.state = EditParserState::AfterOldText { old_text };
+                        self.state = EditParserState::AfterOldText;
+                        edit_events.push(EditEvent::OldText(old_text));
                     } else {
                         break;
                     }
                 }
-                EditParserState::AfterOldText { old_text } => {
+                EditParserState::AfterOldText => {
                     if let Some(start) = self.buffer.find("<new_text>") {
                         self.buffer.drain(..start + "<new_text>".len());
-                        self.state = EditParserState::WithinNewText {
-                            old_text: mem::take(old_text),
-                        };
+                        self.state = EditParserState::WithinNewText { start: true };
                     } else {
                         break;
                     }
                 }
-                EditParserState::WithinNewText { old_text } => {
-                    if let Some(end) = self.buffer.find("</new_text>") {
-                        let mut start = 0;
-                        if self.buffer.starts_with('\n') {
-                            start = 1;
-                        }
-                        let mut new_text = self.buffer[start..end].to_string();
-                        if new_text.ends_with('\n') {
-                            new_text.pop();
-                        }
-                        edits.push(Edit {
-                            old_text: mem::take(old_text),
-                            new_text,
-                        });
+                EditParserState::WithinNewText { start } => {
+                    const NEW_TEXT_END_TAG: &str = "</new_text>";
 
-                        self.buffer.drain(..end + "</new_text>".len());
+                    if !self.buffer.is_empty() {
+                        if *start && self.buffer.starts_with('\n') {
+                            self.buffer.remove(0);
+                        }
+                        *start = false;
+                    }
+
+                    if let Some(end) = self.buffer.find(NEW_TEXT_END_TAG) {
+                        let mut chunk = self.buffer[..end].to_string();
+                        if chunk.ends_with('\n') {
+                            chunk.pop();
+                        }
+
+                        edit_events.push(EditEvent::NewTextChunk { chunk, done: true });
+                        self.buffer.drain(..end + NEW_TEXT_END_TAG.len());
                         self.state = EditParserState::Pending;
                     } else {
+                        let mut end_prefixes = (1..NEW_TEXT_END_TAG.len())
+                            .map(|i| &NEW_TEXT_END_TAG[..i])
+                            .chain(["\n"]);
+                        if end_prefixes.all(|prefix| !self.buffer.ends_with(&prefix)) {
+                            edit_events.push(EditEvent::NewTextChunk {
+                                chunk: mem::take(&mut self.buffer),
+                                done: false,
+                            });
+                        }
                         break;
                     }
                 }
             }
         }
-        edits
+        edit_events
     }
 }
 
@@ -228,19 +238,39 @@ mod tests {
         );
     }
 
+    #[derive(Default, Debug, PartialEq, Eq)]
+    struct Edit {
+        old_text: String,
+        new_text: String,
+    }
+
     fn parse(input: &str, rng: &mut StdRng) -> Vec<Edit> {
         let mut parser = EditParser::new();
         let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
+        chunk_indices.push(input.len());
 
+        let mut pending_edit = Edit::default();
         let mut edits = Vec::new();
         let mut last_ix = 0;
         for chunk_ix in chunk_indices {
-            edits.extend(parser.push(&input[last_ix..chunk_ix]));
+            for event in parser.push(&input[last_ix..chunk_ix]) {
+                match dbg!(event) {
+                    EditEvent::OldText(old_text) => {
+                        pending_edit.old_text = old_text;
+                    }
+                    EditEvent::NewTextChunk { chunk, done } => {
+                        pending_edit.new_text.push_str(&chunk);
+                        if done {
+                            edits.push(pending_edit);
+                            pending_edit = Edit::default();
+                        }
+                    }
+                }
+            }
             last_ix = chunk_ix;
         }
-        edits.extend(parser.push(&input[last_ix..]));
         edits
     }
 }

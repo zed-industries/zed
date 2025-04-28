@@ -735,6 +735,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "streaming_diff",
  "tree-sitter-rust",
  "ui",
  "unindent",
