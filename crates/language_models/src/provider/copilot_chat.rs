@@ -1,3 +1,8 @@
+use std::collections::HashSet;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
@@ -21,10 +26,6 @@ use language_model::{
 };
 use partial_json_fixer;
 use settings::SettingsStore;
-use std::collections::HashSet;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
 
