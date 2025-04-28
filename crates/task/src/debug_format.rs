@@ -1,10 +1,10 @@
 use anyhow::Result;
+use collections::FxHashMap;
+use gpui::SharedString;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
-
-use crate::{TaskTemplate, TaskType, task_template::DebugArgs};
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
@@ -59,10 +59,13 @@ pub struct LaunchRequest {
     /// The program that you trying to debug
     pub program: String,
     /// The current working directory of your project
+    #[serde(default)]
     pub cwd: Option<PathBuf>,
     /// Arguments to pass to a debuggee
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub env: FxHashMap<String, String>,
 }
 
 /// Represents the type that will determine which request to call on the debug adapter
@@ -73,6 +76,64 @@ pub enum DebugRequest {
     Launch(LaunchRequest),
     /// Call the `attach` request on the debug adapter
     Attach(AttachRequest),
+}
+
+impl DebugRequest {
+    pub fn to_proto(&self) -> proto::DebugRequest {
+        match self {
+            DebugRequest::Launch(launch_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugLaunchRequest(
+                    proto::DebugLaunchRequest {
+                        program: launch_request.program.clone(),
+                        cwd: launch_request
+                            .cwd
+                            .as_ref()
+                            .map(|cwd| cwd.to_string_lossy().into_owned()),
+                        args: launch_request.args.clone(),
+                        env: launch_request
+                            .env
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    },
+                )),
+            },
+            DebugRequest::Attach(attach_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugAttachRequest(
+                    proto::DebugAttachRequest {
+                        process_id: attach_request
+                            .process_id
+                            .expect("The process ID to be already filled out."),
+                    },
+                )),
+            },
+        }
+    }
+
+    pub fn from_proto(val: proto::DebugRequest) -> Result<DebugRequest> {
+        let request = val
+            .request
+            .ok_or_else(|| anyhow::anyhow!("Missing debug request"))?;
+        match request {
+            proto::debug_request::Request::DebugLaunchRequest(proto::DebugLaunchRequest {
+                program,
+                cwd,
+                args,
+                env,
+            }) => Ok(DebugRequest::Launch(LaunchRequest {
+                program,
+                cwd: cwd.map(From::from),
+                args,
+                env: env.into_iter().collect(),
+            })),
+
+            proto::debug_request::Request::DebugAttachRequest(proto::DebugAttachRequest {
+                process_id,
+            }) => Ok(DebugRequest::Attach(AttachRequest {
+                process_id: Some(process_id),
+            })),
+        }
+    }
 }
 
 impl From<LaunchRequest> for DebugRequest {
@@ -87,182 +148,47 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
-impl TryFrom<TaskTemplate> for DebugTaskTemplate {
-    type Error = ();
-
-    fn try_from(value: TaskTemplate) -> Result<Self, Self::Error> {
-        let TaskType::Debug(debug_args) = value.task_type else {
-            return Err(());
-        };
-
-        let request = match debug_args.request {
-            crate::DebugArgsRequest::Launch => DebugRequest::Launch(LaunchRequest {
-                program: value.command,
-                cwd: value.cwd.map(PathBuf::from),
-                args: value.args,
-            }),
-            crate::DebugArgsRequest::Attach(attach_config) => DebugRequest::Attach(attach_config),
-        };
-
-        Ok(DebugTaskTemplate {
-            locator: debug_args.locator,
-            definition: DebugTaskDefinition {
-                adapter: debug_args.adapter,
-                request,
-                label: value.label,
-                initialize_args: debug_args.initialize_args,
-                tcp_connection: debug_args.tcp_connection,
-                stop_on_entry: debug_args.stop_on_entry,
-            },
-        })
-    }
-}
-
-impl DebugTaskTemplate {
-    /// Translate from debug definition to a task template
-    pub fn to_zed_format(self) -> TaskTemplate {
-        let (command, cwd, args, request) = match self.definition.request {
-            DebugRequest::Launch(launch_config) => (
-                launch_config.program,
-                launch_config
-                    .cwd
-                    .map(|cwd| cwd.to_string_lossy().to_string()),
-                launch_config.args,
-                crate::task_template::DebugArgsRequest::Launch,
-            ),
-            DebugRequest::Attach(attach_config) => (
-                "".to_owned(),
-                None,
-                vec![],
-                crate::task_template::DebugArgsRequest::Attach(attach_config),
-            ),
-        };
-
-        let task_type = TaskType::Debug(DebugArgs {
-            adapter: self.definition.adapter,
-            request,
-            initialize_args: self.definition.initialize_args,
-            locator: self.locator,
-            tcp_connection: self.definition.tcp_connection,
-            stop_on_entry: self.definition.stop_on_entry,
-        });
-
-        let label = self.definition.label.clone();
-
-        TaskTemplate {
-            label,
-            command,
-            args,
-            task_type,
-            cwd,
-            ..Default::default()
-        }
-    }
-}
-
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
-pub struct DebugTaskTemplate {
-    pub locator: Option<String>,
-    #[serde(flatten)]
-    pub definition: DebugTaskDefinition,
-}
-
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
-pub struct DebugTaskDefinition {
-    /// The adapter to run
-    pub adapter: String,
-    /// The type of request that should be called on the debug adapter
-    #[serde(flatten)]
-    pub request: DebugRequest,
+pub struct DebugScenario {
+    pub adapter: SharedString,
     /// Name of the debug task
-    pub label: String,
+    pub label: SharedString,
+    /// A task to run prior to spawning the debuggee.
+    #[serde(default)]
+    pub build: Option<SharedString>,
+    #[serde(flatten)]
+    pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization
+    #[serde(default)]
     pub initialize_args: Option<serde_json::Value>,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
+    #[serde(default)]
     pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
+    #[serde(default)]
     pub stop_on_entry: Option<bool>,
 }
 
-impl DebugTaskDefinition {
+impl DebugScenario {
     pub fn cwd(&self) -> Option<&Path> {
-        if let DebugRequest::Launch(config) = &self.request {
-            config.cwd.as_deref()
+        if let Some(DebugRequest::Launch(config)) = &self.request {
+            config.cwd.as_ref().map(Path::new)
         } else {
             None
         }
-    }
-    pub fn to_proto(&self) -> proto::DebugTaskDefinition {
-        proto::DebugTaskDefinition {
-            adapter: self.adapter.clone(),
-            request: Some(match &self.request {
-                DebugRequest::Launch(config) => {
-                    proto::debug_task_definition::Request::DebugLaunchRequest(
-                        proto::DebugLaunchRequest {
-                            program: config.program.clone(),
-                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
-                            args: config.args.clone(),
-                        },
-                    )
-                }
-                DebugRequest::Attach(attach_request) => {
-                    proto::debug_task_definition::Request::DebugAttachRequest(
-                        proto::DebugAttachRequest {
-                            process_id: attach_request.process_id.unwrap_or_default(),
-                        },
-                    )
-                }
-            }),
-            label: self.label.clone(),
-            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
-            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
-            stop_on_entry: self.stop_on_entry,
-        }
-    }
-
-    pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto
-            .request
-            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
-        Ok(Self {
-            label: proto.label,
-            initialize_args: proto.initialize_args.map(|v| v.into()),
-            tcp_connection: proto
-                .tcp_connection
-                .map(TcpArgumentsTemplate::from_proto)
-                .transpose()?,
-            stop_on_entry: proto.stop_on_entry,
-            adapter: proto.adapter.clone(),
-            request: match request {
-                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
-                    DebugRequest::Attach(AttachRequest {
-                        process_id: Some(config.process_id),
-                    })
-                }
-
-                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
-                    DebugRequest::Launch(LaunchRequest {
-                        program: config.program,
-                        cwd: config.cwd.map(|cwd| cwd.into()),
-                        args: config.args,
-                    })
-                }
-            },
-        })
     }
 }
 
 /// A group of Debug Tasks defined in a JSON file.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
-pub struct DebugTaskFile(pub Vec<DebugTaskTemplate>);
+pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.
@@ -278,11 +204,7 @@ impl DebugTaskFile {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskTemplate, LaunchRequest,
-        TaskType, TcpArgumentsTemplate,
-    };
-    use std::path::PathBuf;
+    use crate::{DebugRequest, LaunchRequest};
 
     #[test]
     fn test_can_deserialize_non_attach_task() {
@@ -295,97 +217,5 @@ mod tests {
                 ..Default::default()
             })
         );
-    }
-
-    #[test]
-    fn test_to_zed_format_launch() {
-        let debug_template = DebugTaskTemplate {
-            locator: Some("launch-locator".to_string()),
-            definition: DebugTaskDefinition {
-                adapter: "test-adapter".to_string(),
-                request: DebugRequest::Launch(LaunchRequest {
-                    program: "/path/to/program".to_string(),
-                    cwd: Some(PathBuf::from("/path/to/cwd")),
-                    args: vec!["--arg1".to_string(), "--arg2".to_string()],
-                }),
-                label: "Launch Test".to_string(),
-                initialize_args: Some(serde_json::json!({"someInit": "value"})),
-                tcp_connection: Some(TcpArgumentsTemplate {
-                    port: Some(9000),
-                    host: None,
-                    timeout: Some(5000),
-                }),
-                stop_on_entry: Some(true),
-            },
-        };
-
-        let task_template = debug_template.to_zed_format();
-
-        assert_eq!(task_template.label, "Launch Test");
-        assert_eq!(task_template.command, "/path/to/program");
-        assert_eq!(task_template.cwd, Some("/path/to/cwd".to_string()));
-        assert_eq!(
-            task_template.args,
-            vec!["--arg1".to_string(), "--arg2".to_string()]
-        );
-
-        if let TaskType::Debug(debug_args) = task_template.task_type {
-            assert_eq!(debug_args.adapter, "test-adapter");
-            assert_eq!(debug_args.locator, Some("launch-locator".to_string()));
-            assert_eq!(
-                debug_args.initialize_args,
-                Some(serde_json::json!({"someInit": "value"}))
-            );
-            assert!(matches!(debug_args.tcp_connection, Some(_)));
-            assert_eq!(debug_args.stop_on_entry, Some(true));
-            assert!(matches!(
-                debug_args.request,
-                crate::task_template::DebugArgsRequest::Launch
-            ));
-        } else {
-            panic!("Expected TaskType::Debug");
-        }
-    }
-
-    #[test]
-    fn test_to_zed_format_attach() {
-        let debug_template = DebugTaskTemplate {
-            locator: Some("attach-locator".to_string()),
-            definition: DebugTaskDefinition {
-                adapter: "attach-adapter".to_string(),
-                request: DebugRequest::Attach(AttachRequest {
-                    process_id: Some(12345),
-                }),
-                label: "Attach Test".to_string(),
-                initialize_args: None,
-                tcp_connection: None,
-                stop_on_entry: None,
-            },
-        };
-
-        let task_template = debug_template.to_zed_format();
-
-        assert_eq!(task_template.label, "Attach Test");
-        assert_eq!(task_template.command, "");
-        assert_eq!(task_template.cwd, None);
-        assert!(task_template.args.is_empty());
-
-        if let TaskType::Debug(debug_args) = task_template.task_type {
-            assert_eq!(debug_args.adapter, "attach-adapter");
-            assert_eq!(debug_args.locator, Some("attach-locator".to_string()));
-            assert_eq!(debug_args.initialize_args, None);
-            assert_eq!(debug_args.tcp_connection, None);
-            assert_eq!(debug_args.stop_on_entry, None);
-
-            if let crate::task_template::DebugArgsRequest::Attach(attach_config) =
-                debug_args.request
-            {
-                assert_eq!(attach_config.process_id, Some(12345));
-            } else {
-                panic!("Expected DebugArgsRequest::Attach");
-            }
-        } else {
-            panic!("Expected TaskType::Debug");
-        }
     }
 }

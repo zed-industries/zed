@@ -16,7 +16,6 @@ use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
-use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
@@ -52,7 +51,6 @@ use settings::{
     SettingsStore, VIM_KEYMAP_PATH, initial_debug_tasks_content, initial_project_settings_content,
     initial_tasks_content, update_settings_file,
 };
-use std::any::TypeId;
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
@@ -266,29 +264,6 @@ pub fn initialize_workspace(
         register_actions(app_state.clone(), workspace, window, cx);
 
         workspace.focus_handle(cx).focus(window);
-    })
-    .detach();
-
-    feature_gate_zed_pro_actions(cx);
-}
-
-fn feature_gate_zed_pro_actions(cx: &mut App) {
-    let zed_pro_actions = [TypeId::of::<OpenAccountSettings>()];
-
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_action_types(&zed_pro_actions);
-    });
-
-    cx.observe_flag::<feature_flags::ZedProFeatureFlag, _>({
-        move |is_enabled, cx| {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                if is_enabled {
-                    filter.show_action_types(zed_pro_actions.iter());
-                } else {
-                    filter.hide_action_types(&zed_pro_actions);
-                }
-            });
-        }
     })
     .detach();
 }
@@ -4245,11 +4220,7 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
-            copilot::copilot_chat::init(
-                app_state.fs.clone(),
-                app_state.client.http_client().clone(),
-                cx,
-            );
+            copilot::copilot_chat::init(app_state.fs.clone(), app_state.client.http_client(), cx);
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
             language_models::init(
@@ -4273,7 +4244,7 @@ mod tests {
             project::debugger::breakpoint_store::BreakpointStore::init(
                 &app_state.client.clone().into(),
             );
-            project::debugger::dap_store::DapStore::init(&app_state.client.clone().into());
+            project::debugger::dap_store::DapStore::init(&app_state.client.clone().into(), cx);
             debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);

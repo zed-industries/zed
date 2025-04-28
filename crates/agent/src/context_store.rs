@@ -17,8 +17,9 @@ use util::ResultExt as _;
 
 use crate::ThreadStore;
 use crate::context::{
-    AgentContext, AgentContextKey, ContextId, DirectoryContext, FetchedUrlContext, FileContext,
-    ImageContext, RulesContext, SelectionContext, SymbolContext, ThreadContext,
+    AgentContextHandle, AgentContextKey, ContextId, DirectoryContextHandle, FetchedUrlContext,
+    FileContextHandle, ImageContext, RulesContextHandle, SelectionContextHandle,
+    SymbolContextHandle, ThreadContextHandle,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -47,7 +48,7 @@ impl ContextStore {
         }
     }
 
-    pub fn context(&self) -> impl Iterator<Item = &AgentContext> {
+    pub fn context(&self) -> impl Iterator<Item = &AgentContextHandle> {
         self.context_set.iter().map(|entry| entry.as_ref())
     }
 
@@ -56,11 +57,16 @@ impl ContextStore {
         self.context_thread_ids.clear();
     }
 
-    pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AgentContext> {
+    pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AgentContextHandle> {
         let existing_context = thread
             .messages()
-            .flat_map(|message| &message.loaded_context.contexts)
-            .map(AgentContextKey::ref_cast)
+            .flat_map(|message| {
+                message
+                    .loaded_context
+                    .contexts
+                    .iter()
+                    .map(|context| AgentContextKey(context.handle()))
+            })
             .collect::<HashSet<_>>();
         self.context_set
             .iter()
@@ -98,7 +104,7 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContext::File(FileContext { buffer, context_id });
+        let context = AgentContextHandle::File(FileContextHandle { buffer, context_id });
 
         let already_included = if self.has_context(&context) {
             if remove_if_exists {
@@ -133,7 +139,7 @@ impl ContextStore {
         };
 
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContext::Directory(DirectoryContext {
+        let context = AgentContextHandle::Directory(DirectoryContextHandle {
             entry_id,
             context_id,
         });
@@ -159,7 +165,7 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) -> bool {
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContext::Symbol(SymbolContext {
+        let context = AgentContextHandle::Symbol(SymbolContextHandle {
             buffer,
             symbol,
             range,
@@ -184,7 +190,7 @@ impl ContextStore {
         cx: &mut Context<Self>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContext::Thread(ThreadContext { thread, context_id });
+        let context = AgentContextHandle::Thread(ThreadContextHandle { thread, context_id });
 
         if self.has_context(&context) {
             if remove_if_exists {
@@ -237,7 +243,7 @@ impl ContextStore {
         cx: &mut Context<ContextStore>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContext::Rules(RulesContext {
+        let context = AgentContextHandle::Rules(RulesContextHandle {
             prompt_id,
             context_id,
         });
@@ -257,7 +263,7 @@ impl ContextStore {
         text: impl Into<SharedString>,
         cx: &mut Context<ContextStore>,
     ) {
-        let context = AgentContext::FetchedUrl(FetchedUrlContext {
+        let context = AgentContextHandle::FetchedUrl(FetchedUrlContext {
             url: url.into(),
             text: text.into(),
             context_id: self.next_context_id.post_inc(),
@@ -268,7 +274,7 @@ impl ContextStore {
 
     pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
         let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
-        let context = AgentContext::Image(ImageContext {
+        let context = AgentContextHandle::Image(ImageContext {
             original_image: image,
             image_task,
             context_id: self.next_context_id.post_inc(),
@@ -283,7 +289,7 @@ impl ContextStore {
         cx: &mut Context<ContextStore>,
     ) {
         let context_id = self.next_context_id.post_inc();
-        let context = AgentContext::Selection(SelectionContext {
+        let context = AgentContextHandle::Selection(SelectionContextHandle {
             buffer,
             range,
             context_id,
@@ -304,14 +310,17 @@ impl ContextStore {
             } => {
                 if let Some(buffer) = buffer.upgrade() {
                     let context_id = self.next_context_id.post_inc();
-                    self.insert_context(AgentContext::File(FileContext { buffer, context_id }), cx);
+                    self.insert_context(
+                        AgentContextHandle::File(FileContextHandle { buffer, context_id }),
+                        cx,
+                    );
                 };
             }
             SuggestedContext::Thread { thread, name: _ } => {
                 if let Some(thread) = thread.upgrade() {
                     let context_id = self.next_context_id.post_inc();
                     self.insert_context(
-                        AgentContext::Thread(ThreadContext { thread, context_id }),
+                        AgentContextHandle::Thread(ThreadContextHandle { thread, context_id }),
                         cx,
                     );
                 }
@@ -319,9 +328,9 @@ impl ContextStore {
         }
     }
 
-    fn insert_context(&mut self, context: AgentContext, cx: &mut Context<Self>) -> bool {
+    fn insert_context(&mut self, context: AgentContextHandle, cx: &mut Context<Self>) -> bool {
         match &context {
-            AgentContext::Thread(thread_context) => {
+            AgentContextHandle::Thread(thread_context) => {
                 self.context_thread_ids
                     .insert(thread_context.thread.read(cx).id().clone());
                 self.start_summarizing_thread_if_needed(&thread_context.thread, cx);
@@ -335,13 +344,13 @@ impl ContextStore {
         inserted
     }
 
-    pub fn remove_context(&mut self, context: &AgentContext, cx: &mut Context<Self>) {
+    pub fn remove_context(&mut self, context: &AgentContextHandle, cx: &mut Context<Self>) {
         if self
             .context_set
             .shift_remove(AgentContextKey::ref_cast(context))
         {
             match context {
-                AgentContext::Thread(thread_context) => {
+                AgentContextHandle::Thread(thread_context) => {
                     self.context_thread_ids
                         .remove(thread_context.thread.read(cx).id());
                 }
@@ -351,7 +360,7 @@ impl ContextStore {
         }
     }
 
-    pub fn has_context(&mut self, context: &AgentContext) -> bool {
+    pub fn has_context(&mut self, context: &AgentContextHandle) -> bool {
         self.context_set
             .contains(AgentContextKey::ref_cast(context))
     }
@@ -361,8 +370,10 @@ impl ContextStore {
     pub fn file_path_included(&self, path: &ProjectPath, cx: &App) -> Option<FileInclusion> {
         let project = self.project.upgrade()?.read(cx);
         self.context().find_map(|context| match context {
-            AgentContext::File(file_context) => FileInclusion::check_file(file_context, path, cx),
-            AgentContext::Directory(directory_context) => {
+            AgentContextHandle::File(file_context) => {
+                FileInclusion::check_file(file_context, path, cx)
+            }
+            AgentContextHandle::Directory(directory_context) => {
                 FileInclusion::check_directory(directory_context, path, project, cx)
             }
             _ => None,
@@ -376,7 +387,7 @@ impl ContextStore {
     ) -> Option<FileInclusion> {
         let project = self.project.upgrade()?.read(cx);
         self.context().find_map(|context| match context {
-            AgentContext::Directory(directory_context) => {
+            AgentContextHandle::Directory(directory_context) => {
                 FileInclusion::check_directory(directory_context, path, project, cx)
             }
             _ => None,
@@ -385,7 +396,7 @@ impl ContextStore {
 
     pub fn includes_symbol(&self, symbol: &Symbol, cx: &App) -> bool {
         self.context().any(|context| match context {
-            AgentContext::Symbol(context) => {
+            AgentContextHandle::Symbol(context) => {
                 if context.symbol != symbol.name {
                     return false;
                 }
@@ -410,7 +421,7 @@ impl ContextStore {
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {
         self.context_set
-            .contains(&RulesContext::lookup_key(prompt_id))
+            .contains(&RulesContextHandle::lookup_key(prompt_id))
     }
 
     pub fn includes_url(&self, url: impl Into<SharedString>) -> bool {
@@ -421,17 +432,17 @@ impl ContextStore {
     pub fn file_paths(&self, cx: &App) -> HashSet<ProjectPath> {
         self.context()
             .filter_map(|context| match context {
-                AgentContext::File(file) => {
+                AgentContextHandle::File(file) => {
                     let buffer = file.buffer.read(cx);
                     buffer.project_path(cx)
                 }
-                AgentContext::Directory(_)
-                | AgentContext::Symbol(_)
-                | AgentContext::Selection(_)
-                | AgentContext::FetchedUrl(_)
-                | AgentContext::Thread(_)
-                | AgentContext::Rules(_)
-                | AgentContext::Image(_) => None,
+                AgentContextHandle::Directory(_)
+                | AgentContextHandle::Symbol(_)
+                | AgentContextHandle::Selection(_)
+                | AgentContextHandle::FetchedUrl(_)
+                | AgentContextHandle::Thread(_)
+                | AgentContextHandle::Rules(_)
+                | AgentContextHandle::Image(_) => None,
             })
             .collect()
     }
@@ -447,7 +458,7 @@ pub enum FileInclusion {
 }
 
 impl FileInclusion {
-    fn check_file(file_context: &FileContext, path: &ProjectPath, cx: &App) -> Option<Self> {
+    fn check_file(file_context: &FileContextHandle, path: &ProjectPath, cx: &App) -> Option<Self> {
         let file_path = file_context.buffer.read(cx).project_path(cx)?;
         if path == &file_path {
             Some(FileInclusion::Direct)
@@ -457,7 +468,7 @@ impl FileInclusion {
     }
 
     fn check_directory(
-        directory_context: &DirectoryContext,
+        directory_context: &DirectoryContextHandle,
         path: &ProjectPath,
         project: &Project,
         cx: &App,

@@ -14,7 +14,7 @@ use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeSymbolsInput {
@@ -102,7 +102,7 @@ impl Tool for CodeSymbolsTool {
 
                 match &input.path {
                     Some(path) => {
-                        let path = MarkdownString::inline_code(path);
+                        let path = MarkdownInlineCode(path);
                         if page > 1 {
                             format!("List page {page} of code symbols for {path}")
                         } else {

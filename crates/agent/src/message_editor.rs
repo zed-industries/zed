@@ -11,6 +11,7 @@ use editor::{
     ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, MultiBuffer,
 };
+use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -20,7 +21,9 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage};
+use language_model::{
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage, MessageContent,
+};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -31,6 +34,7 @@ use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
+use zed_llm_client::CompletionMode;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -48,7 +52,6 @@ pub struct MessageEditor {
     thread: Entity<Thread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
-    #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     context_store: Entity<ContextStore>,
@@ -417,6 +420,37 @@ impl MessageEditor {
         }
     }
 
+    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !cx.has_flag::<NewBillingFeatureFlag>() {
+            return None;
+        }
+
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model.clone())?;
+        if !model.supports_max_mode() {
+            return None;
+        }
+
+        let active_completion_mode = self.thread.read(cx).completion_mode();
+
+        Some(
+            IconButton::new("max-mode", IconName::SquarePlus)
+                .icon_size(IconSize::Small)
+                .toggle_state(active_completion_mode == Some(CompletionMode::Max))
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.thread.update(cx, |thread, _cx| {
+                        thread.set_completion_mode(match active_completion_mode {
+                            Some(CompletionMode::Max) => Some(CompletionMode::Normal),
+                            Some(CompletionMode::Normal) | None => Some(CompletionMode::Max),
+                        });
+                    });
+                }))
+                .tooltip(Tooltip::text("Max Mode"))
+                .into_any_element(),
+        )
+    }
+
     fn render_editor(
         &self,
         font_size: Rems,
@@ -577,6 +611,7 @@ impl MessageEditor {
                                             }),
                                         )
                                     })
+                                    .children(self.render_max_mode_toggle(cx))
                                     .child(self.model_selector.clone())
                                     .map({
                                         let focus_handle = focus_handle.clone();
@@ -1089,9 +1124,16 @@ impl MessageEditor {
                     loaded_context.add_to_request_message(&mut request_message);
                 }
 
+                if !message_text.is_empty() {
+                    request_message
+                        .content
+                        .push(MessageContent::Text(message_text));
+                }
+
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
+                    mode: None,
                     messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],

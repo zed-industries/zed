@@ -6,6 +6,7 @@ use crate::{
 use dap::{
     ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    adapters::DebugTaskDefinition,
     client::SessionId,
     requests::{
         Continue, Disconnect, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
@@ -23,13 +24,14 @@ use project::{
 };
 use serde_json::json;
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
-use task::{DebugTaskDefinition, LaunchRequest};
+use task::LaunchRequest;
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
@@ -1411,13 +1413,14 @@ async fn test_we_send_arguments_from_user_config(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let debug_definition = DebugTaskDefinition {
-        adapter: "fake-adapter".to_string(),
+        adapter: "fake-adapter".into(),
         request: dap::DebugRequest::Launch(LaunchRequest {
             program: "main.rs".to_owned(),
             args: vec!["arg1".to_owned(), "arg2".to_owned()],
             cwd: Some("/Random_path".into()),
+            env: HashMap::from_iter(vec![("KEY".to_owned(), "VALUE".to_owned())]),
         }),
-        label: "test".to_string(),
+        label: "test".into(),
         initialize_args: None,
         tcp_connection: None,
         stop_on_entry: None,

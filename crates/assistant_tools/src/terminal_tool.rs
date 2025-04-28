@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use ui::IconName;
 use util::command::new_smol_command;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
@@ -55,17 +55,14 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownString::inline_code(&first_line).0,
-                    1 => {
-                        MarkdownString::inline_code(&format!(
-                            "{} - {} more line",
-                            first_line, remaining_line_count
-                        ))
-                        .0
-                    }
-                    n => {
-                        MarkdownString::inline_code(&format!("{} - {} more lines", first_line, n)).0
-                    }
+                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    1 => MarkdownInlineCode(&format!(
+                        "{} - {} more line",
+                        first_line, remaining_line_count
+                    ))
+                    .to_string(),
+                    n => MarkdownInlineCode(&format!("{} - {} more lines", first_line, n))
+                        .to_string(),
                 }
             }
             Err(_) => "Run terminal command".to_string(),
@@ -205,39 +202,52 @@ async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<
     consume_reader(out_reader, truncated).await?;
     consume_reader(err_reader, truncated).await?;
 
-    let status = cmd.status().await.context("Failed to get command status")?;
+    // Handle potential errors during status retrieval, including interruption.
+    match cmd.status().await {
+        Ok(status) => {
+            let output_string = if truncated {
+                // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
+                // multi-byte characters.
+                let last_line_ix = combined_buffer.bytes().rposition(|b| b == b'\n');
+                let buffer_content =
+                    &combined_buffer[..last_line_ix.unwrap_or(combined_buffer.len())];
 
-    let output_string = if truncated {
-        // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
-        // multi-byte characters.
-        let last_line_ix = combined_buffer.bytes().rposition(|b| b == b'\n');
-        let combined_buffer = &combined_buffer[..last_line_ix.unwrap_or(combined_buffer.len())];
+                format!(
+                    "Command output too long. The first {} bytes:\n\n{}",
+                    buffer_content.len(),
+                    output_block(buffer_content),
+                )
+            } else {
+                output_block(&combined_buffer)
+            };
 
-        format!(
-            "Command output too long. The first {} bytes:\n\n{}",
-            combined_buffer.len(),
-            output_block(&combined_buffer),
-        )
-    } else {
-        output_block(&combined_buffer)
-    };
+            let output_with_status = if status.success() {
+                if output_string.is_empty() {
+                    "Command executed successfully.".to_string()
+                } else {
+                    output_string
+                }
+            } else {
+                format!(
+                    "Command failed with exit code {} (shell: {}).\n\n{}",
+                    status.code().unwrap_or(-1),
+                    shell,
+                    output_string,
+                )
+            };
 
-    let output_with_status = if status.success() {
-        if output_string.is_empty() {
-            "Command executed successfully.".to_string()
-        } else {
-            output_string.to_string()
+            Ok(output_with_status)
         }
-    } else {
-        format!(
-            "Command failed with exit code {} (shell: {}).\n\n{}",
-            status.code().unwrap_or(-1),
-            shell,
-            output_string,
-        )
-    };
-
-    Ok(output_with_status)
+        Err(err) => {
+            // Error occurred getting status (potential interruption). Include partial output.
+            let partial_output = output_block(&combined_buffer);
+            let error_message = format!(
+                "Command failed or was interrupted.\nPartial output captured:\n\n{}",
+                partial_output
+            );
+            Err(anyhow!(err).context(error_message))
+        }
+    }
 }
 
 async fn consume_reader<T: AsyncReadExt + Unpin>(

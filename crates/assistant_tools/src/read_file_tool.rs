@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return an error along with the model's symbol outline,
@@ -40,7 +40,7 @@ pub struct ReadFileToolInput {
     #[serde(default)]
     pub start_line: Option<usize>,
 
-    /// Optional line number to end reading on (1-based index)
+    /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<usize>,
 }
@@ -71,7 +71,7 @@ impl Tool for ReadFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 match (input.start_line, input.end_line) {
                     (Some(start), None) => format!("Read file {path} (from line {start})"),
                     (Some(start), Some(end)) => format!("Read file {path} (lines {start}-{end})"),
@@ -128,7 +128,7 @@ impl Tool for ReadFileTool {
                     let start = input.start_line.unwrap_or(1);
                     let lines = text.split('\n').skip(start - 1);
                     if let Some(end) = input.end_line {
-                        let count = end.saturating_sub(start).max(1); // Ensure at least 1 line
+                        let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
                         Itertools::intersperse(lines.take(count), "\n").collect()
                     } else {
                         Itertools::intersperse(lines, "\n").collect()
@@ -329,7 +329,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3");
+        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
     }
 
     fn init_test(cx: &mut TestAppContext) {

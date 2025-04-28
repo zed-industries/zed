@@ -1,4 +1,4 @@
-use crate::context::{AgentContext, RULES_ICON};
+use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::MentionLink;
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
@@ -30,7 +30,7 @@ use language_model::{
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
-use project::ProjectItem as _;
+use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
 use std::path::Path;
@@ -43,8 +43,8 @@ use ui::{
     Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
-use util::markdown::MarkdownString;
-use workspace::{OpenOptions, Workspace};
+use util::markdown::MarkdownCodeBlock;
+use workspace::Workspace;
 use zed_actions::assistant::OpenRulesLibrary;
 
 pub struct ActiveThread {
@@ -882,7 +882,11 @@ impl ActiveThread {
         });
         rendered.input.update(cx, |this, cx| {
             this.replace(
-                MarkdownString::code_block("json", tool_input).to_string(),
+                MarkdownCodeBlock {
+                    tag: "json",
+                    text: tool_input,
+                }
+                .to_string(),
                 cx,
             );
         });
@@ -1289,6 +1293,7 @@ impl ActiveThread {
                 let request = language_model::LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
+                    mode: None,
                     messages: vec![request_message],
                     tools: vec![],
                     stop: vec![],
@@ -1486,19 +1491,13 @@ impl ActiveThread {
 
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
-        let prompt_store = self.thread_store.read(cx).prompt_store().as_ref();
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
-        let added_context = if let Some(workspace) = workspace.upgrade() {
-            let project = workspace.read(cx).project().read(cx);
-            thread
-                .context_for_message(message_id)
-                .flat_map(|context| AddedContext::new(context.clone(), prompt_store, project, cx))
-                .collect::<Vec<_>>()
-        } else {
-            return Empty.into_any();
-        };
+        let added_context = thread
+            .context_for_message(message_id)
+            .map(|context| AddedContext::new_attached(context, cx))
+            .collect::<Vec<_>>();
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
@@ -1536,23 +1535,25 @@ impl ActiveThread {
         const RESPONSE_PADDING_X: Pixels = px(18.);
 
         let feedback_container = h_flex()
+            .group("feedback_container")
             .py_2()
             .px(RESPONSE_PADDING_X)
             .gap_1()
             .flex_wrap()
-            .justify_between();
+            .justify_end();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
-                    Label::new(match feedback {
-                        ThreadFeedback::Positive => "Thanks for your feedback!",
-                        ThreadFeedback::Negative => {
-                            "We appreciate your feedback and will use it to improve."
-                        }
-                    })
+                    div().mr_1().visible_on_hover("feedback_container").child(
+                        Label::new(match feedback {
+                            ThreadFeedback::Positive => "Thanks for your feedback!",
+                            ThreadFeedback::Negative => {
+                                "We appreciate your feedback and will use it to improve."
+                            }
+                        })
                     .color(Color::Muted)
                     .size(LabelSize::XSmall)
-                    .truncate(),
+                    .truncate())
                 )
                 .child(
                     h_flex()
@@ -1599,12 +1600,13 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(
-                    Label::new(
-                        "Rating the thread sends all of your current conversation to the Zed team.",
-                    )
-                    .color(Color::Muted)
+                    div().mr_1().visible_on_hover("feedback_container").child(
+                        Label::new(
+                            "Rating the thread sends all of your current conversation to the Zed team.",
+                        )
+                        .color(Color::Muted)
                     .size(LabelSize::XSmall)
-                    .truncate(),
+                    .truncate())
                 )
                 .child(
                     h_flex()
@@ -1650,6 +1652,7 @@ impl ActiveThread {
 
         let message_content = has_content.then(|| {
             v_flex()
+                .w_full()
                 .gap_1()
                 .when(!message_is_empty, |parent| {
                     parent.child(
@@ -1673,6 +1676,8 @@ impl ActiveThread {
                                 .on_action(cx.listener(Self::cancel_editing_message))
                                 .on_action(cx.listener(Self::confirm_editing_message))
                                 .min_h_6()
+                                .flex_grow()
+                                .w_full()
                                 .child(EditorElement::new(
                                     &edit_message_editor,
                                     EditorStyle {
@@ -1702,7 +1707,7 @@ impl ActiveThread {
                 .when(!added_context.is_empty(), |parent| {
                     parent.child(h_flex().flex_wrap().gap_1().children(
                         added_context.into_iter().map(|added_context| {
-                            let context = added_context.context.clone();
+                            let context = added_context.handle.clone();
                             ContextPill::added(added_context, false, false, None).on_click(Rc::new(
                                 cx.listener({
                                     let workspace = workspace.clone();
@@ -1722,13 +1727,7 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .map(|this| {
-                    if is_first_message {
-                        this.pt_2()
-                    } else {
-                        this.pt_4()
-                    }
-                })
+                .pt_2()
                 .pl_2()
                 .pr_2p5()
                 .pb_4()
@@ -1742,48 +1741,62 @@ impl ActiveThread {
                         .border_color(colors.border)
                         .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
                         .cursor_pointer()
-                        .child(div().p_2().pt_2p5().children(message_content))
-                        .when_some(edit_message_editor.clone(), |this, edit_editor| {
-                            let focus_handle = edit_editor.focus_handle(cx);
-
-                            this.child(
-                                h_flex()
-                                    .p_1()
-                                    .border_t_1()
-                                    .border_color(colors.border_variant)
-                                    .gap_1()
-                                    .justify_end()
-                                    .child(
-                                        Button::new("cancel-edit-message", "Cancel")
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Cancel,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
+                        .child(
+                            h_flex()
+                                .p_2()
+                                .pt_3()
+                                .gap_1()
+                                .children(message_content)
+                                .when_some(edit_message_editor.clone(), |this, edit_editor| {
+                                    let edit_editor_clone = edit_editor.clone();
+                                    this.w_full().justify_between().child(
+                                        h_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                IconButton::new(
+                                                    "cancel-edit-message",
+                                                    IconName::Close,
                                                 )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_color(Color::Error)
+                                                .tooltip(move |window, cx| {
+                                                    let focus_handle =
+                                                        edit_editor_clone.focus_handle(cx);
+                                                    Tooltip::for_action_in(
+                                                        "Cancel Edit",
+                                                        &menu::Cancel,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(cx.listener(Self::handle_cancel_click)),
                                             )
-                                            .on_click(cx.listener(Self::handle_cancel_click)),
+                                            .child(
+                                                IconButton::new(
+                                                    "confirm-edit-message",
+                                                    IconName::Check,
+                                                )
+                                                .disabled(edit_editor.read(cx).is_empty(cx))
+                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_color(Color::Success)
+                                                .tooltip(move |window, cx| {
+                                                    let focus_handle = edit_editor.focus_handle(cx);
+                                                    Tooltip::for_action_in(
+                                                        "Regenerate",
+                                                        &menu::Confirm,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_click(
+                                                    cx.listener(Self::handle_regenerate_click),
+                                                ),
+                                            ),
                                     )
-                                    .child(
-                                        Button::new("confirm-edit-message", "Regenerate")
-                                            .disabled(edit_editor.read(cx).is_empty(cx))
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
-                                            )
-                                            .on_click(cx.listener(Self::handle_regenerate_click)),
-                                    ),
-                            )
-                        })
+                                }),
+                        )
                         .when(edit_message_editor.is_none(), |this| {
                             this.tooltip(Tooltip::text("Click To Edit"))
                         })
@@ -3039,21 +3052,30 @@ impl ActiveThread {
             return;
         };
 
-        let abs_paths = project_context
+        let project_entry_ids = project_context
             .worktrees
             .iter()
             .flat_map(|worktree| worktree.rules_file.as_ref())
-            .map(|rules_file| rules_file.abs_path.to_path_buf())
+            .map(|rules_file| ProjectEntryId::from_usize(rules_file.project_entry_id))
             .collect::<Vec<_>>();
 
-        if let Ok(task) = self.workspace.update(cx, move |workspace, cx| {
-            // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
-            // files clear. For example, if rules file 1 is already open but rules file 2 is not,
-            // this would open and focus rules file 2 in a tab that is not next to rules file 1.
-            workspace.open_paths(abs_paths, OpenOptions::default(), None, window, cx)
-        }) {
-            task.detach();
-        }
+        self.workspace
+            .update(cx, move |workspace, cx| {
+                // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+                // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+                // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+                let project = workspace.project().read(cx);
+                let project_paths = project_entry_ids
+                    .into_iter()
+                    .flat_map(|entry_id| project.path_for_entry(entry_id, cx))
+                    .collect::<Vec<_>>();
+                for project_path in project_paths {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .ok();
     }
 
     fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {
@@ -3160,13 +3182,13 @@ impl Render for ActiveThread {
 }
 
 pub(crate) fn open_context(
-    context: &AgentContext,
+    context: &AgentContextHandle,
     workspace: Entity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
     match context {
-        AgentContext::File(file_context) => {
+        AgentContextHandle::File(file_context) => {
             if let Some(project_path) = file_context.project_path(cx) {
                 workspace.update(cx, |workspace, cx| {
                     workspace
@@ -3176,7 +3198,7 @@ pub(crate) fn open_context(
             }
         }
 
-        AgentContext::Directory(directory_context) => {
+        AgentContextHandle::Directory(directory_context) => {
             let entry_id = directory_context.entry_id;
             workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |_project, cx| {
@@ -3185,7 +3207,7 @@ pub(crate) fn open_context(
             })
         }
 
-        AgentContext::Symbol(symbol_context) => {
+        AgentContextHandle::Symbol(symbol_context) => {
             let buffer = symbol_context.buffer.read(cx);
             if let Some(project_path) = buffer.project_path(cx) {
                 let snapshot = buffer.snapshot();
@@ -3195,7 +3217,7 @@ pub(crate) fn open_context(
             }
         }
 
-        AgentContext::Selection(selection_context) => {
+        AgentContextHandle::Selection(selection_context) => {
             let buffer = selection_context.buffer.read(cx);
             if let Some(project_path) = buffer.project_path(cx) {
                 let snapshot = buffer.snapshot();
@@ -3206,11 +3228,11 @@ pub(crate) fn open_context(
             }
         }
 
-        AgentContext::FetchedUrl(fetched_url_context) => {
+        AgentContextHandle::FetchedUrl(fetched_url_context) => {
             cx.open_url(&fetched_url_context.url);
         }
 
-        AgentContext::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
+        AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     let thread_id = thread_context.thread.read(cx).id().clone();
@@ -3221,14 +3243,14 @@ pub(crate) fn open_context(
             }
         }),
 
-        AgentContext::Rules(rules_context) => window.dispatch_action(
+        AgentContextHandle::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(rules_context.prompt_id.0),
             }),
             cx,
         ),
 
-        AgentContext::Image(_) => {}
+        AgentContextHandle::Image(_) => {}
     }
 }
 

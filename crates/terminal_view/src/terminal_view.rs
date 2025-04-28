@@ -1462,6 +1462,11 @@ impl Item for TerminalView {
             .into_any()
     }
 
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        let terminal = self.terminal().read(cx);
+        terminal.title(detail == 0).into()
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
     }
