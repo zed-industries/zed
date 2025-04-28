@@ -261,7 +261,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     <p>{{ example.description }}</p>
     
     <div class="code-container">
-        <pre><code class="language-rust">{{ code }}</code></pre>
+        {{ code | safe }}
     </div>
     
     <div class="example-info">
