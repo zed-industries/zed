@@ -40,17 +40,20 @@ impl TemplateEngine {
         // Load the templates we've created from the output directory
         // Since MiniJinja 1.0 doesn't have path_loader, we'll manually load them
         let base_html = fs::read_to_string(templates_dir.join("base.html"))?;
+        let base_subdir_html = fs::read_to_string(templates_dir.join("base_subdir.html"))?;
         let index_html = fs::read_to_string(templates_dir.join("index.html"))?;
         let example_html = fs::read_to_string(templates_dir.join("example.html"))?;
         let doc_html = fs::read_to_string(templates_dir.join("doc.html"))?;
         
         // Convert to static lifetime strings with Box leak
         let base_html = Box::leak(base_html.into_boxed_str());
+        let base_subdir_html = Box::leak(base_subdir_html.into_boxed_str());
         let index_html = Box::leak(index_html.into_boxed_str());
         let example_html = Box::leak(example_html.into_boxed_str());
         let doc_html = Box::leak(doc_html.into_boxed_str());
         
         env.add_template("base.html", base_html)?;
+        env.add_template("base_subdir.html", base_subdir_html)?;
         env.add_template("index.html", index_html)?;
         env.add_template("example.html", example_html)?;
         env.add_template("doc.html", doc_html)?;
@@ -103,6 +106,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     fs::create_dir_all(&templates_dir)?;
     
     // Create basic templates
+    // First create the main base template
     fs::write(
         templates_dir.join("base.html"),
         r#"<!DOCTYPE html>
@@ -111,20 +115,20 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }} - gpui</title>
-    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
     <header>
         <div class="container">
-            <a href="/" class="logo">gpui</a>
+            <a href="index.html" class="logo">gpui</a>
             <nav>
                 <ul>
-                    <li><a href="/">Home</a></li>
+                    <li><a href="index.html">Home</a></li>
                     <li>
                         <span>Examples</span>
                         <ul>
                             {% for example in examples %}
-                            <li><a href="/examples/{{ example.path }}">{{ example.title }}</a></li>
+                            <li><a href="examples/{{ example.path }}">{{ example.title }}</a></li>
                             {% endfor %}
                         </ul>
                     </li>
@@ -132,7 +136,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
                         <span>Docs</span>
                         <ul>
                             {% for doc in docs %}
-                            <li><a href="/docs/{{ doc.path }}">{{ doc.title }}</a></li>
+                            <li><a href="docs/{{ doc.path }}">{{ doc.title }}</a></li>
                             {% endfor %}
                         </ul>
                     </li>
@@ -152,7 +156,63 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
         </div>
     </footer>
     
-    <script src="/js/main.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
+"#,
+    )?;
+    
+    // Create a base template for pages in subdirectories (examples/, docs/)
+    fs::write(
+        templates_dir.join("base_subdir.html"),
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - gpui</title>
+    <link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <a href="../index.html" class="logo">gpui</a>
+            <nav>
+                <ul>
+                    <li><a href="../index.html">Home</a></li>
+                    <li>
+                        <span>Examples</span>
+                        <ul>
+                            {% for example in examples %}
+                            <li><a href="../examples/{{ example.path }}">{{ example.title }}</a></li>
+                            {% endfor %}
+                        </ul>
+                    </li>
+                    <li>
+                        <span>Docs</span>
+                        <ul>
+                            {% for doc in docs %}
+                            <li><a href="../docs/{{ doc.path }}">{{ doc.title }}</a></li>
+                            {% endfor %}
+                        </ul>
+                    </li>
+                    <li><a href="https://github.com/zed-industries/zed/tree/main/crates/gpui">GitHub</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>gpui is part of the <a href="https://github.com/zed-industries/zed">Zed</a> project © Zed Industries, Inc.</p>
+        </div>
+    </footer>
+    
+    <script src="../js/main.js"></script>
 </body>
 </html>
 "#,
@@ -167,7 +227,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     <h1>gpui</h1>
     <p class="tagline">A fast, productive UI framework for Rust from the creators of Zed.</p>
     <div class="cta-buttons">
-        <a href="/docs/intro" class="button primary">Get Started →</a>
+        <a href="docs/intro.html" class="button primary">Get Started →</a>
         <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui" class="button secondary">GitHub</a>
     </div>
 </section>
@@ -180,7 +240,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     <h2>Examples</h2>
     <div class="grid">
         {% for example in examples %}
-        <a href="/examples/{{ example.path }}" class="example-card">
+        <a href="examples/{{ example.path }}" class="example-card">
             <h3>{{ example.title }}</h3>
             <p>{{ example.description }}</p>
         </a>
@@ -193,7 +253,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     
     fs::write(
         templates_dir.join("example.html"),
-        r#"{% extends "base.html" %}
+        r#"{% extends "base_subdir.html" %}
 
 {% block content %}
 <article class="example">
@@ -216,7 +276,7 @@ pub fn create_template_stubs(output_dir: &Path) -> Result<()> {
     
     fs::write(
         templates_dir.join("doc.html"),
-        r#"{% extends "base.html" %}
+        r#"{% extends "base_subdir.html" %}
 
 {% block content %}
 <article class="documentation">
