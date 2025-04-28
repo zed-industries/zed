@@ -10,7 +10,7 @@ use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
-use context_server::{ContextServerFactoryRegistry, ContextServerTool};
+use context_server::{ContextServerDescriptorRegistry, ContextServerTool};
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
@@ -109,7 +109,7 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> (Self, oneshot::Receiver<()>) {
-        let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
+        let context_server_factory_registry = ContextServerDescriptorRegistry::default_global(cx);
         let context_server_manager = cx.new(|cx| {
             ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
         });

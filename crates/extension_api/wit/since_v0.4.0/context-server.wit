@@ -1,0 +1,9 @@
+interface context-server {
+    ///
+    record context-server-configuration {
+        ///
+        installation-instructions: string,
+        ///
+        settings-schema: string,
+    }
+}

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use anyhow::Context as _;
+use context_server::ContextServerDescriptorRegistry;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ContextServerManifestEntry;
+use extension::ContextServerConfiguration;
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity,
 };
@@ -9,6 +11,7 @@ use language::{Language, LanguageRegistry};
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
@@ -20,18 +23,44 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
         if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
             cx.subscribe_in(extension_events, window, {
                 let language_registry = language_registry.clone();
-                move |_, _, event, window, cx| match event {
+                move |workspace, _, event, window, cx| match event {
                     extension::Event::ExtensionInstalled(manifest) => {
+                        let registry = ContextServerDescriptorRegistry::global(cx).read(cx);
+                        let project = workspace.project().clone();
+                        let configuration_tasks =
+                            manifest
+                                .context_servers
+                                .keys()
+                                .cloned()
+                                .filter_map({
+                                    |key| {
+                                        let descriptor= registry.context_server_descriptor(&key)?;
+                                        Some(cx.spawn({
+                                            let project = project.clone();
+                                            async move |_, cx| {
+                                                descriptor.configuration(project, &cx)
+                                                    .await
+                                                    .context("Failed to resolve context server configuration")
+                                                    .log_err()
+                                                    .flatten()
+                                                    .map(|config| (key, config))
+                                            }
+                                        }))
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+
                         let jsonc_language = language_registry.language_for_name("jsonc");
-                        let manifest = manifest.clone();
+
                         cx.spawn_in(window, async move |this, cx| {
+                            let descriptors = futures::future::join_all(configuration_tasks).await;
                             let jsonc_language = jsonc_language.await.ok();
-                            let workspace = this.clone();
+
                             this.update_in(cx, |this, window, cx| {
-                                let modal = ConfigureContextServerModal::from_manifests(
-                                    manifest.context_servers.iter(),
+                                let modal = ConfigureContextServerModal::from_configurations(
+                                    descriptors.into_iter().filter_map(|descriptor| descriptor),
                                     jsonc_language,
-                                    workspace,
+                                    cx.entity().downgrade(),
                                     window,
                                     cx,
                                 );
@@ -55,21 +84,21 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
     .detach();
 }
 
-struct ContextServerConfiguration {
+struct ConfigureContextServer {
     id: Arc<str>,
     installation_instructions: SharedString,
     settings_editor: Entity<Editor>,
 }
 
 struct ConfigureContextServerModal {
-    context_servers_to_setup: Vec<ContextServerConfiguration>,
+    context_servers_to_setup: Vec<ConfigureContextServer>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
 }
 
 impl ConfigureContextServerModal {
-    pub fn from_manifests<'a>(
-        manifests: impl Iterator<Item = (&'a Arc<str>, &'a ContextServerManifestEntry)>,
+    pub fn from_configurations(
+        configurations: impl Iterator<Item = (Arc<str>, ContextServerConfiguration)>,
         jsonc_language: Option<Arc<Language>>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -77,22 +106,21 @@ impl ConfigureContextServerModal {
     ) -> Option<Self> {
         let focus_handle = cx.focus_handle();
 
-        let context_servers_to_setup = manifests
-            .filter_map(|(id, manifest)| {
-                let settings_hint = manifest.settings_hint.clone()?;
+        let context_servers_to_setup = configurations
+            .map(|(id, manifest)| {
                 let jsonc_language = jsonc_language.clone();
-                Some(ContextServerConfiguration {
+                ConfigureContextServer {
                     id: id.clone(),
-                    installation_instructions: manifest.installation_instructions.clone()?.into(),
+                    installation_instructions: manifest.installation_instructions.clone().into(),
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
-                        editor.set_text(settings_hint, window, cx);
+                        editor.set_text(manifest.settings_schema, window, cx);
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
                         }
                         editor
                     }),
-                })
+                }
             })
             .collect::<Vec<_>>();
 

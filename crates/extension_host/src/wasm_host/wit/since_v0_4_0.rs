@@ -247,6 +247,15 @@ impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCom
     }
 }
 
+impl From<ContextServerConfiguration> for extension::ContextServerConfiguration {
+    fn from(value: ContextServerConfiguration) -> Self {
+        Self {
+            installation_instructions: value.installation_instructions,
+            settings_schema: value.settings_schema,
+        }
+    }
+}
+
 impl HostKeyValueStore for WasmState {
     async fn insert(
         &mut self,
@@ -609,6 +618,9 @@ impl process::Host for WasmState {
 
 #[async_trait]
 impl slash_command::Host for WasmState {}
+
+#[async_trait]
+impl context_server::Host for WasmState {}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(

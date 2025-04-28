@@ -7,7 +7,7 @@ use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use client::{Client, TypedEnvelope, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::HashMap;
-use context_server::ContextServerFactoryRegistry;
+use context_server::ContextServerDescriptorRegistry;
 use context_server::manager::ContextServerManager;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
@@ -106,7 +106,7 @@ impl ContextStore {
 
             let this = cx.new(|cx: &mut Context<Self>| {
                 let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
+                    ContextServerDescriptorRegistry::default_global(cx);
                 let context_server_manager = cx.new(|cx| {
                     ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
                 });

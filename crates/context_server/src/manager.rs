@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use crate::{ContextServerSettings, ServerConfig};
 
 use crate::{
-    CONTEXT_SERVERS_NAMESPACE, ContextServerFactoryRegistry,
+    CONTEXT_SERVERS_NAMESPACE, ContextServerDescriptorRegistry,
     client::{self, Client},
     types,
 };
@@ -106,7 +106,7 @@ impl ContextServer {
 pub struct ContextServerManager {
     servers: HashMap<Arc<str>, Arc<ContextServer>>,
     project: Entity<Project>,
-    registry: Entity<ContextServerFactoryRegistry>,
+    registry: Entity<ContextServerDescriptorRegistry>,
     update_servers_task: Option<Task<Result<()>>>,
     needs_server_update: bool,
     _subscriptions: Vec<Subscription>,
@@ -121,7 +121,7 @@ impl EventEmitter<Event> for ContextServerManager {}
 
 impl ContextServerManager {
     pub fn new(
-        registry: Entity<ContextServerFactoryRegistry>,
+        registry: Entity<ContextServerDescriptorRegistry>,
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -186,6 +186,7 @@ impl ContextServerManager {
         server: Arc<ContextServer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
+        dbg!("Starting server", server.id());
         cx.spawn(async move |this, cx| {
             let id = server.id.clone();
             server.start(&cx).await?;
@@ -263,12 +264,14 @@ impl ContextServerManager {
             (this.registry.clone(), this.project.clone())
         })?;
 
-        for (id, factory) in
-            registry.read_with(cx, |registry, _| registry.context_server_factories())?
+        for (id, descriptor) in
+            registry.read_with(cx, |registry, _| registry.context_server_descriptors())?
         {
             let config = desired_servers.entry(id).or_default();
             if config.command.is_none() {
-                if let Some(extension_command) = factory(project.clone(), &cx).await.log_err() {
+                if let Some(extension_command) =
+                    descriptor.command(project.clone(), &cx).await.log_err()
+                {
                     config.command = Some(extension_command);
                 }
             }
