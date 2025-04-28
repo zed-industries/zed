@@ -769,6 +769,7 @@ impl LanguageModel for CloudLanguageModel {
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
+        let mode = request.mode;
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
@@ -787,7 +788,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            mode: Some(CompletionMode::Max),
+                            mode,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -834,7 +835,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            mode: Some(CompletionMode::Max),
+                            mode,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
@@ -865,7 +866,7 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            mode: Some(CompletionMode::Max),
+                            mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
