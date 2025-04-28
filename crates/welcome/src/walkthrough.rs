@@ -1,83 +1,43 @@
 use client::{TelemetrySettings, telemetry::Telemetry};
-use db::kvp::KEY_VALUE_STORE;
+
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, svg,
+    ParentElement, Render, Styled, Subscription, WeakEntity, Window, svg,
 };
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use persistence::WALKTHROUGH_DB;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    AppState, Welcome, Workspace, WorkspaceId,
-    dock::DockPosition,
+    SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::{Item, ItemEvent},
-    open_new,
+    register_serializable_item,
 };
 
-pub use base_keymap_setting::BaseKeymap;
-pub use multibuffer_hint::*;
-
-mod base_keymap_picker;
-mod base_keymap_setting;
-mod multibuffer_hint;
-mod walkthrough;
-mod welcome_ui;
-
-actions!(welcome, [ResetHints]);
-
-pub const FIRST_OPEN: &str = "first_open";
-pub const DOCS_URL: &str = "https://zed.dev/docs/";
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
-
 pub fn init(cx: &mut App) {
-    BaseKeymap::register(cx);
-
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
-        workspace.register_action(|workspace, _: &Welcome, window, cx| {
-            let welcome_page = WelcomePage::new(workspace, cx);
+        workspace.register_action(|workspace, _: &workspace::Walkthrough, window, cx| {
+            let welcome_page = Walkthrough::new(workspace, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
         });
-        workspace
-            .register_action(|_workspace, _: &ResetHints, _, cx| MultibufferHint::set_count(0, cx));
     })
     .detach();
 
-    walkthrough::init(cx);
-    base_keymap_picker::init(cx);
+    register_serializable_item::<Walkthrough>(cx);
 }
 
-pub fn show_welcome_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
-    open_new(
-        Default::default(),
-        app_state,
-        cx,
-        |workspace, window, cx| {
-            workspace.toggle_dock(DockPosition::Left, window, cx);
-            let welcome_page = WelcomePage::new(workspace, cx);
-            workspace.add_item_to_center(Box::new(welcome_page.clone()), window, cx);
-
-            window.focus(&welcome_page.focus_handle(cx));
-
-            cx.notify();
-
-            db::write_and_log(cx, || {
-                KEY_VALUE_STORE.write_kvp(FIRST_OPEN.to_string(), "false".to_string())
-            });
-        },
-    )
-}
-
-pub struct WelcomePage {
+pub struct Walkthrough {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
+    // steps: ListState,
     _settings_subscription: Subscription,
 }
 
-impl Render for WelcomePage {
+impl Render for Walkthrough {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let edit_prediction_provider_is_zed =
             all_language_settings(None, cx).edit_predictions.provider
@@ -156,25 +116,7 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .child(
-                                        Button::new("choose-keymap", "Choose a Keymap")
-                                            .icon(IconName::Keyboard)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                telemetry::event!("Welcome Keymap Changed");
-                                                this.workspace
-                                                    .update(cx, |workspace, cx| {
-                                                        base_keymap_picker::toggle(
-                                                            workspace,
-                                                            &Default::default(),
-                                                            window, cx,
-                                                        )
-                                                    })
-                                                    .ok();
-                                            })),
-                                    )
+
                                     .child(
                                         Button::new(
                                             "try-zed-edit-prediction",
@@ -232,17 +174,7 @@ impl Render for WelcomePage {
                                                 })),
                                         )
                                     })
-                                    .child(
-                                        Button::new("view-docs", "View Documentation")
-                                            .icon(IconName::FileCode)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                telemetry::event!("Welcome Documentation Viewed");
-                                                cx.open_url(DOCS_URL);
-                                            })),
-                                    )
+
                                     .child(
                                         Button::new("explore-extensions", "Explore Extensions")
                                             .icon(IconName::Blocks)
@@ -256,16 +188,7 @@ impl Render for WelcomePage {
                                                 ), cx);
                                             })),
                                     )
-                                    .child(
-                                        Button::new("book-onboarding", "Book Onboarding")
-                                            .icon(IconName::PhoneIncoming)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.open_url(BOOK_ONBOARDING);
-                                            })),
-                                    ),
+
                             ),
                     )
                     .child(
@@ -363,20 +286,22 @@ impl Render for WelcomePage {
     }
 }
 
-impl WelcomePage {
+impl Walkthrough {
     pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         let this = cx.new(|cx| {
-            cx.on_release(|_: &mut Self, _| {
-                telemetry::event!("Welcome Page Closed");
-            })
-            .detach();
+            // cx.on_release(|_: &mut Self, _| {
+            //     telemetry::event!("Welcome Page Closed");
+            // }
+            // .detach();
 
-            WelcomePage {
+            Walkthrough {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                // steps
+                // steps_list: ListState::new(steps.len(), ListAlignment::Top, px(todo!()), || todo!()),
             }
         });
 
@@ -412,23 +337,23 @@ impl WelcomePage {
     }
 }
 
-impl EventEmitter<ItemEvent> for WelcomePage {}
+impl EventEmitter<ItemEvent> for Walkthrough {}
 
-impl Focusable for WelcomePage {
+impl Focusable for Walkthrough {
     fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Item for WelcomePage {
+impl Item for Walkthrough {
     type Event = ItemEvent;
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Welcome".into()
+        "Walkthrough".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("Welcome Page Opened")
+        Some("Walkthrough Page Opened")
     }
 
     fn show_toolbar(&self) -> bool {
@@ -441,7 +366,7 @@ impl Item for WelcomePage {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| WelcomePage {
+        Some(cx.new(|cx| Walkthrough {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),
@@ -451,5 +376,97 @@ impl Item for WelcomePage {
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+}
+
+impl SerializableItem for Walkthrough {
+    fn serialized_item_kind() -> &'static str {
+        "Walkthrough"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<()>> {
+        delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "walkthroughs",
+            &*WALKTHROUGH_DB,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: workspace::ItemId,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<Entity<Self>>> {
+        let has_walkthrough = WALKTHROUGH_DB.get_walkthrough(item_id, workspace_id);
+        cx.spawn(async move |cx| {
+            has_walkthrough?;
+            workspace.update(cx, |workspace, cx| Walkthrough::new(workspace, cx))
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        Some(cx.background_spawn(async move {
+            WALKTHROUGH_DB.save_walkthrough(item_id, workspace_id).await
+        }))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+}
+
+mod persistence {
+    use db::{define_connection, query, sqlez_macros::sql};
+    use workspace::{ItemId, WorkspaceDb};
+
+    define_connection! {
+        pub static ref WALKTHROUGH_DB: WalkthroughDb<WorkspaceDb> =
+            &[sql!(
+                CREATE TABLE walkthroughs (
+                    workspace_id INTEGER,
+                    item_id INTEGER UNIQUE,
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+            )];
+    }
+
+    impl WalkthroughDb {
+        query! {
+            pub async fn save_walkthrough(item_id: ItemId, workspace_id: workspace::WorkspaceId) -> Result<()> {
+                INSERT INTO walkthroughs(item_id, workspace_id)
+                VALUES (?1, ?2)
+                ON CONFLICT DO UPDATE SET
+                  item_id = ?1,
+                  workspace_id = ?2
+            }
+        }
+
+        query! {
+            pub fn get_walkthrough(item_id: ItemId, workspace_id: workspace::WorkspaceId) -> Result<ItemId> {
+                SELECT item_id
+                FROM walkthroughs
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
     }
 }
