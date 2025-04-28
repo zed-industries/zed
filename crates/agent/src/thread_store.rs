@@ -22,7 +22,7 @@ use gpui::{
 use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
-use project::{Project, Worktree};
+use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
     UserRulesContext, WorktreeContext,
@@ -207,15 +207,15 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let project = self.project.read(cx);
-        let worktree_tasks = project
+        let worktrees = self
+            .project
+            .read(cx)
             .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        let worktree_tasks = worktrees
+            .into_iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(
-                    project.fs().clone(),
-                    worktree.read(cx),
-                    cx,
-                )
+                Self::load_worktree_info_for_system_prompt(worktree, self.project.clone(), cx)
             })
             .collect::<Vec<_>>();
         let default_user_rules_task = match prompt_store {
@@ -276,13 +276,13 @@ impl ThreadStore {
     }
 
     fn load_worktree_info_for_system_prompt(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
+        worktree: Entity<Worktree>,
+        project: Entity<Project>,
+        cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
-        let root_name = worktree.root_name().into();
+        let root_name = worktree.read(cx).root_name().into();
 
-        let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
+        let rules_task = Self::load_worktree_rules_file(worktree, project, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
@@ -312,33 +312,44 @@ impl ThreadStore {
     }
 
     fn load_worktree_rules_file(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
+        worktree: Entity<Worktree>,
+        project: Entity<Project>,
+        cx: &mut App,
     ) -> Option<Task<Result<RulesFileContext>>> {
+        let worktree_ref = worktree.read(cx);
+        let worktree_id = worktree_ref.id();
         let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
-                worktree
+                worktree_ref
                     .entry_for_path(name)
                     .filter(|entry| entry.is_file())
-                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
+                    .map(|entry| entry.path.clone())
             })
             .next();
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        selected_rules_file.map(|(path_in_worktree, abs_path)| {
-            let fs = fs.clone();
+        selected_rules_file.map(|path_in_worktree| {
+            let project_path = ProjectPath {
+                worktree_id,
+                path: path_in_worktree.clone(),
+            };
+            let buffer_task =
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+            let rope_task = cx.spawn(async move |cx| {
+                buffer_task.await?.read_with(cx, |buffer, cx| {
+                    let project_entry_id = buffer.entry_id(cx).context("buffer has no file")?;
+                    anyhow::Ok((project_entry_id, buffer.as_rope().clone()))
+                })?
+            });
+            // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
-                let abs_path = abs_path?;
-                let text = fs.load(&abs_path).await.with_context(|| {
-                    format!("Failed to load assistant rules file {:?}", abs_path)
-                })?;
+                let (project_entry_id, rope) = rope_task.await?;
                 anyhow::Ok(RulesFileContext {
                     path_in_worktree,
-                    abs_path: abs_path.into(),
-                    text: text.trim().to_string(),
+                    text: rope.to_string().trim().to_string(),
+                    project_entry_id: project_entry_id.to_usize(),
                 })
             })
         })

@@ -30,7 +30,7 @@ use language_model::{
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
-use project::ProjectItem as _;
+use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
 use std::path::Path;
@@ -43,8 +43,8 @@ use ui::{
     Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
-use util::markdown::MarkdownString;
-use workspace::{OpenOptions, Workspace};
+use util::markdown::MarkdownCodeBlock;
+use workspace::Workspace;
 use zed_actions::assistant::OpenRulesLibrary;
 
 pub struct ActiveThread {
@@ -483,7 +483,7 @@ fn render_markdown_code_block(
         .expanded_code_blocks
         .get(&(message_id, ix))
         .copied()
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     let codeblock_header_bg = cx
         .theme()
@@ -504,51 +504,47 @@ fn render_markdown_code_block(
         .children(label)
         .child(
             h_flex()
+                .visible_on_hover("codeblock_container")
                 .gap_1()
                 .child(
-                    div().visible_on_hover("codeblock_container").child(
-                        IconButton::new(
-                            ("copy-markdown-code", ix),
-                            if codeblock_was_copied {
-                                IconName::Check
-                            } else {
-                                IconName::Copy
-                            },
-                        )
-                        .icon_color(Color::Muted)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(Tooltip::text("Copy Code"))
-                        .on_click({
-                            let active_thread = active_thread.clone();
-                            let parsed_markdown = parsed_markdown.clone();
-                            let code_block_range = metadata.content_range.clone();
-                            move |_event, _window, cx| {
-                                active_thread.update(cx, |this, cx| {
-                                    this.copied_code_block_ids.insert((message_id, ix));
+                    IconButton::new(
+                        ("copy-markdown-code", ix),
+                        if codeblock_was_copied {
+                            IconName::Check
+                        } else {
+                            IconName::Copy
+                        },
+                    )
+                    .icon_color(Color::Muted)
+                    .shape(ui::IconButtonShape::Square)
+                    .tooltip(Tooltip::text("Copy Code"))
+                    .on_click({
+                        let active_thread = active_thread.clone();
+                        let parsed_markdown = parsed_markdown.clone();
+                        let code_block_range = metadata.content_range.clone();
+                        move |_event, _window, cx| {
+                            active_thread.update(cx, |this, cx| {
+                                this.copied_code_block_ids.insert((message_id, ix));
 
-                                    let code = parsed_markdown.source()[code_block_range.clone()]
-                                        .to_string();
-                                    cx.write_to_clipboard(ClipboardItem::new_string(code));
+                                let code =
+                                    parsed_markdown.source()[code_block_range.clone()].to_string();
+                                cx.write_to_clipboard(ClipboardItem::new_string(code));
 
-                                    cx.spawn(async move |this, cx| {
-                                        cx.background_executor()
-                                            .timer(Duration::from_secs(2))
-                                            .await;
+                                cx.spawn(async move |this, cx| {
+                                    cx.background_executor().timer(Duration::from_secs(2)).await;
 
-                                        cx.update(|cx| {
-                                            this.update(cx, |this, cx| {
-                                                this.copied_code_block_ids
-                                                    .remove(&(message_id, ix));
-                                                cx.notify();
-                                            })
+                                    cx.update(|cx| {
+                                        this.update(cx, |this, cx| {
+                                            this.copied_code_block_ids.remove(&(message_id, ix));
+                                            cx.notify();
                                         })
-                                        .ok();
                                     })
-                                    .detach();
-                                });
-                            }
-                        }),
-                    ),
+                                    .ok();
+                                })
+                                .detach();
+                            });
+                        }
+                    }),
                 )
                 .when(
                     metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK,
@@ -576,7 +572,7 @@ fn render_markdown_code_block(
                                         let is_expanded = this
                                             .expanded_code_blocks
                                             .entry((message_id, ix))
-                                            .or_insert(false);
+                                            .or_insert(true);
                                         *is_expanded = !*is_expanded;
                                         cx.notify();
                                     });
@@ -886,7 +882,11 @@ impl ActiveThread {
         });
         rendered.input.update(cx, |this, cx| {
             this.replace(
-                MarkdownString::code_block("json", tool_input).to_string(),
+                MarkdownCodeBlock {
+                    tag: "json",
+                    text: tool_input,
+                }
+                .to_string(),
                 cx,
             );
         });
@@ -2113,13 +2113,15 @@ impl ActiveThread {
                                         }),
                                         transform: Some(Arc::new({
                                             let active_thread = cx.entity();
+                                            let editor_bg = cx.theme().colors().editor_background;
+
                                             move |el, range, metadata, _, cx| {
                                                 let is_expanded = active_thread
                                                     .read(cx)
                                                     .expanded_code_blocks
                                                     .get(&(message_id, range.start))
                                                     .copied()
-                                                    .unwrap_or(false);
+                                                    .unwrap_or(true);
 
                                                 if is_expanded
                                                     || metadata.line_count
@@ -2135,19 +2137,11 @@ impl ActiveThread {
                                                         .w_full()
                                                         .h_1_4()
                                                         .rounded_b_lg()
-                                                        .bg(gpui::linear_gradient(
+                                                        .bg(linear_gradient(
                                                             0.,
-                                                            gpui::linear_color_stop(
-                                                                cx.theme()
-                                                                    .colors()
-                                                                    .editor_background,
-                                                                0.,
-                                                            ),
-                                                            gpui::linear_color_stop(
-                                                                cx.theme()
-                                                                    .colors()
-                                                                    .editor_background
-                                                                    .opacity(0.),
+                                                            linear_color_stop(editor_bg, 0.),
+                                                            linear_color_stop(
+                                                                editor_bg.opacity(0.),
                                                                 1.,
                                                             ),
                                                         )),
@@ -3049,21 +3043,30 @@ impl ActiveThread {
             return;
         };
 
-        let abs_paths = project_context
+        let project_entry_ids = project_context
             .worktrees
             .iter()
             .flat_map(|worktree| worktree.rules_file.as_ref())
-            .map(|rules_file| rules_file.abs_path.to_path_buf())
+            .map(|rules_file| ProjectEntryId::from_usize(rules_file.project_entry_id))
             .collect::<Vec<_>>();
 
-        if let Ok(task) = self.workspace.update(cx, move |workspace, cx| {
-            // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
-            // files clear. For example, if rules file 1 is already open but rules file 2 is not,
-            // this would open and focus rules file 2 in a tab that is not next to rules file 1.
-            workspace.open_paths(abs_paths, OpenOptions::default(), None, window, cx)
-        }) {
-            task.detach();
-        }
+        self.workspace
+            .update(cx, move |workspace, cx| {
+                // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+                // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+                // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+                let project = workspace.project().read(cx);
+                let project_paths = project_entry_ids
+                    .into_iter()
+                    .flat_map(|entry_id| project.path_for_entry(entry_id, cx))
+                    .collect::<Vec<_>>();
+                for project_path in project_paths {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .ok();
     }
 
     fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {

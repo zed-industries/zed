@@ -4046,7 +4046,7 @@ pub enum ElementId {
     /// The ID of a View element
     View(EntityId),
     /// An integer ID.
-    Integer(usize),
+    Integer(u64),
     /// A string based ID.
     Name(SharedString),
     /// A UUID.
@@ -4054,9 +4054,16 @@ pub enum ElementId {
     /// An ID that's equated with a focus handle.
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
-    NamedInteger(SharedString, usize),
+    NamedInteger(SharedString, u64),
     /// A path
     Path(Arc<std::path::Path>),
+}
+
+impl ElementId {
+    /// Constructs an `ElementId::NamedInteger` from a name and `usize`.
+    pub fn named_usize(name: impl Into<SharedString>, integer: usize) -> ElementId {
+        Self::NamedInteger(name.into(), integer as u64)
+    }
 }
 
 impl Display for ElementId {
@@ -4089,13 +4096,13 @@ impl TryInto<SharedString> for ElementId {
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        ElementId::Integer(id)
+        ElementId::Integer(id as u64)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self::Integer(id as usize)
+        Self::Integer(id as u64)
     }
 }
 
@@ -4125,25 +4132,25 @@ impl<'a> From<&'a FocusHandle> for ElementId {
 
 impl From<(&'static str, EntityId)> for ElementId {
     fn from((name, id): (&'static str, EntityId)) -> Self {
-        ElementId::NamedInteger(name.into(), id.as_u64() as usize)
+        ElementId::NamedInteger(name.into(), id.as_u64())
     }
 }
 
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
-        ElementId::NamedInteger(name.into(), id)
+        ElementId::NamedInteger(name.into(), id as u64)
     }
 }
 
 impl From<(SharedString, usize)> for ElementId {
     fn from((name, id): (SharedString, usize)) -> Self {
-        ElementId::NamedInteger(name, id)
+        ElementId::NamedInteger(name, id as u64)
     }
 }
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
-        ElementId::NamedInteger(name.into(), id as usize)
+        ElementId::NamedInteger(name.into(), id)
     }
 }
 
@@ -4155,7 +4162,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(name.into(), id as usize)
+        ElementId::NamedInteger(name.into(), id.into())
     }
 }
 

@@ -13,7 +13,10 @@ use schemars::{
 use serde::Deserialize;
 use serde_json::Value;
 use std::{any::TypeId, fmt::Write, rc::Rc, sync::Arc, sync::LazyLock};
-use util::{asset_str, markdown::MarkdownString};
+use util::{
+    asset_str,
+    markdown::{MarkdownEscaped, MarkdownInlineCode, MarkdownString},
+};
 
 use crate::{SettingsAssets, settings_store::parse_json_with_comments};
 
@@ -152,7 +155,7 @@ impl KeymapFile {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::Success { key_bindings } => Ok(key_bindings),
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => Err(anyhow!(
-                "Error loading built-in keymap \"{asset_path}\": {error_message}"
+                "Error loading built-in keymap \"{asset_path}\": {error_message}",
             )),
             KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
                 "JSON parse error in built-in keymap \"{asset_path}\": {error}"
@@ -171,7 +174,7 @@ impl KeymapFile {
                 error_message,
                 ..
             } if key_bindings.is_empty() => Err(anyhow!(
-                "Error loading built-in keymap \"{asset_path}\": {error_message}"
+                "Error loading built-in keymap \"{asset_path}\": {error_message}",
             )),
             KeymapFileLoadResult::Success { key_bindings, .. }
             | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
@@ -251,7 +254,7 @@ impl KeymapFile {
                 write!(
                     section_errors,
                     "\n\n - Unrecognized fields: {}",
-                    MarkdownString::inline_code(&format!("{:?}", unrecognized_fields.keys()))
+                    MarkdownInlineCode(&format!("{:?}", unrecognized_fields.keys()))
                 )
                 .unwrap();
             }
@@ -280,7 +283,7 @@ impl KeymapFile {
                             write!(
                                 section_errors,
                                 "\n\n- In binding {}, {indented_err}",
-                                inline_code_string(keystrokes),
+                                MarkdownInlineCode(&format!("\"{}\"", keystrokes))
                             )
                             .unwrap();
                         }
@@ -299,16 +302,15 @@ impl KeymapFile {
             let mut error_message = "Errors in user keymap file.\n".to_owned();
             for (context, section_errors) in errors {
                 if context.is_empty() {
-                    write!(error_message, "\n\nIn section without context predicate:").unwrap()
+                    let _ = write!(error_message, "\n\nIn section without context predicate:");
                 } else {
-                    write!(
+                    let _ = write!(
                         error_message,
                         "\n\nIn section with {}:",
-                        MarkdownString::inline_code(&format!("context = \"{}\"", context))
-                    )
-                    .unwrap()
+                        MarkdownInlineCode(&format!("context = \"{}\"", context))
+                    );
                 }
-                write!(error_message, "{section_errors}").unwrap();
+                let _ = write!(error_message, "{section_errors}");
             }
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
@@ -330,14 +332,14 @@ impl KeymapFile {
                     return Err(format!(
                         "expected two-element array of `[name, input]`. \
                         Instead found {}.",
-                        MarkdownString::inline_code(&action.0.to_string())
+                        MarkdownInlineCode(&action.0.to_string())
                     ));
                 }
                 let serde_json::Value::String(ref name) = items[0] else {
                     return Err(format!(
                         "expected two-element array of `[name, input]`, \
                         but the first element is not a string in {}.",
-                        MarkdownString::inline_code(&action.0.to_string())
+                        MarkdownInlineCode(&action.0.to_string())
                     ));
                 };
                 let action_input = items[1].clone();
@@ -353,7 +355,7 @@ impl KeymapFile {
                 return Err(format!(
                     "expected two-element array of `[name, input]`. \
                     Instead found {}.",
-                    MarkdownString::inline_code(&action.0.to_string())
+                    MarkdownInlineCode(&action.0.to_string())
                 ));
             }
         };
@@ -363,23 +365,23 @@ impl KeymapFile {
             Err(ActionBuildError::NotFound { name }) => {
                 return Err(format!(
                     "didn't find an action named {}.",
-                    inline_code_string(&name)
+                    MarkdownInlineCode(&format!("\"{}\"", &name))
                 ));
             }
             Err(ActionBuildError::BuildError { name, error }) => match action_input_string {
                 Some(action_input_string) => {
                     return Err(format!(
                         "can't build {} action from input value {}: {}",
-                        inline_code_string(&name),
-                        MarkdownString::inline_code(&action_input_string),
-                        MarkdownString::escape(&error.to_string())
+                        MarkdownInlineCode(&format!("\"{}\"", &name)),
+                        MarkdownInlineCode(&action_input_string),
+                        MarkdownEscaped(&error.to_string())
                     ));
                 }
                 None => {
                     return Err(format!(
                         "can't build {} action - it requires input data via [name, input]: {}",
-                        inline_code_string(&name),
-                        MarkdownString::escape(&error.to_string())
+                        MarkdownInlineCode(&format!("\"{}\"", &name)),
+                        MarkdownEscaped(&error.to_string())
                     ));
                 }
             },
@@ -390,7 +392,7 @@ impl KeymapFile {
             Err(InvalidKeystrokeError { keystroke }) => {
                 return Err(format!(
                     "invalid keystroke {}. {}",
-                    inline_code_string(&keystroke),
+                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
                     KEYSTROKE_PARSE_EXPECTED_MESSAGE
                 ));
             }
@@ -604,11 +606,6 @@ impl KeymapFile {
             }
         }
     }
-}
-
-// Double quotes a string and wraps it in backticks for markdown inline code..
-fn inline_code_string(text: &str) -> MarkdownString {
-    MarkdownString::inline_code(&format!("\"{}\"", text))
 }
 
 #[cfg(test)]

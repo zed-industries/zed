@@ -448,6 +448,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "shlex",
  "smol",
  "tempfile",
  "util",
@@ -737,7 +738,6 @@ dependencies = [
  "web_search",
  "workspace",
  "workspace-hack",
- "worktree",
  "zed_llm_client",
 ]
 
@@ -14314,6 +14314,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger 0.11.8",
+ "fuzzy",
  "gpui",
  "language",
  "menu",
@@ -14323,6 +14324,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "theme",
  "ui",
  "util",

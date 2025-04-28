@@ -1,11 +1,11 @@
 use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
-use dap::{FakeAdapter, client::SessionId};
+use dap::{FakeAdapter, adapters::DebugTaskDefinition};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachRequest, DebugTaskDefinition, TcpArgumentsTemplate};
+use task::{AttachRequest, TcpArgumentsTemplate};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -30,11 +30,11 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         &workspace,
         cx,
         DebugTaskDefinition {
-            adapter: "fake-adapter".to_string(),
+            adapter: "fake-adapter".into(),
             request: dap::DebugRequest::Attach(AttachRequest {
                 process_id: Some(10),
             }),
-            label: "label".to_string(),
+            label: "label".into(),
             initialize_args: None,
             tcp_connection: None,
             stop_on_entry: None,
@@ -104,6 +104,7 @@ async fn test_show_attach_modal_and_select_process(
                     workspace_handle,
                     DebugTaskDefinition {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
+
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
                         initialize_args: None,
@@ -176,14 +177,4 @@ async fn test_show_attach_modal_and_select_process(
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            let session = dap_store.session_by_id(SessionId(0)).unwrap();
-
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

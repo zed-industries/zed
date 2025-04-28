@@ -27,7 +27,7 @@ use std::time::Duration;
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownCodeBlock;
 
 use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
 use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
@@ -863,7 +863,10 @@ impl RequestMarkdown {
                 write!(
                     &mut tools,
                     "{}\n",
-                    MarkdownString::code_block("json", &format!("{:#}", tool.input_schema))
+                    MarkdownCodeBlock {
+                        tag: "json",
+                        text: &format!("{:#}", tool.input_schema)
+                    }
                 )
                 .unwrap();
             }
@@ -910,7 +913,10 @@ impl RequestMarkdown {
                         ));
                         messages.push_str(&format!(
                             "{}\n",
-                            MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                            MarkdownCodeBlock {
+                                tag: "json",
+                                text: &format!("{:#}", tool_use.input)
+                            }
                         ));
                     }
                     MessageContent::ToolResult(tool_result) => {
@@ -972,7 +978,10 @@ pub fn response_events_to_markdown(
                 ));
                 response.push_str(&format!(
                     "{}\n",
-                    MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                    MarkdownCodeBlock {
+                        tag: "json",
+                        text: &format!("{:#}", tool_use.input)
+                    }
                 ));
             }
             Ok(
