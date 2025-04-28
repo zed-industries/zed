@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Duration};
+use std::{path::PathBuf, rc::Rc, time::Duration};
 
 use file_icons::FileIcons;
 use gpui::{
@@ -11,8 +11,8 @@ use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
 use crate::context::{
     AgentContext, ContextHandle, ContextKind, DirectoryContextHandle, FetchedUrlContext,
-    FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContextHandle,
-    SymbolContextHandle, ThreadContextHandle,
+    FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContext,
+    SelectionContextHandle, SymbolContextHandle, ThreadContextHandle,
 };
 
 #[derive(IntoElement)]
@@ -171,11 +171,11 @@ impl RenderOnce for ContextPill {
                             .map(|element| match &context.status {
                                 ContextStatus::Ready => element
                                     .when_some(
-                                        context.render_preview.as_ref(),
-                                        |element, render_preview| {
-                                            let render_preview = render_preview.clone();
+                                        context.render_hover.as_ref(),
+                                        |element, render_hover| {
+                                            let render_hover = render_hover.clone();
                                             element.hoverable_tooltip(move |window, cx| {
-                                                render_preview(window, cx)
+                                                render_hover(window, cx)
                                             })
                                         },
                                     )
@@ -274,15 +274,17 @@ pub struct AddedContext {
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
     pub status: ContextStatus,
-    pub render_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    pub render_hover: RenderHover,
 }
+
+type RenderHover = Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>;
 
 impl AddedContext {
     /// Creates an `AddedContext` by retrieving relevant details of `AgentContext`. This returns a
     /// `None` if `DirectoryContext` or `RulesContext` no longer exist.
     ///
     /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
-    pub fn new_from_handle(
+    pub fn new_pending(
         handle: ContextHandle,
         prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
@@ -292,7 +294,7 @@ impl AddedContext {
             ContextHandle::File(handle) => Self::new_file(handle, cx),
             ContextHandle::Directory(handle) => Self::new_directory(handle, project, cx),
             ContextHandle::Symbol(handle) => Some(Self::new_symbol(handle)),
-            ContextHandle::Selection(handle) => Self::new_selection(handle, None, cx),
+            ContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
             ContextHandle::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
             ContextHandle::Thread(handle) => Some(Self::new_thread(handle, cx)),
             ContextHandle::Rules(handle) => Self::new_rules(handle, prompt_store, cx),
@@ -300,7 +302,8 @@ impl AddedContext {
         }
     }
 
-    pub fn new_from_loaded(
+    // todo! can this take a &AgentContext?
+    pub fn new_attached(
         context: AgentContext,
         prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
@@ -310,9 +313,7 @@ impl AddedContext {
             AgentContext::File(context) => Self::new_file(context.handle, cx),
             AgentContext::Directory(context) => Self::new_directory(context.handle, project, cx),
             AgentContext::Symbol(context) => Some(Self::new_symbol(context.handle)),
-            AgentContext::Selection(context) => {
-                Self::new_selection(context.handle, Some(context.fenced_codeblock), cx)
-            }
+            AgentContext::Selection(context) => Self::attached_selection(context, cx),
             AgentContext::FetchedUrl(handle) => Some(Self::new_fetched_url(handle)),
             AgentContext::Thread(context) => Some(Self::new_thread(context.handle, cx)),
             AgentContext::Rules(context) => Self::new_rules(context.handle, prompt_store, cx),
@@ -338,7 +339,7 @@ impl AddedContext {
             tooltip: Some(full_path_string),
             icon_path: FileIcons::get_icon(&full_path, cx),
             status: ContextStatus::Ready,
-            render_preview: None,
+            render_hover: None,
             handle: ContextHandle::File(file_context),
         })
     }
@@ -369,7 +370,7 @@ impl AddedContext {
             tooltip: Some(full_path_string),
             icon_path: None,
             status: ContextStatus::Ready,
-            render_preview: None,
+            render_hover: None,
             handle: ContextHandle::Directory(directory_context),
         })
     }
@@ -382,28 +383,22 @@ impl AddedContext {
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
-            render_preview: None,
+            render_hover: None,
             handle: ContextHandle::Symbol(symbol_context),
         }
     }
 
-    fn new_selection(
-        selection_context: SelectionContextHandle,
-        loaded_fenced_codeblock: Option<SharedString>,
-        cx: &App,
-    ) -> Option<AddedContext> {
-        let buffer = selection_context.buffer.read(cx);
-        let full_path = buffer.file()?.full_path(cx);
+    fn pending_selection(handle: SelectionContextHandle, cx: &App) -> Option<AddedContext> {
+        let full_path = handle.full_path(cx)?;
+        let line_range = handle.line_range(cx);
+
         let mut full_path_string = full_path.to_string_lossy().into_owned();
         let mut name = full_path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| full_path_string.clone());
 
-        let line_range = selection_context.range.to_point(&buffer.snapshot());
-
         let line_range_text = format!(" ({}-{})", line_range.start.row + 1, line_range.end.row + 1);
-
         full_path_string.push_str(&line_range_text);
         name.push_str(&line_range_text);
 
@@ -412,52 +407,113 @@ impl AddedContext {
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned().into());
 
+        let icon_path = FileIcons::get_icon(&full_path, cx);
+        let full_path_string: SharedString = full_path_string.into();
+
         Some(AddedContext {
             kind: ContextKind::Selection,
             name: name.into(),
             parent,
             tooltip: None,
-            icon_path: FileIcons::get_icon(&full_path, cx),
+            icon_path: icon_path.clone(),
             status: ContextStatus::Ready,
-            render_preview: if let Some(text) = loaded_fenced_codeblock {
-                Some(Rc::new(
-                    // todo! Weird to show fenced codeblock format only when loaded
-                    move |_, cx| {
-                        let text = text.clone();
-                        ContextPillPreview::new(cx, move |_, cx| {
-                            div()
-                                .id("context-pill-selection-preview")
-                                .overflow_scroll()
-                                .max_w_128()
-                                .max_h_96()
-                                .child(Label::new(text.clone()).buffer_font(cx))
-                                .into_any_element()
-                        })
-                        .into()
-                    },
-                ))
-            } else {
-                let buffer = selection_context.buffer.clone();
-                let range = selection_context.range.clone();
+            render_hover: {
+                let buffer = handle.buffer.clone();
+                let range = handle.range.clone();
                 Some(Rc::new(move |_, cx| {
-                    let text: SharedString = buffer
-                        .read(cx)
+                    let buffer_ref = buffer.read(cx);
+                    let text: SharedString = buffer_ref
                         .text_for_range(range.clone())
                         .collect::<String>()
                         .into();
-                    ContextPillPreview::new(cx, move |_, cx| {
-                        div()
-                            .id("context-pill-selection-preview")
-                            .overflow_scroll()
-                            .max_w_128()
-                            .max_h_96()
-                            .child(Label::new(text.clone()).buffer_font(cx))
-                            .into_any_element()
-                    })
+                    Self::file_hover(icon_path.clone(), full_path_string.clone(), text, cx).into()
+                }))
+            },
+            handle: ContextHandle::Selection(handle),
+        })
+    }
+
+    fn attached_selection(context: SelectionContext, cx: &App) -> Option<AddedContext> {
+        let full_path = context.full_path;
+        let line_range = context.line_range;
+
+        let mut full_path_string = full_path.to_string_lossy().into_owned();
+        let mut name = full_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| full_path_string.clone());
+
+        let line_range_text = format!(" ({}-{})", line_range.start.row + 1, line_range.end.row + 1);
+        full_path_string.push_str(&line_range_text);
+        name.push_str(&line_range_text);
+
+        let parent = full_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned().into());
+
+        let icon_path = FileIcons::get_icon(&full_path, cx);
+        let full_path_string: SharedString = full_path_string.into();
+
+        Some(AddedContext {
+            kind: ContextKind::Selection,
+            name: name.into(),
+            parent,
+            tooltip: None,
+            icon_path: icon_path.clone(),
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    Self::file_hover(
+                        icon_path.clone(),
+                        full_path_string.clone(),
+                        text.clone(),
+                        cx,
+                    )
                     .into()
                 }))
             },
-            handle: ContextHandle::Selection(selection_context),
+            handle: ContextHandle::Selection(context.handle),
+        })
+    }
+
+    fn file_hover(
+        icon_path: Option<SharedString>,
+        full_path_string: SharedString,
+        text: SharedString,
+        cx: &mut App,
+    ) -> Entity<ContextPillHover> {
+        ContextPillHover::new(cx, move |_, cx| {
+            v_flex()
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .w_full()
+                        .max_w_full()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border.opacity(0.6))
+                        .children(
+                            icon_path
+                                .clone()
+                                .map(Icon::from_path)
+                                .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
+                        )
+                        .child(
+                            Label::new(full_path_string.clone())
+                                .size(LabelSize::Small)
+                                .ml_1(),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("context-pill-selection-hover")
+                        .overflow_scroll()
+                        .max_w_128()
+                        .max_h_96()
+                        .child(Label::new(text.clone()).buffer_font(cx)),
+                )
+                .into_any_element()
         })
     }
 
@@ -469,7 +525,7 @@ impl AddedContext {
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
-            render_preview: None,
+            render_hover: None,
             handle: ContextHandle::FetchedUrl(fetched_url_context),
         }
     }
@@ -492,7 +548,7 @@ impl AddedContext {
             } else {
                 ContextStatus::Ready
             },
-            render_preview: None,
+            render_hover: None,
             handle: ContextHandle::Thread(thread_context),
         }
     }
@@ -514,7 +570,7 @@ impl AddedContext {
             tooltip: None,
             icon_path: None,
             status: ContextStatus::Ready,
-            render_preview: None,
+            render_hover: None,
             handle: ContextHandle::Rules(rules_context),
         })
     }
@@ -535,11 +591,11 @@ impl AddedContext {
                 },
                 ImageStatus::Ready => ContextStatus::Ready,
             },
-            render_preview: Some(Rc::new({
+            render_hover: Some(Rc::new({
                 let image = image_context.original_image.clone();
                 move |_, cx| {
                     let image = image.clone();
-                    ContextPillPreview::new(cx, move |_, _| {
+                    ContextPillHover::new(cx, move |_, _| {
                         gpui::img(image.clone())
                             .max_w_96()
                             .max_h_96()
@@ -553,28 +609,28 @@ impl AddedContext {
     }
 }
 
-struct ContextPillPreview {
-    render_preview: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+struct ContextPillHover {
+    render_hover: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
 }
 
-impl ContextPillPreview {
+impl ContextPillHover {
     fn new(
         cx: &mut App,
-        render_preview: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+        render_hover: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
     ) -> Entity<Self> {
         cx.new(|_| Self {
-            render_preview: Box::new(render_preview),
+            render_hover: Box::new(render_hover),
         })
     }
 }
 
-impl Render for ContextPillPreview {
+impl Render for ContextPillHover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         tooltip_container(window, cx, move |this, window, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child((self.render_preview)(window, cx))
+                .child((self.render_hover)(window, cx))
         })
     }
 }

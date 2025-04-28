@@ -1,5 +1,6 @@
 use std::fmt::{self, Display, Formatter, Write as _};
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 
 use collections::HashSet;
@@ -14,7 +15,7 @@ use ref_cast::RefCast;
 use rope::{Point, Rope};
 use text::{Anchor, OffsetRangeExt as _};
 use ui::{ElementId, IconName};
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
 use crate::thread::Thread;
@@ -146,7 +147,7 @@ pub struct FileContextHandle {
 pub struct FileContext {
     pub handle: FileContextHandle,
     pub full_path: Arc<Path>,
-    pub fenced_codeblock: SharedString,
+    pub text: SharedString,
 }
 
 impl FileContextHandle {
@@ -178,8 +179,8 @@ impl FileContextHandle {
         cx.background_spawn(async move {
             let context = AgentContext::File(FileContext {
                 handle: self,
-                fenced_codeblock: to_fenced_codeblock(&full_path, rope, None).into(),
                 full_path: full_path.into(),
+                text: rope.to_string().into(),
             });
             Some((context, vec![buffer]))
         })
@@ -188,7 +189,14 @@ impl FileContextHandle {
 
 impl Display for FileContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.fenced_codeblock)
+        write!(
+            f,
+            "{}",
+            MarkdownCodeBlock {
+                tag: &codeblock_tag(&self.full_path, None),
+                text: &self.text,
+            }
+        )
     }
 }
 
@@ -273,9 +281,15 @@ impl DirectoryContextHandle {
 
             cx.background_spawn(async move {
                 let (rope, buffer) = rope_task.await?;
+                let fenced_codeblock = MarkdownCodeBlock {
+                    tag: &codeblock_tag(&full_path, None),
+                    text: &rope.to_string(),
+                }
+                .to_string()
+                .into();
                 let descendant = DirectoryContextDescendant {
                     rel_path,
-                    fenced_codeblock: to_fenced_codeblock(&full_path, rope, None).into(),
+                    fenced_codeblock,
                 };
                 Some((descendant, buffer))
             })
@@ -322,7 +336,9 @@ pub struct SymbolContextHandle {
 #[derive(Debug, Clone)]
 pub struct SymbolContext {
     pub handle: SymbolContextHandle,
-    pub fenced_codeblock: SharedString,
+    pub full_path: Arc<Path>,
+    pub line_range: Range<Point>,
+    pub text: SharedString,
 }
 
 impl SymbolContextHandle {
@@ -351,7 +367,9 @@ impl SymbolContextHandle {
         cx.background_spawn(async move {
             let context = AgentContext::Symbol(SymbolContext {
                 handle: self,
-                fenced_codeblock: to_fenced_codeblock(&full_path, rope, Some(line_range)).into(),
+                full_path: full_path.into(),
+                line_range,
+                text: rope.to_string().into(),
             });
             Some((context, vec![buffer]))
         })
@@ -360,7 +378,11 @@ impl SymbolContextHandle {
 
 impl Display for SymbolContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.fenced_codeblock)
+        let code_block = MarkdownCodeBlock {
+            tag: &codeblock_tag(&self.full_path, Some(self.line_range.clone())),
+            text: &self.text,
+        };
+        write!(f, "{code_block}",)
     }
 }
 
@@ -374,7 +396,9 @@ pub struct SelectionContextHandle {
 #[derive(Debug, Clone)]
 pub struct SelectionContext {
     pub handle: SelectionContextHandle,
-    pub fenced_codeblock: SharedString,
+    pub full_path: Arc<Path>,
+    pub line_range: Range<Point>,
+    pub text: SharedString,
 }
 
 impl SelectionContextHandle {
@@ -387,31 +411,44 @@ impl SelectionContextHandle {
         self.range.hash(state);
     }
 
+    pub fn full_path(&self, cx: &App) -> Option<PathBuf> {
+        Some(self.buffer.read(cx).file()?.full_path(cx))
+    }
+
+    pub fn line_range(&self, cx: &App) -> Range<Point> {
+        self.range.to_point(&self.buffer.read(cx).snapshot())
+    }
+
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
-        let buffer_ref = self.buffer.read(cx);
-        let Some(file) = buffer_ref.file() else {
+        let Some(full_path) = self.full_path(cx) else {
             log::error!("selection context's file has no path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx);
-        let rope = buffer_ref
+        let text = self
+            .buffer
+            .read(cx)
             .text_for_range(self.range.clone())
-            .collect::<Rope>();
-        let line_range = self.range.to_point(&buffer_ref.snapshot());
+            .collect::<String>()
+            .into();
         let buffer = self.buffer.clone();
-        cx.background_spawn(async move {
-            let context = AgentContext::Selection(SelectionContext {
-                handle: self,
-                fenced_codeblock: to_fenced_codeblock(&full_path, rope, Some(line_range)).into(),
-            });
-            Some((context, vec![buffer]))
-        })
+        let context = AgentContext::Selection(SelectionContext {
+            full_path: full_path.into(),
+            line_range: self.line_range(cx),
+            text,
+            handle: self,
+        });
+
+        Task::ready(Some((context, vec![buffer])))
     }
 }
 
 impl Display for SelectionContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.fenced_codeblock)
+        let code_block = MarkdownCodeBlock {
+            tag: &codeblock_tag(&self.full_path, Some(self.line_range.clone())),
+            text: &self.text,
+        };
+        write!(f, "{code_block}",)
     }
 }
 
@@ -565,7 +602,11 @@ impl Display for RulesContext {
         if let Some(title) = &self.title {
             write!(f, "Rules title: {}\n", title)?;
         }
-        write!(f, "{}", MarkdownString::code_block("", self.text.trim()))
+        let code_block = MarkdownCodeBlock {
+            tag: "",
+            text: self.text.trim(),
+        };
+        write!(f, "{code_block}")
     }
 }
 
@@ -829,61 +870,24 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
     files
 }
 
-fn to_fenced_codeblock(
-    full_path: &Path,
-    content: Rope,
-    line_range: Option<Range<Point>>,
-) -> String {
-    let line_range_text = line_range.map(|range| {
+fn codeblock_tag(full_path: &Path, line_range: Option<Range<Point>>) -> String {
+    let mut result = String::new();
+
+    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+        let _ = write!(result, "{} ", extension);
+    }
+
+    let _ = write!(result, "{}", full_path.display());
+
+    if let Some(range) = line_range {
         if range.start.row == range.end.row {
-            format!(":{}", range.start.row + 1)
+            let _ = write!(result, ":{}", range.start.row + 1);
         } else {
-            format!(":{}-{}", range.start.row + 1, range.end.row + 1)
+            let _ = write!(result, ":{}-{}", range.start.row + 1, range.end.row + 1);
         }
-    });
-
-    let path_extension = full_path.extension().and_then(|ext| ext.to_str());
-    let path_string = full_path.to_string_lossy();
-    let capacity = 3
-        + path_extension.map_or(0, |extension| extension.len() + 1)
-        + path_string.len()
-        + line_range_text.as_ref().map_or(0, |text| text.len())
-        + 1
-        + content.len()
-        + 5;
-    let mut buffer = String::with_capacity(capacity);
-
-    buffer.push_str("```");
-
-    if let Some(extension) = path_extension {
-        buffer.push_str(extension);
-        buffer.push(' ');
-    }
-    buffer.push_str(&path_string);
-
-    if let Some(line_range_text) = line_range_text {
-        buffer.push_str(&line_range_text);
     }
 
-    buffer.push('\n');
-    for chunk in content.chunks() {
-        buffer.push_str(chunk);
-    }
-
-    if !buffer.ends_with('\n') {
-        buffer.push('\n');
-    }
-
-    buffer.push_str("```\n");
-
-    debug_assert!(
-        buffer.len() == capacity - 1 || buffer.len() == capacity,
-        "to_fenced_codeblock calculated capacity of {}, but length was {}",
-        capacity,
-        buffer.len(),
-    );
-
-    buffer
+    result
 }
 
 /// Wraps `AgentContext` to opt-in to `PartialEq` and `Hash` impls which use a subset of fields

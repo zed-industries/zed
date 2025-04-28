@@ -1499,7 +1499,7 @@ impl ActiveThread {
             thread
                 .context_for_message(message_id)
                 .flat_map(|context| {
-                    AddedContext::new_from_loaded(context.clone(), prompt_store, project, cx)
+                    AddedContext::new_attached(context.clone(), prompt_store, project, cx)
                 })
                 .collect::<Vec<_>>()
         } else {

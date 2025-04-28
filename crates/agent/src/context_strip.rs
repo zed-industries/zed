@@ -93,7 +93,7 @@ impl ContextStrip {
                 .read(cx)
                 .context()
                 .flat_map(|context| {
-                    AddedContext::new_from_handle(context.clone(), prompt_store, project, cx)
+                    AddedContext::new_pending(context.clone(), prompt_store, project, cx)
                 })
                 .collect::<Vec<_>>()
         } else {
