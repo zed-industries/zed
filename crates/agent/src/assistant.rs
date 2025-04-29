@@ -34,7 +34,7 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings as _;
-use thread::ThreadId;
+pub use thread::{MessageSegment, ThreadId};
 
 pub use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
