@@ -904,9 +904,9 @@ impl MessageEditor {
                                                 .gap_0p5()
                                                 .children(name_label)
                                                 .children(parent_label),
-                                        ) // TODO: show lines changed
-                                        .child(Label::new("+").color(Color::Created))
-                                        .child(Label::new("-").color(Color::Deleted)),
+                                        ), // TODO: Implement line diff
+                                           // .child(Label::new("+").color(Color::Created))
+                                           // .child(Label::new("-").color(Color::Deleted)),
                                 )
                                 .child(
                                     div().visible_on_hover("edited-code").child(
