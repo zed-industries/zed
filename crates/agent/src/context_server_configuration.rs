@@ -197,27 +197,17 @@ impl Render for ConfigureContextServerModal {
                     .section(
                         Section::new().child(
                             v_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .child(
-                                            Label::new("Installation Instructions")
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                        )
-                                        .child(Label::new(
-                                            current.installation_instructions.clone(),
-                                        )),
+                                    Label::new(current.installation_instructions.clone())
+                                        .color(Color::Muted),
                                 )
                                 .child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .child(
-                                            Label::new("Settings")
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                        )
+                                    div()
+                                        .p_2()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
                                         .child({
                                             let settings = ThemeSettings::get_global(cx);
                                             let text_style = TextStyle {
@@ -269,7 +259,7 @@ impl Render for ConfigureContextServerModal {
                                     ),
                             )
                             .end_slot(
-                                Button::new("configure-server", "Configure")
+                                Button::new("configure-server", "Configure MCP")
                                     .key_binding(
                                         KeyBinding::for_action_in(
                                             &menu::Confirm,
