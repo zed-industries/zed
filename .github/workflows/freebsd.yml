@@ -26,5 +26,7 @@ jobs:
             sysctl hw.ncpu
             sysctl hw.physmem
             sysctl hw.usermem
+            rustup-init --profile minimal --default-toolchain none -y
+            rustup update
             cargo build -p remote_server
             target/debug/remote-server --version
