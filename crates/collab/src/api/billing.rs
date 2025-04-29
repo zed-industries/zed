@@ -380,11 +380,14 @@ async fn create_billing_subscription(
                 }
             }
 
+            let feature_flags = app.db.get_user_flags(user.id).await?;
+
             stripe_billing
                 .checkout_with_zed_pro_trial(
                     app.config.zed_pro_price_id()?,
                     customer_id,
                     &user.github_login,
+                    feature_flags,
                     &success_url,
                 )
                 .await?
