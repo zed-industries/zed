@@ -1853,6 +1853,8 @@ impl Terminal {
                 let completion_receiver = task.completion_rx.clone();
                 return cx
                     .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
+            } else if let Ok(status) = task.completion_rx.try_recv() {
+                return Task::ready(status);
             }
         }
         Task::ready(None)
