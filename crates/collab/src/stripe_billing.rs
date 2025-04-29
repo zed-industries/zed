@@ -87,7 +87,7 @@ impl StripeBilling {
             .prices_by_lookup_key
             .get(lookup_key)
             .cloned()
-            .ok_or_else(|| crate::Error::Internal(anyhow!("")))
+            .ok_or_else(|| crate::Error::Internal(anyhow!("no price ID found for {lookup_key:?}")))
     }
 
     pub async fn register_model_for_token_based_usage(
@@ -224,6 +224,39 @@ impl StripeBilling {
             id: price_id,
             meter_event_name: meter_event_name.to_string(),
         })
+    }
+
+    pub async fn subscribe_to_price(
+        &self,
+        subscription_id: &stripe::SubscriptionId,
+        price_id: &stripe::PriceId,
+    ) -> Result<()> {
+        let subscription =
+            stripe::Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
+
+        if subscription_contains_price(&subscription, price_id) {
+            return Ok(());
+        }
+
+        stripe::Subscription::update(
+            &self.client,
+            subscription_id,
+            stripe::UpdateSubscription {
+                items: Some(vec![stripe::UpdateSubscriptionItems {
+                    price: Some(price_id.to_string()),
+                    ..Default::default()
+                }]),
+                trial_settings: Some(stripe::UpdateSubscriptionTrialSettings {
+                    end_behavior: stripe::UpdateSubscriptionTrialSettingsEndBehavior {
+                        missing_payment_method: stripe::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
+                    },
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Ok(())
     }
 
     pub async fn subscribe_to_model(

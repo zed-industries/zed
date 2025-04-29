@@ -1366,9 +1366,12 @@ async fn sync_model_request_usage_with_stripe(
         .get_active_zed_pro_billing_subscriptions(user_ids)
         .await?;
 
-    let claude_3_5_sonnet = stripe_billing.find_price_by_lookup_key("").await?;
-    let claude_3_7_sonnet = stripe_billing.find_price_by_lookup_key("").await?;
-    let claude_3_7_sonnet_max = stripe_billing.find_price_by_lookup_key("").await?;
+    let claude_3_5_sonnet = stripe_billing
+        .find_price_by_lookup_key("claude-3-5-sonnet-requests")
+        .await?;
+    let claude_3_7_sonnet = stripe_billing
+        .find_price_by_lookup_key("claude-3-7-sonnet-requests")
+        .await?;
 
     for (usage_meter, usage) in usage_meters {
         let Some((billing_customer, billing_subscription)) =
@@ -1392,12 +1395,15 @@ async fn sync_model_request_usage_with_stripe(
 
         let model = llm_db.model_by_id(usage_meter.model_id)?;
 
-        let meter_event_name = match model.name.as_str() {
-            "claude-3-5-sonnet" => "claude_3_5_sonnet/requests",
-            "claude-3-7-sonnet" => "claude_3_7_sonnet/requests",
+        let (price_id, meter_event_name) = match model.name.as_str() {
+            "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
+            "claude-3-7-sonnet" => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
             _ => continue,
         };
 
+        stripe_billing
+            .subscribe_to_price(&stripe_subscription_id, price_id)
+            .await?;
         stripe_billing
             .bill_model_request_usage(&stripe_customer_id, meter_event_name, usage_meter.requests)
             .await?;
