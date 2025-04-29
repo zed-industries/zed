@@ -80,7 +80,7 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
                 .context_server_configuration(id.clone(), extension_project)
                 .await?;
 
-            log::info!("loaded configration for context server {id}: {configuration:?}");
+            log::info!("loaded configuration for context server {id}: {configuration:?}");
 
             Ok(configuration)
         })

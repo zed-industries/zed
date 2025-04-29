@@ -142,7 +142,7 @@ impl ConfigureContextServerModal {
 }
 
 impl ConfigureContextServerModal {
-    pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
+    pub fn confirm(&mut self, cx: &mut Context<Self>) {
         if self.context_servers_to_setup.is_empty() {
             return;
         }
@@ -191,6 +191,11 @@ impl ConfigureContextServerModal {
                 }
             },
         );
+
+        self.completed = self.context_servers_to_setup.is_empty();
+        if self.completed {
+            cx.emit(DismissEvent);
+        }
     }
 }
 
@@ -206,6 +211,7 @@ impl Render for ConfigureContextServerModal {
             .elevation_3(cx)
             .w(rems(34.))
             .key_context("ConfigureContextServerModal")
+            .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| cx.emit(DismissEvent)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window);
@@ -300,9 +306,9 @@ impl Render for ConfigureContextServerModal {
                                         )
                                         .map(|kb| kb.size(rems_from_px(12.))),
                                     )
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.confirm(&menu::Confirm, cx)
-                                    })),
+                                    .on_click(
+                                        cx.listener(|this, _event, _window, cx| this.confirm(cx)),
+                                    ),
                             ),
                     ),
             )

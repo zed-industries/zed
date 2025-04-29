@@ -289,6 +289,14 @@
     }
   },
   {
+    "context": "ConfigureContextServerModal > Editor",
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "editor::Newline",
+      "alt-enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "ContextStrip",
     "bindings": {
       "up": "agent::FocusUp",
