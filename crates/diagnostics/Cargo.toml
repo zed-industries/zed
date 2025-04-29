@@ -20,6 +20,7 @@ component.workspace = true
 ctor.workspace = true
 editor.workspace = true
 env_logger.workspace = true
+futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
 itertools.workspace = true

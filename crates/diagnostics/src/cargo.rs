@@ -1,5 +1,6 @@
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{path::Path, process::Stdio};
 
+use cargo_metadata::diagnostic::Diagnostic as CargoDiagnostic;
 use gpui::{AppContext, Entity, Task};
 use itertools::Itertools as _;
 use project::{Worktree, project_settings::ProjectSettings};
@@ -13,26 +14,7 @@ use smol::{
 use ui::App;
 use util::ResultExt;
 
-use cargo_metadata::{Artifact, Message, PackageId, diagnostic::Diagnostic};
-
 use crate::ProjectDiagnosticsEditor;
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(untagged)]
-enum JsonMessage {
-    Cargo(Message),
-    Rustc(Diagnostic),
-}
-
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum CargoCheckMessage {
-    CompilerArtifact(Artifact),
-    Diagnostic {
-        diagnostic: Diagnostic,
-        package_id: Option<Arc<PackageId>>,
-    },
-}
 
 pub fn worktrees_for_diagnostics_fetch(
     editor: Entity<ProjectDiagnosticsEditor>,
@@ -56,7 +38,7 @@ pub fn worktrees_for_diagnostics_fetch(
 pub fn fetch_worktree_diagnostics(
     worktree_root: &Path,
     cx: &App,
-) -> Option<(Task<()>, Receiver<CargoCheckMessage>)> {
+) -> Option<(Task<()>, Receiver<CargoDiagnostic>)> {
     let diagnostics_settings = ProjectSettings::get_global(cx)
         .diagnostics
         .cargo
@@ -93,36 +75,13 @@ pub fn fetch_worktree_diagnostics(
                     errors = 0;
                     let mut deserializer = serde_json::Deserializer::from_str(&line);
                     deserializer.disable_recursion_limit();
-                    let cargo_check_message =
-                        JsonMessage::deserialize(&mut deserializer).map(|json_message| {
-                            match json_message {
-                                JsonMessage::Cargo(message) => match message {
-                                    Message::CompilerArtifact(artifact) if !artifact.fresh => {
-                                        Some(CargoCheckMessage::CompilerArtifact(artifact))
-                                    }
-                                    Message::CompilerMessage(msg) => {
-                                        Some(CargoCheckMessage::Diagnostic {
-                                            diagnostic: msg.message,
-                                            package_id: Some(Arc::new(msg.package_id)),
-                                        })
-                                    }
-                                    _ => None,
-                                },
-                                JsonMessage::Rustc(message) => Some(CargoCheckMessage::Diagnostic {
-                                    diagnostic: message,
-                                    package_id: None,
-                                }),
-                            }
-                        });
-
-                    match cargo_check_message {
-                        Ok(Some(message)) => {
+                    match CargoDiagnostic::deserialize(&mut deserializer) {
+                        Ok(message) => {
                             if tx.send(message).await.is_err() {
                                 return;
                             }
                         }
-                        Ok(None) => {}
-                        Err(e) => log::error!("Failed to parse cargo diagnostics from line '{line}': {e}"),
+                        Err(_) => log::debug!("Failed to parse cargo diagnostics from line '{line}'"),
                     };
                 },
                 Err(e) => {
@@ -138,4 +97,8 @@ pub fn fetch_worktree_diagnostics(
     });
 
     Some((cargo_diagnostics_fetch_task, rx))
+}
+
+pub fn cargo_to_lsp(diagnostics: Vec<CargoDiagnostic>) -> lsp::PublishDiagnosticsParams {
+    todo!("TODO kb")
 }

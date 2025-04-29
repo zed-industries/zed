@@ -8,6 +8,7 @@ mod diagnostic_renderer;
 mod diagnostics_tests;
 
 use anyhow::Result;
+use cargo::{cargo_to_lsp, fetch_worktree_diagnostics};
 use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
@@ -26,7 +27,8 @@ use language::{
 use lsp::DiagnosticSeverity;
 
 use project::{
-    DiagnosticSummary, Project, ProjectPath, Worktree, project_settings::ProjectSettings,
+    DiagnosticSummary, Project, ProjectPath, Worktree,
+    lsp_store::rust_analyzer_ext::RUST_ANALYZER_NAME, project_settings::ProjectSettings,
 };
 use settings::Settings;
 use std::{
@@ -329,22 +331,91 @@ impl ProjectDiagnosticsEditor {
 
     fn fetch_cargo_diagnostics(
         &mut self,
-        diagnostics_sources: &[Entity<Worktree>],
+        diagnostics_sources: Arc<Vec<Entity<Worktree>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cargo_diagnostics_task =
-            Some(cx.spawn(async move |project_diagnostics_editor, cx| {
-                // TODO kb
-                cx.background_executor().timer(Duration::from_secs(1)).await;
+        self.cargo_diagnostics_task = Some(cx.spawn_in(
+            window,
+            async move |project_diagnostics_editor, cx| {
+                let rust_analyzer_server = project_diagnostics_editor
+                    .update(cx, |editor, cx| {
+                        editor
+                            .project
+                            .read(cx)
+                            .language_server_with_name(RUST_ANALYZER_NAME, cx)
+                    })
+                    .ok();
+                let rust_analyzer_server = match rust_analyzer_server {
+                    Some(rust_analyzer_server) => rust_analyzer_server.await,
+                    None => None,
+                };
+                let Some(rust_analyzer_server) = rust_analyzer_server else {
+                    return;
+                };
+
+                let mut worktree_diagnostics_tasks = Vec::new();
+                for worktree in diagnostics_sources.iter() {
+                    if let Some((_task, mut worktree_diagnostics)) = cx
+                        .update(|_, cx| {
+                            let worktree_root = worktree.read(cx).abs_path();
+                            fetch_worktree_diagnostics(&worktree_root, cx)
+                        })
+                        .ok()
+                        .flatten()
+                    {
+                        let editor = project_diagnostics_editor.clone();
+                        let worktree = worktree.downgrade();
+                        worktree_diagnostics_tasks.push(cx.spawn(async move |cx| {
+                            let _task = _task;
+                            let mut current_file_diagnostics =
+                                None::<(String, Vec<cargo_metadata::diagnostic::Diagnostic>)>;
+                            while let Ok(diagnostic) = worktree_diagnostics.recv().await {
+                                let file_changed = todo!("TODO kb");
+                                if file_changed {
+                                    if let Some((relative_path, diagnostics)) =
+                                        current_file_diagnostics.take()
+                                    {
+                                        if editor
+                                            .update(cx, |editor, cx| {
+                                                let diagnostics = cargo_to_lsp(diagnostics);
+                                                editor.project.read(cx).lsp_store().update(
+                                                    cx,
+                                                    |lsp_store, cx| {
+                                                        lsp_store.merge_diagnostics(
+                                                            rust_analyzer_server,
+                                                            diagnostics,
+                                                            &[],
+                                                            |d| {
+                                                                // TODO kb clean up previous fetches' diagnostics here instead
+                                                                true
+                                                            },
+                                                            cx,
+                                                        )
+                                                    },
+                                                )
+                                            })
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }));
+                    }
+                }
+
+                let _: Vec<()> = futures::future::join_all(worktree_diagnostics_tasks).await;
                 project_diagnostics_editor
-                    .update(cx, |project_diagnostics_editor, cx| {
-                        project_diagnostics_editor.cargo_diagnostics_task = None;
+                    .update_in(cx, |editor, window, cx| {
+                        editor.cargo_diagnostics_task = None;
+                        editor.update_all_excerpts(window, cx);
                         cx.notify();
                     })
                     .ok();
-                // diagnostics.update_all_excerpts(window, cx);
-            }));
+            },
+        ));
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
