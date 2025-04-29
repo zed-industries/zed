@@ -1,10 +1,11 @@
 use std::process::ExitStatus;
 
 use anyhow::{Result, anyhow};
-use gpui::{Context, Task};
+use gpui::{Context, Entity, Task};
+use language::Buffer;
 use project::TaskSourceKind;
 use remote::ConnectionState;
-use task::{DebugTaskDefinition, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
+use task::{DebugScenario, ResolvedTask, SpawnInTerminal, TaskContext, TaskTemplate};
 use ui::Window;
 
 use crate::Workspace;
@@ -48,84 +49,41 @@ impl Workspace {
     pub fn schedule_resolved_task(
         self: &mut Workspace,
         task_source_kind: TaskSourceKind,
-        mut resolved_task: ResolvedTask,
+        resolved_task: ResolvedTask,
         omit_history: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
-            if !omit_history {
-                resolved_task.resolved = Some(spawn_in_terminal.clone());
-                self.project().update(cx, |project, cx| {
-                    if let Some(task_inventory) =
-                        project.task_store().read(cx).task_inventory().cloned()
-                    {
-                        task_inventory.update(cx, |inventory, _| {
-                            inventory.task_scheduled(task_source_kind, resolved_task);
-                        })
-                    }
-                });
-            }
-
-            if let Some(terminal_provider) = self.terminal_provider.as_ref() {
-                terminal_provider
-                    .spawn(spawn_in_terminal, window, cx)
-                    .detach_and_log_err(cx);
-            }
-        }
-    }
-
-    pub fn schedule_debug_task(
-        &mut self,
-        task: ResolvedTask,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let Some(debug_config) = task.resolved_debug_adapter_config() else {
-            log::error!("Debug task has no debug adapter config");
-            return;
-        };
-
-        let project = self.project().clone();
-        cx.spawn_in(window, async move |workspace, cx| {
-            let config = if debug_config.locator.is_some() {
-                let task = workspace.update_in(cx, |workspace, window, cx| {
-                    workspace.spawn_in_terminal(task.resolved.unwrap(), window, cx)
-                })?;
-
-                let exit_code = task.await?;
-                if !exit_code.success() {
-                    return anyhow::Ok(());
+        let spawn_in_terminal = resolved_task.resolved.clone();
+        if !omit_history {
+            self.project().update(cx, |project, cx| {
+                if let Some(task_inventory) =
+                    project.task_store().read(cx).task_inventory().cloned()
+                {
+                    task_inventory.update(cx, |inventory, _| {
+                        inventory.task_scheduled(task_source_kind, resolved_task);
+                    })
                 }
-                let ret = project
-                    .update(cx, |project, cx| {
-                        project.dap_store().update(cx, |dap_store, cx| {
-                            dap_store.run_debug_locator(debug_config, cx)
-                        })
-                    })?
-                    .await?;
-                ret
-            } else {
-                debug_config.definition
-            };
+            });
+        }
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                workspace.start_debug_session(config, window, cx);
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        if let Some(terminal_provider) = self.terminal_provider.as_ref() {
+            terminal_provider
+                .spawn(spawn_in_terminal, window, cx)
+                .detach_and_log_err(cx);
+        }
     }
 
     pub fn start_debug_session(
         &mut self,
-        definition: DebugTaskDefinition,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(provider) = self.debugger_provider.as_mut() {
-            provider.start_session(definition, window, cx)
+            provider.start_session(scenario, task_context, active_buffer, window, cx)
         }
     }
 

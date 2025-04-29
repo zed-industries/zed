@@ -42,7 +42,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_kvp() {
-        let db = KeyValueStore(crate::open_test_db("test_kvp").await);
+        let db = KeyValueStore::open_test_db("test_kvp").await;
 
         assert_eq!(db.read_kvp("key-1").unwrap(), None);
 

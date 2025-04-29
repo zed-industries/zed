@@ -32,7 +32,7 @@ use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
     DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
     Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, Window, div, h_flex, v_flex,
+    Styled, Tab, Tooltip, VisibleOnHover, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -54,7 +54,7 @@ pub struct RunningState {
     loaded_sources_list: Entity<LoadedSourceList>,
     pub debug_terminal: Entity<DebugTerminal>,
     module_list: Entity<module_list::ModuleList>,
-    _console: Entity<Console>,
+    console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
     active_pane: Option<Entity<Pane>>,
@@ -106,6 +106,7 @@ pub(crate) struct SubView {
     pane_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
+    hovered: bool,
 }
 
 impl SubView {
@@ -121,6 +122,7 @@ impl SubView {
             inner: view,
             pane_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
+            hovered: false,
         })
     }
 
@@ -139,8 +141,8 @@ impl Item for SubView {
 
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.kind.to_shared_string())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        self.kind.to_shared_string()
     }
 
     fn tab_content(
@@ -170,10 +172,19 @@ impl Item for SubView {
 impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .id(SharedString::from(format!(
+                "subview-container-{}",
+                self.kind.to_shared_string()
+            )))
+            .on_hover(cx.listener(|this, hovered, _, cx| {
+                this.hovered = *hovered;
+                cx.notify();
+            }))
             .size_full()
+            // Add border uncoditionally to prevent layout shifts on focus changes.
+            .border_1()
             .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
-                // TODO better way of showing focus?
-                el.border_1().border_color(gpui::red())
+                el.border_color(cx.theme().colors().pane_focused_border)
             })
             .child(self.inner.clone())
     }
@@ -311,16 +322,23 @@ pub(crate) fn new_debugger_pane(
         pane.set_render_tab_bar(cx, {
             move |pane, window, cx| {
                 let active_pane_item = pane.active_item();
+                let pane_group_id: SharedString =
+                    format!("pane-zoom-button-hover-{}", cx.entity_id()).into();
+                let is_hovered = active_pane_item.as_ref().map_or(false, |item| {
+                    item.downcast::<SubView>()
+                        .map_or(false, |this| this.read(cx).hovered)
+                });
                 h_flex()
+                    .group(pane_group_id.clone())
                     .justify_between()
                     .bg(cx.theme().colors().tab_bar_background)
                     .border_b_1()
+                    .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
                     .child(
                         h_flex()
                             .w_full()
-                            .px_2()
                             .gap_1()
                             .h(Tab::container_height(cx))
                             .drag_over::<DraggedTab>(|bar, _, _, cx| {
@@ -336,6 +354,7 @@ pub(crate) fn new_debugger_pane(
                                 let selected = active_pane_item
                                     .as_ref()
                                     .map_or(false, |active| active.item_id() == item.item_id());
+                                let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
                                     .id(SharedString::from(format!(
@@ -346,10 +365,17 @@ pub(crate) fn new_debugger_pane(
                                     .rounded_md()
                                     .cursor_pointer()
                                     .map(|this| {
+                                        let theme = cx.theme();
                                         if selected {
-                                            this.bg(cx.theme().colors().tab_active_background)
+                                            let color = theme.colors().tab_active_background;
+                                            let color = if deemphasized {
+                                                color.opacity(0.5)
+                                            } else {
+                                                color
+                                            };
+                                            this.bg(color)
                                         } else {
-                                            let hover_color = cx.theme().colors().element_hover;
+                                            let hover_color = theme.colors().element_hover;
                                             this.hover(|style| style.bg(hover_color))
                                         }
                                     })
@@ -362,6 +388,7 @@ pub(crate) fn new_debugger_pane(
                                     .child(item.tab_content(
                                         TabContentParams {
                                             selected,
+                                            deemphasized,
                                             ..Default::default()
                                         },
                                         window,
@@ -387,31 +414,40 @@ pub(crate) fn new_debugger_pane(
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
-                        IconButton::new(
-                            "debug-toggle-zoom",
-                            if zoomed {
-                                IconName::Minimize
-                            } else {
-                                IconName::Maximize
-                            },
-                        )
-                        .icon_size(IconSize::Small)
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                let zoomed_text = if zoomed { "Zoom Out" } else { "Zoom In" };
-                                Tooltip::for_action_in(
-                                    zoomed_text,
-                                    &workspace::ToggleZoom,
-                                    &focus_handle,
-                                    window,
-                                    cx,
+                        div()
+                            .visible_on_hover(pane_group_id)
+                            .when(is_hovered, |this| this.visible())
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "debug-toggle-zoom-{}",
+                                        cx.entity_id()
+                                    )),
+                                    if zoomed {
+                                        IconName::Minimize
+                                    } else {
+                                        IconName::Maximize
+                                    },
                                 )
-                            }
-                        })
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(move |pane, _, window, cx| {
+                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                }))
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        let zoomed_text =
+                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                        Tooltip::for_action_in(
+                                            zoomed_text,
+                                            &workspace::ToggleZoom,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                            )
                     })
                     .into_any_element()
             }
@@ -585,7 +621,7 @@ impl RunningState {
             panes,
             active_pane: None,
             module_list,
-            _console: console,
+            console,
             breakpoint_list,
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
@@ -629,11 +665,11 @@ impl RunningState {
     ) -> Box<dyn ItemHandle> {
         match item_kind {
             DebuggerPaneItem::Console => {
-                let weak_console = self._console.clone().downgrade();
+                let weak_console = self.console.clone().downgrade();
 
                 Box::new(SubView::new(
-                    self._console.focus_handle(cx),
-                    self._console.clone().into(),
+                    self.console.focus_handle(cx),
+                    self.console.clone().into(),
                     item_kind,
                     Some(Box::new(move |cx| {
                         weak_console
@@ -862,7 +898,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
-        &self._console
+        &self.console
     }
 
     #[cfg(test)]

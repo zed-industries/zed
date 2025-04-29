@@ -19,7 +19,7 @@ use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role, report_assistant_event,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use prompt_store::PromptBuilder;
 use settings::{Settings, update_settings_file};
 use std::{
@@ -294,6 +294,7 @@ impl TerminalInlineAssistant {
         Ok(LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            mode: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
@@ -748,6 +749,7 @@ impl PromptEditor {
             language_model_selector: cx.new(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -755,7 +757,6 @@ impl PromptEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
-                    ModelType::Default,
                     window,
                     cx,
                 )
