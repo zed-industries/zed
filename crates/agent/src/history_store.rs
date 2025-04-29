@@ -122,7 +122,6 @@ impl HistoryStore {
     pub fn recently_opened_entries(
         &self,
         limit: usize,
-        filter: impl Fn(&RecentEntry) -> bool,
         _cx: &mut Context<Self>,
     ) -> Vec<RecentEntry> {
         #[cfg(debug_assertions)]
@@ -130,16 +129,9 @@ impl HistoryStore {
             return Vec::new();
         }
 
-        let mut entries = Vec::with_capacity(limit);
-        for entry in self.recently_opened_entries.iter().rev() {
-            if filter(entry) {
-                entries.push(entry.clone());
-                if entries.len() == limit {
-                    break;
-                }
-            }
-        }
-
+        let start = self.recently_opened_entries.len().saturating_sub(limit);
+        let mut entries = self.recently_opened_entries[start..].to_owned();
+        entries.reverse();
         entries
     }
 }

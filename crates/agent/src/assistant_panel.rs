@@ -121,6 +121,8 @@ pub fn init(cx: &mut App) {
 
 enum ActiveView {
     Thread {
+        id: ThreadId,
+        summary: SharedString,
         change_title_editor: Entity<Editor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
@@ -135,11 +137,12 @@ enum ActiveView {
 
 impl ActiveView {
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
+        let id = thread.read(cx).id().clone();
         let summary = thread.read(cx).summary_or_default();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_text(summary, window, cx);
+            editor.set_text(summary.clone(), window, cx);
             editor
         });
 
@@ -184,6 +187,8 @@ impl ActiveView {
         ];
 
         Self::Thread {
+            id,
+            summary,
             change_title_editor: editor,
             _subscriptions: subscriptions,
         }
@@ -421,7 +426,7 @@ impl AssistantPanel {
         });
 
         let weak_panel = weak_self.clone();
-      
+
         window.defer(cx, move |window, cx| {
             let panel = weak_panel.clone();
             let assistant_navigation_menu =
@@ -429,25 +434,7 @@ impl AssistantPanel {
                     let recently_opened = panel
                         .update(cx, |this, cx| {
                             this.history_store.update(cx, |history_store, cx| {
-                                let active_entry_id = match &this.active_view {
-                                    ActiveView::Thread { .. } => Some(RecentEntryId::Thread(
-                                        this.active_thread(cx).read(cx).id().clone(),
-                                    )),
-                                    ActiveView::PromptEditor { context_editor, .. } => {
-                                        context_editor
-                                            .read(cx)
-                                            .context()
-                                            .read(cx)
-                                            .path()
-                                            .map(|path| RecentEntryId::Context(path.into()))
-                                    }
-                                    ActiveView::History | ActiveView::Configuration => None,
-                                };
-                                history_store.recently_opened_entries(
-                                    6,
-                                    |entry| /* Some(&entry.id) != active_entry_id.as_ref() */ true,
-                                    cx,
-                                )
+                                history_store.recently_opened_entries(6, cx)
                             })
                         })
                         .unwrap_or_default();
@@ -515,7 +502,7 @@ impl AssistantPanel {
                 })
                 .ok();
         });
-      
+
         let _default_model_subscription = cx.subscribe(
             &LanguageModelRegistry::global(cx),
             |this, _, event: &language_model::Event, cx| match event {
@@ -1056,19 +1043,19 @@ impl AssistantPanel {
         let new_is_history = matches!(new_view, ActiveView::History);
 
         match &new_view {
-            ActiveView::Thread { .. } => self.history_store.update(cx, |store, cx| {
-                let active_thread = self.active_thread(cx).read(cx);
+            ActiveView::Thread { id, summary, .. } => self.history_store.update(cx, |store, cx| {
+                //let active_thread = self.active_thread(cx).read(cx);
                 // if active_thread.is_empty() {
                 //     return;
                 // }
 
-                let thread_id = active_thread.id();
-                let summary = active_thread.summary_or_default();
+                // let thread_id = active_thread.id();
+                // let summary = active_thread.summary_or_default();
 
                 store.push_recently_opened_entry(
                     RecentEntry {
-                        id: RecentEntryId::Thread(thread_id.clone()),
-                        title: summary,
+                        id: RecentEntryId::Thread(id.clone()),
+                        title: summary.clone(),
                     },
                     cx,
                 );
