@@ -1550,7 +1550,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
                 name: "frame 1".into(),
                 source: Some(dap::Source {
                     name: Some("main.rs".into()),
-                    path: Some("/project/main.rs".into()),
+                    path: Some(path!("/project/main.rs").into()),
                     source_reference: None,
                     presentation_hint: None,
                     origin: None,
@@ -1624,7 +1624,7 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
                     name: "frame 2".into(),
                     source: Some(dap::Source {
                         name: Some("second.rs".into()),
-                        path: Some("/project/second.rs".into()),
+                        path: Some(path!("/project/second.rs").into()),
                         source_reference: None,
                         presentation_hint: None,
                         origin: None,
