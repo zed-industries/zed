@@ -1503,9 +1503,17 @@ fn open_local_file(
     if let Some(worktree) = worktree {
         let tree_id = worktree.read(cx).id();
         cx.spawn_in(window, async move |workspace, cx| {
+            // Check if the file actually exists on disk (even if it's excluded from worktree)
+            let worktree_path = worktree.update(cx, |tree, _| tree.as_local().unwrap().abs_path().clone())?;
+            let full_path = worktree_path.join(settings_relative_path);
+            
+            // Try to load the file to see if it exists by getting a copy of the path first
+            let full_path_clone = full_path.clone();
+            let fs = project.update(cx, |project, _| project.fs().clone())?;
+            let file_exists = fs.load(&full_path_clone).await.is_ok();
 
             if let Some(dir_path) = settings_relative_path.parent() {
-                if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? && !file_exists {
                     project
                         .update(cx, |project, cx| {
                             project.create_entry((tree_id, dir_path), true, cx)
@@ -1517,7 +1525,7 @@ fn open_local_file(
 
             if worktree.update(cx, |tree, _| {
                 tree.entry_for_path(settings_relative_path).is_none()
-            })? {
+            })? && !file_exists {
                 project
                     .update(cx, |project, cx| {
                         project.create_entry((tree_id, settings_relative_path), false, cx)
@@ -1538,7 +1546,7 @@ fn open_local_file(
                 .downgrade()
                 .update(cx, |editor, cx| {
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        if buffer.read(cx).is_empty() {
+                        if buffer.read(cx).is_empty() && !file_exists {
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, initial_contents)], None, cx)
                             });
