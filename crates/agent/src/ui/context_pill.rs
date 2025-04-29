@@ -723,6 +723,7 @@ impl Component for AddedContext {
             "Ready",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
             }),
@@ -732,6 +733,7 @@ impl Component for AddedContext {
             "Loading",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: cx
                     .background_spawn(async move {
@@ -746,6 +748,7 @@ impl Component for AddedContext {
             "Error",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: Task::ready(None).shared(),
             }),
