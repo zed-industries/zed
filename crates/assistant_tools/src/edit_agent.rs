@@ -3,7 +3,7 @@ mod edit_parser;
 mod evals;
 
 use crate::{Template, Templates};
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use assistant_tool::ActionLog;
 use edit_parser::EditParser;
 use futures::{Stream, StreamExt, stream::BoxStream};
@@ -102,7 +102,9 @@ impl EditAgent {
                         }
                     }
                     edit_parser::EditEvent::NewTextChunk { chunk, done } => {
-                        let mut edit = pending_edit.take().context("no pending edit found")?;
+                        let Some(mut edit) = pending_edit.take() else {
+                            continue;
+                        };
 
                         let mut operations = edit.diff.push_new(&chunk);
                         if done {
@@ -333,9 +335,54 @@ impl SearchMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{App, AppContext};
+    use fs::FakeFs;
+    use futures::stream;
+    use gpui::{App, AppContext, TestAppContext};
+    use indoc::indoc;
+    use language_model::fake_provider::FakeLanguageModel;
+    use project::Project;
+    use rand::prelude::*;
+    use rand::rngs::StdRng;
+    use std::cmp;
     use unindent::Unindent;
     use util::test::{generate_marked_text, marked_text_ranges};
+
+    #[gpui::test(iterations = 10)]
+    async fn test_old_text_hallucination(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let raw_edits = to_random_chunk_stream(
+            &mut rng,
+            indoc! {"
+                <old_text>
+                jkl
+                </old_text>
+                <new_text>
+                mno
+                </new_text>
+
+                <old_text>
+                abc
+                </old_text>
+                <new_text>
+                ABC
+                </new_text>
+            "},
+        );
+        agent
+            .apply_edits(
+                buffer.clone(),
+                buffer.read_with(cx, |buffer, _| buffer.snapshot()),
+                raw_edits,
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "ABC\ndef\nghi"
+        );
+    }
 
     #[gpui::test]
     fn test_resolve_location(cx: &mut App) {
@@ -450,5 +497,32 @@ mod tests {
         ranges.extend(EditAgent::resolve_location(&snapshot, query));
         let text_with_actual_range = generate_marked_text(&text, &ranges, false);
         pretty_assertions::assert_eq!(text_with_actual_range, text_with_expected_range);
+    }
+
+    fn to_random_chunk_stream(
+        rng: &mut StdRng,
+        input: &str,
+    ) -> impl Stream<Item = Result<String, LanguageModelCompletionError>> {
+        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
+        chunk_indices.sort();
+        chunk_indices.push(input.len());
+
+        let mut chunks = Vec::new();
+        let mut last_ix = 0;
+        for chunk_ix in chunk_indices {
+            chunks.push(Ok(input[last_ix..chunk_ix].to_string()));
+            last_ix = chunk_ix;
+        }
+        stream::iter(chunks)
+    }
+
+    async fn init_test(cx: &mut TestAppContext) -> EditAgent {
+        cx.update(settings::init);
+        cx.update(Project::init_settings);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let model = Arc::new(FakeLanguageModel::default());
+        let action_log = cx.new(|_| ActionLog::new(project));
+        EditAgent::new(model, action_log, Templates::new())
     }
 }
