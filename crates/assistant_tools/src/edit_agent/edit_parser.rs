@@ -2,7 +2,7 @@ use smallvec::SmallVec;
 use std::mem;
 
 #[derive(Debug)]
-pub enum EditEvent {
+pub enum EditParserEvent {
     OldText(String),
     NewTextChunk { chunk: String, done: bool },
 }
@@ -29,7 +29,7 @@ impl EditParser {
         }
     }
 
-    pub fn push(&mut self, chunk: &str) -> SmallVec<[EditEvent; 1]> {
+    pub fn push(&mut self, chunk: &str) -> SmallVec<[EditParserEvent; 1]> {
         self.buffer.push_str(chunk);
 
         let mut edit_events = SmallVec::new();
@@ -56,7 +56,7 @@ impl EditParser {
 
                         self.buffer.drain(..end + "</old_text>".len());
                         self.state = EditParserState::AfterOldText;
-                        edit_events.push(EditEvent::OldText(old_text));
+                        edit_events.push(EditParserEvent::OldText(old_text));
                     } else {
                         break;
                     }
@@ -85,7 +85,7 @@ impl EditParser {
                             chunk.pop();
                         }
 
-                        edit_events.push(EditEvent::NewTextChunk { chunk, done: true });
+                        edit_events.push(EditParserEvent::NewTextChunk { chunk, done: true });
                         self.buffer.drain(..end + NEW_TEXT_END_TAG.len());
                         self.state = EditParserState::Pending;
                     } else {
@@ -93,7 +93,7 @@ impl EditParser {
                             .map(|i| &NEW_TEXT_END_TAG[..i])
                             .chain(["\n"]);
                         if end_prefixes.all(|prefix| !self.buffer.ends_with(&prefix)) {
-                            edit_events.push(EditEvent::NewTextChunk {
+                            edit_events.push(EditParserEvent::NewTextChunk {
                                 chunk: mem::take(&mut self.buffer),
                                 done: false,
                             });
@@ -257,10 +257,10 @@ mod tests {
         for chunk_ix in chunk_indices {
             for event in parser.push(&input[last_ix..chunk_ix]) {
                 match dbg!(event) {
-                    EditEvent::OldText(old_text) => {
+                    EditParserEvent::OldText(old_text) => {
                         pending_edit.old_text = old_text;
                     }
-                    EditEvent::NewTextChunk { chunk, done } => {
+                    EditParserEvent::NewTextChunk { chunk, done } => {
                         pending_edit.new_text.push_str(&chunk);
                         if done {
                             edits.push(pending_edit);

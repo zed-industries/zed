@@ -5,17 +5,20 @@ mod evals;
 use crate::{Template, Templates};
 use anyhow::Result;
 use assistant_tool::ActionLog;
-use edit_parser::EditParser;
-use futures::{Stream, StreamExt, stream::BoxStream};
-use gpui::{AsyncApp, Entity};
+use edit_parser::{EditParser, EditParserEvent};
+use futures::{
+    Stream, StreamExt,
+    channel::mpsc::{self, UnboundedReceiver},
+    stream::BoxStream,
+};
+use gpui::{AppContext, AsyncApp, Entity, Task};
 use language::{Bias, Buffer, BufferSnapshot};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role,
 };
 use serde::Serialize;
-use smallvec::SmallVec;
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{mem, ops::Range, path::PathBuf, sync::Arc};
 use streaming_diff::{CharOperation, StreamingDiff};
 
 #[derive(Serialize)]
@@ -56,102 +59,120 @@ impl EditAgent {
     ) -> Result<String> {
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         let edit_chunks = self
-            .request_edits(snapshot.clone(), edit_description, previous_messages, cx)
+            .request_edits(snapshot, edit_description, previous_messages, cx)
             .await?;
-        let chunks = self.apply_edits(buffer, snapshot, edit_chunks, cx).await?;
+        let chunks = self.apply_edits(buffer, edit_chunks, cx).await?;
         Ok(chunks)
     }
 
+    // todo!("add tests for this")
     async fn apply_edits(
         &self,
         buffer: Entity<Buffer>,
-        mut snapshot: BufferSnapshot,
-        edit_chunks: impl Stream<Item = Result<String, LanguageModelCompletionError>>,
+        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
         cx: &mut AsyncApp,
     ) -> Result<String> {
-        struct PendingEdit {
-            start: usize,
-            diff: StreamingDiff,
-        }
-
-        // todo!("group all edits into one transaction")
-        // todo!("move to the background")
-        // todo!("add tests for this")
-
         // Ensure the buffer is tracked by the action log.
         self.action_log
             .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
 
-        let mut parser = EditParser::new();
-        let mut pending_edit = None;
-        futures::pin_mut!(edit_chunks);
-        let mut output = String::new();
+        let (raw_output, mut edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
+        while let Some(edit_event) = edit_events.next().await {
+            let EditParserEvent::OldText(old_text_query) = edit_event? else {
+                continue;
+            };
 
-        while let Some(edit_chunk) = edit_chunks.next().await {
-            let chunk = edit_chunk?;
-            output.push_str(&chunk);
+            let (edits_tx, edits_rx) = mpsc::unbounded();
+            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let compute_edits = cx.background_spawn(async move {
+                if let Some(range) = Self::resolve_location(&snapshot, &old_text_query) {
+                    let old_text = snapshot.text_for_range(range.clone()).collect::<String>();
+                    let mut diff = StreamingDiff::new(old_text);
+                    let mut edit_start = range.start;
 
-            for event in parser.push(&chunk) {
-                match event {
-                    edit_parser::EditEvent::OldText(old_text) => {
-                        if let Some(range) = Self::resolve_location(&snapshot, &old_text) {
-                            pending_edit = Some(PendingEdit {
-                                start: range.start,
-                                diff: StreamingDiff::new(old_text),
-                            });
-                        }
-                    }
-                    edit_parser::EditEvent::NewTextChunk { chunk, done } => {
-                        let Some(mut edit) = pending_edit.take() else {
-                            continue;
+                    while let Some(edit_event) = edit_events.next().await {
+                        let EditParserEvent::NewTextChunk { chunk, done } = edit_event? else {
+                            break;
                         };
 
-                        let mut operations = edit.diff.push_new(&chunk);
+                        let mut char_operations = diff.push_new(&chunk);
                         if done {
-                            operations.extend(edit.diff.finish());
-                            edit.diff = StreamingDiff::new(String::new());
+                            char_operations.extend(mem::take(&mut diff).finish());
                         }
 
-                        let edits = operations
-                            .into_iter()
-                            .filter_map(|operation| match operation {
+                        for op in char_operations {
+                            match op {
                                 CharOperation::Insert { text } => {
-                                    let edit_start = snapshot.anchor_after(edit.start);
-                                    Some((edit_start..edit_start, text))
+                                    let edit_start = snapshot.anchor_after(edit_start);
+                                    edits_tx.unbounded_send((edit_start..edit_start, text))?;
                                 }
                                 CharOperation::Delete { bytes } => {
-                                    let edit_end = edit.start + bytes;
-                                    let edit_range = snapshot.anchor_after(edit.start)
+                                    let edit_end = edit_start + bytes;
+                                    let edit_range = snapshot.anchor_after(edit_start)
                                         ..snapshot.anchor_before(edit_end);
-                                    edit.start = edit_end;
-                                    Some((edit_range, String::new()))
+                                    edit_start = edit_end;
+                                    edits_tx.unbounded_send((edit_range, String::new()))?;
                                 }
-                                CharOperation::Keep { bytes } => {
-                                    edit.start = edit.start + bytes;
-                                    None
-                                }
-                            })
-                            .collect::<SmallVec<[_; 1]>>();
-
-                        // Edit the buffer and report the edit as part of the same effect cycle, otherwise
-                        // the edit will be reported as if the user made it.
-                        cx.update(|cx| {
-                            buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
-                            self.action_log
-                                .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
-                        })?;
+                                CharOperation::Keep { bytes } => edit_start += bytes,
+                            }
+                        }
 
                         if done {
-                            snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                        } else {
-                            pending_edit = Some(edit);
+                            break;
                         }
                     }
                 }
+
+                anyhow::Ok(edit_events)
+            });
+
+            // todo!("group all edits into one transaction")
+            let mut edits_rx = edits_rx.ready_chunks(32);
+            while let Some(edits) = edits_rx.next().await {
+                // Edit the buffer and report the edit as part of the same effect cycle, otherwise
+                // the edit will be reported as if the user made it.
+                cx.update(|cx| {
+                    buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+                    self.action_log
+                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
+                })?;
             }
+
+            edit_events = compute_edits.await?;
         }
 
-        Ok(output)
+        raw_output.await
+    }
+
+    fn parse_edit_chunks(
+        chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<String>>,
+        UnboundedReceiver<Result<EditParserEvent>>,
+    ) {
+        let (tx, rx) = mpsc::unbounded();
+        let raw_output = cx.background_spawn(async move {
+            futures::pin_mut!(chunks);
+
+            let mut parser = EditParser::new();
+            let mut output = String::new();
+            while let Some(chunk) = chunks.next().await {
+                match chunk {
+                    Ok(chunk) => {
+                        output.push_str(&chunk);
+                        for event in parser.push(&chunk) {
+                            tx.unbounded_send(Ok(event))?;
+                        }
+                    }
+                    Err(error) => {
+                        tx.unbounded_send(Err(error.into()))?;
+                    }
+                }
+            }
+            Ok(output)
+        });
+        (raw_output, rx)
     }
 
     async fn request_edits(
@@ -348,6 +369,38 @@ mod tests {
     use util::test::{generate_marked_text, marked_text_ranges};
 
     #[gpui::test(iterations = 10)]
+    async fn test_dependent_edits(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let raw_edits = to_random_chunk_stream(
+            &mut rng,
+            indoc! {"
+                <old_text>
+                def
+                </old_text>
+                <new_text>
+                DEF
+                </new_text>
+
+                <old_text>
+                DEF
+                </old_text>
+                <new_text>
+                DeF
+                </new_text>
+            "},
+        );
+        agent
+            .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\nDeF\nghi"
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
     async fn test_old_text_hallucination(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
@@ -370,12 +423,7 @@ mod tests {
             "},
         );
         agent
-            .apply_edits(
-                buffer.clone(),
-                buffer.read_with(cx, |buffer, _| buffer.snapshot()),
-                raw_edits,
-                &mut cx.to_async(),
-            )
+            .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
             .await
             .unwrap();
         assert_eq!(
@@ -502,7 +550,7 @@ mod tests {
     fn to_random_chunk_stream(
         rng: &mut StdRng,
         input: &str,
-    ) -> impl Stream<Item = Result<String, LanguageModelCompletionError>> {
+    ) -> impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>> {
         let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
