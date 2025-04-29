@@ -453,7 +453,7 @@ mod tests {
                 content,
                 tool_calls,
             } => {
-                assert!(content == "");
+                assert!(content.is_empty());
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
             }
             _ => panic!("Deserialized wrong role"),
