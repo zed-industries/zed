@@ -3,4 +3,3 @@
 ("{" @open "}" @close)
 ("\"" @open "\"" @close)
 ("`" @open "`" @close)
-((raw_string) @open @close)
