@@ -3,7 +3,7 @@ name: FreeBSD
 on: [push]
 
 jobs:
-  test:
+  freebsd:
     runs-on: ubuntu-latest
     name: Build Zed on FreeBSD
     # env:
@@ -11,14 +11,14 @@ jobs:
     #   MYTOKEN2: "value2"
     steps:
       - uses: actions/checkout@v4
-      - name: Test in FreeBSD
-        id: test
+      - name: Build FreeBSD remote-server
+        id: freebsd-build
         uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
         with:
           # envs: "MYTOKEN MYTOKEN2"
           usesh: true
           release: 13.5
-          copyback: true
+          copyback: false
           prepare: |
             pkg install -y \
               curl git rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
@@ -30,13 +30,10 @@ jobs:
             sysctl hw.usermem
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
-            cargo build -p remote_server
-            target/debug/remote_server --help
-            target/debug/remote_server version
-            mkdir -p out/
-            cp target/debug/remote_server out/
-            cargo clean
-      - name: Look around
-        run: |
-          du -sh out/remote_server
-          file out/remote_server
+            ./script/bundle-freebsd
+            # cargo build -p remote_server
+            # target/debug/remote_server --help
+            # target/debug/remote_server version
+            # mkdir -p out/
+            # cp target/debug/remote_server out/
+            # cargo clean
