@@ -197,6 +197,9 @@ impl EditAgent {
                 last_message
                     .content
                     .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
+                if last_message.content.is_empty() {
+                    messages.pop();
+                }
             }
         }
         message_content.push(MessageContent::Text(prompt));

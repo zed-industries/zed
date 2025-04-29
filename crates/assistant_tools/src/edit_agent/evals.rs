@@ -426,8 +426,10 @@ impl EditAgentTest {
                 language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
 
                 cx.spawn(async move |cx| {
-                    let agent_model = Self::load_model("claude-3-7-sonnet-latest", cx).await;
-                    let judge_model = Self::load_model("claude-3-7-sonnet-latest", cx).await;
+                    let agent_model =
+                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
+                    let judge_model =
+                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
                     (agent_model.unwrap(), judge_model.unwrap())
                 })
             })
@@ -441,12 +443,16 @@ impl EditAgentTest {
         }
     }
 
-    async fn load_model(id: &str, cx: &mut AsyncApp) -> Result<Arc<dyn LanguageModel>> {
+    async fn load_model(
+        provider: &str,
+        id: &str,
+        cx: &mut AsyncApp,
+    ) -> Result<Arc<dyn LanguageModel>> {
         let (provider, model) = cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
-                .find(|model| model.id().0 == id)
+                .find(|model| model.provider_id().0 == provider && model.id().0 == id)
                 .unwrap();
             let provider = models.provider(&model.provider_id()).unwrap();
             (provider, model)
