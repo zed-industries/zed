@@ -923,7 +923,7 @@ impl PlatformWindow for MacWindow {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, label)| label.is_cancel())
+            .find(|(_, label)| !label.is_cancel())
             .filter(|&(label_index, _)| label_index > 0);
 
         unsafe {
@@ -947,6 +947,10 @@ impl PlatformWindow for MacWindow {
             {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
+
+                if answer.is_cancel() {
+                    let _: () = msg_send![button, setKeyEquivalent: ns_string("\u{1b}")];
+                }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
