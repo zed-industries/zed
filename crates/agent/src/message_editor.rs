@@ -888,7 +888,7 @@ impl MessageEditor {
                                 .justify_between()
                                 .bg(cx.theme().colors().editor_background)
                                 .hover(|style| style.bg(hover_color))
-                                .when(index + 1 < changed_buffers.len(), |parent| {
+                                .when(index < changed_buffers.len() - 1, |parent| {
                                     parent.border_color(border_color).border_b_1()
                                 })
                                 .child(
