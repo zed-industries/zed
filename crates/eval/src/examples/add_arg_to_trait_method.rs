@@ -1,7 +1,6 @@
-use std::{collections::HashSet, path::Path};
+use std::path::Path;
 
 use anyhow::Result;
-use assistant_tools::{CreateFileToolInput, EditFileToolInput, ReadFileToolInput};
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion, LanguageServer};
@@ -32,7 +31,7 @@ impl Example for AddArgToTraitMethod {
             "#
         ));
 
-        let response = cx.run_to_end().await?;
+        let _ = cx.run_to_end().await?;
 
         // Adds ignored argument to all but `batch_tool`
 
