@@ -20,8 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    LanguageModelRequestMessage, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    MessageContent, RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -196,6 +196,15 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tools()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        match self.model.vendor() {
+            ModelVendor::OpenAI | ModelVendor::Anthropic => {
+                LanguageModelToolSchemaFormat::JsonSchema
+            }
+            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
+        }
     }
 
     fn telemetry_id(&self) -> String {
