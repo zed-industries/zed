@@ -1834,6 +1834,7 @@ impl Session {
                     .insert(variables_reference, variables.clone());
 
                 cx.emit(SessionEvent::Variables);
+                cx.emit(SessionEvent::InvalidateInlineValue);
                 Some(variables)
             },
             cx,

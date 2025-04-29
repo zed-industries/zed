@@ -1583,6 +1583,7 @@ impl Editor {
                     |editor, _, event, window, cx| match event {
                         BreakpointStoreEvent::ClearDebugLines => {
                             editor.clear_row_highlights::<ActiveDebugLine>();
+                            editor.refresh_inline_values(cx);
                         }
                         BreakpointStoreEvent::SetDebugLine => {
                             if editor.go_to_active_debug_line(window, cx) {
