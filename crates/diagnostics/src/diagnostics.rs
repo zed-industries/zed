@@ -8,7 +8,7 @@ mod diagnostic_renderer;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use cargo::{fetch_worktree_diagnostics, map_rust_diagnostic_to_lsp};
+use cargo::{cargo_diagnostics_sources, fetch_worktree_diagnostics, map_rust_diagnostic_to_lsp};
 use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
@@ -50,7 +50,10 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-actions!(diagnostics, [Deploy, ToggleWarnings]);
+actions!(
+    diagnostics,
+    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+);
 
 #[derive(Default)]
 pub(crate) struct IncludeWarnings(bool);
@@ -132,6 +135,7 @@ impl Render for ProjectDiagnosticsEditor {
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
+            .on_action(cx.listener(Self::toggle_diagnostics_refresh))
             .child(child)
     }
 }
@@ -218,7 +222,7 @@ impl ProjectDiagnosticsEditor {
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
             this.include_warnings = cx.global::<IncludeWarnings>().0;
             this.diagnostics.clear();
-            this.update_all_excerpts(window, cx);
+            this.update_all_diagnostics(window, cx);
         })
         .detach();
 
@@ -238,7 +242,7 @@ impl ProjectDiagnosticsEditor {
             cargo_diagnostics_task: None,
             _subscription: project_event_subscription,
         };
-        this.update_all_excerpts(window, cx);
+        this.update_all_diagnostics(window, cx);
         this
     }
 
@@ -316,6 +320,15 @@ impl ProjectDiagnosticsEditor {
         cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
+    fn toggle_diagnostics_refresh(
+        &mut self,
+        _: &ToggleDiagnosticsRefresh,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_all_diagnostics(window, cx);
+    }
+
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.focus_handle(cx).focus(window)
@@ -326,6 +339,15 @@ impl ProjectDiagnosticsEditor {
         if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
             self.update_stale_excerpts(window, cx);
+        }
+    }
+
+    fn update_all_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cargo_diagnostics_sources = cargo_diagnostics_sources(self, cx);
+        if cargo_diagnostics_sources.is_empty() {
+            self.update_all_excerpts(window, cx);
+        } else {
+            self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), window, cx);
         }
     }
 
@@ -397,10 +419,8 @@ impl ProjectDiagnosticsEditor {
                                                                     version: None,
                                                                 },
                                                                 &[],
-                                                                |diagnostic| {
-                                                                    // TODO kb clean up previous fetches' diagnostics here instead
-                                                                    true
-                                                                },
+                                                                // TODO kb clean up previous fetches' diagnostics here instead
+                                                                |_| true,
                                                                 cx,
                                                             )?;
                                                         }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::ProjectDiagnosticsEditor;
-use crate::cargo::worktrees_for_diagnostics_fetch;
+use crate::cargo::cargo_diagnostics_sources;
+use crate::{ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
 use gpui::{Context, Entity, EventEmitter, ParentElement, Render, WeakEntity, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
@@ -18,7 +18,7 @@ impl Render for ToolbarControls {
         let mut is_updating = false;
         let cargo_diagnostics_sources = Arc::new(
             self.diagnostics()
-                .map(|editor| worktrees_for_diagnostics_fetch(editor, cx))
+                .map(|editor| cargo_diagnostics_sources(editor.read(cx), cx))
                 .unwrap_or_default(),
         );
 
@@ -56,7 +56,10 @@ impl Render for ToolbarControls {
                         IconButton::new("stop-updating", IconName::StopFilled)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Stop diagnostics update"))
+                            .tooltip(Tooltip::for_action_title(
+                                "Stop diagnostics update",
+                                &ToggleDiagnosticsRefresh,
+                            ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
                                 if let Some(diagnostics) = toolbar_controls.diagnostics() {
                                     diagnostics.update(cx, |diagnostics, cx| {
@@ -73,8 +76,10 @@ impl Render for ToolbarControls {
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
                             .disabled(!has_stale_excerpts && cargo_diagnostics_sources.is_empty())
-                            // TODO kb action for this
-                            .tooltip(Tooltip::text("Refresh diagnostics"))
+                            .tooltip(Tooltip::for_action_title(
+                                "Refresh diagnostics",
+                                &ToggleDiagnosticsRefresh,
+                            ))
                             .on_click(cx.listener({
                                 move |toolbar_controls, _, window, cx| {
                                     if let Some(diagnostics) = toolbar_controls.diagnostics() {

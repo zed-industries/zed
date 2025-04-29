@@ -43,8 +43,8 @@ macro_rules! format_to {
     };
 }
 
-pub fn worktrees_for_diagnostics_fetch(
-    editor: Entity<ProjectDiagnosticsEditor>,
+pub fn cargo_diagnostics_sources(
+    editor: &ProjectDiagnosticsEditor,
     cx: &App,
 ) -> Vec<Entity<Worktree>> {
     let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
@@ -54,7 +54,6 @@ pub fn worktrees_for_diagnostics_fetch(
         return Vec::new();
     }
     editor
-        .read(cx)
         .project
         .read(cx)
         .worktrees(cx)
