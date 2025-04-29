@@ -39,7 +39,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType, ToggleModelSelector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -298,6 +298,7 @@ impl ContextEditor {
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -305,7 +306,6 @@ impl ContextEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
-                    ModelType::Default,
                     window,
                     cx,
                 )

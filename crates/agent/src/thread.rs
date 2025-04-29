@@ -22,8 +22,8 @@ use language_model::{
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
-    TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
+    StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -41,8 +41,8 @@ use zed_llm_client::CompletionMode;
 use crate::ThreadStore;
 use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
-    SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
-    SerializedToolUse, SharedProjectContext,
+    SerializedLanguageModel, SerializedMessage, SerializedMessageSegment, SerializedThread,
+    SerializedToolResult, SerializedToolUse, SharedProjectContext,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
@@ -272,7 +272,11 @@ impl TotalTokenUsage {
         #[cfg(not(debug_assertions))]
         let warning_threshold: f32 = 0.8;
 
-        if self.total >= self.max {
+        // When the maximum is unknown because there is no selected model,
+        // avoid showing the token limit warning.
+        if self.max == 0 {
+            TokenUsageRatio::Normal
+        } else if self.total >= self.max {
             TokenUsageRatio::Exceeded
         } else if self.total as f32 / self.max as f32 >= warning_threshold {
             TokenUsageRatio::Warning
@@ -332,6 +336,7 @@ pub struct Thread {
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
     remaining_turns: u32,
+    configured_model: Option<ConfiguredModel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +356,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
+        let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -388,6 +395,7 @@ impl Thread {
             last_auto_capture_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
+            configured_model,
         }
     }
 
@@ -410,6 +418,19 @@ impl Thread {
         let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
         let (detailed_summary_tx, detailed_summary_rx) =
             postage::watch::channel_with(serialized.detailed_summary_state);
+
+        let configured_model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            serialized
+                .model
+                .and_then(|model| {
+                    let model = SelectedModel {
+                        provider: model.provider.clone().into(),
+                        model: model.model.clone().into(),
+                    };
+                    registry.select_model(&model, cx)
+                })
+                .or_else(|| registry.default_model())
+        });
 
         Self {
             id,
@@ -468,6 +489,7 @@ impl Thread {
             last_auto_capture_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
+            configured_model,
         }
     }
 
@@ -505,6 +527,22 @@ impl Thread {
 
     pub fn project_context(&self) -> SharedProjectContext {
         self.project_context.clone()
+    }
+
+    pub fn get_or_init_configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
+        if self.configured_model.is_none() {
+            self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        }
+        self.configured_model.clone()
+    }
+
+    pub fn configured_model(&self) -> Option<ConfiguredModel> {
+        self.configured_model.clone()
+    }
+
+    pub fn set_configured_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+        self.configured_model = model;
+        cx.notify();
     }
 
     pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
@@ -952,6 +990,13 @@ impl Thread {
                 request_token_usage: this.request_token_usage.clone(),
                 detailed_summary_state: this.detailed_summary_rx.borrow().clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
+                model: this
+                    .configured_model
+                    .as_ref()
+                    .map(|model| SerializedLanguageModel {
+                        provider: model.provider.id().0.to_string(),
+                        model: model.model.id().0.to_string(),
+                    }),
             })
         })
     }
@@ -1733,7 +1778,7 @@ impl Thread {
             tool_use_id.clone(),
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
-            cx,
+            self.configured_model.as_ref(),
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -1808,7 +1853,7 @@ impl Thread {
                             tool_use_id.clone(),
                             tool_name,
                             output,
-                            cx,
+                            thread.configured_model.as_ref(),
                         );
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
@@ -1826,10 +1871,9 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         if self.all_tools_finished() {
-            let model_registry = LanguageModelRegistry::read_global(cx);
-            if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+            if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
                 if !canceled {
-                    self.send_to_model(model, window, cx);
+                    self.send_to_model(model.clone(), window, cx);
                 }
                 self.auto_capture_telemetry(cx);
             }
@@ -2254,8 +2298,8 @@ impl Thread {
         self.cumulative_token_usage
     }
 
-    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
-        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+    pub fn token_usage_up_to_message(&self, message_id: MessageId) -> TotalTokenUsage {
+        let Some(model) = self.configured_model.as_ref() else {
             return TotalTokenUsage::default();
         };
 
@@ -2283,20 +2327,17 @@ impl Thread {
         }
     }
 
-    pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.default_model() else {
-            return TotalTokenUsage::default();
-        };
+    pub fn total_token_usage(&self) -> Option<TotalTokenUsage> {
+        let model = self.configured_model.as_ref()?;
 
         let max = model.model.max_token_count();
 
         if let Some(exceeded_error) = &self.exceeded_window_error {
             if model.model.id() == exceeded_error.model_id {
-                return TotalTokenUsage {
+                return Some(TotalTokenUsage {
                     total: exceeded_error.token_count,
                     max,
-                };
+                });
             }
         }
 
@@ -2305,7 +2346,7 @@ impl Thread {
             .unwrap_or_default()
             .total_tokens() as usize;
 
-        TotalTokenUsage { total, max }
+        Some(TotalTokenUsage { total, max })
     }
 
     fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
@@ -2336,8 +2377,12 @@ impl Thread {
             "Permission to run tool action denied by user"
         ));
 
-        self.tool_use
-            .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
+        self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            err,
+            self.configured_model.as_ref(),
+        );
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
 }
@@ -2769,6 +2814,7 @@ fn main() {{
             prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
+            language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::assistant_model_selector::ModelType;
+use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use buffer_diff::BufferDiff;
@@ -21,9 +21,7 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage, MessageContent,
-};
+use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -36,7 +34,6 @@ use util::ResultExt as _;
 use workspace::Workspace;
 use zed_llm_client::CompletionMode;
 
-use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -153,6 +150,17 @@ impl MessageEditor {
             }),
         ];
 
+        let model_selector = cx.new(|cx| {
+            AssistantModelSelector::new(
+                fs.clone(),
+                model_selector_menu_handle,
+                editor.focus_handle(cx),
+                ModelType::Default(thread.clone()),
+                window,
+                cx,
+            )
+        });
+
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
@@ -165,16 +173,7 @@ impl MessageEditor {
             context_picker_menu_handle,
             load_context_task: None,
             last_loaded_context: None,
-            model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(
-                    fs.clone(),
-                    model_selector_menu_handle,
-                    editor.focus_handle(cx),
-                    ModelType::Default,
-                    window,
-                    cx,
-                )
-            }),
+            model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
             profile_selector: cx
@@ -263,15 +262,11 @@ impl MessageEditor {
         self.editor.read(cx).text(cx).trim().is_empty()
     }
 
-    fn is_model_selected(&self, cx: &App) -> bool {
-        LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .is_some()
-    }
-
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(ConfiguredModel { model, provider }) = model_registry.default_model() else {
+        let Some(ConfiguredModel { model, provider }) = self
+            .thread
+            .update(cx, |thread, cx| thread.get_or_init_configured_model(cx))
+        else {
             return;
         };
 
@@ -408,14 +403,13 @@ impl MessageEditor {
             return None;
         }
 
-        let model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.model.clone())?;
-        if !model.supports_max_mode() {
+        let thread = self.thread.read(cx);
+        let model = thread.configured_model();
+        if !model?.model.supports_max_mode() {
             return None;
         }
 
-        let active_completion_mode = self.thread.read(cx).completion_mode();
+        let active_completion_mode = thread.completion_mode();
 
         Some(
             IconButton::new("max-mode", IconName::SquarePlus)
@@ -442,24 +436,21 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Div {
         let thread = self.thread.read(cx);
+        let model = thread.configured_model();
 
         let editor_bg_color = cx.theme().colors().editor_background;
         let is_generating = thread.is_generating();
         let focus_handle = self.editor.focus_handle(cx);
 
-        let is_model_selected = self.is_model_selected(cx);
+        let is_model_selected = model.is_some();
         let is_editor_empty = self.is_editor_empty(cx);
-
-        let model = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.model.clone());
 
         let incompatible_tools = model
             .as_ref()
             .map(|model| {
                 self.incompatible_tools_state.update(cx, |state, cx| {
                     state
-                        .incompatible_tools(model, cx)
+                        .incompatible_tools(&model.model, cx)
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>()
@@ -1058,7 +1049,7 @@ impl MessageEditor {
         cx.emit(MessageEditorEvent::Changed);
         self.update_token_count_task.take();
 
-        let Some(default_model) = LanguageModelRegistry::read_global(cx).default_model() else {
+        let Some(model) = self.thread.read(cx).configured_model() else {
             self.last_estimated_token_count.take();
             return;
         };
@@ -1111,7 +1102,7 @@ impl MessageEditor {
                     temperature: None,
                 };
 
-                Some(default_model.model.count_tokens(request, cx))
+                Some(model.model.count_tokens(request, cx))
             })? {
                 task.await?
             } else {
@@ -1143,8 +1134,11 @@ impl Focusable for MessageEditor {
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
-        let total_token_usage = thread.total_token_usage(cx);
-        let token_usage_ratio = total_token_usage.ratio();
+        let token_usage_ratio = thread
+            .total_token_usage()
+            .map_or(TokenUsageRatio::Normal, |total_token_usage| {
+                total_token_usage.ratio()
+            });
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
