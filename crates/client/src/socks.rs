@@ -144,8 +144,8 @@ mod tests {
         let proxy = Url::parse("socks5://proxy.example.com:1080").unwrap();
 
         let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-        assert!(host == "proxy.example.com");
-        assert!(port == 1080);
+        assert_eq!(host, "proxy.example.com");
+        assert_eq!(port, 1080);
         assert!(matches!(version, SocksVersion::V5(None)))
     }
 
