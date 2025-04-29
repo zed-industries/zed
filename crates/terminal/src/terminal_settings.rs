@@ -293,6 +293,8 @@ impl settings::Settings for TerminalSettings {
         let platform = "linux";
         #[cfg(target_os = "macos")]
         let platform = "osx";
+        #[cfg(target_os = "freebsd")]
+        let platform = "freebsd";
 
         // TODO: handle arguments
         let shell_name = format!("{platform}Exec");
