@@ -492,6 +492,7 @@ impl AssistantPanel {
                         .keep_open_on_confirm(false)
                         .fixed_width(rems(24.))
                         .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
+                        .key_context("NavigationMenu")
                 });
             weak_panel
                 .update(cx, |panel, _| {

@@ -142,6 +142,7 @@ pub struct ContextMenu {
     delayed: bool,
     clicked: bool,
     end_slot_action: Option<Box<dyn Action>>,
+    key_context: SharedString,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
     eager: bool,
@@ -182,6 +183,7 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
                     eager: false,
@@ -224,6 +226,7 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
                     eager: false,
@@ -259,6 +262,7 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
                     eager: true,
@@ -295,6 +299,7 @@ impl ContextMenu {
                 selected_index: None,
                 delayed: false,
                 clicked: false,
+                key_context: "menu".into(),
                 _on_blur_subscription: cx.on_blur(
                     &focus_handle,
                     window,
@@ -543,6 +548,11 @@ impl ContextMenu {
 
     pub fn end_slot_action(mut self, action: Box<dyn Action>) -> Self {
         self.end_slot_action = Some(action);
+        self
+    }
+
+    pub fn key_context(mut self, context: impl Into<SharedString>) -> Self {
+        self.key_context = context.into();
         self
     }
 
@@ -1055,7 +1065,7 @@ impl Render for ContextMenu {
                             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                                 this.cancel(&menu::Cancel, window, cx)
                             }))
-                            .key_context("menu")
+                            .key_context(self.key_context.as_ref())
                             .on_action(cx.listener(ContextMenu::select_first))
                             .on_action(cx.listener(ContextMenu::handle_select_last))
                             .on_action(cx.listener(ContextMenu::select_next))
