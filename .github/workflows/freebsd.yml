@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   test:
-    runs-on: github-8vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     name: Build Zed on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
@@ -31,7 +31,7 @@ jobs:
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             cargo build -p remote_server
-            target/debug/remote_server --version
+            target/debug/remote_server version
             mkdir -p out/
             cp target/debug/remote_server out/
             cargo clean
