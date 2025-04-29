@@ -1419,7 +1419,7 @@ impl EditorElement {
         content_offset: gpui::Point<Pixels>,
         scroll_position: &gpui::Point<f32>,
         non_visible_cursors: bool,
-        minimap_width: Pixels,
+        right_margin: Pixels,
         editor_width: Pixels,
         window: &mut Window,
         cx: &mut App,
@@ -1474,7 +1474,7 @@ impl EditorElement {
             content_offset,
             scroll_position,
             self.style.scrollbar_width,
-            minimap_width,
+            right_margin,
             editor_width,
             show_scrollbars,
             window,
@@ -3585,6 +3585,7 @@ impl EditorElement {
         line_height: Pixels,
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
+        right_margin: Pixels,
         start_row: DisplayRow,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
@@ -3653,7 +3654,7 @@ impl EditorElement {
 
         let viewport_bounds =
             Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
-                right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
+                right: -right_margin - MENU_GAP,
                 ..Default::default()
             });
 
@@ -3786,6 +3787,7 @@ impl EditorElement {
         line_height: Pixels,
         text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
+        right_margin: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_overshoot: Pixels,
         window: &mut Window,
@@ -3819,7 +3821,7 @@ impl EditorElement {
         let max_height = line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
         let viewport_bounds =
             Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
-                right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
+                right: -right_margin - MENU_GAP,
                 ..Default::default()
             });
         self.layout_popovers_above_or_below_line(
@@ -4294,6 +4296,7 @@ impl EditorElement {
         position_map: &PositionMap,
         newest_cursor_position: Option<DisplayPoint>,
         line_height: Pixels,
+        right_margin: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         highlighted_rows: &BTreeMap<DisplayRow, LineHighlight>,
@@ -4373,10 +4376,7 @@ impl EditorElement {
                     let size =
                         element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
 
-                    let x = text_hitbox.bounds.right()
-                        - self.style.scrollbar_width
-                        - px(10.)
-                        - size.width;
+                    let x = text_hitbox.bounds.right() - right_margin - px(10.) - size.width;
 
                     window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
                         element.prepaint(window, cx)
@@ -7119,11 +7119,10 @@ impl Element for EditorElement {
                         .flatten()
                         .unwrap_or_default();
 
-                    let editor_width = text_width
-                        - gutter_dimensions.margin
-                        - em_width
-                        - minimap_width
-                        - vertical_scrollbar_width;
+                    let right_margin = minimap_width + vertical_scrollbar_width;
+
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - em_width - right_margin;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -7823,7 +7822,7 @@ impl Element for EditorElement {
                         content_offset,
                         &scroll_position,
                         non_visible_cursors,
-                        minimap_width,
+                        right_margin,
                         editor_width,
                         window,
                         cx,
@@ -7841,6 +7840,7 @@ impl Element for EditorElement {
                                 line_height,
                                 &text_hitbox,
                                 content_origin,
+                                right_margin,
                                 start_row,
                                 scroll_pixel_position,
                                 &line_layouts,
@@ -7903,6 +7903,7 @@ impl Element for EditorElement {
                         line_height,
                         &text_hitbox,
                         content_origin,
+                        right_margin,
                         scroll_pixel_position,
                         gutter_dimensions.width - gutter_dimensions.left_padding,
                         window,
@@ -8077,6 +8078,7 @@ impl Element for EditorElement {
                             &position_map,
                             newest_selection_head,
                             line_height,
+                            right_margin,
                             scroll_pixel_position,
                             &display_hunks,
                             &highlighted_rows,
@@ -8358,7 +8360,7 @@ impl EditorScrollbars {
         content_offset: gpui::Point<Pixels>,
         scroll_position: &gpui::Point<f32>,
         scrollbar_width: Pixels,
-        minimap_width: Pixels,
+        right_margin: Pixels,
         editor_width: Pixels,
         show_scrollbars: bool,
         window: &mut Window,
@@ -8378,11 +8380,7 @@ impl EditorScrollbars {
                 size(
                     // The horizontal viewport size differs from the space available for the
                     // horizontal scrollbar, so we have to manually stich it together here.
-                    if settings_visibility.vertical {
-                        editor_bounds.size.width - minimap_width - scrollbar_width
-                    } else {
-                        editor_bounds.size.width - minimap_width
-                    },
+                    editor_bounds.size.width - right_margin,
                     scrollbar_width,
                 ),
             ),
