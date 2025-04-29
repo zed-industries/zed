@@ -489,11 +489,20 @@ impl StripeBilling {
         zed_pro_price_id: PriceId,
         customer_id: stripe::CustomerId,
         github_login: &str,
+        feature_flags: Vec<String>,
         success_url: &str,
     ) -> Result<String> {
+        const AGENT_EXTENDED_TRIAL_FEATURE_FLAG: &str = "agent-extended-trial";
+
+        let eligible_for_extended_trial = feature_flags
+            .iter()
+            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+
+        let trial_period_days = if eligible_for_extended_trial { 60 } else { 14 };
+
         let mut params = stripe::CreateCheckoutSession::new();
         params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
-            trial_period_days: Some(14),
+            trial_period_days: Some(trial_period_days),
             trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
                 end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
                     missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
@@ -511,6 +520,12 @@ impl StripeBilling {
             quantity: Some(1),
             ..Default::default()
         }]);
+        if eligible_for_extended_trial {
+            params.metadata = Some(std::collections::HashMap::from_iter([(
+                "promo_feature_flag".to_string(),
+                AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string(),
+            )]));
+        }
         params.success_url = Some(success_url);
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
