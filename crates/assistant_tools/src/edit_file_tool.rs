@@ -174,6 +174,7 @@ impl Tool for EditFileTool {
                     "The `old_string` and `new_string` are identical, so no changes would be made."
                 ));
             }
+            let old_string = input.old_string.clone();
 
             let result = cx
                 .background_spawn(async move {
@@ -213,6 +214,21 @@ impl Tool for EditFileTool {
                             input.path.display()
                         )
                     } else {
+                        let old_string_with_buffer = format!(
+                            "old_string:\n\n{}\n\n-------file-------\n\n{}",
+                            &old_string,
+                            buffer.text()
+                        );
+                        let path = {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+
+                            let mut hasher = DefaultHasher::new();
+                            old_string_with_buffer.hash(&mut hasher);
+
+                            PathBuf::from(format!("failed_tool_{}.txt", hasher.finish()))
+                        };
+                        std::fs::write(path, old_string_with_buffer).unwrap();
                         anyhow!("Failed to match the provided `old_string`")
                     }
                 })?;
