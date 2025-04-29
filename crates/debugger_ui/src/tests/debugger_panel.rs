@@ -44,14 +44,14 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -181,14 +181,14 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -346,14 +346,14 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -417,14 +417,14 @@ async fn test_handle_start_debugging_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -493,14 +493,14 @@ async fn test_handle_error_run_in_terminal_reverse_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -523,7 +523,7 @@ async fn test_handle_error_run_in_terminal_reverse_request(
         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
             kind: None,
             title: None,
-            cwd: "/non-existing/path".into(), // invalid/non-existing path will cause the terminal spawn to fail
+            cwd: path!("/non-existing/path").into(), // invalid/non-existing path will cause the terminal spawn to fail
             args: vec![],
             env: None,
             args_can_be_interpreted_by_shell: None,
@@ -561,14 +561,14 @@ async fn test_handle_start_debugging_reverse_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -657,14 +657,14 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let dap_store = project.update(cx, |project, _| project.dap_store());
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -763,14 +763,14 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let dap_store = project.update(cx, |project, _| project.dap_store());
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -883,14 +883,14 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -1326,7 +1326,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
                 .expect("We should always send a breakpoint's path")
                 .as_str()
             {
-                "/project/main.rs" | "/project/second.rs" => {}
+                path!("/project/main.rs") | path!("/project/second.rs") => {}
                 _ => {
                     panic!("Unset breakpoints for path that doesn't have any")
                 }
@@ -1354,14 +1354,14 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -1402,14 +1402,14 @@ async fn test_we_send_arguments_from_user_config(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let debug_definition = DebugTaskDefinition {
@@ -1417,7 +1417,7 @@ async fn test_we_send_arguments_from_user_config(
         request: dap::DebugRequest::Launch(LaunchRequest {
             program: "main.rs".to_owned(),
             args: vec!["arg1".to_owned(), "arg2".to_owned()],
-            cwd: Some("/Random_path".into()),
+            cwd: Some(path!("/Random_path").into()),
             env: HashMap::from_iter(vec![("KEY".to_owned(), "VALUE".to_owned())]),
         }),
         label: "test".into(),
