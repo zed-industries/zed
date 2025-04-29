@@ -451,16 +451,18 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
+        const ONE_MILLION: usize = 1_048_576;
+        const TWO_MILLION: usize = 2_097_152;
         match self {
-            Model::Gemini15Pro => 2_000_000,
-            Model::Gemini15Flash => 1_000_000,
-            Model::Gemini20Pro => 2_000_000,
-            Model::Gemini20Flash => 1_000_000,
-            Model::Gemini20FlashThinking => 1_000_000,
-            Model::Gemini20FlashLite => 1_000_000,
-            Model::Gemini25ProExp0325 => 1_000_000,
-            Model::Gemini25ProPreview0325 => 1_000_000,
-            Model::Gemini25FlashPreview0417 => 1_000_000,
+            Model::Gemini15Pro => TWO_MILLION,
+            Model::Gemini15Flash => ONE_MILLION,
+            Model::Gemini20Pro => TWO_MILLION,
+            Model::Gemini20Flash => ONE_MILLION,
+            Model::Gemini20FlashThinking => ONE_MILLION,
+            Model::Gemini20FlashLite => ONE_MILLION,
+            Model::Gemini25ProExp0325 => ONE_MILLION,
+            Model::Gemini25ProPreview0325 => ONE_MILLION,
+            Model::Gemini25FlashPreview0417 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }
