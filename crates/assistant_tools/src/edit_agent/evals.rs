@@ -1,6 +1,7 @@
 use super::*;
 use crate::{EditFileToolInput, ReadFileToolInput};
 use Role::*;
+use anyhow::{Context, anyhow};
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
@@ -136,7 +137,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/after.rs");
     let edit_description = "Update compile_parser_to_wasm to use wasi-sdk instead of emscripten";
     eval(
-        1,
+        100,
         0.95,
         EvalInput {
             conversation: vec![
@@ -302,40 +303,45 @@ struct EvalInput {
     expected_output: String,
 }
 
-fn eval(iterations: usize, expected_pass_ratio: f32, eval: EvalInput) {
-    let executor = gpui::background_executor();
-    let (tx, rx) = mpsc::channel();
-    for _ in 0..iterations {
-        let eval = eval.clone();
-        let tx = tx.clone();
-        executor
-            .spawn(async move {
-                let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
-                let mut cx = TestAppContext::build(dispatcher, None);
-                let output = cx
-                    .executor()
-                    .block_test(async { run_eval(eval, &mut cx).await });
-                tx.send(output).unwrap();
-            })
-            .detach();
-    }
-    drop(tx);
-
-    let expected_output = strip_empty_lines(&eval.expected_output);
+fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut evaluated_count = 0;
     report_progress(evaluated_count, iterations);
 
+    let (tx, rx) = mpsc::channel();
+
+    // Cache the last message in the conversation, and run one instance of the eval so that
+    // all the next ones are cached.
+    eval.conversation.last_mut().unwrap().cache = true;
+    run_eval(eval.clone(), tx.clone());
+
+    let executor = gpui::background_executor();
+    for _ in 1..iterations {
+        let eval = eval.clone();
+        let tx = tx.clone();
+        executor.spawn(async move { run_eval(eval, tx) }).detach();
+    }
+    drop(tx);
+
     let mut failed_count = 0;
     let mut failed_evals = HashMap::default();
+    let mut errored_evals = HashMap::default();
     while let Ok(output) = rx.recv() {
         if output
             .as_ref()
-            .map_or(true, |output| output.buffer_text != expected_output)
+            .map_or(true, |output| output.diff_comparison.score <= 80)
         {
             failed_count += 1;
-            *failed_evals
-                .entry(output.map_err(|error| error.to_string()))
-                .or_insert(0) += 1;
+            match output {
+                Ok(output) => {
+                    failed_evals
+                        .entry(output.buffer_text.clone())
+                        .or_insert(Vec::new())
+                        .push(output);
+                }
+                Err(error) => {
+                    *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
+                }
+            }
         }
 
         evaluated_count += 1;
@@ -345,24 +351,20 @@ fn eval(iterations: usize, expected_pass_ratio: f32, eval: EvalInput) {
     let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
     println!("Actual pass ratio: {}\n", actual_pass_ratio);
     if actual_pass_ratio < expected_pass_ratio {
+        let mut errored_evals = errored_evals.into_iter().collect::<Vec<_>>();
+        errored_evals.sort_by_key(|(_, count)| Reverse(*count));
+        for (error, count) in errored_evals {
+            println!("Eval errored {} times. Error: {}", count, error);
+        }
+
         let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
-        failed_evals.sort_by_key(|(_, count)| Reverse(*count));
-        for (output, count) in failed_evals {
-            match output {
-                Ok(output) => {
-                    println!(
-                        "Failed {} times. Raw Output\n{}\nDiff\n{}\n=====",
-                        count,
-                        output.raw_edits,
-                        pretty_assertions::StrComparison::new(
-                            &output.buffer_text,
-                            &expected_output
-                        )
-                    );
-                }
-                Err(error) => {
-                    println!("Failed {} times. Error: {}\n=====", count, error);
-                }
+        failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
+        for (_buffer_output, evals) in failed_evals {
+            println!("Eval failed {} times", evals.len());
+            for eval in evals {
+                println!("Judge Output:\n{}", eval.diff_comparison.raw_output);
+                println!("Diff:\n{}", eval.diff);
+                println!("Raw Edits:\n{}", eval.raw_edits);
             }
         }
 
@@ -373,43 +375,21 @@ fn eval(iterations: usize, expected_pass_ratio: f32, eval: EvalInput) {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Hash)]
-struct EvalOutput {
-    buffer_text: String,
-    raw_edits: String,
+fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
+    let dispatcher = gpui::TestDispatcher::new(StdRng::from_entropy());
+    let mut cx = TestAppContext::build(dispatcher, None);
+    let output = cx.executor().block_test(async {
+        let test = EditAgentTest::new(&mut cx).await;
+        test.eval(eval, &mut cx).await
+    });
+    tx.send(output).unwrap();
 }
 
-async fn run_eval(mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
-    // Cache the last message in the conversation, so that all other evals running in parallel can use it.
-    eval.conversation.last_mut().unwrap().cache = true;
-
-    let test = agent_test(cx).await;
-    let path = test
-        .project
-        .read_with(cx, |project, cx| {
-            project.find_project_path(eval.input_path, cx)
-        })
-        .unwrap();
-    let buffer = test
-        .project
-        .update(cx, |project, cx| project.open_buffer(path, cx))
-        .await
-        .unwrap();
-    buffer.update(cx, |buffer, cx| buffer.set_text(eval.input_content, cx));
-    let raw_output = test
-        .agent
-        .edit(
-            buffer.clone(),
-            eval.edit_description,
-            eval.conversation,
-            &mut cx.to_async(),
-        )
-        .await?;
-    let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
-    Ok(EvalOutput {
-        buffer_text: strip_empty_lines(buffer_text),
-        raw_edits: raw_output,
-    })
+struct EvalOutput {
+    diff_comparison: DiffComparison,
+    buffer_text: String,
+    raw_edits: String,
+    diff: String,
 }
 
 fn report_progress(evaluated_count: usize, iterations: usize) {
@@ -417,59 +397,162 @@ fn report_progress(evaluated_count: usize, iterations: usize) {
     std::io::stdout().flush().unwrap();
 }
 
-fn strip_empty_lines(text: impl AsRef<str>) -> String {
-    text.as_ref()
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 struct EditAgentTest {
     agent: EditAgent,
     project: Entity<Project>,
+    judge_model: Arc<dyn LanguageModel>,
 }
 
-async fn agent_test(cx: &mut TestAppContext) -> EditAgentTest {
-    cx.executor().allow_parking();
-    cx.update(settings::init);
-    cx.update(Project::init_settings);
-    cx.update(language::init);
-    cx.update(gpui_tokio::init);
-    cx.update(client::init_settings);
+impl EditAgentTest {
+    async fn new(cx: &mut TestAppContext) -> Self {
+        cx.executor().allow_parking();
+        cx.update(settings::init);
+        cx.update(Project::init_settings);
+        cx.update(language::init);
+        cx.update(gpui_tokio::init);
+        cx.update(client::init_settings);
 
-    let fs = FakeFs::new(cx.executor().clone());
-    fs.insert_tree("/root", json!({})).await;
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let model = cx
-        .update(|cx| {
-            let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-            cx.set_http_client(Arc::new(http_client));
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree("/root", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (agent_model, judge_model) = cx
+            .update(|cx| {
+                let http_client = ReqwestClient::user_agent("agent tests").unwrap();
+                cx.set_http_client(Arc::new(http_client));
 
-            let client = Client::production(cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+                let client = Client::production(cx);
+                let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+                language_model::init(client.clone(), cx);
+                language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
 
+                cx.spawn(async move |cx| {
+                    let agent_model = Self::load_model("claude-3-7-sonnet-latest", cx).await;
+                    let judge_model = Self::load_model("claude-3-7-sonnet-latest", cx).await;
+                    (agent_model.unwrap(), judge_model.unwrap())
+                })
+            })
+            .await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        Self {
+            agent: EditAgent::new(agent_model, action_log, Templates::new()),
+            project,
+            judge_model,
+        }
+    }
+
+    async fn load_model(id: &str, cx: &mut AsyncApp) -> Result<Arc<dyn LanguageModel>> {
+        let (provider, model) = cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
-                .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
+                .find(|model| model.id().0 == id)
                 .unwrap();
-
             let provider = models.provider(&model.provider_id()).unwrap();
-            let authenticated = provider.authenticate(cx);
-
-            cx.spawn(async move |_| {
-                authenticated.await.unwrap();
-                model
-            })
-        })
-        .await;
-    let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-    EditAgentTest {
-        agent: EditAgent::new(model, action_log, Templates::new()),
-        project,
+            (provider, model)
+        })?;
+        cx.update(|cx| provider.authenticate(cx))?.await?;
+        Ok(model)
     }
+
+    async fn eval(&self, eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
+        let path = self
+            .project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(eval.input_path, cx)
+            })
+            .unwrap();
+        let buffer = self
+            .project
+            .update(cx, |project, cx| project.open_buffer(path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(eval.input_content.clone(), cx)
+        });
+        let raw_output = self
+            .agent
+            .edit(
+                buffer.clone(),
+                eval.edit_description,
+                eval.conversation,
+                &mut cx.to_async(),
+            )
+            .await?;
+        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+        let actual_diff = language::unified_diff(&eval.input_content, &buffer_text);
+        let expected_diff = language::unified_diff(&eval.input_content, &eval.expected_output);
+        let diff_comparison = self
+            .compare_diffs(&actual_diff, &expected_diff, &cx.to_async())
+            .await
+            .context("failed comparing diffs")?;
+        Ok(EvalOutput {
+            diff_comparison,
+            diff: actual_diff,
+            buffer_text,
+            raw_edits: raw_output,
+        })
+    }
+
+    async fn compare_diffs(
+        &self,
+        diff_a: &str,
+        diff_b: &str,
+        cx: &AsyncApp,
+    ) -> Result<DiffComparison> {
+        let prompt = DiffJudgeTemplate {
+            diff_a: diff_a.to_string(),
+            diff_b: diff_b.to_string(),
+        }
+        .render(&self.agent.templates)
+        .unwrap();
+
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![prompt.into()],
+                cache: false,
+            }],
+            ..Default::default()
+        };
+        let mut response = self.judge_model.stream_completion_text(request, cx).await?;
+        let mut output = String::new();
+        while let Some(chunk) = response.stream.next().await {
+            let chunk = chunk?;
+            output.push_str(&chunk);
+        }
+
+        // Parse the score from the response
+        let re = regex::Regex::new(r"<score>(\d+)</score>").unwrap();
+        if let Some(captures) = re.captures(&output) {
+            if let Some(score_match) = captures.get(1) {
+                let score = score_match.as_str().parse().unwrap_or(0);
+                return Ok(DiffComparison {
+                    score,
+                    raw_output: output,
+                });
+            }
+        }
+
+        Err(anyhow!(
+            "No score found in response. Raw output: {}",
+            output
+        ))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+struct DiffComparison {
+    score: usize,
+    raw_output: String,
+}
+
+#[derive(Serialize)]
+pub struct DiffJudgeTemplate {
+    diff_a: String,
+    diff_b: String,
+}
+
+impl Template for DiffJudgeTemplate {
+    const TEMPLATE_NAME: &'static str = "diff_judge.hbs";
 }
