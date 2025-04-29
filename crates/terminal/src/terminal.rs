@@ -313,7 +313,7 @@ impl Display for TerminalError {
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
-const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
@@ -1219,28 +1219,16 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty.
-    fn write_to_pty(&self, input: String) {
-        self.pty_tx.notify(input.into_bytes());
+    fn write_to_pty(&self, input: impl Into<Vec<u8>>) {
+        self.pty_tx.notify(input.into());
     }
 
-    fn write_bytes_to_pty(&self, input: Vec<u8>) {
-        self.pty_tx.notify(input);
-    }
-
-    pub fn input(&mut self, input: String) {
+    pub fn input(&mut self, input: impl Into<Vec<u8>>) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
-    }
-
-    pub fn input_bytes(&mut self, input: Vec<u8>) {
-        self.events
-            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
-        self.events.push_back(InternalEvent::SetSelection(None));
-
-        self.write_bytes_to_pty(input);
     }
 
     pub fn toggle_vi_mode(&mut self) {
@@ -1421,6 +1409,13 @@ impl Terminal {
             terminal_bounds: last_content.terminal_bounds,
             last_hovered_word: last_content.last_hovered_word.clone(),
         }
+    }
+
+    pub fn get_content(&self) -> String {
+        let term = self.term.lock_unfair();
+        let start = AlacPoint::new(term.topmost_line(), Column(0));
+        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+        term.bounds_to_string(start, end)
     }
 
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
@@ -1865,6 +1860,8 @@ impl Terminal {
                 let completion_receiver = task.completion_rx.clone();
                 return cx
                     .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
+            } else if let Ok(status) = task.completion_rx.try_recv() {
+                return Task::ready(status);
             }
         }
         Task::ready(None)
