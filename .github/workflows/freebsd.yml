@@ -27,6 +27,7 @@ jobs:
             sysctl hw.physmem
             sysctl hw.usermem
             rustup-init --profile minimal --default-toolchain none -y
+            . "$HOME/.cargo/env"
             rustup update
             cargo build -p remote_server
             target/debug/remote-server --version
