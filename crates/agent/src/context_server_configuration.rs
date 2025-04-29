@@ -58,7 +58,7 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
 
                             this.update_in(cx, |this, window, cx| {
                                 let modal = ConfigureContextServerModal::from_configurations(
-                                    descriptors.into_iter().filter_map(|descriptor| descriptor),
+                                    descriptors.into_iter().flatten(),
                                     jsonc_language,
                                     cx.entity().downgrade(),
                                     window,
