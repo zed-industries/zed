@@ -683,6 +683,10 @@ pub struct LanguageConfig {
     pub brackets: BracketPairConfig,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
+    #[serde(default)]
+    pub language_without_bracket: bool,
+    /// If set to true, auto indentation uses last non empty line to determine
+    /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
     // Whether indentation of pasted content should be adjusted based on the context.
@@ -884,6 +888,7 @@ impl Default for LanguageConfig {
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
+            language_without_bracket: Default::default(),
         }
     }
 }
