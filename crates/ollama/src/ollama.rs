@@ -348,7 +348,7 @@ pub async fn get_models(
     }
 }
 
-/// Fetch details of a model, used to determine model capablities
+/// Fetch details of a model, used to determine model capabilities
 pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
     let request = HttpRequest::builder()
