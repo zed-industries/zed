@@ -23,7 +23,6 @@ pub struct WebSearchToolInput {
     query: String,
 }
 
-#[derive(RegisterComponent)]
 pub struct WebSearchTool;
 
 impl Tool for WebSearchTool {
@@ -84,6 +83,7 @@ impl Tool for WebSearchTool {
     }
 }
 
+#[derive(RegisterComponent)]
 struct WebSearchToolCard {
     response: Option<Result<WebSearchResponse>>,
     _task: Task<()>,
@@ -185,13 +185,9 @@ impl ToolCard for WebSearchToolCard {
     }
 }
 
-impl Component for WebSearchTool {
+impl Component for WebSearchToolCard {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
-    }
-
-    fn sort_name() -> &'static str {
-        "ToolWebSearch"
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {

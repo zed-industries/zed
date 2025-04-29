@@ -193,7 +193,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
             return;
         };
 
-        let http_client = workspace.read(cx).client().http_client().clone();
+        let http_client = workspace.read(cx).client().http_client();
         let url = self.url.clone();
         cx.spawn_in(window, async move |this, cx| {
             let text = cx

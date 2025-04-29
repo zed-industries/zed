@@ -7,8 +7,8 @@ use crate::{
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
     HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
     LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
@@ -59,6 +59,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 use project::{
+    ProjectPath,
     debugger::breakpoint_store::Breakpoint,
     project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
@@ -946,18 +947,45 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(new_point, Bias::Left);
 
-            if position_map
+            if let Some((buffer_snapshot, file)) = position_map
                 .snapshot
                 .buffer_snapshot
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
-                .is_some_and(|buffer| buffer.file().is_some())
+                .and_then(|buffer| buffer.file().map(|file| (buffer, file)))
             {
                 let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
+                let as_point = text::ToPoint::to_point(&buffer_anchor.text_anchor, buffer_snapshot);
+
                 let is_visible = editor
                     .gutter_breakpoint_indicator
                     .0
-                    .map_or(false, |(_, is_active)| is_active);
-                editor.gutter_breakpoint_indicator.0 = Some((new_point, is_visible));
+                    .map_or(false, |indicator| indicator.is_active);
+
+                let has_existing_breakpoint =
+                    editor.breakpoint_store.as_ref().map_or(false, |store| {
+                        let Some(project) = &editor.project else {
+                            return false;
+                        };
+                        let Some(abs_path) = project.read(cx).absolute_path(
+                            &ProjectPath {
+                                path: file.path().clone(),
+                                worktree_id: file.worktree_id(cx),
+                            },
+                            cx,
+                        ) else {
+                            return false;
+                        };
+                        store
+                            .read(cx)
+                            .breakpoint_at_row(&abs_path, as_point.row, cx)
+                            .is_some()
+                    });
+
+                editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
+                    display_row: new_point.row(),
+                    is_active: is_visible,
+                    collides_with_existing_breakpoint: has_existing_breakpoint,
+                });
 
                 editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
                     cx.spawn(async move |this, cx| {
@@ -968,10 +996,8 @@ impl EditorElement {
                         }
 
                         this.update(cx, |this, cx| {
-                            if let Some((_, is_active)) =
-                                this.gutter_breakpoint_indicator.0.as_mut()
-                            {
-                                *is_active = true;
+                            if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut() {
+                                indicator.is_active = true;
                             }
 
                             cx.notify();
@@ -7061,23 +7087,28 @@ impl Element for EditorElement {
                     // line numbers so we don't paint a line number debug accent color if a user
                     // has their mouse over that line when a breakpoint isn't there
                     if cx.has_flag::<DebuggerFeatureFlag>() {
-                        let gutter_breakpoint_indicator =
-                            self.editor.read(cx).gutter_breakpoint_indicator.0;
-                        if let Some((gutter_breakpoint_point, _)) =
-                            gutter_breakpoint_indicator.filter(|(_, is_active)| *is_active)
-                        {
-                            breakpoint_rows
-                                .entry(gutter_breakpoint_point.row())
-                                .or_insert_with(|| {
-                                    let position = snapshot.display_point_to_anchor(
-                                        gutter_breakpoint_point,
-                                        Bias::Right,
-                                    );
-                                    let breakpoint = Breakpoint::new_standard();
-
-                                    (position, breakpoint)
-                                });
-                        }
+                        self.editor.update(cx, |editor, _| {
+                            if let Some(phantom_breakpoint) = &mut editor
+                                .gutter_breakpoint_indicator
+                                .0
+                                .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
+                            {
+                                // Is there a non-phantom breakpoint on this line?
+                                phantom_breakpoint.collides_with_existing_breakpoint = true;
+                                breakpoint_rows
+                                    .entry(phantom_breakpoint.display_row)
+                                    .or_insert_with(|| {
+                                        let position = snapshot.display_point_to_anchor(
+                                            DisplayPoint::new(phantom_breakpoint.display_row, 0),
+                                            Bias::Right,
+                                        );
+                                        let breakpoint = Breakpoint::new_standard();
+                                        phantom_breakpoint.collides_with_existing_breakpoint =
+                                            false;
+                                        (position, breakpoint)
+                                    });
+                            }
+                        })
                     }
 
                     let mut expand_toggles =

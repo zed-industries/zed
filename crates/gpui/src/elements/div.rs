@@ -40,6 +40,8 @@ use std::{
 use taffy::style::Overflow;
 use util::ResultExt;
 
+use super::ImageCacheProvider;
+
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
@@ -1134,6 +1136,7 @@ pub fn div() -> Div {
         interactivity,
         children: SmallVec::default(),
         prepaint_listener: None,
+        image_cache: None,
     }
 }
 
@@ -1142,6 +1145,7 @@ pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
+    image_cache: Option<Box<dyn ImageCacheProvider>>,
 }
 
 impl Div {
@@ -1152,6 +1156,12 @@ impl Div {
         listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.prepaint_listener = Some(Box::new(listener));
+        self
+    }
+
+    /// Add an image cache at the location of this div in the element tree.
+    pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
+        self.image_cache = Some(Box::new(cache));
         self
     }
 }
@@ -1199,7 +1209,12 @@ impl Element for Div {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id =
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
+        let layout_id = window.with_image_cache(image_cache, |window| {
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
@@ -1210,7 +1225,9 @@ impl Element for Div {
                             .collect::<SmallVec<_>>();
                         window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
-                });
+                })
+        });
+
         (layout_id, DivFrameState { child_layout_ids })
     }
 
@@ -1291,18 +1308,25 @@ impl Element for Div {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.interactivity.paint(
-            global_id,
-            bounds,
-            hitbox.as_ref(),
-            window,
-            cx,
-            |_style, window, cx| {
-                for child in &mut self.children {
-                    child.paint(window, cx);
-                }
-            },
-        );
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
+        window.with_image_cache(image_cache, |window| {
+            self.interactivity.paint(
+                global_id,
+                bounds,
+                hitbox.as_ref(),
+                window,
+                cx,
+                |_style, window, cx| {
+                    for child in &mut self.children {
+                        child.paint(window, cx);
+                    }
+                },
+            )
+        });
     }
 }
 

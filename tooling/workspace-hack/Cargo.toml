@@ -263,9 +263,11 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.x86_64-apple-darwin.build-dependencies]
 clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
@@ -288,9 +290,11 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.aarch64-apple-darwin.dependencies]
 core-foundation = { version = "0.9" }
@@ -311,9 +315,11 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.aarch64-apple-darwin.build-dependencies]
 clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
@@ -336,9 +342,11 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -373,11 +381,13 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 
@@ -412,11 +422,13 @@ rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["ev
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 
@@ -453,11 +465,13 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 
@@ -492,11 +506,13 @@ rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["ev
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 
@@ -512,9 +528,11 @@ naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
 scopeguard = { version = "1" }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
@@ -535,9 +553,11 @@ proc-macro2 = { version = "1", default-features = false, features = ["span-locat
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
 scopeguard = { version = "1" }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
@@ -578,11 +598,13 @@ rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs",
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 
@@ -617,11 +639,13 @@ rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["ev
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 smallvec = { version = "1", default-features = false, features = ["write"] }
+sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
+tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 

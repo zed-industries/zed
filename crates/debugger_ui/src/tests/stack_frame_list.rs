@@ -182,14 +182,6 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
         });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -370,7 +362,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                     let snapshot = editor.snapshot(window, cx);
 
                     editor
-                        .highlighted_rows::<editor::DebugCurrentRowHighlight>()
+                        .highlighted_rows::<editor::ActiveDebugLine>()
                         .map(|(range, _)| {
                             let start = range.start.to_point(&snapshot.buffer_snapshot);
                             let end = range.end.to_point(&snapshot.buffer_snapshot);
@@ -440,7 +432,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                 let snapshot = editor.snapshot(window, cx);
 
                 editor
-                    .highlighted_rows::<editor::DebugCurrentRowHighlight>()
+                    .highlighted_rows::<editor::ActiveDebugLine>()
                     .map(|(range, _)| {
                         let start = range.start.to_point(&snapshot.buffer_snapshot);
                         let end = range.end.to_point(&snapshot.buffer_snapshot);
@@ -450,14 +442,6 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             })
         );
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -807,12 +791,4 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             );
         });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

@@ -90,12 +90,12 @@ fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContex
     );
     assert_eq!(
         matches[2].string_match.string.as_str(),
-        "floorf128",
+        "floorf16",
         "Match order not expected"
     );
     assert_eq!(
         matches[3].string_match.string.as_str(),
-        "floorf16",
+        "floorf32",
         "Match order not expected"
     );
 
@@ -433,7 +433,51 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
         "Match order not expected"
     );
 
-    // Case 4: "unreachable"
+    // Case 4: "unreachabl"
+    let query: Option<&str> = Some("unreachable");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.9090909090909092,
+                positions: vec![],
+                string: "unreachable".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "unreachable"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.6666666666666666,
+                positions: vec![],
+                string: "unreachable!(…)".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "unreachable!(…)"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.47619047619047616,
+                positions: vec![],
+                string: "unreachable_unchecked".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "unreachable_unchecked"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches[0].string_match.string.as_str(),
+        "unreachable!(…)",
+        "Match order not expected"
+    );
+
+    // Case 5: "unreachable"
     let query: Option<&str> = Some("unreachable");
     let mut matches: Vec<SortableMatch<'_>> = vec![
         SortableMatch {
@@ -956,17 +1000,17 @@ fn test_sort_matches_jsx_event_handler(_cx: &mut TestAppContext) {
             .collect::<Vec<&str>>(),
         vec![
             "onAbort?",
+            "onAuxClick?",
             "onAbortCapture?",
             "onAnimationEnd?",
-            "onAnimationEndCapture?",
-            "onAnimationIteration?",
             "onAnimationStart?",
-            "onAuxClick?",
             "onAuxClickCapture?",
-            "onCanPlay?",
-            "onChange?",
+            "onAnimationIteration?",
+            "onAnimationEndCapture?",
             "onDrag?",
-            "onDragEnd?",
+            "onLoad?",
+            "onPlay?",
+            "onPaste?",
         ]
     );
 }
@@ -985,7 +1029,7 @@ fn test_sort_matches_for_snippets(_cx: &mut TestAppContext) {
             },
             is_snippet: false,
             sort_text: Some("80000000"),
-            sort_key: (2, "unreachable"),
+            sort_key: (2, "println"),
         },
         SortableMatch {
             string_match: StringMatch {
@@ -1004,5 +1048,286 @@ fn test_sort_matches_for_snippets(_cx: &mut TestAppContext) {
         matches[0].string_match.string.as_str(),
         "println!(…)",
         "Match order not expected"
+    );
+}
+
+#[gpui::test]
+fn test_sort_matches_for_exact_match(_cx: &mut TestAppContext) {
+    // Case 1: "set_text"
+    let query: Option<&str> = Some("set_text");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 1.0,
+                positions: vec![],
+                string: "set_text".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_text"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.32000000000000006,
+                positions: vec![],
+                string: "set_placeholder_text".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_placeholder_text"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.32,
+                positions: vec![],
+                string: "set_text_style_refinement".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_text_style_refinement"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.16666666666666666,
+                positions: vec![],
+                string: "set_context_menu_options".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_context_menu_options"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.08695652173913043,
+                positions: vec![],
+                string: "select_to_next_word_end".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_next_word_end"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.07692307692307693,
+                positions: vec![],
+                string: "select_to_next_subword_end".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_next_subword_end"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.06956521739130435,
+                positions: vec![],
+                string: "set_custom_context_menu".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_custom_context_menu"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.06,
+                positions: vec![],
+                string: "select_to_end_of_excerpt".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_end_of_excerpt"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.055384615384615386,
+                positions: vec![],
+                string: "select_to_start_of_excerpt".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_start_of_excerpt"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.0464516129032258,
+                positions: vec![],
+                string: "select_to_start_of_next_excerpt".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_start_of_next_excerpt"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.04363636363636363,
+                positions: vec![],
+                string: "select_to_end_of_previous_excerpt".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_end_of_previous_excerpt"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::Top);
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec![
+            "set_text",
+            "set_text_style_refinement",
+            "set_placeholder_text",
+            "set_context_menu_options",
+            "set_custom_context_menu",
+            "select_to_next_word_end",
+            "select_to_next_subword_end",
+            "select_to_end_of_excerpt",
+            "select_to_start_of_excerpt",
+            "select_to_start_of_next_excerpt",
+            "select_to_end_of_previous_excerpt",
+        ]
+    );
+}
+
+#[gpui::test]
+fn test_sort_matches_for_prefix_matches(_cx: &mut TestAppContext) {
+    // Case 1: "set"
+    let query: Option<&str> = Some("set");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.12631578947368421,
+                positions: vec![],
+                string: "select_to_beginning".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_beginning"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.15000000000000002,
+                positions: vec![],
+                string: "set_collapse_matches".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_collapse_matches"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.21428571428571427,
+                positions: vec![],
+                string: "set_autoindent".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_autoindent"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.11538461538461539,
+                positions: vec![],
+                string: "set_all_diagnostics_active".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "set_all_diagnostics_active"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.1142857142857143,
+                positions: vec![],
+                string: "select_to_end_of_line".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_to_end_of_line"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.15000000000000002,
+                positions: vec![],
+                string: "select_all".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_all"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13636363636363635,
+                positions: vec![],
+                string: "select_line".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_line"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13636363636363635,
+                positions: vec![],
+                string: "select_left".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_left"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.13636363636363635,
+                positions: vec![],
+                string: "select_down".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "select_down"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::Top);
+    println!(
+        "{:?}",
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+    );
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec![
+            "set_autoindent",
+            "set_collapse_matches",
+            "set_all_diagnostics_active",
+            "select_all",
+            "select_down",
+            "select_left",
+            "select_line",
+            "select_to_beginning",
+            "select_to_end_of_line",
+        ]
     );
 }

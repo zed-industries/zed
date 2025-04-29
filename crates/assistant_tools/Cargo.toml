@@ -34,6 +34,9 @@ regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+task.workspace = true
+terminal.workspace = true
+terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
 web_search.workspace = true
@@ -51,6 +54,7 @@ project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 pretty_assertions.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+task = { workspace = true, features = ["test-support"]}
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

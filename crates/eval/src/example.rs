@@ -276,7 +276,8 @@ impl ExampleContext {
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged
-                | ThreadEvent::UsageUpdated(_) => {
+                | ThreadEvent::UsageUpdated(_)
+                | ThreadEvent::CancelEditing => {
                     tx.try_send(Ok(())).ok();
                     if std::env::var("ZED_EVAL_DEBUG").is_ok() {
                         println!("{}Event: {:#?}", log_prefix, event);
@@ -386,6 +387,7 @@ impl Response {
         cx.assert_some(result, format!("called `{}`", tool_name))
     }
 
+    #[allow(dead_code)]
     pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
         self.messages.iter().flat_map(|msg| &msg.tool_use)
     }

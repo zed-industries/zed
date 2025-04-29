@@ -7,6 +7,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
 use tests::{init_test, init_test_workspace};
+use util::path;
 
 #[gpui::test]
 async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -15,14 +16,14 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     workspace
@@ -157,14 +158,6 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
             );
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 // #[gpui::test]

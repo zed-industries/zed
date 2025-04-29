@@ -1479,6 +1479,21 @@ pub enum ImageFormat {
     Tiff,
 }
 
+impl ImageFormat {
+    /// Returns the mime type for the ImageFormat
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "image/png",
+            ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Webp => "image/webp",
+            ImageFormat::Gif => "image/gif",
+            ImageFormat::Svg => "image/svg+xml",
+            ImageFormat::Bmp => "image/bmp",
+            ImageFormat::Tiff => "image/tiff",
+        }
+    }
+}
+
 /// An image, with a format and certain bytes
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
@@ -1520,6 +1535,22 @@ impl Image {
         ImageSource::Image(self)
             .use_data(None, window, cx)
             .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `get_asset` API to make this image renderable
+    pub fn get_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        ImageSource::Image(self)
+            .get_data(None, window, cx)
+            .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `remove_asset` API to drop this image, if possible.
+    pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
+        ImageSource::Image(self).remove_asset(cx);
     }
 
     /// Convert the clipboard image to an `ImageData` object.

@@ -34,7 +34,7 @@ use ui::{
 use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -1462,6 +1462,11 @@ impl Item for TerminalView {
             .into_any()
     }
 
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        let terminal = self.terminal().read(cx);
+        terminal.title(detail == 0).into()
+    }
+
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
     }
@@ -1577,14 +1582,10 @@ impl SerializableItem for TerminalView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, async move |_| {
-            TERMINAL_DB
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+        delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
     }
 
     fn serialize(
