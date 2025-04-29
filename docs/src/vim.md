@@ -174,6 +174,17 @@ Zed's vim mode includes some features that are usually provided by very popular 
 
 Zed offers two different strategies for selecting text surrounded by any quote, or any bracket. These text objects are **not enabled by default** and must be configured in your keymap to be used.
 
+#### Included Characters
+
+Each text object type works with specific characters:
+
+| Text Object | Characters |
+|-------------|------------|
+| AnyQuotes/MiniQuotes | Single quote (`'`), Double quote (`"`), Backtick (`` ` ``) |
+| AnyBrackets/MiniBrackets | Parentheses (`()`), Square brackets (`[]`), Curly braces (`{}`), Angle brackets (`<>`) |
+
+Both "Any" and "Mini" variants work with the same character sets, but differ in their selection strategy.
+
 #### AnyQuotes and AnyBrackets (Traditional Vim behavior)
 
 These text objects implement traditional Vim behavior:
