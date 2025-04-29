@@ -18,8 +18,8 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -495,7 +495,18 @@ impl AssistantPanel {
                         .key_context("NavigationMenu")
                 });
             weak_panel
-                .update(cx, |panel, _| {
+                .update(cx, |panel, cx| {
+                    cx.subscribe_in(
+                        &assistant_navigation_menu,
+                        window,
+                        |_, menu, _: &DismissEvent, window, cx| {
+                            menu.update(cx, |menu, _| {
+                                menu.clear_selected();
+                            });
+                            cx.focus_self(window);
+                        },
+                    )
+                    .detach();
                     panel.assistant_navigation_menu = Some(assistant_navigation_menu);
                 })
                 .ok();
