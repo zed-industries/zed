@@ -26,6 +26,7 @@ use crate::api::events::SnowflakeRow;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
+use crate::llm::db::subscription_usage_meter::CompletionMode;
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{AppState, Cents, Error, Result};
@@ -1372,6 +1373,9 @@ async fn sync_model_request_usage_with_stripe(
     let claude_3_7_sonnet = stripe_billing
         .find_price_by_lookup_key("claude-3-7-sonnet-requests")
         .await?;
+    let claude_3_7_sonnet_max = stripe_billing
+        .find_price_by_lookup_key("claude-3-7-sonnet-requests-max")
+        .await?;
 
     for (usage_meter, usage) in usage_meters {
         maybe!(async {
@@ -1397,7 +1401,12 @@ async fn sync_model_request_usage_with_stripe(
 
             let (price_id, meter_event_name) = match model.name.as_str() {
                 "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
-                "claude-3-7-sonnet" => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
+                "claude-3-7-sonnet" => match usage_meter.mode {
+                    CompletionMode::Normal => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
+                    CompletionMode::Max => {
+                        (&claude_3_7_sonnet_max.id, "claude_3_7_sonnet/requests/max")
+                    }
+                },
                 model_name => {
                     bail!("Attempted to sync usage meter for unsupported model: {model_name:?}")
                 }
