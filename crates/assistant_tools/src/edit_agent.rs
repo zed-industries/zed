@@ -129,8 +129,9 @@ impl EditAgent {
             // todo!("group all edits into one transaction")
             let mut edits_rx = edits_rx.ready_chunks(32);
             while let Some(edits) = edits_rx.next().await {
-                // Edit the buffer and report the edit as part of the same effect cycle, otherwise
-                // the edit will be reported as if the user made it.
+                // Edit the buffer and report edits to the action log as part of the
+                // same effect cycle, otherwise the edit will be reported as if the
+                // user made it.
                 cx.update(|cx| {
                     buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
                     self.action_log
