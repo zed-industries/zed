@@ -39,8 +39,12 @@ pub use crate::telemetry::*;
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    registry::init(cx);
+    init_settings(cx);
     RefreshLlmTokenListener::register(client.clone(), cx);
+}
+
+pub fn init_settings(cx: &mut App) {
+    registry::init(cx);
 }
 
 /// The availability of a [`LanguageModel`].

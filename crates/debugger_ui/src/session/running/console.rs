@@ -45,7 +45,7 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
-            editor.set_show_gutter(true, cx);
+            editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -57,6 +57,8 @@ impl Console {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
+            editor.set_use_modal_editing(false);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
         let focus_handle = cx.focus_handle();
@@ -146,6 +148,23 @@ impl Console {
             expression
         });
 
+        self.add_messages(
+            [OutputEvent {
+                category: None,
+                output: format!("> {expression}"),
+                group: None,
+                variables_reference: None,
+                source: None,
+                line: None,
+                column: None,
+                data: None,
+                location_reference: None,
+            }]
+            .iter(),
+            window,
+            cx,
+        );
+
         self.session.update(cx, |session, cx| {
             session
                 .evaluate(
@@ -160,6 +179,10 @@ impl Console {
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
+        EditorElement::new(&self.console, self.editor_style(cx))
+    }
+
+    fn editor_style(&self, cx: &Context<Self>) -> EditorStyle {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
@@ -174,44 +197,16 @@ impl Console {
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
-
-        EditorElement::new(
-            &self.console,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        EditorStyle {
+            background: cx.theme().colors().editor_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            ..Default::default()
+        }
     }
 
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: if self.console.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                cx.theme().colors().text
-            },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: TextSize::Editor.rems(cx).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
-            ..Default::default()
-        };
-
-        EditorElement::new(
-            &self.query_bar,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        EditorElement::new(&self.query_bar, self.editor_style(cx))
     }
 }
 

@@ -18,7 +18,7 @@ use theme::Theme;
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
 };
 
@@ -241,14 +241,16 @@ impl SerializableItem for ImageView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, async move |_| {
-            IMAGE_VIEWER
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+        delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "image_viewers",
+            &IMAGE_VIEWER,
+            cx,
+        )
     }
 
     fn serialize(
@@ -380,10 +382,9 @@ pub fn init(cx: &mut App) {
 }
 
 mod persistence {
-    use anyhow::Result;
     use std::path::PathBuf;
 
-    use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
+    use db::{define_connection, query, sqlez_macros::sql};
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
     define_connection! {
@@ -420,32 +421,6 @@ mod persistence {
                 FROM image_viewers
                 WHERE item_id = ? AND workspace_id = ?
             }
-        }
-
-        pub async fn delete_unloaded_items(
-            &self,
-            workspace: WorkspaceId,
-            alive_items: Vec<ItemId>,
-        ) -> Result<()> {
-            let placeholders = alive_items
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<&str>>()
-                .join(", ");
-
-            let query = format!(
-                "DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-            );
-
-            self.write(move |conn| {
-                let mut statement = Statement::prepare(conn, query)?;
-                let mut next_index = statement.bind(&workspace, 1)?;
-                for id in alive_items {
-                    next_index = statement.bind(&id, next_index)?;
-                }
-                statement.exec()
-            })
-            .await
         }
     }
 }
