@@ -3,8 +3,9 @@ use std::{
     process::Stdio,
 };
 
-use cargo_metadata::diagnostic::{
-    Applicability, Diagnostic as CargoDiagnostic, DiagnosticLevel, DiagnosticSpan,
+use cargo_metadata::{
+    Message,
+    diagnostic::{Applicability, Diagnostic as CargoDiagnostic, DiagnosticLevel, DiagnosticSpan},
 };
 use collections::HashMap;
 use gpui::{AppContext, Entity, Task};
@@ -21,6 +22,13 @@ use ui::App;
 use util::ResultExt;
 
 use crate::ProjectDiagnosticsEditor;
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum CargoMessage {
+    Cargo(Message),
+    Rustc(CargoDiagnostic),
+}
 
 /// Appends formatted string to a `String`.
 macro_rules! format_to {
@@ -94,12 +102,23 @@ pub fn fetch_worktree_diagnostics(
                     errors = 0;
                     let mut deserializer = serde_json::Deserializer::from_str(&line);
                     deserializer.disable_recursion_limit();
-                    match CargoDiagnostic::deserialize(&mut deserializer) {
-                        Ok(message) => {
+                    match CargoMessage::deserialize(&mut deserializer).map(|cargo_message| {
+                        match cargo_message {
+                            CargoMessage::Cargo(message) => match message {
+                                Message::CompilerMessage(msg) => {
+                                    Some(msg.message)
+                                }
+                                _ => None,
+                            },
+                            CargoMessage::Rustc(message) => Some(message),
+                        }
+                    }) {
+                        Ok(Some(message)) => {
                             if tx.send(message).await.is_err() {
                                 return;
                             }
                         }
+                        Ok(None) => {}
                         Err(_) => log::debug!("Failed to parse cargo diagnostics from line '{line}'"),
                     };
                 },
