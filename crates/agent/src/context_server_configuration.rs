@@ -95,6 +95,7 @@ struct ConfigureContextServer {
 struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     context_servers_to_setup: Vec<ConfigureContextServer>,
+    completed: bool,
 }
 
 impl ConfigureContextServerModal {
@@ -135,6 +136,7 @@ impl ConfigureContextServerModal {
         Some(Self {
             workspace,
             context_servers_to_setup,
+            completed: false,
         })
     }
 }
@@ -192,20 +194,6 @@ impl ConfigureContextServerModal {
     }
 }
 
-impl ModalView for ConfigureContextServerModal {}
-
-impl Focusable for ConfigureContextServerModal {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if let Some(current) = self.context_servers_to_setup.first() {
-            current.settings_editor.read(cx).focus_handle(cx)
-        } else {
-            cx.focus_handle()
-        }
-    }
-}
-
-impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
-
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(configuration) = self.context_servers_to_setup.first() else {
@@ -222,7 +210,6 @@ impl Render for ConfigureContextServerModal {
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window);
             }))
-            .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(
                 Modal::new("configure-context-server", None)
                     .header(ModalHeader::new().headline(format!("Configure {}", configuration.id)))
@@ -297,9 +284,10 @@ impl Render for ConfigureContextServerModal {
                                         )
                                         .map(|kb| kb.size(rems_from_px(12.))),
                                     )
-                                    .on_click(
-                                        cx.listener(|_, _event, _window, cx| cx.emit(DismissEvent)),
-                                    ),
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.completed = true;
+                                        cx.emit(DismissEvent);
+                                    })),
                             )
                             .end_slot(
                                 Button::new("configure-server", "Configure MCP")
@@ -318,5 +306,26 @@ impl Render for ConfigureContextServerModal {
                             ),
                     ),
             )
+    }
+}
+
+impl ModalView for ConfigureContextServerModal {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        workspace::DismissDecision::Dismiss(self.completed)
+    }
+}
+
+impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
+impl Focusable for ConfigureContextServerModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(current) = self.context_servers_to_setup.first() {
+            current.settings_editor.read(cx).focus_handle(cx)
+        } else {
+            cx.focus_handle()
+        }
     }
 }
