@@ -91,9 +91,8 @@ struct ConfigureContextServer {
 }
 
 struct ConfigureContextServerModal {
-    context_servers_to_setup: Vec<ConfigureContextServer>,
-    focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
+    context_servers_to_setup: Vec<ConfigureContextServer>,
 }
 
 impl ConfigureContextServerModal {
@@ -104,8 +103,6 @@ impl ConfigureContextServerModal {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Self> {
-        let focus_handle = cx.focus_handle();
-
         let context_servers_to_setup = configurations
             .map(|(id, manifest)| {
                 let jsonc_language = jsonc_language.clone();
@@ -129,9 +126,8 @@ impl ConfigureContextServerModal {
         }
 
         Some(Self {
-            context_servers_to_setup,
-            focus_handle,
             workspace,
+            context_servers_to_setup,
         })
     }
 }
@@ -174,13 +170,27 @@ impl ConfigureContextServerModal {
     }
 }
 
+impl ModalView for ConfigureContextServerModal {}
+
+impl Focusable for ConfigureContextServerModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(current) = self.context_servers_to_setup.first() {
+            current.settings_editor.read(cx).focus_handle(cx)
+        } else {
+            cx.focus_handle()
+        }
+    }
+}
+
+impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
+
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(current) = self.context_servers_to_setup.first() else {
             return div().child("No context servers to setup");
         };
 
-        let focus_handle = self.focus_handle.clone();
+        let focus_handle = self.focus_handle(cx);
 
         div()
             .elevation_3(cx)
@@ -195,51 +205,43 @@ impl Render for ConfigureContextServerModal {
                 Modal::new("configure-context-server", None)
                     .header(ModalHeader::new().headline(format!("Configure {}", current.id)))
                     .section(
-                        Section::new().child(
-                            v_flex()
-                                .gap_1()
-                                .child(
-                                    Label::new(current.installation_instructions.clone())
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    div()
-                                        .p_2()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
-                                        .child({
-                                            let settings = ThemeSettings::get_global(cx);
-                                            let text_style = TextStyle {
-                                                color: cx.theme().colors().text,
-                                                font_family: settings.buffer_font.family.clone(),
-                                                font_fallbacks: settings
-                                                    .buffer_font
-                                                    .fallbacks
-                                                    .clone(),
-                                                font_size: settings.buffer_font_size(cx).into(),
-                                                font_weight: settings.buffer_font.weight,
-                                                line_height: relative(
-                                                    settings.buffer_line_height.value(),
-                                                ),
+                        Section::new()
+                            .child(
+                                Label::new(current.installation_instructions.clone())
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .p_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child({
+                                        let settings = ThemeSettings::get_global(cx);
+                                        let text_style = TextStyle {
+                                            color: cx.theme().colors().text,
+                                            font_family: settings.buffer_font.family.clone(),
+                                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                            font_size: settings.buffer_font_size(cx).into(),
+                                            font_weight: settings.buffer_font.weight,
+                                            line_height: relative(
+                                                settings.buffer_line_height.value(),
+                                            ),
+                                            ..Default::default()
+                                        };
+                                        EditorElement::new(
+                                            &current.settings_editor,
+                                            EditorStyle {
+                                                background: cx.theme().colors().editor_background,
+                                                local_player: cx.theme().players().local(),
+                                                text: text_style,
+                                                syntax: cx.theme().syntax().clone(),
                                                 ..Default::default()
-                                            };
-                                            EditorElement::new(
-                                                &current.settings_editor,
-                                                EditorStyle {
-                                                    background: cx
-                                                        .theme()
-                                                        .colors()
-                                                        .editor_background,
-                                                    local_player: cx.theme().players().local(),
-                                                    text: text_style,
-                                                    syntax: cx.theme().syntax().clone(),
-                                                    ..Default::default()
-                                                },
-                                            )
-                                        }),
-                                ),
-                        ),
+                                            },
+                                        )
+                                    }),
+                            ),
                     )
                     .footer(
                         ModalFooter::new()
@@ -275,13 +277,5 @@ impl Render for ConfigureContextServerModal {
                             ),
                     ),
             )
-    }
-}
-
-impl ModalView for ConfigureContextServerModal {}
-impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
-impl Focusable for ConfigureContextServerModal {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
     }
 }
