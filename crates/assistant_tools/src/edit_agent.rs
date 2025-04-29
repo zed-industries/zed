@@ -8,7 +8,7 @@ use assistant_tool::ActionLog;
 use edit_parser::EditParser;
 use futures::{Stream, StreamExt, stream::BoxStream};
 use gpui::{AsyncApp, Entity};
-use language::{Anchor, Bias, Buffer, BufferSnapshot, ToOffset};
+use language::{Bias, Buffer, BufferSnapshot};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, MessageContent, Role,
@@ -94,11 +94,12 @@ impl EditAgent {
             for event in parser.push(&chunk) {
                 match event {
                     edit_parser::EditEvent::OldText(old_text) => {
-                        let range = Self::resolve_location(&snapshot, &old_text);
-                        pending_edit = Some(PendingEdit {
-                            start: range.start.to_offset(&snapshot),
-                            diff: StreamingDiff::new(old_text),
-                        });
+                        if let Some(range) = Self::resolve_location(&snapshot, &old_text) {
+                            pending_edit = Some(PendingEdit {
+                                start: range.start,
+                                diff: StreamingDiff::new(old_text),
+                            });
+                        }
                     }
                     edit_parser::EditEvent::NewTextChunk { chunk, done } => {
                         let mut edit = pending_edit.take().context("no pending edit found")?;
@@ -194,8 +195,7 @@ impl EditAgent {
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
     }
 
-    // todo!("return an offset range here.")
-    fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Range<Anchor> {
+    fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {
         const INSERTION_COST: u32 = 3;
         const DELETION_COST: u32 = 10;
         const WHITESPACE_INSERTION_COST: u32 = 1;
@@ -260,6 +260,7 @@ impl EditAgent {
             }
         }
 
+        let mut equal_bytes = 0;
         let mut query_ix = query_len;
         let mut buffer_ix = best_buffer_end;
         while query_ix > 0 && buffer_ix > 0 {
@@ -268,6 +269,7 @@ impl EditAgent {
                 SearchDirection::Diagonal => {
                     query_ix -= 1;
                     buffer_ix -= 1;
+                    equal_bytes += 1;
                 }
                 SearchDirection::Up => {
                     query_ix -= 1;
@@ -285,7 +287,12 @@ impl EditAgent {
             end.column = buffer.line_len(end.row);
         }
 
-        buffer.anchor_after(start)..buffer.anchor_before(end)
+        let score = equal_bytes as f32 / query_len as f32;
+        if score >= 0.8 {
+            Some(buffer.point_to_offset(start)..buffer.point_to_offset(end))
+        } else {
+            None
+        }
     }
 }
 
@@ -327,5 +334,128 @@ impl SearchMatrix {
 
     fn set(&mut self, row: usize, col: usize, cost: SearchState) {
         self.data[row * self.cols + col] = cost;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{App, AppContext};
+    use unindent::Unindent;
+    use util::test::{generate_marked_text, marked_text_ranges};
+
+    #[gpui::test]
+    fn test_resolve_location(cx: &mut App) {
+        assert_location_resolution(
+            concat!(
+                "    Lorem\n",
+                "«    ipsum\n",
+                "    dolor sit amet»\n",
+                "    consecteur",
+            ),
+            "ipsum\ndolor",
+            cx,
+        );
+
+        assert_location_resolution(
+            &"
+            «fn foo1(a: usize) -> usize {
+                40
+            }»
+
+            fn foo2(b: usize) -> usize {
+                42
+            }
+            "
+            .unindent(),
+            "fn foo1(b: usize) {\n40\n}",
+            cx,
+        );
+
+        assert_location_resolution(
+            &"
+            fn main() {
+            «    Foo
+                    .bar()
+                    .baz()
+                    .qux()»
+            }
+
+            fn foo2(b: usize) -> usize {
+                42
+            }
+            "
+            .unindent(),
+            "Foo.bar.baz.qux()",
+            cx,
+        );
+
+        assert_location_resolution(
+            &"
+            class Something {
+                one() { return 1; }
+            «    two() { return 2222; }
+                three() { return 333; }
+                four() { return 4444; }
+                five() { return 5555; }
+                six() { return 6666; }
+            »    seven() { return 7; }
+                eight() { return 8; }
+            }
+            "
+            .unindent(),
+            &"
+                two() { return 2222; }
+                four() { return 4444; }
+                five() { return 5555; }
+                six() { return 6666; }
+            "
+            .unindent(),
+            cx,
+        );
+
+        assert_location_resolution(
+            &"
+                use std::ops::Range;
+                use std::sync::Mutex;
+                use std::{
+                    collections::HashMap,
+                    env,
+                    ffi::{OsStr, OsString},
+                    fs,
+                    io::{BufRead, BufReader},
+                    mem,
+                    path::{Path, PathBuf},
+                    process::Command,
+                    sync::LazyLock,
+                    time::SystemTime,
+                };
+            "
+            .unindent(),
+            &"
+                use std::collections::{HashMap, HashSet};
+                use std::ffi::{OsStr, OsString};
+                use std::fmt::Write as _;
+                use std::fs;
+                use std::io::{BufReader, Read, Write};
+                use std::mem;
+                use std::path::{Path, PathBuf};
+                use std::process::Command;
+                use std::sync::Arc;
+            "
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[track_caller]
+    fn assert_location_resolution(text_with_expected_range: &str, query: &str, cx: &mut App) {
+        let (text, _) = marked_text_ranges(text_with_expected_range, false);
+        let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+        let snapshot = buffer.read(cx).snapshot();
+        let mut ranges = Vec::new();
+        ranges.extend(EditAgent::resolve_location(&snapshot, query));
+        let text_with_actual_range = generate_marked_text(&text, &ranges, false);
+        pretty_assertions::assert_eq!(text_with_actual_range, text_with_expected_range);
     }
 }
