@@ -360,6 +360,13 @@ jobs:
       - name: Create Dev Drive using ReFS
         run: ./script/setup-dev-driver.ps1
 
+      # # TODO: Remove this
+      # - name: Test
+      #   uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+      #   with:
+      #     path: crates/zed/resources/windows/installer/zed.iss
+      #     options: /O+
+
       # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
       - name: Copy Git Repo to Dev Drive
         run: |
@@ -751,12 +758,81 @@ jobs:
       - name: Limit /nix/store to 50GB
         run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
+  bundle-windows-x64:
+    timeout-minutes: 120
+    name: Create a Windows installer
+    runs-on: hosted-windows-2
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    needs: [windows_tests]
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ secrets.ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ secrets.ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+    steps:
+      # more info here:- https://github.com/rust-lang/cargo/issues/13020
+      - name: Enable longer pathnames for git
+        run: git config --system core.longpaths true
+
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Create Dev Drive using ReFS
+        run: ./script/setup-dev-driver.ps1
+
+      # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
+      - name: Copy Git Repo to Dev Drive
+        run: |
+          Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
+
+      - name: Determine version and release channel
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
+          script/determine-release-channel.ps1
+
+      - name: Install trusted signing
+        uses: ./.github/actions/install_trusted_signing
+
+      - name: Build Zed installer
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/bundle-windows.ps1
+
+      - name: Upload app bundle to release
+        uses: softprops/action-gh-release@v2
+        if: ${{ env.RELEASE_CHANNEL == 'preview' }} # Only publish preview for now
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: ${{ env.SETUP_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check dev drive space
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
+
   auto-release-preview:
     name: Auto release preview
     if: |
       startsWith(github.ref, 'refs/tags/v')
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
+    needs:
+      [
+        bundle-mac,
+        bundle-linux-x86_x64,
+        bundle-linux-aarch64,
+        bundle-windows-x64,
+      ]
     runs-on:
       - self-hosted
       - bundle

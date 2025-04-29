@@ -218,7 +218,7 @@ blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
-windows-core = "0.61"
+windows-core.workspace = true
 windows-numerics = "0.2"
 windows-registry = "0.5"
 
