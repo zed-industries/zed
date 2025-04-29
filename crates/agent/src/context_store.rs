@@ -8,6 +8,7 @@ use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::Buffer;
 use language_model::LanguageModelImage;
+use project::image_store::is_image_file;
 use project::{Project, ProjectItem, ProjectPath, Symbol};
 use prompt_store::UserPromptId;
 use ref_cast::RefCast as _;
@@ -81,15 +82,28 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        cx.spawn(async move |this, cx| {
-            let open_buffer_task = project.update(cx, |project, cx| {
-                project.open_buffer(project_path.clone(), cx)
-            })?;
-            let buffer = open_buffer_task.await?;
-            this.update(cx, |this, cx| {
-                this.add_file_from_buffer(&project_path, buffer, remove_if_exists, cx)
+        if is_image_file(&project, &project_path, cx) {
+            cx.spawn(async move |this, cx| {
+                let open_image_task = project.update(cx, |project, cx| {
+                    project.open_image(project_path.clone(), cx)
+                })?;
+                let image_item = open_image_task.await?;
+                let image = image_item.read_with(cx, |image_item, _| image_item.image.clone())?;
+                this.update(cx, |this, cx| {
+                    this.add_image(image, cx);
+                })
             })
-        })
+        } else {
+            cx.spawn(async move |this, cx| {
+                let open_buffer_task = project.update(cx, |project, cx| {
+                    project.open_buffer(project_path.clone(), cx)
+                })?;
+                let buffer = open_buffer_task.await?;
+                this.update(cx, |this, cx| {
+                    this.add_file_from_buffer(&project_path, buffer, remove_if_exists, cx)
+                })
+            })
+        }
     }
 
     pub fn add_file_from_buffer(
