@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::{Cents, Result, llm};
+use crate::llm::{self, AGENT_EXTENDED_TRIAL_FEATURE_FLAG};
+use crate::{Cents, Result};
 use anyhow::{Context as _, anyhow};
 use chrono::{Datelike, Utc};
 use collections::HashMap;
@@ -492,8 +493,6 @@ impl StripeBilling {
         feature_flags: Vec<String>,
         success_url: &str,
     ) -> Result<String> {
-        const AGENT_EXTENDED_TRIAL_FEATURE_FLAG: &str = "agent-extended-trial";
-
         let eligible_for_extended_trial = feature_flags
             .iter()
             .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
