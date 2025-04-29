@@ -186,7 +186,6 @@ impl ContextServerManager {
         server: Arc<ContextServer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        dbg!("Starting server", server.id());
         cx.spawn(async move |this, cx| {
             let id = server.id.clone();
             server.start(&cx).await?;
