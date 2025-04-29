@@ -167,24 +167,22 @@ impl Tool for GrepTool {
 
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-                let mut file_header_written = false;
                 let mut ranges = ranges
                     .into_iter()
                     .map(|range| {
                         let matched = range.to_point(&snapshot);
                         let matched_end_line_len = snapshot.line_len(matched.end.row);
                         let full_lines = Point::new(matched.start.row, 0)..Point::new(matched.end.row, matched_end_line_len);
-                        let ancestor_node = snapshot.syntax_ancestor(full_lines.clone());
+                        let symbols = snapshot.symbols_containing(matched.start, None);
 
-                        if let Some(ancestor_node) = &ancestor_node {
+                        if let Some(ancestor_node) = snapshot.syntax_ancestor(full_lines.clone()) {
                             let full_ancestor_range = ancestor_node.byte_range().to_point(&snapshot);
-
                             let end_row = full_ancestor_range.end.row.min(full_ancestor_range.start.row + MAX_ANCESTOR_LINES);
                             let end_col = snapshot.line_len(end_row);
                             let capped_ancestor_range = Point::new(full_ancestor_range.start.row, 0)..Point::new(end_row, end_col);
 
                             if capped_ancestor_range.contains_inclusive(&full_lines) {
-                                return (capped_ancestor_range, Some(full_ancestor_range))
+                                return (capped_ancestor_range, Some(full_ancestor_range), symbols)
                             }
                         }
 
@@ -198,11 +196,13 @@ impl Tool for GrepTool {
                         );
                         matched.end.column = snapshot.line_len(matched.end.row);
 
-                        (matched, None)
+                        (matched, None, symbols)
                     })
                     .peekable();
 
-                while let Some((mut range, ancestor_range)) = ranges.next(){
+                let mut file_header_written = false;
+
+                while let Some((mut range, ancestor_range, parent_symbols)) = ranges.next(){
                     if skips_remaining > 0 {
                         skips_remaining -= 1;
                         continue;
@@ -214,7 +214,7 @@ impl Tool for GrepTool {
                         break 'outer;
                     }
 
-                    while let Some((next_range, _)) = ranges.peek() {
+                    while let Some((next_range, _, _)) = ranges.peek() {
                         if range.end.row >= next_range.start.row {
                             range.end = next_range.end;
                             ranges.next();
@@ -229,20 +229,36 @@ impl Tool for GrepTool {
                     }
 
                     let end_row = range.end.row;
-                    writeln!(output, "\n### Lines {}-{}\n```", range.start.row + 1, range.end.row + 1)?;
+                    output.push_str("\n### ");
+
+                    if let Some(parent_symbols) = &parent_symbols {
+                        for symbol in parent_symbols {
+                            write!(output, "{} › ", symbol.text)?;
+                        }
+                    }
+
+                    if range.start.row == end_row {
+                        writeln!(output, "L{}", range.start.row + 1)?;
+                    } else {
+                        writeln!(output, "L{}-{}", range.start.row + 1, end_row + 1)?;
+                    }
+
+                    output.push_str("```\n");
                     output.extend(snapshot.text_for_range(range));
                     output.push_str("\n```\n");
 
                     if let Some(ancestor_range) = ancestor_range {
                         if end_row < ancestor_range.end.row {
                             let remaining_lines = ancestor_range.end.row - end_row;
-                            writeln!(output, "\n{} lines remaining in ancestor node. Read file to see all of it.", remaining_lines)?;
+                            writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
                         }
                     }
 
                     matches_found += 1;
                 }
             }
+
+            println!("{output}");
 
             if matches_found == 0 {
                 Ok("No matches found".to_string())
@@ -268,6 +284,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use settings::SettingsStore;
+    use unindent::Unindent;
     use util::path;
 
     #[gpui::test]
@@ -453,48 +470,56 @@ mod tests {
                         println!("This is at the top level");
                     }
 
-                    fn function_with_multiline_args(
-                        first_arg: String,
-                        second_arg: i32,
-                        third_arg: bool,
-                    ) {
-                        println!("Function with multiline args");
-                    }
-
-                    fn function_with_body() {
-                        let x = 5;
-                        let y = 10;
-                        println!("Inside function body");
-                        let z = x + y;
-                    }
-
-                    fn function_with_if_block() {
-                        let condition = true;
-                        if condition {
-                            println!("Inside if block");
-                            let x = 42;
-                        } else {
-                            println!("Inside else block");
+                    mod feature_module {
+                        pub mod nested_module {
+                            pub fn nested_function(
+                                first_arg: String,
+                                second_arg: i32,
+                            ) {
+                                println!("Function in nested module");
+                                println!("{first_arg}");
+                                println!("{second_arg}");
+                            }
                         }
                     }
 
-                    fn very_long_function() {
-                        println!("Line 1");
-                        println!("Line 2");
-                        println!("Line 3");
-                        println!("Line 4");
-                        println!("Line 5");
-                        println!("Line 6");
-                        println!("Line 7");
-                        println!("Line 8");
-                        println!("Line 9");
-                        println!("Line 10");
-                        println!("Line 11");
-                        println!("Line 12");
-                        println!("Line 13");
-                        println!("Line 14");
-                        println!("Line 15");
-                        println!("End of long function"); // This should exceed MAX_ANCESTOR_LINES
+                    struct MyStruct {
+                        field1: String,
+                        field2: i32,
+                    }
+
+                    impl MyStruct {
+                        fn method_with_block() {
+                            let condition = true;
+                            if condition {
+                                println!("Inside if block");
+                            }
+                        }
+
+                        fn long_function() {
+                            println!("Line 1");
+                            println!("Line 2");
+                            println!("Line 3");
+                            println!("Line 4");
+                            println!("Line 5");
+                            println!("Line 6");
+                            println!("Line 7");
+                            println!("Line 8");
+                            println!("Line 9");
+                            println!("Line 10");
+                            println!("Line 11");
+                            println!("Line 12");
+                        }
+                    }
+
+                    trait Processor {
+                        fn process(&self, input: &str) -> String;
+                    }
+
+                    impl Processor for MyStruct {
+                        fn process(&self, input: &str) -> String {
+                            format!("Processed: {}", input)
+                        }
                     }
                 "#.unindent().trim(),
             }),
@@ -512,7 +537,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_grep_top_level_function(cx: &mut TestAppContext) {
-        use unindent::Unindent;
         let project = setup_syntax_test(cx).await;
 
         // Test: Line at the top level of the file
@@ -530,7 +554,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### Lines 1-3
+            ### fn top_level_function › L1-3
             ```
             fn top_level_function() {
                 println!("This is at the top level");
@@ -542,13 +566,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_grep_ancestor_remaining_lines_message(cx: &mut TestAppContext) {
-        use unindent::Unindent;
+    async fn test_grep_function_body(cx: &mut TestAppContext) {
         let project = setup_syntax_test(cx).await;
 
-        // Test: Line in the middle of a long function - should show message about remaining lines
+        // Test: Line inside a function body
         let input = serde_json::to_value(GrepToolInput {
-            regex: "Line 5".to_string(),
+            regex: "Function in nested module".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
@@ -561,30 +584,21 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### Lines 30-40
+            ### mod feature_module › pub mod nested_module › pub fn nested_function › L10-14
             ```
-            fn very_long_function() {
-                println!("Line 1");
-                println!("Line 2");
-                println!("Line 3");
-                println!("Line 4");
-                println!("Line 5");
-                println!("Line 6");
-                println!("Line 7");
-                println!("Line 8");
-                println!("Line 9");
-                println!("Line 10");
+                    ) {
+                        println!("Function in nested module");
+                        println!("{first_arg}");
+                        println!("{second_arg}");
+                    }
             ```
-
-            7 lines remaining in ancestor node. Read file to see all of it.
             "#
         .unindent();
         assert_eq!(result, expected);
     }
 
     #[gpui::test]
-    async fn test_grep_function_arguments(cx: &mut TestAppContext) {
-        use unindent::Unindent;
+    async fn test_grep_function_args_and_body(cx: &mut TestAppContext) {
         let project = setup_syntax_test(cx).await;
 
         // Test: Line with a function argument
@@ -602,47 +616,16 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### Lines 5-9
+            ### mod feature_module › pub mod nested_module › pub fn nested_function › L7-14
             ```
-            fn function_with_multiline_args(
-                first_arg: String,
-                second_arg: i32,
-                third_arg: bool,
-            ) {
-            ```
-            "#
-        .unindent();
-        assert_eq!(result, expected);
-    }
-
-    #[gpui::test]
-    async fn test_grep_function_body(cx: &mut TestAppContext) {
-        use unindent::Unindent;
-        let project = setup_syntax_test(cx).await;
-
-        // Test: Line inside a function body
-        let input = serde_json::to_value(GrepToolInput {
-            regex: "Inside function body".to_string(),
-            include_pattern: Some("**/*.rs".to_string()),
-            offset: 0,
-            case_sensitive: false,
-        })
-        .unwrap();
-
-        let result = run_grep_tool(input, project.clone(), cx).await;
-        let expected = r#"
-            Found 1 matches:
-
-            ## Matches in root/test_syntax.rs
-
-            ### Lines 13-18
-            ```
-            fn function_with_body() {
-                let x = 5;
-                let y = 10;
-                println!("Inside function body");
-                let z = x + y;
-            }
+                    pub fn nested_function(
+                        first_arg: String,
+                        second_arg: i32,
+                    ) {
+                        println!("Function in nested module");
+                        println!("{first_arg}");
+                        println!("{second_arg}");
+                    }
             ```
             "#
         .unindent();
@@ -669,12 +652,11 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### Lines 22-25
+            ### impl MyStruct › fn method_with_block › L26-28
             ```
-                if condition {
-                    println!("Inside if block");
-                    let x = 42;
-                } else {
+                    if condition {
+                        println!("Inside if block");
+                    }
             ```
             "#
         .unindent();
@@ -682,13 +664,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_grep_long_function(cx: &mut TestAppContext) {
+    async fn test_grep_long_function_top(cx: &mut TestAppContext) {
         use unindent::Unindent;
         let project = setup_syntax_test(cx).await;
 
-        // Test: Line at the end of a long function
+        // Test: Line in the middle of a long function - should show message about remaining lines
         let input = serde_json::to_value(GrepToolInput {
-            regex: "End of long function".to_string(),
+            regex: "Line 5".to_string(),
             include_pattern: Some("**/*.rs".to_string()),
             offset: 0,
             case_sensitive: false,
@@ -701,11 +683,53 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### Lines 44-47
+            ### impl MyStruct › fn long_function › L31-41
             ```
-                println!("Line 14");
-                println!("Line 15");
-                println!("End of long function"); // This should exceed MAX_ANCESTOR_LINES
+                fn long_function() {
+                    println!("Line 1");
+                    println!("Line 2");
+                    println!("Line 3");
+                    println!("Line 4");
+                    println!("Line 5");
+                    println!("Line 6");
+                    println!("Line 7");
+                    println!("Line 8");
+                    println!("Line 9");
+                    println!("Line 10");
+            ```
+
+            3 lines remaining in ancestor node. Read the file to see all.
+            "#
+        .unindent();
+        assert_eq!(result, expected);
+    }
+
+    #[gpui::test]
+    async fn test_grep_long_function_bottom(cx: &mut TestAppContext) {
+        use unindent::Unindent;
+        let project = setup_syntax_test(cx).await;
+
+        // Test: Line in the long function
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "Line 12".to_string(),
+            include_pattern: Some("**/*.rs".to_string()),
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let result = run_grep_tool(input, project.clone(), cx).await;
+        let expected = r#"
+            Found 1 matches:
+
+            ## Matches in root/test_syntax.rs
+
+            ### impl MyStruct › fn long_function › L41-45
+            ```
+                    println!("Line 10");
+                    println!("Line 11");
+                    println!("Line 12");
+                }
             }
             ```
             "#
@@ -749,5 +773,7 @@ mod tests {
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
         )
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
+        .unwrap()
     }
 }
