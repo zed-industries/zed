@@ -10,7 +10,7 @@ use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
@@ -27,7 +27,6 @@ use language::{Buffer, Point, Selection, TransactionId};
 use language_model::ConfiguredModel;
 use language_model::{LanguageModelRegistry, report_assistant_event};
 use multi_buffer::MultiBufferRow;
-use parking_lot::Mutex;
 use project::LspAction;
 use project::Project;
 use project::{CodeAction, ProjectTransaction};

@@ -10,7 +10,7 @@ use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
+    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
@@ -21,9 +21,7 @@ use gpui::{
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::{ModelType, ToggleModelSelector};
-use parking_lot::Mutex;
 use settings::Settings;
-use std::cmp;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
@@ -58,6 +56,13 @@ impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
+        if let PromptEditorMode::Buffer { codegen, .. } = &self.mode {
+            let codegen = codegen.read(cx);
+
+            if codegen.alternative_count(cx) > 1 {
+                buttons.push(self.render_cycle_controls(&codegen, cx));
+            }
+        }
 
         let left_gutter_width = self.margin_left;
 
@@ -777,7 +782,7 @@ pub enum PromptEditorMode {
         codegen: Entity<BufferCodegen>,
     },
     Terminal {
-        id: TerminalInlineAssistId,
+        id: InlineAssistId,
         codegen: Entity<TerminalCodegen>,
     },
 }
@@ -936,20 +941,9 @@ impl PromptEditor<BufferCodegen> {
     }
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct TerminalInlineAssistId(pub usize);
-
-impl TerminalInlineAssistId {
-    pub fn post_inc(&mut self) -> TerminalInlineAssistId {
-        let id = *self;
-        self.0 += 1;
-        id
-    }
-}
-
 impl PromptEditor<TerminalCodegen> {
     pub fn new_terminal(
-        id: TerminalInlineAssistId,
+        id: InlineAssistId,
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<TerminalCodegen>,
@@ -1058,7 +1052,7 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
-    pub fn id(&self) -> TerminalInlineAssistId {
+    pub fn id(&self) -> InlineAssistId {
         match &self.mode {
             PromptEditorMode::Buffer { .. } => unreachable!(),
             PromptEditorMode::Terminal { id, .. } => *id,
