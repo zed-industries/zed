@@ -1311,7 +1311,6 @@ impl Render for ExtensionsPage {
                         })
                         .toggle_state(self.provides_filter == Some(provides))
                         .on_click({
-                            let provides = provides;
                             cx.listener(move |this, _event, _, cx| {
                                 this.change_provides_filter(Some(provides), cx);
                             })
