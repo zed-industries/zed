@@ -160,7 +160,7 @@ pub trait Extension: Send + Sync {
         Err("`context_server_command` not implemented".to_string())
     }
 
-    ///
+    /// Returns the configuration options for the specified context server.
     fn context_server_configuration(
         &mut self,
         _context_server_id: &ContextServerId,
