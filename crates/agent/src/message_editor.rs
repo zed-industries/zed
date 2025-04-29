@@ -721,9 +721,12 @@ impl MessageEditor {
         let border_color = cx.theme().colors().border;
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+
         let is_edit_changes_expanded = self.edits_expanded;
+        let is_generating = self.thread.read(cx).is_generating();
 
         v_flex()
+            .mt_1()
             .mx_2()
             .bg(bg_edit_files_disclosure)
             .border_1()
@@ -758,25 +761,44 @@ impl MessageEditor {
                                         cx.notify();
                                     })),
                             )
-                            .child(
-                                Label::new("Edits")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                            .child(
-                                Label::new(format!(
-                                    "{} {}",
-                                    changed_buffers.len(),
-                                    if changed_buffers.len() == 1 {
-                                        "file"
-                                    } else {
-                                        "files"
-                                    }
-                                ))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
+                            .map(|this| {
+                                if is_generating {
+                                    this.child(
+                                        AnimatedLabel::new(format!(
+                                            "Editing {} {}",
+                                            changed_buffers.len(),
+                                            if changed_buffers.len() == 1 {
+                                                "file"
+                                            } else {
+                                                "files"
+                                            }
+                                        ))
+                                        .size(LabelSize::Small),
+                                    )
+                                } else {
+                                    this.child(
+                                        Label::new("Edits")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("•").size(LabelSize::XSmall).color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(format!(
+                                            "{} {}",
+                                            changed_buffers.len(),
+                                            if changed_buffers.len() == 1 {
+                                                "file"
+                                            } else {
+                                                "files"
+                                            }
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                }
+                            }),
                     )
                     .child(
                         Button::new("review", "Review Changes")
