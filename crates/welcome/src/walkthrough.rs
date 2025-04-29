@@ -1,5 +1,6 @@
 use client::telemetry::Telemetry;
 
+use fs::Fs;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
     ListState, ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
@@ -7,6 +8,7 @@ use gpui::{
 use persistence::WALKTHROUGH_DB;
 use settings::SettingsStore;
 use std::sync::Arc;
+use theme::{Appearance, ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
@@ -17,8 +19,8 @@ use workspace::{
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &workspace::Walkthrough, window, cx| {
-            let welcome_page = Walkthrough::new(workspace, cx);
-            workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
+            let walkthrough = Walkthrough::new(workspace, cx);
+            workspace.add_item_to_active_pane(Box::new(walkthrough), None, true, window, cx)
         });
     })
     .detach();
@@ -37,6 +39,7 @@ const STEPS: [&'static dyn WalkthroughStep; 5] = [
 pub struct Walkthrough {
     active_step: usize,
     workspace: WeakEntity<Workspace>,
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     _telemetry: Arc<Telemetry>,
     steps: ListState,
@@ -50,6 +53,7 @@ impl Walkthrough {
             Walkthrough {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
+                fs: workspace.app_state().fs.clone(),
                 _telemetry: workspace.client().telemetry().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_: &mut Walkthrough, cx| cx.notify()),
@@ -173,11 +177,32 @@ impl WalkthroughStep for ThemeStep {
     fn render_subpane(
         &self,
         _ix: usize,
-        _walkthrough: &mut Walkthrough,
+        walkthrough: &mut Walkthrough,
         _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
+        cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div().size_20().bg(gpui::blue()).into_any()
+        let current = cx.theme().name.clone();
+        let fs = walkthrough.fs.clone();
+        // let registry = ThemeRegistry::global(cx);
+        // let mut themes = registry.list();
+
+        let make_button = |name: &'static str, fs: Arc<dyn Fs>| {
+            Button::new(name, name)
+                .when(current == name, |this| this.toggle_state(true))
+                .on_click(move |_event, window, cx| {
+                    let name = name.to_string();
+                    // TODO: filter click event?
+                    telemetry::event!("Settings Changed", setting = "theme", value = &name);
+                    let appearance = Appearance::from(window.appearance());
+                    let fs = fs.clone();
+                    settings::update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
+                        settings.set_theme(name, appearance);
+                    });
+                })
+        };
+        div()
+            .children(["One Light", "One Dark"].map(|name| make_button(name, fs.clone())))
+            .into_any()
     }
 }
 
