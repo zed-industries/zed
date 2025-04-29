@@ -439,6 +439,7 @@ impl AssistantPanel {
                         })
                         .unwrap_or_default();
                     if recently_opened.is_empty() {
+                        // FIXME better empty state
                         return menu.action("View All", Box::new(OpenHistory));
                     }
                     let weak_menu = cx.weak_entity();
@@ -1319,18 +1320,16 @@ impl AssistantPanel {
             .anchor(Corner::TopLeft)
             .with_handle(self.assistant_navigation_menu_handle.clone())
             .menu({
-                let this = cx.entity();
+                let menu = self.assistant_navigation_menu.clone();
                 move |window, cx| {
-                    this.update(cx, |this, cx| {
-                        if let Some(menu) = this.assistant_navigation_menu.as_ref() {
-                            menu.update(cx, |_, cx| {
-                                cx.defer_in(window, |menu, window, cx| {
-                                    menu.rebuild(window, cx);
-                                });
-                            })
-                        }
-                        this.assistant_navigation_menu.clone()
-                    })
+                    if let Some(menu) = menu.as_ref() {
+                        menu.update(cx, |_, cx| {
+                            cx.defer_in(window, |menu, window, cx| {
+                                menu.rebuild(window, cx);
+                            });
+                        })
+                    }
+                    menu.clone()
                 }
             });
 
