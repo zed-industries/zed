@@ -6,7 +6,9 @@ use collections::HashMap;
 use fs::FakeFs;
 use gpui::{AppContext, TestAppContext};
 use indoc::indoc;
-use language_model::{LanguageModelRegistry, LanguageModelToolUse, LanguageModelToolUseId};
+use language_model::{
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId,
+};
 use project::Project;
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
@@ -132,7 +134,7 @@ fn message(
     LanguageModelRequestMessage {
         role,
         content: contents.into_iter().collect(),
-        cache: true,
+        cache: false,
     }
 }
 
@@ -253,7 +255,10 @@ struct EvalOutput {
     raw_edits: String,
 }
 
-async fn run_eval(eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
+async fn run_eval(mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
+    // Cache the last message in the conversation, so that all other evals running in parallel can use it.
+    eval.conversation.last_mut().unwrap().cache = true;
+
     let test = agent_test(cx).await;
     let path = test
         .project

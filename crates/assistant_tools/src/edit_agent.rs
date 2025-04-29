@@ -11,7 +11,7 @@ use gpui::{AsyncApp, Entity};
 use language::{Bias, Buffer, BufferSnapshot};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, MessageContent, Role,
+    MessageContent, Role,
 };
 use serde::Serialize;
 use smallvec::SmallVec;
@@ -167,18 +167,11 @@ impl EditAgent {
         .render(&self.templates)?;
 
         let mut message_content = Vec::new();
-        if let Some(last_message) = messages.last() {
+        if let Some(last_message) = messages.last_mut() {
             if last_message.role == Role::Assistant {
-                for content in &last_message.content {
-                    if let MessageContent::ToolUse(tool) = content {
-                        message_content.push(MessageContent::ToolResult(LanguageModelToolResult {
-                            tool_use_id: tool.id.clone(),
-                            tool_name: tool.name.clone(),
-                            is_error: false,
-                            content: "In progress...".into(), // todo!("what can we do here?")
-                        }));
-                    }
-                }
+                last_message
+                    .content
+                    .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
             }
         }
         message_content.push(MessageContent::Text(prompt));
