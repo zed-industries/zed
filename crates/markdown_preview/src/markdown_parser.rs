@@ -100,7 +100,6 @@ impl<'a> MarkdownParser<'a> {
             // Represent an inline code block
             | Event::Code(_)
             | Event::Html(_)
-            | Event::InlineHtml(_)
             | Event::FootnoteReference(_)
             | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)
@@ -124,11 +123,22 @@ impl<'a> MarkdownParser<'a> {
         self
     }
 
+
+
     #[async_recursion]
-    async fn parse_block(&mut self) -> Option<Vec<ParsedMarkdownElement>> {
-        let (current, source_range) = self.current().unwrap();
-        let source_range = source_range.clone();
+    pub async fn parse_block(&mut self) -> Option<Vec<ParsedMarkdownElement>> {
+
+        let (current, source_range) = self.tokens[self.cursor].clone();
+
         match current {
+            // Novo branch para blocos HTML (HTML block)
+            Event::Html(html) => {
+                self.cursor += 1;
+                if let Some(parsed) = self.parse_special_html_block(&html, &source_range) {
+                    return Some(parsed);
+                }
+                return Some(vec![ParsedMarkdownElement::Html(html.to_string(), source_range)]);
+            }
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
                     self.cursor += 1;
@@ -136,7 +146,7 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::Paragraph(text)])
                 }
                 Tag::Heading { level, .. } => {
-                    let level = *level;
+                    let level = level;
                     self.cursor += 1;
                     let heading = self.parse_heading(level);
                     Some(vec![ParsedMarkdownElement::Heading(heading)])
@@ -148,7 +158,7 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::Table(table)])
                 }
                 Tag::List(order) => {
-                    let order = *order;
+                    let order = order;
                     self.cursor += 1;
                     let list = self.parse_list(order).await;
                     Some(list)
@@ -185,6 +195,150 @@ impl<'a> MarkdownParser<'a> {
             _ => None,
         }
     }
+
+
+    fn parse_special_html_block(
+        &mut self,
+        html: &str,
+        source_range: &Range<usize>,
+    ) -> Option<Vec<ParsedMarkdownElement>> {
+        if html.starts_with("<h4") && html.contains("</h4>") {
+            let mut alignment = ParsedMarkdownTableAlignment::None;
+            let mut paragraph = Vec::new();
+
+            // Parse alignment attribute
+            if let Some(align_start) = html.find("align=\"") {
+                let align_end = html[align_start..].find('"').unwrap_or(0);
+                let align_value = &html[align_start+7..align_start+align_end];
+                alignment = match align_value {
+                    "center" => ParsedMarkdownTableAlignment::Center,
+                    "left" => ParsedMarkdownTableAlignment::Left,
+                    "right" => ParsedMarkdownTableAlignment::Right,
+                    _ => ParsedMarkdownTableAlignment::None,
+                };
+            }
+
+            // Parse inner content
+            if let Some(p_start) = html.find("<p>") {
+                let p_content = &html[p_start+3..html.find("</p>").unwrap_or(html.len())];
+                let parts: Vec<&str> = p_content.split('|').collect();
+
+                for part in parts {
+                    let trimmed = part.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
+                    // Handle bold text
+                    if let Some(b_start) = trimmed.find("<b>") {
+                        let bold_text = &trimmed[b_start+3..trimmed.find("</b>").unwrap_or(trimmed.len())];
+                        paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: source_range.clone(),
+                            contents: bold_text.to_string(),
+                            highlights: vec![(
+                                0..bold_text.len(),
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    weight: FontWeight::BOLD,
+                                    ..Default::default()
+                                })
+                            )],
+                            regions: vec![],
+                            region_ranges: vec![],
+                        }));
+                    }
+                    // Handle links
+                    else if let Some(a_start) = trimmed.find("<a") {
+                        let href_start = trimmed[a_start..].find("href=\"")? + a_start + 6;
+                        let href_end = trimmed[href_start..].find('"')? + href_start;
+                        let url = trimmed[href_start..href_end].to_string();
+
+                        let text_start = trimmed.find('>')? + 1;
+                        let text_end = trimmed[text_start..].find('<')? + text_start;
+                        let link_text = trimmed[text_start..text_end].to_string();
+
+                        // Handle link identification
+                        if let Some(link) = Link::identify(self.file_location_directory.clone(), url) {
+                            paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                                source_range: source_range.clone(),
+                                contents: link_text.clone(),
+                                highlights: vec![(
+                                    0..link_text.len(),
+                                    MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                        underline: true,
+                                        ..Default::default()
+                                    })
+                                )],
+                                regions: vec![ParsedRegion {
+                                    code: false,
+                                    link: Some(link),
+                                }],
+                                region_ranges: vec![0..link_text.len()],
+                            }));
+                        }
+                    }
+                }
+            }
+
+            return Some(vec![ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                source_range: source_range.clone(),
+                level: HeadingLevel::H4,
+                contents: paragraph,
+                alignment,
+            })]);
+        }
+        None
+    }
+
+
+    fn create_bold_text(&self, content: &str) -> ParsedMarkdownText {
+        ParsedMarkdownText {
+            source_range: 0..0, // Adjust based on actual source
+            contents: content.to_string(),
+            highlights: vec![(
+                0..content.len(),
+                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                    weight: FontWeight::BOLD,
+                    ..Default::default()
+                })
+            )],
+            regions: vec![],
+            region_ranges: vec![],
+        }
+    }
+
+    fn create_link(&self, text: &str, url: &str) -> ParsedMarkdownText {
+        let mut regions = Vec::new();
+        let mut region_ranges = Vec::new();
+
+        let link = Link::identify(
+            self.file_location_directory.clone(),
+            url.to_string()
+        );
+
+        regions.push(ParsedRegion {
+            code: false,
+            link: link.clone(),
+        });
+
+        region_ranges.push(0..text.len());
+
+        ParsedMarkdownText {
+            source_range: 0..0, // Adjust based on actual source
+            contents: text.to_string(),
+            highlights: vec![(
+                0..text.len(),
+                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                    underline: true,
+                    ..Default::default()
+                })
+            )],
+            regions,
+            region_ranges,
+        }
+    }
+
+
+
 
     fn parse_text(
         &mut self,
@@ -431,6 +585,7 @@ impl<'a> MarkdownParser<'a> {
                 pulldown_cmark::HeadingLevel::H6 => HeadingLevel::H6,
             },
             contents: text,
+            alignment: ParsedMarkdownTableAlignment::None, // Default for markdown headings
         }
     }
 
@@ -1429,6 +1584,7 @@ fn main() {
             source_range,
             level: HeadingLevel::H1,
             contents,
+            alignment,
         })
     }
 
@@ -1437,6 +1593,7 @@ fn main() {
             source_range,
             level: HeadingLevel::H2,
             contents,
+            alignment,
         })
     }
 
@@ -1445,6 +1602,7 @@ fn main() {
             source_range,
             level: HeadingLevel::H3,
             contents,
+            alignment,
         })
     }
 
@@ -1531,3 +1689,8 @@ fn main() {
         }
     }
 }
+
+
+
+
+

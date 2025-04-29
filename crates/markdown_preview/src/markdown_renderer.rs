@@ -11,6 +11,7 @@ use gpui::{
     StyledText, TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
+
 use std::{
     ops::{Mul, Range},
     sync::Arc,
@@ -26,6 +27,7 @@ use ui::{
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
+
 
 #[derive(Clone)]
 pub struct RenderContext {
@@ -104,17 +106,6 @@ impl RenderContext {
 
     /// This ensures that children inside of block quotes
     /// have padding between them.
-    ///
-    /// For example, for this markdown:
-    ///
-    /// ```markdown
-    /// > This is a block quote.
-    /// >
-    /// > And this is the next paragraph.
-    /// ```
-    ///
-    /// We give padding between "This is a block quote."
-    /// and "And this is the next paragraph."
     fn with_common_p(&self, element: Div) -> Div {
         if self.indent > 0 {
             element.pb(self.scaled_rems(0.75))
@@ -122,7 +113,54 @@ impl RenderContext {
             element
         }
     }
+
+
+    pub fn render_image(&mut self, src: &str, align: Option<&str>) -> AnyElement {
+        let link = if src.starts_with("http://") || src.starts_with("https://") {
+            Link::Web { url: src.into() }
+        } else {
+            Link::Path {
+                path: src.into(),
+                display_path: src.into(),
+            }
+        };
+
+        let resource = match link {
+            Link::Web { url } => Resource::Uri(url.into()),
+            Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+        };
+
+        let mut container = div()
+            .overflow_hidden()
+            .flex()
+            .items_center();
+        
+        // Handle alignment
+        if let Some(align) = align {
+            match align {
+                "right" => container = container.justify_end().ml_4(),
+                "left" => container = container.justify_start().mr_4(),
+                "center" => container = container.justify_center().mx_auto(),
+                _ => {}
+            }
+        }
+
+        container
+            .child(
+                img(ImageSource::Resource(resource))
+                    .w_auto()
+                    .max_w_full()
+                    .h_auto()
+            )
+            .into_any()
+    }
+
+
+pub fn render_empty(&mut self) -> AnyElement {
+        div().into_element().into_any()
+    }
 }
+
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
@@ -140,6 +178,8 @@ pub fn render_parsed_markdown(
     )
 }
 
+
+
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
     use ParsedMarkdownElement::*;
     match block {
@@ -150,8 +190,29 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
+
+        Html(content, _) => {
+            if content.contains("<img") {
+                let src = content
+                    .split("src=\"")
+                    .nth(1)
+                    .and_then(|part| part.split('"').next())
+                    .unwrap_or_default();
+                
+                let align = content
+                    .split("align=\"")
+                    .nth(1)
+                    .and_then(|part| part.split('"').next());
+
+                cx.render_image(src, align)
+            } else {
+                cx.render_empty()
+            }
+        }
     }
 }
+
+
 
 fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContext) -> AnyElement {
     let size = match parsed.level {
@@ -216,25 +277,25 @@ fn render_markdown_list_item(
                     },
                     cx.clone(),
                 )
-                .when_some(
-                    cx.checkbox_clicked_callback.clone(),
-                    |this, callback| {
-                        this.on_click({
-                            let range = range.clone();
-                            move |selection, window, cx| {
-                                let checked = match selection {
-                                    ToggleState::Selected => true,
-                                    ToggleState::Unselected => false,
-                                    _ => return,
-                                };
+                    .when_some(
+                        cx.checkbox_clicked_callback.clone(),
+                        |this, callback| {
+                            this.on_click({
+                                let range = range.clone();
+                                move |selection, window, cx| {
+                                    let checked = match selection {
+                                        ToggleState::Selected => true,
+                                        ToggleState::Unselected => false,
+                                        _ => return,
+                                    };
 
-                                if window.modifiers().secondary() {
-                                    callback(checked, range.clone(), window, cx);
+                                    if window.modifiers().secondary() {
+                                        callback(checked, range.clone(), window, cx);
+                                    }
                                 }
-                            }
-                        })
-                    },
-                ),
+                            })
+                        },
+                    ),
             )
             .hover(|s| s.cursor_pointer())
             .tooltip(|_, cx| {
@@ -605,7 +666,9 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
     cx.with_common_p(div())
         .children(render_markdown_text(parsed, cx))
         .flex()
-        .flex_col()
+        .flex_row()
+        .flex_wrap()
+        .items_start()
         .into_any_element()
 }
 
@@ -660,41 +723,41 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                             StyledText::new(parsed.contents.clone())
                                 .with_default_highlights(&text_style, highlights),
                         )
-                        .tooltip({
-                            let links = links.clone();
-                            let link_ranges = link_ranges.clone();
-                            move |idx, _, cx| {
-                                for (ix, range) in link_ranges.iter().enumerate() {
-                                    if range.contains(&idx) {
-                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                            .tooltip({
+                                let links = links.clone();
+                                let link_ranges = link_ranges.clone();
+                                move |idx, _, cx| {
+                                    for (ix, range) in link_ranges.iter().enumerate() {
+                                        if range.contains(&idx) {
+                                            return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                                        }
                                     }
+                                    None
                                 }
-                                None
-                            }
-                        })
-                        .on_click(
-                            link_ranges,
-                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => cx.open_url(url),
-                                Link::Path { path, .. } => {
-                                    if let Some(workspace) = &workspace {
-                                        _ = workspace.update(cx, |workspace, cx| {
-                                            workspace
-                                                .open_abs_path(
-                                                    path.clone(),
-                                                    OpenOptions {
-                                                        visible: Some(OpenVisible::None),
-                                                        ..Default::default()
-                                                    },
-                                                    window,
-                                                    cx,
-                                                )
-                                                .detach();
-                                        });
+                            })
+                            .on_click(
+                                link_ranges,
+                                move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
+                                    Link::Web { url } => cx.open_url(url),
+                                    Link::Path { path, .. } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(
+                                                        path.clone(),
+                                                        OpenOptions {
+                                                            visible: Some(OpenVisible::None),
+                                                            ..Default::default()
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .detach();
+                                            });
+                                        }
                                     }
-                                }
-                            },
-                        ),
+                                },
+                            ),
                     )
                     .into_any();
                 any_element.push(element);
@@ -727,7 +790,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                                 "open image",
                                 cx,
                             )
-                            .into()
+                                .into()
                         }
                     })
                     .on_click({
@@ -807,8 +870,8 @@ impl Render for InteractiveMarkdownElementTooltip {
                             "{}-click to {}",
                             secondary_modifier, self.action_text
                         ))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     ),
             )
         })
