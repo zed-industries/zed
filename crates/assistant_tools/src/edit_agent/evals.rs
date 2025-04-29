@@ -2,7 +2,7 @@ use super::*;
 use crate::{EditFileToolInput, ReadFileToolInput};
 use Role::*;
 use client::{Client, UserStore};
-use collections::HashSet;
+use collections::HashMap;
 use fs::FakeFs;
 use gpui::{AppContext, TestAppContext};
 use indoc::indoc;
@@ -11,7 +11,7 @@ use project::Project;
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use std::{fmt::Write as _, io::Write as _, sync::mpsc};
+use std::{cmp::Reverse, io::Write as _, sync::mpsc};
 use util::path;
 
 #[test]
@@ -22,7 +22,7 @@ fn eval_extract_handle_command_output() {
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
         100,
-        0.9,
+        0.95,
         EvalInput {
             conversation: vec![
                 message(
@@ -30,8 +30,9 @@ fn eval_extract_handle_command_output() {
                     [text(indoc! {"
                         Read the `{input_file_path}` file and extract a method in
                         the final stanza of `run_git_blame` to deal with command failures,
-                        call it `handle_command_output`. Add it right next to `run_git_blame` and
-                        copy it verbatim from `run_git_blame`.
+                        call it `handle_command_output` and take the std::process::Output as the only parameter.
+
+                        Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
                     "})],
                 ),
                 message(
@@ -78,7 +79,7 @@ fn eval_delete_run_git_blame() {
     let edit_description = "Delete the `run_git_blame` function.";
     eval(
         100,
-        0.9,
+        0.95,
         EvalInput {
             conversation: vec![
                 message(
@@ -194,27 +195,21 @@ fn eval(iterations: usize, expected_pass_ratio: f32, eval: EvalInput) {
     }
     drop(tx);
 
+    let expected_output = strip_empty_lines(&eval.expected_output);
     let mut evaluated_count = 0;
     report_progress(evaluated_count, iterations);
 
     let mut failed_count = 0;
-    let mut failed_message = String::new();
-    let mut failed_outputs = HashSet::default();
+    let mut failed_evals = HashMap::default();
     while let Ok(output) = rx.recv() {
-        if output.buffer_text != eval.expected_output {
+        if output
+            .as_ref()
+            .map_or(true, |output| output.buffer_text != expected_output)
+        {
             failed_count += 1;
-            if failed_outputs.insert(output.buffer_text.clone()) {
-                writeln!(
-                    failed_message,
-                    "Raw Output\n{}\nDiff\n{}\n=====",
-                    output.raw_edits,
-                    pretty_assertions::StrComparison::new(
-                        &output.buffer_text,
-                        &eval.expected_output
-                    )
-                )
-                .unwrap();
-            }
+            *failed_evals
+                .entry(output.map_err(|error| error.to_string()))
+                .or_insert(0) += 1;
         }
 
         evaluated_count += 1;
@@ -223,21 +218,42 @@ fn eval(iterations: usize, expected_pass_ratio: f32, eval: EvalInput) {
 
     let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
     println!("Actual pass ratio: {}\n", actual_pass_ratio);
-    assert!(
-        actual_pass_ratio >= expected_pass_ratio,
-        "Expected pass ratio: {}\nActual pass ratio: {}\nFailures: {}",
-        expected_pass_ratio,
-        actual_pass_ratio,
-        failed_message
-    );
+    if actual_pass_ratio < expected_pass_ratio {
+        let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
+        failed_evals.sort_by_key(|(_, count)| Reverse(*count));
+        for (output, count) in failed_evals {
+            match output {
+                Ok(output) => {
+                    println!(
+                        "Failed {} times. Raw Output\n{}\nDiff\n{}\n=====",
+                        count,
+                        output.raw_edits,
+                        pretty_assertions::StrComparison::new(
+                            &output.buffer_text,
+                            &eval.expected_output
+                        )
+                    );
+                }
+                Err(error) => {
+                    println!("Failed {} times. Error: {}\n=====", count, error);
+                }
+            }
+        }
+
+        panic!(
+            "Actual pass ratio: {}\nExpected pass ratio: {}",
+            actual_pass_ratio, expected_pass_ratio
+        );
+    }
 }
 
+#[derive(Debug, Eq, PartialEq, Hash)]
 struct EvalOutput {
     buffer_text: String,
     raw_edits: String,
 }
 
-async fn run_eval(eval: EvalInput, cx: &mut TestAppContext) -> EvalOutput {
+async fn run_eval(eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {
     let test = agent_test(cx).await;
     let path = test
         .project
@@ -259,18 +275,25 @@ async fn run_eval(eval: EvalInput, cx: &mut TestAppContext) -> EvalOutput {
             eval.conversation,
             &mut cx.to_async(),
         )
-        .await
-        .unwrap();
+        .await?;
     let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
-    EvalOutput {
-        buffer_text,
+    Ok(EvalOutput {
+        buffer_text: strip_empty_lines(buffer_text),
         raw_edits: raw_output,
-    }
+    })
 }
 
 fn report_progress(evaluated_count: usize, iterations: usize) {
     print!("\r\x1b[KEvaluated {}/{}", evaluated_count, iterations);
     std::io::stdout().flush().unwrap();
+}
+
+fn strip_empty_lines(text: impl AsRef<str>) -> String {
+    text.as_ref()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 struct EditAgentTest {
