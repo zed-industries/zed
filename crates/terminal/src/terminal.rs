@@ -313,7 +313,7 @@ impl Display for TerminalError {
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
-const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
