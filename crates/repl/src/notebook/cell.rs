@@ -407,18 +407,17 @@ impl Render for MarkdownCell {
                     .child(self.gutter(window, cx))
                     .child(
                         v_flex()
+                            .image_cache(self.image_cache.clone())
                             .size_full()
                             .flex_1()
                             .p_3()
                             .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
-                            .child(image_cache(self.image_cache.clone()).children(
-                                parsed.children.iter().map(|child| {
-                                    div().relative().child(div().relative().child(
-                                        render_markdown_block(child, &mut markdown_render_context),
-                                    ))
-                                }),
-                            )),
+                            .children(parsed.children.iter().map(|child| {
+                                div().relative().child(div().relative().child(
+                                    render_markdown_block(child, &mut markdown_render_context),
+                                ))
+                            })),
                     ),
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this

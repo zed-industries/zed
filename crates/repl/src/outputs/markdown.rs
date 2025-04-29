@@ -1,7 +1,6 @@
 use anyhow::Result;
 use gpui::{
-    App, ClipboardItem, Context, Entity, RetainAllImageCache, Task, Window, div, image_cache,
-    prelude::*,
+    App, ClipboardItem, Context, Entity, RetainAllImageCache, Task, Window, div, prelude::*,
 };
 use language::Buffer;
 use markdown_preview::{
@@ -79,19 +78,16 @@ impl Render for MarkdownView {
             markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
 
         v_flex()
+            .image_cache(self.image_cache.clone())
             .gap_3()
             .py_4()
-            .child(
-                image_cache(self.image_cache.clone()).children(parsed.children.iter().map(
-                    |child| {
-                        div().relative().child(
-                            div()
-                                .relative()
-                                .child(render_markdown_block(child, &mut markdown_render_context)),
-                        )
-                    },
-                )),
-            )
+            .children(parsed.children.iter().map(|child| {
+                div().relative().child(
+                    div()
+                        .relative()
+                        .child(render_markdown_block(child, &mut markdown_render_context)),
+                )
+            }))
             .into_any_element()
     }
 }

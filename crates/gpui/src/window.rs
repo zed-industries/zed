@@ -2884,14 +2884,18 @@ impl Window {
     }
 
     /// Executes the provided function with the specified image cache.
-    pub(crate) fn with_image_cache<F, R>(&mut self, image_cache: AnyImageCache, f: F) -> R
+    pub fn with_image_cache<F, R>(&mut self, image_cache: Option<AnyImageCache>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.image_cache_stack.push(image_cache);
-        let result = f(self);
-        self.image_cache_stack.pop();
-        result
+        if let Some(image_cache) = image_cache {
+            self.image_cache_stack.push(image_cache);
+            let result = f(self);
+            self.image_cache_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

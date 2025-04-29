@@ -44,8 +44,8 @@ impl Render for ImageGallery {
             .text_color(gpui::white())
             .child("Manually managed image cache:")
             .child(
-                image_cache(self.image_cache.clone()).child(
                 div()
+                    .image_cache(self.image_cache.clone())
                     .id("main")
                     .font_family(".SystemUIFont")
                     .text_color(gpui::black())
@@ -95,7 +95,7 @@ impl Render for ImageGallery {
                                     .map(|ix| img(format!("{}-{}", image_url, ix)).size_20()),
                             ),
                     ),
-            ))
+            )
             .child(
                 "Automatically managed image cache:"
             )

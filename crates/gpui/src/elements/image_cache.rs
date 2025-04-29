@@ -109,7 +109,7 @@ impl Element for ImageCacheElement {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let image_cache = self.image_cache_provider.provide(window, cx);
-        window.with_image_cache(image_cache, |window| {
+        window.with_image_cache(Some(image_cache), |window| {
             let child_layout_ids = self
                 .children
                 .iter_mut()
@@ -145,7 +145,7 @@ impl Element for ImageCacheElement {
         cx: &mut App,
     ) {
         let image_cache = self.image_cache_provider.provide(window, cx);
-        window.with_image_cache(image_cache, |window| {
+        window.with_image_cache(Some(image_cache), |window| {
             for child in &mut self.children {
                 child.paint(window, cx);
             }
