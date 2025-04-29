@@ -10,7 +10,8 @@ use std::sync::Arc;
 use client::UserStore;
 use component::{ComponentId, ComponentMetadata, components};
 use gpui::{
-    App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
+    AnyEntity, App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list,
+    prelude::*,
 };
 
 use collections::HashMap;
@@ -497,15 +498,15 @@ impl ComponentPreview {
     }
 
     fn render_preview(
-        &self,
+        &mut self,
         component: &ComponentMetadata,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
         let name = component.scopeless_name();
         let scope = component.scope();
-
         let description = component.description();
+        let component_id = component.id();
 
         v_flex()
             .py_2()
@@ -539,10 +540,7 @@ impl ComponentPreview {
                                         .child(description),
                                 )
                             }),
-                    )
-                    .when_some(component.preview(), |this, preview| {
-                        this.children(preview(window, cx))
-                    }),
+                    ),
             )
             .into_any_element()
     }
@@ -962,3 +960,55 @@ impl RenderOnce for ComponentPreviewPage {
             .child(self.render_preview(window, cx))
     }
 }
+
+/// Utility to add context params to a Component's preview method
+pub struct PreviewContext<'a, T: 'static> {
+    /// The preview data entity for the component
+    pub preview_data: Option<Entity<T>>,
+    /// The window for rendering
+    pub window: &'a mut Window,
+    /// The application context
+    pub cx: &'a mut App,
+}
+
+// /// Extension utility to pass preview data to a Component's preview method
+// pub trait ComponentPreviewExt {
+//     /// Pass preview data along with this component preview
+//     fn with_preview_data<T: 'static>(
+//         &mut self,
+//         component_id: &ComponentId,
+//         preview_data: Option<Entity<T>>,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> Option<AnyElement>;
+// }
+
+// impl ComponentPreviewExt for ComponentPreview {
+//     fn with_preview_data<T: 'static>(
+//         &mut self,
+//         component_id: &ComponentId,
+//         preview_data: Option<Entity<T>>,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> Option<AnyElement> {
+//         // Store the entity if we have one
+//         if let Some(data) = &preview_data {
+//             let any_entity = data.clone().into_any();
+//             self.preview_data_entities
+//                 .insert(component_id.clone(), any_entity);
+//         }
+
+//         // Look up the component metadata
+//         let metadata = self.component_map.get(component_id)?;
+
+//         // Call the appropriate preview method with context
+//         component::Component::preview_with_context(component_id, preview_data, window, cx).or_else(
+//             || {
+//                 // Fall back to regular preview
+//                 metadata
+//                     .preview()
+//                     .and_then(|preview_fn| preview_fn(window, cx))
+//             },
+//         )
+//     }
+// }

@@ -1,5 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window, div, hsla, prelude::*,
+    AnyElement, AnyView, App, ElementId, Entity, Hsla, IntoElement, Styled, Window, div, hsla,
+    prelude::*,
 };
 use std::sync::Arc;
 
@@ -9,6 +10,9 @@ use crate::{ElevationIndex, KeyBinding, prelude::*};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
 // restructured to use a ToggleLike, similar to Button/Buttonlike, Label/Labellike
+
+// Import Component and StatefulComponent
+use component::{Component, ComponentScope};
 
 /// Creates a new checkbox.
 pub fn checkbox(id: impl Into<ElementId>, toggle_state: ToggleState) -> Checkbox {
@@ -598,6 +602,11 @@ impl RenderOnce for SwitchWithLabel {
     }
 }
 
+pub struct CheckboxPreviewData {
+    pub checked: ToggleState,
+    pub string: String,
+}
+
 impl Component for Checkbox {
     fn scope() -> ComponentScope {
         ComponentScope::Input
@@ -608,6 +617,7 @@ impl Component for Checkbox {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        // The preview is handled by the StatefulComponent implementation
         Some(
             v_flex()
                 .gap_6()
@@ -618,6 +628,9 @@ impl Component for Checkbox {
                             single_example(
                                 "Unselected",
                                 Checkbox::new("checkbox_unselected", ToggleState::Unselected)
+                                    .on_click(move |toggle_state, _, _| {
+                                        println!("clicked! toggle_state: {:?}", toggle_state);
+                                    })
                                     .into_any_element(),
                             ),
                             single_example(

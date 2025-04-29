@@ -1,0 +1,22 @@
+[package]
+name = "component_state"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/component_state.rs"
+
+[features]
+default = []
+
+[dependencies]
+anyhow.workspace = true
+component.workspace = true
+gpui.workspace = true
+linkme.workspace = true
+util.workspace = true

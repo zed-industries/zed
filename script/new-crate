@@ -27,7 +27,7 @@ elif [[ "$LICENSE_FLAG" == *"agpl"* ]]; then
     LICENSE_FILE="LICENSE-AGPL"
 else
     LICENSE_MODE="GPL-3.0-or-later"
-    LICENSE_FILE="LICENSE"
+    LICENSE_FILE="LICENSE-GPL"
 fi
 
 if [[ ! "$CRATE_NAME" =~ ^[a-z0-9_]+$ ]]; then
@@ -39,7 +39,7 @@ CRATE_PATH="crates/$CRATE_NAME"
 mkdir -p "$CRATE_PATH/src"
 
 # Symlink the license
-ln -sf "../../../$LICENSE_FILE" "$CRATE_PATH/LICENSE"
+ln -sf "$(pwd)/$LICENSE_FILE" "$CRATE_PATH/$LICENSE_FILE"
 
 CARGO_TOML_TEMPLATE=$(cat << 'EOF'
 [package]
@@ -82,5 +82,5 @@ echo "$CARGO_TOML_CONTENT" > "$CRATE_PATH/Cargo.toml"
 echo "//! # $CRATE_NAME" > "$CRATE_PATH/src/$CRATE_NAME.rs"
 
 echo "Created new crate: $CRATE_NAME in $CRATE_PATH"
-echo "License: $LICENSE_MODE (symlinked from $LICENSE_FILE)"
+echo "License: $LICENSE_MODE (symlinked from $LICENSE_FILE to $LICENSE_FILE)"
 echo "Don't forget to add the new crate to the workspace!"

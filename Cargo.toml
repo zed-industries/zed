@@ -33,6 +33,7 @@ members = [
     "crates/command_palette_hooks",
     "crates/component",
     "crates/component_preview",
+    "crates/component_state",
     "crates/context_server",
     "crates/context_server_settings",
     "crates/copilot",
@@ -242,6 +243,7 @@ command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
+component_state = { path = "crates/component_state" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }

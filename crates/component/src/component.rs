@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{
-    AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, pattern_slash, prelude::*,
-    px, rems,
+    AnyElement, AnyEntity, App, Entity, IntoElement, RenderOnce, SharedString, Window, div,
+    pattern_slash, prelude::*, px, rems,
 };
 use linkme::distributed_slice;
 use parking_lot::RwLock;
@@ -37,7 +37,26 @@ pub trait Component {
     fn description() -> Option<&'static str> {
         None
     }
+
+    /// Creates and returns an entity for the component's preview data.
+    ///
+    /// This is only called once per component instance. The returned entity
+    /// is stored and reused across frames, allowing stateful previews.
+    fn create_preview_data(_window: &mut Window, _cx: &mut App) -> Option<AnyEntity> {
+        None
+    }
+
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        None
+    }
+
+    // Optional hook for components to handle preview context
+    fn preview_with_context<T: 'static>(
+        _component_id: &ComponentId,
+        _preview_data: Option<Entity<T>>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<AnyElement> {
         None
     }
 }
