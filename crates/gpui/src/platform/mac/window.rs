@@ -949,7 +949,11 @@ impl PlatformWindow for MacWindow {
                 let _: () = msg_send![button, setTag: ix as NSInteger];
 
                 if answer.is_cancel() {
-                    let _: () = msg_send![button, setKeyEquivalent: ns_string("\u{1b}")];
+                    // Bind Escape Key to Cancel Button
+                    if let Some(key) = std::char::from_u32(super::events::ESCAPE_KEY as u32) {
+                        let _: () =
+                            msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
+                    }
                 }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {

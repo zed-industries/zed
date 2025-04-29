@@ -170,22 +170,40 @@ impl Render for WindowDemo {
                 window.resize(size(content_size.height, content_size.width));
             }))
             .child(button("Prompt", |window, cx| {
-                _ = window.prompt(
+                let answer = window.prompt(
                     PromptLevel::Info,
                     "Are you sure?",
                     None,
                     &["Ok", "Cancel"],
                     cx,
                 );
+
+                cx.spawn(async move |_| {
+                    if answer.await.unwrap() == 0 {
+                        println!("You have clicked Ok");
+                    } else {
+                        println!("You have clicked Cancel");
+                    }
+                })
+                .detach();
             }))
             .child(button("Prompt (non-English)", |window, cx| {
-                _ = window.prompt(
+                let answer = window.prompt(
                     PromptLevel::Info,
                     "Are you sure?",
                     None,
                     &[PromptButton::ok("确定"), PromptButton::cancel("取消")],
                     cx,
                 );
+
+                cx.spawn(async move |_| {
+                    if answer.await.unwrap() == 0 {
+                        println!("You have clicked Ok");
+                    } else {
+                        println!("You have clicked Cancel");
+                    }
+                })
+                .detach();
             }))
     }
 }
