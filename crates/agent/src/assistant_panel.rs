@@ -122,6 +122,7 @@ pub fn init(cx: &mut App) {
 enum ActiveView {
     Thread {
         change_title_editor: Entity<Editor>,
+        thread: WeakEntity<Thread>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     PromptEditor {
@@ -185,6 +186,7 @@ impl ActiveView {
 
         Self::Thread {
             change_title_editor: editor,
+            thread: thread.downgrade(),
             _subscriptions: subscriptions,
         }
     }
@@ -1069,14 +1071,11 @@ impl AssistantPanel {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
 
-        match &self.active_view {
-            ActiveView::Thread { .. } => self.history_store.update(cx, |store, cx| {
-                let active_thread = self.active_thread(cx);
-                if active_thread.read(cx).is_empty() {
-                    return;
+        match &new_view {
+            ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
+                if let Some(thread) = thread.upgrade() {
+                    store.push_recently_opened_entry(RecentEntry::Thread(thread), cx);
                 }
-
-                store.push_recently_opened_entry(RecentEntry::Thread(active_thread), cx);
             }),
             ActiveView::PromptEditor { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
