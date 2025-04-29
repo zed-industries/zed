@@ -314,7 +314,7 @@ impl ExampleContext {
             for message in thread.messages().skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
-                    _text: message.to_string(),
+                    text: message.to_string(),
                     tool_use: thread
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()
@@ -391,12 +391,16 @@ impl Response {
     pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
         self.messages.iter().flat_map(|msg| &msg.tool_use)
     }
+
+    pub fn texts(&self) -> impl Iterator<Item = &str> {
+        self.messages.iter().map(|msg| msg.text.as_str())
+    }
 }
 
 #[derive(Debug)]
 pub struct Message {
     _role: Role,
-    _text: String,
+    text: String,
     tool_use: Vec<ToolUse>,
 }
 
