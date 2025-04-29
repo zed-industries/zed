@@ -110,66 +110,73 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> A
 {
 }
 
-#[test]
-fn parse_socks4() {
-    let proxy = Url::parse("socks4://proxy.example.com:1080").unwrap();
+#[cfg(test)]
+mod tests {
+    use url::Url;
 
-    let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-    assert!(host == "proxy.example.com");
-    assert!(port == 1080);
-    assert!(matches!(version, SocksVersion::V4(None)))
-}
+    use super::*;
 
-#[test]
-fn parse_socks4_with_identification() {
-    let proxy = Url::parse("socks4://userid@proxy.example.com:1080").unwrap();
+    #[test]
+    fn parse_socks4() {
+        let proxy = Url::parse("socks4://proxy.example.com:1080").unwrap();
 
-    let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-    assert!(host == "proxy.example.com");
-    assert!(port == 1080);
-    assert!(matches!(
-        version,
-        SocksVersion::V4(Some(Socks4Identification { user_id: "userid" }))
-    ))
-}
+        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
+        assert_eq!(host, "proxy.example.com");
+        assert_eq!(port, 1080);
+        assert!(matches!(version, SocksVersion::V4(None)))
+    }
 
-#[test]
-fn parse_socks5() {
-    let proxy = Url::parse("socks5://proxy.example.com:1080").unwrap();
+    #[test]
+    fn parse_socks4_with_identification() {
+        let proxy = Url::parse("socks4://userid@proxy.example.com:1080").unwrap();
 
-    let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-    assert!(host == "proxy.example.com");
-    assert!(port == 1080);
-    assert!(matches!(version, SocksVersion::V5(None)))
-}
+        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
+        assert_eq!(host, "proxy.example.com");
+        assert_eq!(port, 1080);
+        assert!(matches!(
+            version,
+            SocksVersion::V4(Some(Socks4Identification { user_id: "userid" }))
+        ))
+    }
 
-#[test]
-fn parse_socks5_with_authorization() {
-    let proxy = Url::parse("socks5://username:password@proxy.example.com:1080").unwrap();
+    #[test]
+    fn parse_socks5() {
+        let proxy = Url::parse("socks5://proxy.example.com:1080").unwrap();
 
-    let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-    assert!(host == "proxy.example.com");
-    assert!(port == 1080);
-    assert!(matches!(
-        version,
-        SocksVersion::V5(Some(Socks5Authorization {
-            username: "username",
-            password: "password"
-        }))
-    ))
-}
+        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
+        assert!(host == "proxy.example.com");
+        assert!(port == 1080);
+        assert!(matches!(version, SocksVersion::V5(None)))
+    }
 
-/// If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
-/// SOCKS proxies are often used in contexts where security and privacy are critical,
-/// so any fallback could expose users to significant risks.
-#[tokio::test]
-async fn fails_on_bad_proxy() {
-    // Should fail connecting because http is not a valid Socks proxy scheme
-    let proxy = Url::parse("http://localhost:2313").unwrap();
+    #[test]
+    fn parse_socks5_with_authorization() {
+        let proxy = Url::parse("socks5://username:password@proxy.example.com:1080").unwrap();
 
-    let result = connect_socks_proxy_stream(Some(&proxy), ("test", 1080)).await;
-    match result {
-        Err(e) => assert!(e.to_string() == "Parsing proxy url failed"),
-        Ok(_) => panic!("Connecting on bad proxy should fail"),
-    };
+        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
+        assert_eq!(host, "proxy.example.com");
+        assert_eq!(port, 1080);
+        assert!(matches!(
+            version,
+            SocksVersion::V5(Some(Socks5Authorization {
+                username: "username",
+                password: "password"
+            }))
+        ))
+    }
+
+    /// If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
+    /// SOCKS proxies are often used in contexts where security and privacy are critical,
+    /// so any fallback could expose users to significant risks.
+    #[tokio::test]
+    async fn fails_on_bad_proxy() {
+        // Should fail connecting because http is not a valid Socks proxy scheme
+        let proxy = Url::parse("http://localhost:2313").unwrap();
+
+        let result = connect_socks_proxy_stream(Some(&proxy), ("test", 1080)).await;
+        match result {
+            Err(e) => assert!(e.to_string() == "Parsing proxy url failed"),
+            Ok(_) => panic!("Connecting on bad proxy should fail"),
+        };
+    }
 }
