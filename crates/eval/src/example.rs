@@ -387,6 +387,7 @@ impl Response {
         cx.assert_some(result, format!("called `{}`", tool_name))
     }
 
+    #[allow(dead_code)]
     pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
         self.messages.iter().flat_map(|msg| &msg.tool_use)
     }
