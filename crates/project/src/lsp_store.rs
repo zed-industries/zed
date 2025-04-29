@@ -8575,6 +8575,8 @@ impl LspStore {
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostics = HashMap::default();
 
+        let adapter = self.language_server_adapter_for_id(language_server_id);
+
         // Ensure that primary diagnostics are always the most severe
         params.diagnostics.sort_by_key(|item| item.severity);
 
@@ -8622,6 +8624,9 @@ impl LspStore {
                             .as_ref()
                             .map(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                        markdown: adapter.as_ref().and_then(|adapter| {
+                            adapter.diagnostic_message_to_markdown(&diagnostic.message)
+                        }),
                         message: diagnostic.message.trim().to_string(),
                         group_id,
                         is_primary: true,
@@ -8644,6 +8649,9 @@ impl LspStore {
                                         .as_ref()
                                         .map(|c| c.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
+                                    markdown: adapter.as_ref().and_then(|adapter| {
+                                        adapter.diagnostic_message_to_markdown(&info.message)
+                                    }),
                                     message: info.message.trim().to_string(),
                                     group_id,
                                     is_primary: false,
