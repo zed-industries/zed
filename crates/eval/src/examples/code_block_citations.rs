@@ -24,17 +24,18 @@ impl Example for CodeBlockCitations {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        let todo = (); // TODO change max_assertions from being on ExampleMetadata to being something we can set on cx.
-
         const FILENAME: &str = "assistant_tool.rs";
         cx.push_user_message(format!(
             r#"
             Show me the method bodies of all the methods of the `Tool` trait in {FILENAME}.
+
+            Please show each method in a separate code snippet.
             "#
         ));
 
         // Verify that the messages all have the correct formatting.
         let texts: Vec<String> = cx.run_to_end().await?.texts().collect();
+        let closing_fence = format!("\n{FENCE}");
 
         for text in texts.iter() {
             let mut text = text.as_str();
@@ -43,19 +44,13 @@ impl Example for CodeBlockCitations {
                 // Advance text past the opening backticks.
                 text = &text[index + FENCE.len()..];
 
-                let content_len = text.find(FENCE);
+                // Find the closing backticks.
+                let content_len = text.find(&closing_fence);
 
                 // Verify the citation format - e.g. ```path/to/foo.txt#L123-456
                 if let Some(citation_len) = text.find('\n') {
                     let citation = &text[..citation_len];
                     dbg!(&citation);
-
-                    if let Some(content_len) = content_len {
-                        let content = &text[..content_len];
-                        dbg!(content);
-                    } else {
-                        dbg!("(no content after this citation)");
-                    }
 
                     if let Ok(()) =
                         cx.assert(citation.contains("/"), format!("Slash in {citation:?}",))
@@ -103,7 +98,12 @@ impl Example for CodeBlockCitations {
                             };
 
                             if let Some(content_len) = content_len {
-                                let content = &text[citation.len()..content_len];
+                                dbg!(&text[..content_len]);
+                                dbg!(&text[citation.len()..content_len - citation.len()]);
+
+                                // + 1 because there's a newline character after the citation.
+                                let content =
+                                    &text[(citation.len() + 1)..content_len - (citation.len() + 1)];
 
                                 cx.assert(
                                     buffer_text.contains(&content),
