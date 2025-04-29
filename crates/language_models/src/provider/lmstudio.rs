@@ -2,7 +2,9 @@ use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
-use language_model::{AuthenticateError, LanguageModelCompletionEvent};
+use language_model::{
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -310,7 +312,12 @@ impl LanguageModel for LmStudioLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = self.to_lmstudio_request(request);
 
         let http_client = self.http_client.clone();
@@ -364,7 +371,11 @@ impl LanguageModel for LmStudioLanguageModel {
         async move {
             Ok(future
                 .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .map(|result| {
+                    result
+                        .map(LanguageModelCompletionEvent::Text)
+                        .map_err(LanguageModelCompletionError::Other)
+                })
                 .boxed())
         }
         .boxed()

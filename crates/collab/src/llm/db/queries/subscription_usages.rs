@@ -6,7 +6,7 @@ use crate::db::{UserId, billing_subscription};
 
 use super::*;
 
-fn convert_chrono_to_time(datetime: DateTimeUtc) -> anyhow::Result<PrimitiveDateTime> {
+pub fn convert_chrono_to_time(datetime: DateTimeUtc) -> anyhow::Result<PrimitiveDateTime> {
     use chrono::{Datelike as _, Timelike as _};
 
     let date = time::Date::from_calendar_date(

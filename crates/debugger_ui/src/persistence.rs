@@ -9,7 +9,7 @@ use util::ResultExt;
 use workspace::{Member, Pane, PaneAxis, Workspace};
 
 use crate::session::running::{
-    self, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
+    self, DebugTerminal, RunningState, SubView, breakpoint_list::BreakpointList, console::Console,
     loaded_source_list::LoadedSourceList, module_list::ModuleList,
     stack_frame_list::StackFrameList, variable_list::VariableList,
 };
@@ -22,6 +22,7 @@ pub(crate) enum DebuggerPaneItem {
     Frames,
     Modules,
     LoadedSources,
+    Terminal,
 }
 
 impl DebuggerPaneItem {
@@ -33,6 +34,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Frames,
             DebuggerPaneItem::Modules,
             DebuggerPaneItem::LoadedSources,
+            DebuggerPaneItem::Terminal,
         ];
         VARIANTS
     }
@@ -55,6 +57,7 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Frames => SharedString::new_static("Frames"),
             DebuggerPaneItem::Modules => SharedString::new_static("Modules"),
             DebuggerPaneItem::LoadedSources => SharedString::new_static("Sources"),
+            DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
         }
     }
 }
@@ -169,6 +172,7 @@ pub(crate) fn deserialize_pane_layout(
     console: &Entity<Console>,
     breakpoint_list: &Entity<BreakpointList>,
     loaded_sources: &Entity<LoadedSourceList>,
+    terminal: &Entity<DebugTerminal>,
     subscriptions: &mut HashMap<EntityId, Subscription>,
     window: &mut Window,
     cx: &mut Context<RunningState>,
@@ -191,6 +195,7 @@ pub(crate) fn deserialize_pane_layout(
                     console,
                     breakpoint_list,
                     loaded_sources,
+                    terminal,
                     subscriptions,
                     window,
                     cx,
@@ -271,6 +276,13 @@ pub(crate) fn deserialize_pane_layout(
                                     .unwrap_or_default()
                             }
                         })),
+                        cx,
+                    )),
+                    DebuggerPaneItem::Terminal => Box::new(SubView::new(
+                        pane.focus_handle(cx),
+                        terminal.clone().into(),
+                        DebuggerPaneItem::Terminal,
+                        None,
                         cx,
                     )),
                 })

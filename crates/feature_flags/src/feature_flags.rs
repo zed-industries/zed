@@ -59,28 +59,28 @@ impl FeatureFlag for Assistant2FeatureFlag {
     const NAME: &'static str = "assistant2";
 }
 
+pub struct NewBillingFeatureFlag;
+
+impl FeatureFlag for NewBillingFeatureFlag {
+    const NAME: &'static str = "new-billing";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub struct PredictEditsRateCompletionsFeatureFlag;
 impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
 }
 
-pub struct Remoting {}
-impl FeatureFlag for Remoting {
-    const NAME: &'static str = "remoting";
-}
-
-pub struct LanguageModels {}
-impl FeatureFlag for LanguageModels {
-    const NAME: &'static str = "language-models";
-}
-
-pub struct LlmClosedBeta {}
-impl FeatureFlag for LlmClosedBeta {
+pub struct LlmClosedBetaFeatureFlag {}
+impl FeatureFlag for LlmClosedBetaFeatureFlag {
     const NAME: &'static str = "llm-closed-beta";
 }
 
-pub struct ZedPro {}
-impl FeatureFlag for ZedPro {
+pub struct ZedProFeatureFlag {}
+impl FeatureFlag for ZedProFeatureFlag {
     const NAME: &'static str = "zed-pro";
 }
 
@@ -90,13 +90,13 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct Debugger {}
-impl FeatureFlag for Debugger {
+pub struct DebuggerFeatureFlag {}
+impl FeatureFlag for DebuggerFeatureFlag {
     const NAME: &'static str = "debugger";
 }
 
-pub struct ThreadAutoCapture {}
-impl FeatureFlag for ThreadAutoCapture {
+pub struct ThreadAutoCaptureFeatureFlag {}
+impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
     const NAME: &'static str = "thread-auto-capture";
 
     fn enabled_for_staff() -> bool {

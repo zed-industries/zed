@@ -11,7 +11,6 @@ use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt as _, StreamExt as _};
@@ -22,10 +21,10 @@ use gpui::{
 use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
-use project::{Project, Worktree};
+use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
-    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
+    UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
@@ -82,12 +81,11 @@ impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
+        prompt_store: Option<Entity<PromptStore>>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
-            let prompt_store = prompt_store.await.ok();
             let (thread_store, ready_rx) = cx.update(|cx| {
                 let mut option_ready_rx = None;
                 let thread_store = cx.new(|cx| {
@@ -208,15 +206,15 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let project = self.project.read(cx);
-        let worktree_tasks = project
+        let worktrees = self
+            .project
+            .read(cx)
             .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        let worktree_tasks = worktrees
+            .into_iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(
-                    project.fs().clone(),
-                    worktree.read(cx),
-                    cx,
-                )
+                Self::load_worktree_info_for_system_prompt(worktree, self.project.clone(), cx)
             })
             .collect::<Vec<_>>();
         let default_user_rules_task = match prompt_store {
@@ -277,13 +275,13 @@ impl ThreadStore {
     }
 
     fn load_worktree_info_for_system_prompt(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
+        worktree: Entity<Worktree>,
+        project: Entity<Project>,
+        cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
-        let root_name = worktree.root_name().into();
+        let root_name = worktree.read(cx).root_name().into();
 
-        let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
+        let rules_task = Self::load_worktree_rules_file(worktree, project, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
@@ -313,33 +311,44 @@ impl ThreadStore {
     }
 
     fn load_worktree_rules_file(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
+        worktree: Entity<Worktree>,
+        project: Entity<Project>,
+        cx: &mut App,
     ) -> Option<Task<Result<RulesFileContext>>> {
+        let worktree_ref = worktree.read(cx);
+        let worktree_id = worktree_ref.id();
         let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
-                worktree
+                worktree_ref
                     .entry_for_path(name)
                     .filter(|entry| entry.is_file())
-                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
+                    .map(|entry| entry.path.clone())
             })
             .next();
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        selected_rules_file.map(|(path_in_worktree, abs_path)| {
-            let fs = fs.clone();
+        selected_rules_file.map(|path_in_worktree| {
+            let project_path = ProjectPath {
+                worktree_id,
+                path: path_in_worktree.clone(),
+            };
+            let buffer_task =
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+            let rope_task = cx.spawn(async move |cx| {
+                buffer_task.await?.read_with(cx, |buffer, cx| {
+                    let project_entry_id = buffer.entry_id(cx).context("buffer has no file")?;
+                    anyhow::Ok((project_entry_id, buffer.as_rope().clone()))
+                })?
+            });
+            // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
-                let abs_path = abs_path?;
-                let text = fs.load(&abs_path).await.with_context(|| {
-                    format!("Failed to load assistant rules file {:?}", abs_path)
-                })?;
+                let (project_entry_id, rope) = rope_task.await?;
                 anyhow::Ok(RulesFileContext {
                     path_in_worktree,
-                    abs_path: abs_path.into(),
-                    text: text.trim().to_string(),
+                    text: rope.to_string().trim().to_string(),
+                    project_entry_id: project_entry_id.to_usize(),
                 })
             })
         })
@@ -349,25 +358,8 @@ impl ThreadStore {
         self.context_server_manager.clone()
     }
 
-    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
-        self.prompt_store.clone()
-    }
-
-    pub fn load_rules(
-        &self,
-        prompt_id: UserPromptId,
-        cx: &App,
-    ) -> Task<Result<(PromptMetadata, String)>> {
-        let prompt_id = PromptId::User { uuid: prompt_id };
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
-        };
-        let prompt_store = prompt_store.read(cx);
-        let Some(metadata) = prompt_store.metadata(prompt_id) else {
-            return Task::ready(Err(anyhow!("User rules not found in library.")));
-        };
-        let text_task = prompt_store.load(prompt_id, cx);
-        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
+    pub fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
@@ -379,14 +371,10 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn threads(&self) -> Vec<SerializedThreadMetadata> {
+    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
         let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
-    }
-
-    pub fn recent_threads(&self, limit: usize) -> Vec<SerializedThreadMetadata> {
-        self.threads().into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
@@ -516,6 +504,22 @@ impl ThreadStore {
                     );
                 });
             }
+            // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
+            for (context_server_id, preset) in &profile.context_servers {
+                self.tools.update(cx, |tools, cx| {
+                    tools.disable(
+                        ToolSource::ContextServer {
+                            id: context_server_id.clone().into(),
+                        },
+                        &preset
+                            .tools
+                            .iter()
+                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool.clone()))
+                            .collect::<Vec<_>>(),
+                        cx,
+                    )
+                })
+            }
         } else {
             for (context_server_id, preset) in &profile.context_servers {
                 self.tools.update(cx, |tools, cx| {
@@ -636,6 +640,14 @@ pub struct SerializedThread {
     pub detailed_summary_state: DetailedSummaryState,
     #[serde(default)]
     pub exceeded_window_error: Option<ExceededWindowError>,
+    #[serde(default)]
+    pub model: Option<SerializedLanguageModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializedLanguageModel {
+    pub provider: String,
+    pub model: String,
 }
 
 impl SerializedThread {
@@ -770,6 +782,7 @@ impl LegacySerializedThread {
             request_token_usage: Vec::new(),
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
+            model: None,
         }
     }
 }

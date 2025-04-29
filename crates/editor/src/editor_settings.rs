@@ -39,6 +39,7 @@ pub struct EditorSettings {
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub jupyter: Jupyter,
     pub hide_mouse: Option<HideMouseMode>,
+    pub snippet_sort_order: SnippetSortOrder,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -239,6 +240,21 @@ pub enum HideMouseMode {
     OnTypingAndMovement,
 }
 
+/// Determines how snippets are sorted relative to other completion items.
+///
+/// Default: inline
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnippetSortOrder {
+    /// Place snippets at the top of the completion list
+    Top,
+    /// Sort snippets normally using the default comparison logic
+    #[default]
+    Inline,
+    /// Place snippets at the bottom of the completion list
+    Bottom,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -254,6 +270,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: on_typing_and_movement
     pub hide_mouse: Option<HideMouseMode>,
+    /// Determines how snippets are sorted relative to other completion items.
+    ///
+    /// Default: inline
+    pub snippet_sort_order: Option<SnippetSortOrder>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all

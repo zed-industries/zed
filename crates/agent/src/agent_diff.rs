@@ -597,6 +597,10 @@ impl Item for AgentDiff {
             editor.added_to_workspace(workspace, window, cx)
         });
     }
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Agent Diff".into()
+    }
 }
 
 impl Render for AgentDiff {
@@ -947,6 +951,7 @@ mod tests {
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);
+            language_model::init_settings(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -962,11 +967,13 @@ mod tests {
             })
             .unwrap();
 
+        let prompt_store = None;
         let thread_store = cx
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
+                    prompt_store,
                     Arc::new(PromptBuilder::new(None).unwrap()),
                     cx,
                 )
