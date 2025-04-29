@@ -61,6 +61,7 @@ pub fn cargo_diagnostics_sources(
         .collect()
 }
 
+// TODO kb send back some progress
 pub fn fetch_worktree_diagnostics(
     worktree_root: &Path,
     cx: &App,
@@ -81,6 +82,7 @@ pub fn fetch_worktree_diagnostics(
         .current_dir(worktree_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .kill_on_drop(true)
         .spawn()
         .log_err()?;
 
@@ -90,6 +92,7 @@ pub fn fetch_worktree_diagnostics(
     let error_threshold = 10;
 
     let cargo_diagnostics_fetch_task = cx.background_spawn(async move {
+        let _command = command;
         let mut errors = 0;
         loop {
             let mut line = String::new();
