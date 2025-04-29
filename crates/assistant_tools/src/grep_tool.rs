@@ -259,8 +259,6 @@ impl Tool for GrepTool {
                 }
             }
 
-            println!("{output}");
-
             if matches_found == 0 {
                 Ok("No matches found".to_string())
             } else if has_more_matches {

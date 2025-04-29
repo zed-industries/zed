@@ -1,9 +1,0 @@
-url = "https://github.com/tree-sitter/tree-sitter.git"
-revision = "635c49909ce4aa7f58a9375374f91b1b434f6f9c"
-language_extension = "rs"
-require_lsp = false
-
-prompt = """
-I'm debugging the grep tool. Use it to explore this codebase so I can see it working.
-Make grep calls and nothing else.
-"""
