@@ -31,11 +31,12 @@ jobs:
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             cargo build -p remote_server
+            target/debug/remote_server --help
             target/debug/remote_server version
             mkdir -p out/
             cp target/debug/remote_server out/
             cargo clean
       - name: Look around
         run: |
-          ls -la out/
-          file out/remote_server/
+          du -sh out/remote_server
+          file out/remote_server
