@@ -411,17 +411,19 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
 
-/// Returns the path to the vscode user settings file
-pub fn vscode_settings_file() -> &'static PathBuf {
-    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    let rel_path = "Code/User/settings.json";
-    LOGS_DIR.get_or_init(|| {
+pub fn vscode_data_dir() -> &'static PathBuf {
+    static VSCODE_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+    VSCODE_DATA_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            home_dir()
-                .join("Library/Application Support")
-                .join(rel_path)
+            home_dir().join("Library/Application Support/Code")
         } else {
-            config_dir().join(rel_path)
+            config_dir().join("Code")
         }
     })
+}
+
+/// Returns the path to the vscode user settings file
+pub fn vscode_settings_file() -> &'static PathBuf {
+    static VSCODE_SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();
+    VSCODE_SETTINGS_PATH.get_or_init(|| vscode_data_dir().join("User/Settings.json"))
 }

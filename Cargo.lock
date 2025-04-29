@@ -17101,6 +17101,7 @@ dependencies = [
  "install_cli",
  "language",
  "linkme",
+ "paths",
  "picker",
  "project",
  "schemars",

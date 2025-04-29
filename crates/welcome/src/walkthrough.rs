@@ -8,7 +8,7 @@ use gpui::{
 use persistence::WALKTHROUGH_DB;
 use settings::SettingsStore;
 use std::sync::Arc;
-use theme::{Appearance, ThemeRegistry, ThemeSettings};
+use theme::{Appearance, ThemeSettings};
 use ui::prelude::*;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
@@ -229,6 +229,13 @@ impl WalkthroughStep for SettingsStep {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
+        // keymap picker dropdown
+        // vim mode checkbox
+        // buttons for
+        //   - open keymap
+        //   - open settings
+        //   - extensions
+        //   - open https://zed.dev/docs/configuring-zed in browser
         div().size_20().bg(gpui::red()).into_any()
     }
 }
@@ -256,6 +263,8 @@ impl WalkthroughStep for AiIntegrations {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
+        // agentic setup section
+        // inline "try-edit-predictions" section
         div().size_20().bg(gpui::green()).into_any()
     }
 }
@@ -283,6 +292,10 @@ impl WalkthroughStep for DataSharing {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
+        // checkboxes:
+        // Send Crash Reports
+        // Send Telemetry
+        // Share Training Data (disabled)
         div().size_20().bg(gpui::yellow()).into_any()
     }
 }
@@ -310,6 +323,8 @@ impl WalkthroughStep for OpenProject {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
+        // spinner "searching for recent projects" while running:
+
         div().size_20().bg(gpui::rgba(0x87ceeb)).into_any()
     }
 }
