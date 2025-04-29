@@ -26,8 +26,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TestAppContext, TitlebarOptions, UpdateGlobal, VisualTestContext, Window,
-    WindowKind, WindowOptions, actions, point, px,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, point,
+    px,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -38,7 +38,7 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-use project::{DirectoryLister, Project, ProjectItem, WorktreeSettings};
+use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
@@ -46,7 +46,6 @@ use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
-use serde_json::json;
 use settings::{
     DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
     SettingsStore, VIM_KEYMAP_PATH, initial_debug_tasks_content, initial_project_settings_content,
@@ -1504,34 +1503,42 @@ fn open_local_file(
         let tree_id = worktree.read(cx).id();
         cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
-            let worktree_path = worktree.update(cx, |tree, _| tree.as_local().unwrap().abs_path().clone())?;
-            let full_path = worktree_path.join(settings_relative_path);
-            
-            // Try to load the file to see if it exists by getting a copy of the path first
-            let full_path_clone = full_path.clone();
-            let fs = project.update(cx, |project, _| project.fs().clone())?;
-            let file_exists = fs.load(&full_path_clone).await.is_ok();
+            let file_exists = {
+                let full_path =
+                    worktree.update(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
-            if let Some(dir_path) = settings_relative_path.parent() {
-                if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? && !file_exists {
+                let fs = project.update(cx, |project, _| project.fs().clone())?;
+                let file_exists = fs
+                    .metadata(&full_path)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map_or(false, |metadata| !metadata.is_dir && !metadata.is_fifo);
+                file_exists
+            };
+
+            if !file_exists {
+                if let Some(dir_path) = settings_relative_path.parent() {
+                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                        project
+                            .update(cx, |project, cx| {
+                                project.create_entry((tree_id, dir_path), true, cx)
+                            })?
+                            .await
+                            .context("worktree was removed")?;
+                    }
+                }
+
+                if worktree.update(cx, |tree, _| {
+                    tree.entry_for_path(settings_relative_path).is_none()
+                })? {
                     project
                         .update(cx, |project, cx| {
-                            project.create_entry((tree_id, dir_path), true, cx)
+                            project.create_entry((tree_id, settings_relative_path), false, cx)
                         })?
                         .await
                         .context("worktree was removed")?;
                 }
-            }
-
-            if worktree.update(cx, |tree, _| {
-                tree.entry_for_path(settings_relative_path).is_none()
-            })? && !file_exists {
-                project
-                    .update(cx, |project, cx| {
-                        project.create_entry((tree_id, settings_relative_path), false, cx)
-                    })?
-                    .await
-                    .context("worktree was removed")?;
             }
 
             let editor = workspace
@@ -1546,7 +1553,7 @@ fn open_local_file(
                 .downgrade()
                 .update(cx, |editor, cx| {
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        if buffer.read(cx).is_empty() && !file_exists {
+                        if buffer.read(cx).is_empty() {
                             buffer.update(cx, |buffer, cx| {
                                 buffer.edit([(0..0, initial_contents)], None, cx)
                             });
