@@ -2870,9 +2870,26 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     );
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // cursors that are already at the suggested indent level insert
-    // a soft tab. cursors that are to the left of the suggested indent
-    // auto-indent their line.
+    // when all cursors are to the left of the suggested indent, then auto-indent all.
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+        ˇ
+        ˇ    )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                ˇ
+            ˇ)
+        );
+    "});
+
+    // cursors that are already at the suggested indent level do not move
+    // until other cursors that are to the left of the suggested indent
+    // auto-indent.
     cx.set_state(indoc! {"
         ˇ
         const a: B = (
@@ -2886,7 +2903,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.assert_editor_state(indoc! {"
-            ˇ
+        ˇ
         const a: B = (
             c(
                 d(
@@ -2894,6 +2911,20 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
                 )
                 ˇ
             ˇ)
+        );
+    "});
+    // once all multi-cursors are at the suggested
+    // indent level, they all insert a soft tab together.
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+            ˇ
+        const a: B = (
+            c(
+                d(
+                        ˇ
+                )
+                    ˇ
+                ˇ)
         );
     "});
 
@@ -10732,7 +10763,7 @@ async fn test_completion(cx: &mut TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), window, cx)
             .unwrap()
     });
-    cx.assert_editor_state("editor.clobberˇ");
+    cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 }
@@ -12856,46 +12887,6 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
 }
 
 #[gpui::test]
-async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-
-    cx.set_state(indoc! {"
-        fn func(abˇc def: i32) -> u32 {
-        }
-    "});
-    let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
-
-    cx.update(|_, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(
-                LanguageServerId(0),
-                lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
-                    version: None,
-                    diagnostics: vec![lsp::Diagnostic {
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
-                        severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
-                        ..Default::default()
-                    }],
-                },
-                &[],
-                cx,
-            )
-        })
-    }).unwrap();
-    cx.run_until_parked();
-    cx.update_editor(|editor, window, cx| {
-        hover_popover::hover(editor, &Default::default(), window, cx)
-    });
-    cx.run_until_parked();
-    cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
-}
-
-#[gpui::test]
 async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -14022,7 +14013,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
         {
             assert_eq!(
                 completion_menu_entries(&menu),
-                &["bg-blue", "bg-red", "bg-yellow"]
+                &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
             panic!("expected completion menu to be open");

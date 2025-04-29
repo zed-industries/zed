@@ -2,7 +2,7 @@ name: Run Agent Eval
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 0 * * *"
 
   pull_request:
     branches:
@@ -25,6 +25,15 @@ env:
   ZED_EVAL_TELEMETRY: 1
 
 jobs:
+  # This is a no-op job that we run to prevent GitHub from marking the workflow
+  # as failed for PRs that don't have the `run-eval` label.
+  noop:
+    name: No-op
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op
+        run: echo "Nothing to do"
+
   run_eval:
     timeout-minutes: 60
     name: Run Agent Eval

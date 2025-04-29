@@ -2401,6 +2401,10 @@ fn find_forward(
         if before && to.column() > 0 {
             *to.column_mut() -= 1;
             Some(map.clip_point(to, Bias::Left))
+        } else if before && to.row().0 > 0 {
+            *to.row_mut() -= 1;
+            *to.column_mut() = map.line(to.row()).len() as u32;
+            Some(map.clip_point(to, Bias::Left))
         } else {
             Some(to)
         }

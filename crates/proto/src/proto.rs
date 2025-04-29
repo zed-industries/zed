@@ -50,8 +50,6 @@ messages!(
     (CloseBuffer, Foreground),
     (Commit, Background),
     (CopyProjectEntry, Foreground),
-    (CountLanguageModelTokens, Background),
-    (CountLanguageModelTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -300,8 +298,8 @@ messages!(
     (GitInit, Background),
     (GetDebugAdapterBinary, Background),
     (DebugAdapterBinary, Background),
-    (RunDebugLocator, Background),
-    (DebugTaskDefinition, Background),
+    (RunDebugLocators, Background),
+    (DebugRequest, Background),
 );
 
 request_messages!(
@@ -374,7 +372,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
@@ -459,7 +456,7 @@ request_messages!(
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
     (GetDebugAdapterBinary, DebugAdapterBinary),
-    (RunDebugLocator, DebugTaskDefinition),
+    (RunDebugLocators, DebugRequest),
 );
 
 entity_messages!(
@@ -579,7 +576,7 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
-    RunDebugLocator,
+    RunDebugLocators,
     GetDebugAdapterBinary,
 );
 

@@ -207,13 +207,6 @@ pub fn deploy_context_menu(
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action(
-                    "Show Code Actions",
-                    Box::new(ToggleCodeActions {
-                        deployed_from_indicator: None,
-                    }),
-                )
-                .separator()
                 .when(evaluate_selection && has_selections, |builder| {
                     builder
                         .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
@@ -230,6 +223,13 @@ pub fn deploy_context_menu(
                 .when(has_selections, |cx| {
                     cx.action("Format Selections", Box::new(FormatSelections))
                 })
+                .action(
+                    "Show Code Actions",
+                    Box::new(ToggleCodeActions {
+                        deployed_from_indicator: None,
+                        quick_launch: false,
+                    }),
+                )
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))

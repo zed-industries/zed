@@ -34,6 +34,10 @@ pub struct LlmTokenClaims {
     #[serde(default)]
     pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
     #[serde(default)]
+    pub enable_model_request_overages: bool,
+    #[serde(default)]
+    pub model_request_overages_spend_limit_in_cents: u32,
+    #[serde(default)]
     pub can_use_web_search_tool: bool,
 }
 
@@ -75,6 +79,7 @@ impl LlmTokenClaims {
             can_use_web_search_tool: feature_flags.iter().any(|flag| flag == "assistant2"),
             has_llm_subscription: has_legacy_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
+                .as_ref()
                 .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
                     preferences.max_monthly_llm_usage_spending_in_cents as u32
                 }),
@@ -96,6 +101,16 @@ impl LlmTokenClaims {
 
                 Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
             }),
+            enable_model_request_overages: billing_preferences
+                .as_ref()
+                .map_or(false, |preferences| {
+                    preferences.model_request_overages_enabled
+                }),
+            model_request_overages_spend_limit_in_cents: billing_preferences
+                .as_ref()
+                .map_or(0, |preferences| {
+                    preferences.model_request_overages_spend_limit_in_cents as u32
+                }),
         };
 
         Ok(jsonwebtoken::encode(

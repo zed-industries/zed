@@ -108,8 +108,8 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("History".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "History".into()
     }
 }
 

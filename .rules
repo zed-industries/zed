@@ -119,3 +119,8 @@ GPUI has had some changes to its APIs. Always write code using the new APIs:
 * Use `App` references. This replaces `AppContext` which no longer exists and should NEVER be used.
 * Use `Context<T>` references. This replaces `ModelContext<T>` which no longer exists and should NEVER be used.
 * `Window` is now passed around explicitly. The new interface adds a `Window` reference parameter to some methods, and adds some new "*_in" methods for plumbing `Window`. The old types `WindowContext` and `ViewContext<T>` should NEVER be used.
+
+
+## General guidelines
+
+- Use `./script/clippy` instead of `cargo clippy`

@@ -112,7 +112,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         });
 
     running_state.update_in(cx, |this, window, cx| {
-        this.activate_modules_list(window, cx);
+        this.activate_item(crate::persistence::DebuggerPaneItem::Modules, window, cx);
         cx.refresh_windows();
     });
 
@@ -214,12 +214,4 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         assert_eq!(actual_modules.len(), 2);
         assert!(!actual_modules.contains(&changed_module));
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

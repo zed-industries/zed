@@ -27,7 +27,7 @@ use std::time::Duration;
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownCodeBlock;
 
 use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
 use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
@@ -218,8 +218,14 @@ impl ExampleInstance {
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
-        let thread_store =
-            ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
+        let prompt_store = None;
+        let thread_store = ThreadStore::load(
+            project.clone(),
+            tools,
+            prompt_store,
+            app_state.prompt_builder.clone(),
+            cx,
+        );
         let meta = self.thread.meta();
         let this = self.clone();
 
@@ -567,6 +573,7 @@ impl ExampleInstance {
             let request = LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                mode: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
@@ -857,7 +864,10 @@ impl RequestMarkdown {
                 write!(
                     &mut tools,
                     "{}\n",
-                    MarkdownString::code_block("json", &format!("{:#}", tool.input_schema))
+                    MarkdownCodeBlock {
+                        tag: "json",
+                        text: &format!("{:#}", tool.input_schema)
+                    }
                 )
                 .unwrap();
             }
@@ -904,7 +914,10 @@ impl RequestMarkdown {
                         ));
                         messages.push_str(&format!(
                             "{}\n",
-                            MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                            MarkdownCodeBlock {
+                                tag: "json",
+                                text: &format!("{:#}", tool_use.input)
+                            }
                         ));
                     }
                     MessageContent::ToolResult(tool_result) => {
@@ -966,7 +979,10 @@ pub fn response_events_to_markdown(
                 ));
                 response.push_str(&format!(
                     "{}\n",
-                    MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                    MarkdownCodeBlock {
+                        tag: "json",
+                        text: &format!("{:#}", tool_use.input)
+                    }
                 ));
             }
             Ok(

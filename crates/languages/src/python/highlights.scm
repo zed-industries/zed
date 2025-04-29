@@ -92,9 +92,6 @@
    @function.builtin
    "abs" "all" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes" "callable" "chr" "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate" "eval" "exec" "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help" "hex" "id" "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max" "memoryview" "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr" "reversed" "round" "set" "setattr" "slice" "sorted" "staticmethod" "str" "sum" "super" "tuple" "type" "vars" "zip" "__import__"))
 
-((identifier) @type.builtin
-    (#any-of? @type.builtin "int" "float" "complex" "bool" "list" "tuple" "range" "str" "bytes" "bytearray" "memoryview" "set" "frozenset" "dict"))
-
 ; Literals
 
 [
@@ -271,24 +268,18 @@
   "lambda"
 ] @keyword.definition
 
-((identifier) @attribute.builtin
+(decorator (identifier) @attribute.builtin
   (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
 
 ; Builtin types as identifiers
 [
   (call
     function: (identifier) @type.builtin)
-  (call
-    arguments: (argument_list
-    (identifier) @type.builtin))
-  (call
-    arguments: (argument_list
-      (keyword_argument
-        value: (identifier) @type.builtin)))
   (type (identifier) @type.builtin)
+  (generic_type (identifier) @type.builtin)
   ; also check if type binary operator left identifier for union types
   (type
     (binary_operator
       left: (identifier) @type.builtin))
   (#any-of? @type.builtin "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "int" "list" "memoryview" "object" "range" "set" "slice" "str" "tuple")
-] @type.builtin
+]

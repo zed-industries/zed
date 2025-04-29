@@ -5,8 +5,8 @@
     "context": "PromptLibrary",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "prompt_library::NewPrompt",
-      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-n": "rules_library::NewRule",
+      "cmd-shift-s": "rules_library::ToggleDefaultRule",
       "cmd-w": "workspace::CloseWindow"
     }
   },
@@ -257,7 +257,7 @@
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "assistant::OpenPromptLibrary",
+      "cmd-k l": "assistant::OpenRulesLibrary",
       "cmd-t": "assistant::NewChat",
       "cmd-n": "assistant::NewChat"
     }
@@ -286,7 +286,7 @@
       "cmd-alt-n": "agent::NewTextThread",
       "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenConfiguration",
-      "cmd-alt-p": "assistant::OpenPromptLibrary",
+      "cmd-alt-p": "assistant::OpenRulesLibrary",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
@@ -738,7 +738,7 @@
     }
   },
   {
-    "context": "Editor && mode == full",
+    "context": "!ContextEditor > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",

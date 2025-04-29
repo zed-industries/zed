@@ -34,18 +34,13 @@ pub fn init(cx: &mut App) {
 }
 
 actions!(
-    prompt_library,
-    [
-        NewPrompt,
-        DeletePrompt,
-        DuplicatePrompt,
-        ToggleDefaultPrompt
-    ]
+    rules_library,
+    [NewRule, DeleteRule, DuplicateRule, ToggleDefaultRule]
 );
 
 const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
-    "This prompt supports special functionality.\n",
-    "It's read-only, but you can remove it from your default prompt."
+    "This rule supports special functionality.\n",
+    "It's read-only, but you can remove it from your default rules."
 );
 
 pub trait InlineAssistDelegate {
@@ -54,7 +49,7 @@ pub trait InlineAssistDelegate {
         prompt_editor: &Entity<Editor>,
         initial_prompt: Option<String>,
         window: &mut Window,
-        cx: &mut Context<PromptLibrary>,
+        cx: &mut Context<RulesLibrary>,
     );
 
     /// Returns whether the Assistant panel was focused.
@@ -66,19 +61,19 @@ pub trait InlineAssistDelegate {
     ) -> bool;
 }
 
-/// This function opens a new prompt library window if one doesn't exist already.
+/// This function opens a new rules library window if one doesn't exist already.
 /// If one exists, it brings it to the foreground.
 ///
 /// Note that, when opening a new window, this waits for the PromptStore to be
 /// initialized. If it was initialized successfully, it returns a window handle
-/// to a prompt library.
-pub fn open_prompt_library(
+/// to a rules library.
+pub fn open_rules_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
     prompt_to_select: Option<PromptId>,
     cx: &mut App,
-) -> Task<Result<WindowHandle<PromptLibrary>>> {
+) -> Task<Result<WindowHandle<RulesLibrary>>> {
     let store = PromptStore::global(cx);
     cx.spawn(async move |cx| {
         // We query windows in spawn so that all windows have been returned to GPUI
@@ -87,12 +82,12 @@ pub fn open_prompt_library(
                 let existing_window = cx
                     .windows()
                     .into_iter()
-                    .find_map(|window| window.downcast::<PromptLibrary>());
+                    .find_map(|window| window.downcast::<RulesLibrary>());
                 if let Some(existing_window) = existing_window {
                     existing_window
-                        .update(cx, |prompt_library, window, cx| {
+                        .update(cx, |rules_library, window, cx| {
                             if let Some(prompt_to_select) = prompt_to_select {
-                                prompt_library.load_prompt(prompt_to_select, true, window, cx);
+                                rules_library.load_rule(prompt_to_select, true, window, cx);
                             }
                             window.activate_window()
                         })
@@ -117,7 +112,7 @@ pub fn open_prompt_library(
             cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
-                        title: Some("Prompt Library".into()),
+                        title: Some("Rules Library".into()),
                         appears_transparent: cfg!(target_os = "macos"),
                         traffic_light_position: Some(point(px(9.0), px(9.0))),
                     }),
@@ -127,7 +122,7 @@ pub fn open_prompt_library(
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        PromptLibrary::new(
+                        RulesLibrary::new(
                             store,
                             language_registry,
                             inline_assist_delegate,
@@ -143,19 +138,19 @@ pub fn open_prompt_library(
     })
 }
 
-pub struct PromptLibrary {
+pub struct RulesLibrary {
     store: Entity<PromptStore>,
     language_registry: Arc<LanguageRegistry>,
-    prompt_editors: HashMap<PromptId, PromptEditor>,
-    active_prompt_id: Option<PromptId>,
-    picker: Entity<Picker<PromptPickerDelegate>>,
+    rule_editors: HashMap<PromptId, RuleEditor>,
+    active_rule_id: Option<PromptId>,
+    picker: Entity<Picker<RulePickerDelegate>>,
     pending_load: Task<()>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
     _subscriptions: Vec<Subscription>,
 }
 
-struct PromptEditor {
+struct RuleEditor {
     title_editor: Entity<Editor>,
     body_editor: Entity<Editor>,
     token_count: Option<usize>,
@@ -165,22 +160,22 @@ struct PromptEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-struct PromptPickerDelegate {
+struct RulePickerDelegate {
     store: Entity<PromptStore>,
     selected_index: usize,
     matches: Vec<PromptMetadata>,
 }
 
-enum PromptPickerEvent {
+enum RulePickerEvent {
     Selected { prompt_id: PromptId },
     Confirmed { prompt_id: PromptId },
     Deleted { prompt_id: PromptId },
     ToggledDefault { prompt_id: PromptId },
 }
 
-impl EventEmitter<PromptPickerEvent> for Picker<PromptPickerDelegate> {}
+impl EventEmitter<RulePickerEvent> for Picker<RulePickerDelegate> {}
 
-impl PickerDelegate for PromptPickerDelegate {
+impl PickerDelegate for RulePickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -189,9 +184,9 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
         let text = if self.store.read(cx).prompt_count() == 0 {
-            "No prompts.".into()
+            "No rules.".into()
         } else {
-            "No prompts found matching your search.".into()
+            "No rules found matching your search.".into()
         };
         Some(text)
     }
@@ -203,7 +198,7 @@ impl PickerDelegate for PromptPickerDelegate {
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         if let Some(prompt) = self.matches.get(self.selected_index) {
-            cx.emit(PromptPickerEvent::Selected {
+            cx.emit(RulePickerEvent::Selected {
                 prompt_id: prompt.id,
             });
         }
@@ -247,7 +242,7 @@ impl PickerDelegate for PromptPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(prompt) = self.matches.get(self.selected_index) {
-            cx.emit(PromptPickerEvent::Confirmed {
+            cx.emit(RulePickerEvent::Confirmed {
                 prompt_id: prompt.id,
             });
         }
@@ -262,24 +257,27 @@ impl PickerDelegate for PromptPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let prompt = self.matches.get(ix)?;
-        let default = prompt.default;
-        let prompt_id = prompt.id;
+        let rule = self.matches.get(ix)?;
+        let default = rule.default;
+        let prompt_id = rule.id;
         let element = ListItem::new(ix)
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
-            .child(h_flex().h_5().line_height(relative(1.)).child(Label::new(
-                prompt.title.clone().unwrap_or("Untitled".into()),
-            )))
+            .child(
+                h_flex()
+                    .h_5()
+                    .line_height(relative(1.))
+                    .child(Label::new(rule.title.clone().unwrap_or("Untitled".into()))),
+            )
             .end_slot::<IconButton>(default.then(|| {
-                IconButton::new("toggle-default-prompt", IconName::SparkleFilled)
+                IconButton::new("toggle-default-rule", IconName::SparkleFilled)
                     .toggle_state(true)
                     .icon_color(Color::Accent)
                     .shape(IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Remove from Default Prompt"))
+                    .tooltip(Tooltip::text("Remove from Default Rules"))
                     .on_click(cx.listener(move |_, _, _, cx| {
-                        cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
+                        cx.emit(RulePickerEvent::ToggledDefault { prompt_id })
                     }))
             }))
             .end_hover_slot(
@@ -287,11 +285,11 @@ impl PickerDelegate for PromptPickerDelegate {
                     .gap_2()
                     .child(if prompt_id.is_built_in() {
                         div()
-                            .id("built-in-prompt")
+                            .id("built-in-rule")
                             .child(Icon::new(IconName::FileLock).color(Color::Muted))
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
-                                    "Built-in prompt",
+                                    "Built-in rule",
                                     None,
                                     BUILT_IN_TOOLTIP_TEXT,
                                     window,
@@ -300,28 +298,28 @@ impl PickerDelegate for PromptPickerDelegate {
                             })
                             .into_any()
                     } else {
-                        IconButton::new("delete-prompt", IconName::Trash)
+                        IconButton::new("delete-rule", IconName::Trash)
                             .icon_color(Color::Muted)
                             .shape(IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Delete Prompt"))
+                            .tooltip(Tooltip::text("Delete Rule"))
                             .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(PromptPickerEvent::Deleted { prompt_id })
+                                cx.emit(RulePickerEvent::Deleted { prompt_id })
                             }))
                             .into_any_element()
                     })
                     .child(
-                        IconButton::new("toggle-default-prompt", IconName::Sparkle)
+                        IconButton::new("toggle-default-rule", IconName::Sparkle)
                             .toggle_state(default)
                             .selected_icon(IconName::SparkleFilled)
                             .icon_color(if default { Color::Accent } else { Color::Muted })
                             .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::text(if default {
-                                "Remove from Default Prompt"
+                                "Remove from Default Rules"
                             } else {
-                                "Add to Default Prompt"
+                                "Add to Default Rules"
                             }))
                             .on_click(cx.listener(move |_, _, _, cx| {
-                                cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
+                                cx.emit(RulePickerEvent::ToggledDefault { prompt_id })
                             })),
                     ),
             );
@@ -346,29 +344,29 @@ impl PickerDelegate for PromptPickerDelegate {
     }
 }
 
-impl PromptLibrary {
+impl RulesLibrary {
     fn new(
         store: Entity<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
-        prompt_to_select: Option<PromptId>,
+        rule_to_select: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (selected_index, matches) = if let Some(prompt_to_select) = prompt_to_select {
+        let (selected_index, matches) = if let Some(rule_to_select) = rule_to_select {
             let matches = store.read(cx).all_prompt_metadata();
             let selected_index = matches
                 .iter()
                 .enumerate()
-                .find(|(_, metadata)| metadata.id == prompt_to_select)
+                .find(|(_, metadata)| metadata.id == rule_to_select)
                 .map_or(0, |(ix, _)| ix);
             (selected_index, matches)
         } else {
             (0, vec![])
         };
 
-        let delegate = PromptPickerDelegate {
+        let delegate = RulePickerDelegate {
             store: store.clone(),
             selected_index,
             matches,
@@ -384,8 +382,8 @@ impl PromptLibrary {
         Self {
             store: store.clone(),
             language_registry,
-            prompt_editors: HashMap::default(),
-            active_prompt_id: None,
+            rule_editors: HashMap::default(),
+            active_rule_id: None,
             pending_load: Task::ready(()),
             inline_assist_delegate,
             make_completion_provider,
@@ -396,33 +394,33 @@ impl PromptLibrary {
 
     fn handle_picker_event(
         &mut self,
-        _: &Entity<Picker<PromptPickerDelegate>>,
-        event: &PromptPickerEvent,
+        _: &Entity<Picker<RulePickerDelegate>>,
+        event: &RulePickerEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            PromptPickerEvent::Selected { prompt_id } => {
-                self.load_prompt(*prompt_id, false, window, cx);
+            RulePickerEvent::Selected { prompt_id } => {
+                self.load_rule(*prompt_id, false, window, cx);
             }
-            PromptPickerEvent::Confirmed { prompt_id } => {
-                self.load_prompt(*prompt_id, true, window, cx);
+            RulePickerEvent::Confirmed { prompt_id } => {
+                self.load_rule(*prompt_id, true, window, cx);
             }
-            PromptPickerEvent::ToggledDefault { prompt_id } => {
-                self.toggle_default_for_prompt(*prompt_id, window, cx);
+            RulePickerEvent::ToggledDefault { prompt_id } => {
+                self.toggle_default_for_rule(*prompt_id, window, cx);
             }
-            PromptPickerEvent::Deleted { prompt_id } => {
-                self.delete_prompt(*prompt_id, window, cx);
+            RulePickerEvent::Deleted { prompt_id } => {
+                self.delete_rule(*prompt_id, window, cx);
             }
         }
     }
 
-    pub fn new_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // If we already have an untitled prompt, use that instead
+    pub fn new_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // If we already have an untitled rule, use that instead
         // of creating a new one.
         if let Some(metadata) = self.store.read(cx).first() {
             if metadata.title.is_none() {
-                self.load_prompt(metadata.id, true, window, cx);
+                self.load_rule(metadata.id, true, window, cx);
                 return;
             }
         }
@@ -436,28 +434,23 @@ impl PromptLibrary {
         cx.spawn_in(window, async move |this, cx| {
             save.await?;
             this.update_in(cx, |this, window, cx| {
-                this.load_prompt(prompt_id, true, window, cx)
+                this.load_rule(prompt_id, true, window, cx)
             })
         })
         .detach_and_log_err(cx);
     }
 
-    pub fn save_prompt(
-        &mut self,
-        prompt_id: PromptId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn save_rule(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
         const SAVE_THROTTLE: Duration = Duration::from_millis(500);
 
         if prompt_id.is_built_in() {
             return;
         }
 
-        let prompt_metadata = self.store.read(cx).metadata(prompt_id).unwrap();
-        let prompt_editor = self.prompt_editors.get_mut(&prompt_id).unwrap();
-        let title = prompt_editor.title_editor.read(cx).text(cx);
-        let body = prompt_editor.body_editor.update(cx, |editor, cx| {
+        let rule_metadata = self.store.read(cx).metadata(prompt_id).unwrap();
+        let rule_editor = self.rule_editors.get_mut(&prompt_id).unwrap();
+        let title = rule_editor.title_editor.read(cx).text(cx);
+        let body = rule_editor.body_editor.update(cx, |editor, cx| {
             editor
                 .buffer()
                 .read(cx)
@@ -471,13 +464,13 @@ impl PromptLibrary {
         let store = self.store.clone();
         let executor = cx.background_executor().clone();
 
-        prompt_editor.next_title_and_body_to_save = Some((title, body));
-        if prompt_editor.pending_save.is_none() {
-            prompt_editor.pending_save = Some(cx.spawn_in(window, async move |this, cx| {
+        rule_editor.next_title_and_body_to_save = Some((title, body));
+        if rule_editor.pending_save.is_none() {
+            rule_editor.pending_save = Some(cx.spawn_in(window, async move |this, cx| {
                 async move {
                     loop {
                         let title_and_body = this.update(cx, |this, _| {
-                            this.prompt_editors
+                            this.rule_editors
                                 .get_mut(&prompt_id)?
                                 .next_title_and_body_to_save
                                 .take()
@@ -491,7 +484,7 @@ impl PromptLibrary {
                             };
                             cx.update(|_window, cx| {
                                 store.update(cx, |store, cx| {
-                                    store.save(prompt_id, title, prompt_metadata.default, body, cx)
+                                    store.save(prompt_id, title, rule_metadata.default, body, cx)
                                 })
                             })?
                             .await
@@ -509,8 +502,8 @@ impl PromptLibrary {
                     }
 
                     this.update(cx, |this, _cx| {
-                        if let Some(prompt_editor) = this.prompt_editors.get_mut(&prompt_id) {
-                            prompt_editor.pending_save = None;
+                        if let Some(rule_editor) = this.rule_editors.get_mut(&prompt_id) {
+                            rule_editor.pending_save = None;
                         }
                     })
                 }
@@ -520,43 +513,34 @@ impl PromptLibrary {
         }
     }
 
-    pub fn delete_active_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active_prompt_id) = self.active_prompt_id {
-            self.delete_prompt(active_prompt_id, window, cx);
+    pub fn delete_active_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(active_rule_id) = self.active_rule_id {
+            self.delete_rule(active_rule_id, window, cx);
         }
     }
 
-    pub fn duplicate_active_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active_prompt_id) = self.active_prompt_id {
-            self.duplicate_prompt(active_prompt_id, window, cx);
+    pub fn duplicate_active_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(active_rule_id) = self.active_rule_id {
+            self.duplicate_rule(active_rule_id, window, cx);
         }
     }
 
-    pub fn toggle_default_for_active_prompt(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active_prompt_id) = self.active_prompt_id {
-            self.toggle_default_for_prompt(active_prompt_id, window, cx);
+    pub fn toggle_default_for_active_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(active_rule_id) = self.active_rule_id {
+            self.toggle_default_for_rule(active_rule_id, window, cx);
         }
     }
 
-    pub fn toggle_default_for_prompt(
+    pub fn toggle_default_for_rule(
         &mut self,
         prompt_id: PromptId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.store.update(cx, move |store, cx| {
-            if let Some(prompt_metadata) = store.metadata(prompt_id) {
+            if let Some(rule_metadata) = store.metadata(prompt_id) {
                 store
-                    .save_metadata(
-                        prompt_id,
-                        prompt_metadata.title,
-                        !prompt_metadata.default,
-                        cx,
-                    )
+                    .save_metadata(prompt_id, rule_metadata.title, !rule_metadata.default, cx)
                     .detach_and_log_err(cx);
             }
         });
@@ -565,33 +549,33 @@ impl PromptLibrary {
         cx.notify();
     }
 
-    pub fn load_prompt(
+    pub fn load_rule(
         &mut self,
         prompt_id: PromptId,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+        if let Some(rule_editor) = self.rule_editors.get(&prompt_id) {
             if focus {
-                prompt_editor
+                rule_editor
                     .body_editor
                     .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             }
-            self.set_active_prompt(Some(prompt_id), window, cx);
-        } else if let Some(prompt_metadata) = self.store.read(cx).metadata(prompt_id) {
+            self.set_active_rule(Some(prompt_id), window, cx);
+        } else if let Some(rule_metadata) = self.store.read(cx).metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
-            let prompt = self.store.read(cx).load(prompt_id, cx);
+            let rule = self.store.read(cx).load(prompt_id, cx);
             let make_completion_provider = self.make_completion_provider.clone();
             self.pending_load = cx.spawn_in(window, async move |this, cx| {
-                let prompt = prompt.await;
+                let rule = rule.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
-                this.update_in(cx, |this, window, cx| match prompt {
-                    Ok(prompt) => {
+                this.update_in(cx, |this, window, cx| match rule {
+                    Ok(rule) => {
                         let title_editor = cx.new(|cx| {
                             let mut editor = Editor::auto_width(window, cx);
                             editor.set_placeholder_text("Untitled", cx);
-                            editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
+                            editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
                                 editor.set_show_edit_predictions(Some(false), window, cx);
@@ -600,7 +584,7 @@ impl PromptLibrary {
                         });
                         let body_editor = cx.new(|cx| {
                             let buffer = cx.new(|cx| {
-                                let mut buffer = Buffer::local(prompt, cx);
+                                let mut buffer = Buffer::local(rule, cx);
                                 buffer.set_language(markdown.log_err(), cx);
                                 buffer.set_language_registry(language_registry);
                                 buffer
@@ -628,7 +612,7 @@ impl PromptLibrary {
                                 &title_editor,
                                 window,
                                 move |this, editor, event, window, cx| {
-                                    this.handle_prompt_title_editor_event(
+                                    this.handle_rule_title_editor_event(
                                         prompt_id, editor, event, window, cx,
                                     )
                                 },
@@ -637,15 +621,15 @@ impl PromptLibrary {
                                 &body_editor,
                                 window,
                                 move |this, editor, event, window, cx| {
-                                    this.handle_prompt_body_editor_event(
+                                    this.handle_rule_body_editor_event(
                                         prompt_id, editor, event, window, cx,
                                     )
                                 },
                             ),
                         ];
-                        this.prompt_editors.insert(
+                        this.rule_editors.insert(
                             prompt_id,
-                            PromptEditor {
+                            RuleEditor {
                                 title_editor,
                                 body_editor,
                                 next_title_and_body_to_save: None,
@@ -655,12 +639,12 @@ impl PromptLibrary {
                                 _subscriptions,
                             },
                         );
-                        this.set_active_prompt(Some(prompt_id), window, cx);
+                        this.set_active_rule(Some(prompt_id), window, cx);
                         this.count_tokens(prompt_id, window, cx);
                     }
                     Err(error) => {
                         // TODO: we should show the error in the UI.
-                        log::error!("error while loading prompt: {:?}", error);
+                        log::error!("error while loading rule: {:?}", error);
                     }
                 })
                 .ok();
@@ -668,13 +652,13 @@ impl PromptLibrary {
         }
     }
 
-    fn set_active_prompt(
+    fn set_active_rule(
         &mut self,
         prompt_id: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active_prompt_id = prompt_id;
+        self.active_rule_id = prompt_id;
         self.picker.update(cx, |picker, cx| {
             if let Some(prompt_id) = prompt_id {
                 if picker
@@ -701,7 +685,7 @@ impl PromptLibrary {
         cx.notify();
     }
 
-    pub fn delete_prompt(
+    pub fn delete_rule(
         &mut self,
         prompt_id: PromptId,
         window: &mut Window,
@@ -722,10 +706,10 @@ impl PromptLibrary {
             cx.spawn_in(window, async move |this, cx| {
                 if confirmation.await.ok() == Some(0) {
                     this.update_in(cx, |this, window, cx| {
-                        if this.active_prompt_id == Some(prompt_id) {
-                            this.set_active_prompt(None, window, cx);
+                        if this.active_rule_id == Some(prompt_id) {
+                            this.set_active_rule(None, window, cx);
                         }
-                        this.prompt_editors.remove(&prompt_id);
+                        this.rule_editors.remove(&prompt_id);
                         this.store
                             .update(cx, |store, cx| store.delete(prompt_id, cx))
                             .detach_and_log_err(cx);
@@ -740,20 +724,20 @@ impl PromptLibrary {
         }
     }
 
-    pub fn duplicate_prompt(
+    pub fn duplicate_rule(
         &mut self,
         prompt_id: PromptId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(prompt) = self.prompt_editors.get(&prompt_id) {
+        if let Some(rule) = self.rule_editors.get(&prompt_id) {
             const DUPLICATE_SUFFIX: &str = " copy";
-            let title_to_duplicate = prompt.title_editor.read(cx).text(cx);
+            let title_to_duplicate = rule.title_editor.read(cx).text(cx);
             let existing_titles = self
-                .prompt_editors
+                .rule_editors
                 .iter()
                 .filter(|&(&id, _)| id != prompt_id)
-                .map(|(_, prompt_editor)| prompt_editor.title_editor.read(cx).text(cx))
+                .map(|(_, rule_editor)| rule_editor.title_editor.read(cx).text(cx))
                 .filter(|title| title.starts_with(&title_to_duplicate))
                 .collect::<HashSet<_>>();
 
@@ -771,7 +755,7 @@ impl PromptLibrary {
             };
 
             let new_id = PromptId::new();
-            let body = prompt.body_editor.read(cx).text(cx);
+            let body = rule.body_editor.read(cx).text(cx);
             let save = self.store.update(cx, |store, cx| {
                 store.save(new_id, Some(title.into()), false, body.into(), cx)
             });
@@ -779,17 +763,17 @@ impl PromptLibrary {
                 .update(cx, |picker, cx| picker.refresh(window, cx));
             cx.spawn_in(window, async move |this, cx| {
                 save.await?;
-                this.update_in(cx, |prompt_library, window, cx| {
-                    prompt_library.load_prompt(new_id, true, window, cx)
+                this.update_in(cx, |rules_library, window, cx| {
+                    rules_library.load_rule(new_id, true, window, cx)
                 })
             })
             .detach_and_log_err(cx);
         }
     }
 
-    fn focus_active_prompt(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active_prompt) = self.active_prompt_id {
-            self.prompt_editors[&active_prompt]
+    fn focus_active_rule(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(active_rule) = self.active_rule_id {
+            self.rule_editors[&active_rule]
                 .body_editor
                 .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             cx.stop_propagation();
@@ -807,12 +791,12 @@ impl PromptLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_prompt_id) = self.active_prompt_id else {
+        let Some(active_rule_id) = self.active_rule_id else {
             cx.propagate();
             return;
         };
 
-        let prompt_editor = &self.prompt_editors[&active_prompt_id].body_editor;
+        let rule_editor = &self.rule_editors[&active_rule_id].body_editor;
         let Some(ConfiguredModel { provider, .. }) =
             LanguageModelRegistry::read_global(cx).inline_assistant_model()
         else {
@@ -822,7 +806,7 @@ impl PromptLibrary {
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
             self.inline_assist_delegate
-                .assist(prompt_editor, initial_prompt, window, cx);
+                .assist(rule_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
                 if let Some(workspace) = window.downcast::<Workspace>() {
@@ -847,9 +831,9 @@ impl PromptLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(prompt_id) = self.active_prompt_id {
-            if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
-                window.focus(&prompt_editor.body_editor.focus_handle(cx));
+        if let Some(rule_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get(&rule_id) {
+                window.focus(&rule_editor.body_editor.focus_handle(cx));
             }
         }
     }
@@ -860,14 +844,14 @@ impl PromptLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(prompt_id) = self.active_prompt_id {
-            if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
-                window.focus(&prompt_editor.title_editor.focus_handle(cx));
+        if let Some(rule_id) = self.active_rule_id {
+            if let Some(rule_editor) = self.rule_editors.get(&rule_id) {
+                window.focus(&rule_editor.title_editor.focus_handle(cx));
             }
         }
     }
 
-    fn handle_prompt_title_editor_event(
+    fn handle_rule_title_editor_event(
         &mut self,
         prompt_id: PromptId,
         title_editor: &Entity<Editor>,
@@ -877,7 +861,7 @@ impl PromptLibrary {
     ) {
         match event {
             EditorEvent::BufferEdited => {
-                self.save_prompt(prompt_id, window, cx);
+                self.save_rule(prompt_id, window, cx);
                 self.count_tokens(prompt_id, window, cx);
             }
             EditorEvent::Blurred => {
@@ -892,7 +876,7 @@ impl PromptLibrary {
         }
     }
 
-    fn handle_prompt_body_editor_event(
+    fn handle_rule_body_editor_event(
         &mut self,
         prompt_id: PromptId,
         body_editor: &Entity<Editor>,
@@ -902,7 +886,7 @@ impl PromptLibrary {
     ) {
         match event {
             EditorEvent::BufferEdited => {
-                self.save_prompt(prompt_id, window, cx);
+                self.save_rule(prompt_id, window, cx);
                 self.count_tokens(prompt_id, window, cx);
             }
             EditorEvent::Blurred => {
@@ -923,11 +907,11 @@ impl PromptLibrary {
         else {
             return;
         };
-        if let Some(prompt) = self.prompt_editors.get_mut(&prompt_id) {
-            let editor = &prompt.body_editor.read(cx);
+        if let Some(rule) = self.rule_editors.get_mut(&prompt_id) {
+            let editor = &rule.body_editor.read(cx);
             let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
             let body = buffer.as_rope().clone();
-            prompt.pending_token_count = cx.spawn_in(window, async move |this, cx| {
+            rule.pending_token_count = cx.spawn_in(window, async move |this, cx| {
                 async move {
                     const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -938,6 +922,7 @@ impl PromptLibrary {
                                 LanguageModelRequest {
                                     thread_id: None,
                                     prompt_id: None,
+                                    mode: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,
                                         content: vec![body.to_string().into()],
@@ -953,8 +938,8 @@ impl PromptLibrary {
                         .await?;
 
                     this.update(cx, |this, cx| {
-                        let prompt_editor = this.prompt_editors.get_mut(&prompt_id).unwrap();
-                        prompt_editor.token_count = Some(token_count);
+                        let rule_editor = this.rule_editors.get_mut(&prompt_id).unwrap();
+                        rule_editor.token_count = Some(token_count);
                         cx.notify();
                     })
                 }
@@ -964,10 +949,10 @@ impl PromptLibrary {
         }
     }
 
-    fn render_prompt_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_rule_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .id("prompt-list")
-            .capture_action(cx.listener(Self::focus_active_prompt))
+            .id("rule-list")
+            .capture_action(cx.listener(Self::focus_active_rule))
             .bg(cx.theme().colors().panel_background)
             .h_full()
             .px_1()
@@ -981,34 +966,34 @@ impl PromptLibrary {
                     .flex_none()
                     .justify_end()
                     .child(
-                        IconButton::new("new-prompt", IconName::Plus)
+                        IconButton::new("new-rule", IconName::Plus)
                             .style(ButtonStyle::Transparent)
                             .shape(IconButtonShape::Square)
                             .tooltip(move |window, cx| {
-                                Tooltip::for_action("New Prompt", &NewPrompt, window, cx)
+                                Tooltip::for_action("New Rule", &NewRule, window, cx)
                             })
                             .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(NewPrompt), cx);
+                                window.dispatch_action(Box::new(NewRule), cx);
                             }),
                     ),
             )
             .child(div().flex_grow().child(self.picker.clone()))
     }
 
-    fn render_active_prompt(&mut self, cx: &mut Context<PromptLibrary>) -> gpui::Stateful<Div> {
+    fn render_active_rule(&mut self, cx: &mut Context<RulesLibrary>) -> gpui::Stateful<Div> {
         div()
             .w_2_3()
             .h_full()
-            .id("prompt-editor")
+            .id("rule-editor")
             .border_l_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
             .flex_none()
             .min_w_64()
-            .children(self.active_prompt_id.and_then(|prompt_id| {
-                let prompt_metadata = self.store.read(cx).metadata(prompt_id)?;
-                let prompt_editor = &self.prompt_editors[&prompt_id];
-                let focus_handle = prompt_editor.body_editor.focus_handle(cx);
+            .children(self.active_rule_id.and_then(|prompt_id| {
+                let rule_metadata = self.store.read(cx).metadata(prompt_id)?;
+                let rule_editor = &self.rule_editors[&prompt_id];
+                let focus_handle = rule_editor.body_editor.focus_handle(cx);
                 let model = LanguageModelRegistry::read_global(cx)
                     .default_model()
                     .map(|default| default.model);
@@ -1016,7 +1001,7 @@ impl PromptLibrary {
 
                 Some(
                     v_flex()
-                        .id("prompt-editor-inner")
+                        .id("rule-editor-inner")
                         .size_full()
                         .relative()
                         .overflow_hidden()
@@ -1046,7 +1031,7 @@ impl PromptLibrary {
                                                 )
                                             })
                                             .child(EditorElement::new(
-                                                &prompt_editor.title_editor,
+                                                &rule_editor.title_editor,
                                                 EditorStyle {
                                                     background: cx.theme().system().transparent,
                                                     local_player: cx.theme().players().local(),
@@ -1097,7 +1082,7 @@ impl PromptLibrary {
                                             h_flex()
                                                 .h_full()
                                                 .gap(DynamicSpacing::Base16.rems(cx))
-                                                .children(prompt_editor.token_count.map(
+                                                .children(rule_editor.token_count.map(
                                                     |token_count| {
                                                         let token_count: SharedString =
                                                             token_count.to_string().into();
@@ -1140,14 +1125,14 @@ impl PromptLibrary {
                                                 ))
                                                 .child(if prompt_id.is_built_in() {
                                                     div()
-                                                        .id("built-in-prompt")
+                                                        .id("built-in-rule")
                                                         .child(
                                                             Icon::new(IconName::FileLock)
                                                                 .color(Color::Muted),
                                                         )
                                                         .tooltip(move |window, cx| {
                                                             Tooltip::with_meta(
-                                                                "Built-in prompt",
+                                                                "Built-in rule",
                                                                 None,
                                                                 BUILT_IN_TOOLTIP_TEXT,
                                                                 window,
@@ -1156,33 +1141,30 @@ impl PromptLibrary {
                                                         })
                                                         .into_any()
                                                 } else {
-                                                    IconButton::new(
-                                                        "delete-prompt",
-                                                        IconName::Trash,
-                                                    )
-                                                    .size(ButtonSize::Large)
-                                                    .style(ButtonStyle::Transparent)
-                                                    .shape(IconButtonShape::Square)
-                                                    .size(ButtonSize::Large)
-                                                    .tooltip(move |window, cx| {
-                                                        Tooltip::for_action(
-                                                            "Delete Prompt",
-                                                            &DeletePrompt,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            Box::new(DeletePrompt),
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .into_any_element()
+                                                    IconButton::new("delete-rule", IconName::Trash)
+                                                        .size(ButtonSize::Large)
+                                                        .style(ButtonStyle::Transparent)
+                                                        .shape(IconButtonShape::Square)
+                                                        .size(ButtonSize::Large)
+                                                        .tooltip(move |window, cx| {
+                                                            Tooltip::for_action(
+                                                                "Delete Rule",
+                                                                &DeleteRule,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        })
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                Box::new(DeleteRule),
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .into_any_element()
                                                 })
                                                 .child(
                                                     IconButton::new(
-                                                        "duplicate-prompt",
+                                                        "duplicate-rule",
                                                         IconName::BookCopy,
                                                     )
                                                     .size(ButtonSize::Large)
@@ -1191,28 +1173,28 @@ impl PromptLibrary {
                                                     .size(ButtonSize::Large)
                                                     .tooltip(move |window, cx| {
                                                         Tooltip::for_action(
-                                                            "Duplicate Prompt",
-                                                            &DuplicatePrompt,
+                                                            "Duplicate Rule",
+                                                            &DuplicateRule,
                                                             window,
                                                             cx,
                                                         )
                                                     })
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
-                                                            Box::new(DuplicatePrompt),
+                                                            Box::new(DuplicateRule),
                                                             cx,
                                                         );
                                                     }),
                                                 )
                                                 .child(
                                                     IconButton::new(
-                                                        "toggle-default-prompt",
+                                                        "toggle-default-rule",
                                                         IconName::Sparkle,
                                                     )
                                                     .style(ButtonStyle::Transparent)
-                                                    .toggle_state(prompt_metadata.default)
+                                                    .toggle_state(rule_metadata.default)
                                                     .selected_icon(IconName::SparkleFilled)
-                                                    .icon_color(if prompt_metadata.default {
+                                                    .icon_color(if rule_metadata.default {
                                                         Color::Accent
                                                     } else {
                                                         Color::Muted
@@ -1220,15 +1202,15 @@ impl PromptLibrary {
                                                     .shape(IconButtonShape::Square)
                                                     .size(ButtonSize::Large)
                                                     .tooltip(Tooltip::text(
-                                                        if prompt_metadata.default {
-                                                            "Remove from Default Prompt"
+                                                        if rule_metadata.default {
+                                                            "Remove from Default Rules"
                                                         } else {
-                                                            "Add to Default Prompt"
+                                                            "Add to Default Rules"
                                                         },
                                                     ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
-                                                            Box::new(ToggleDefaultPrompt),
+                                                            Box::new(ToggleDefaultRule),
                                                             cx,
                                                         );
                                                     }),
@@ -1243,38 +1225,36 @@ impl PromptLibrary {
                                 .on_action(cx.listener(Self::move_up_from_body))
                                 .flex_grow()
                                 .h_full()
-                                .child(prompt_editor.body_editor.clone()),
+                                .child(rule_editor.body_editor.clone()),
                         ),
                 )
             }))
     }
 }
 
-impl Render for PromptLibrary {
+impl Render for RulesLibrary {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         h_flex()
-            .id("prompt-manager")
+            .id("rules-library")
             .key_context("PromptLibrary")
-            .on_action(cx.listener(|this, &NewPrompt, window, cx| this.new_prompt(window, cx)))
+            .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
             .on_action(
-                cx.listener(|this, &DeletePrompt, window, cx| {
-                    this.delete_active_prompt(window, cx)
-                }),
+                cx.listener(|this, &DeleteRule, window, cx| this.delete_active_rule(window, cx)),
             )
-            .on_action(cx.listener(|this, &DuplicatePrompt, window, cx| {
-                this.duplicate_active_prompt(window, cx)
+            .on_action(cx.listener(|this, &DuplicateRule, window, cx| {
+                this.duplicate_active_rule(window, cx)
             }))
-            .on_action(cx.listener(|this, &ToggleDefaultPrompt, window, cx| {
-                this.toggle_default_for_active_prompt(window, cx)
+            .on_action(cx.listener(|this, &ToggleDefaultRule, window, cx| {
+                this.toggle_default_for_active_rule(window, cx)
             }))
             .size_full()
             .overflow_hidden()
             .font(ui_font)
             .text_color(theme.colors().text)
-            .child(self.render_prompt_list(cx))
+            .child(self.render_rule_list(cx))
             .map(|el| {
                 if self.store.read(cx).prompt_count() == 0 {
                     el.child(
@@ -1294,7 +1274,7 @@ impl Render for PromptLibrary {
                                             .color(Color::Muted),
                                     )
                                     .child(
-                                        Label::new("No prompts yet")
+                                        Label::new("No rules yet")
                                             .size(LabelSize::Large)
                                             .color(Color::Muted),
                                     ),
@@ -1305,16 +1285,16 @@ impl Render for PromptLibrary {
                                     .child(
                                         v_flex()
                                             .gap_1()
-                                            .child(Label::new("Create your first prompt:"))
+                                            .child(Label::new("Create your first rule:"))
                                             .child(
-                                                Button::new("create-prompt", "New Prompt")
+                                                Button::new("create-rule", "New Rule")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, window, cx,
+                                                        &NewRule, window, cx,
                                                     ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
-                                                            NewPrompt.boxed_clone(),
+                                                            NewRule.boxed_clone(),
                                                             cx,
                                                         )
                                                     }),
@@ -1324,7 +1304,7 @@ impl Render for PromptLibrary {
                             ),
                     )
                 } else {
-                    el.child(self.render_active_prompt(cx))
+                    el.child(self.render_active_rule(cx))
                 }
             })
     }

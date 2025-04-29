@@ -215,11 +215,21 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
-        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        let count = s
+            .bytes()
+            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
+            .count();
         if count > 0 {
             let mut output = String::with_capacity(s.len() + count);
+            let mut is_newline = false;
             for c in s.chars() {
-                if c.is_ascii_punctuation() {
+                if is_newline && c == ' ' {
+                    continue;
+                }
+                is_newline = c == '\n';
+                if c == '\n' {
+                    output.push('\n')
+                } else if c.is_ascii_punctuation() {
                     output.push('\\')
                 }
                 output.push(c)
@@ -1157,7 +1167,7 @@ fn render_copy_code_block_button(
     markdown: Entity<Markdown>,
     cx: &App,
 ) -> impl IntoElement {
-    let id = ElementId::NamedInteger("copy-markdown-code".into(), id);
+    let id = ElementId::named_usize("copy-markdown-code", id);
     let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
     IconButton::new(
         id.clone(),
@@ -1715,6 +1725,15 @@ mod tests {
             |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
         );
         rendered.text
+    }
+
+    #[test]
+    fn test_escape() {
+        assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
+        assert_eq!(
+            Markdown::escape("hello\n    cool world"),
+            "hello\n\ncool world"
+        );
     }
 
     #[track_caller]
