@@ -48,9 +48,9 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
-    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor,
+    InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 pub fn init(cx: &mut App) {
@@ -93,7 +93,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
-                        AgentDiff::deploy_in_workspace(thread, workspace, window, cx);
+                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
@@ -941,7 +941,7 @@ impl AssistantPanel {
         let thread = self.thread.read(cx).thread().clone();
         self.workspace
             .update(cx, |workspace, cx| {
-                AgentDiff::deploy_in_workspace(thread, workspace, window, cx)
+                AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx)
             })
             .log_err();
     }

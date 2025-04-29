@@ -17896,6 +17896,25 @@ impl Editor {
         };
     }
 
+    pub fn reset_diff_source(&mut self, cx: &mut Context<Self>) {
+        self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_all_diff_hunks_collapsed(cx);
+        });
+
+        if let Some(project) = self.project.clone() {
+            self.load_diff_task = Some(
+                get_uncommitted_diff_for_buffer(
+                    &project,
+                    self.buffer.read(cx).all_buffers(),
+                    self.buffer.clone(),
+                    cx,
+                )
+                .shared(),
+            );
+        }
+    }
+
     fn on_display_map_changed(
         &mut self,
         _: Entity<DisplayMap>,

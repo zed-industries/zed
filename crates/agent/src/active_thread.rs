@@ -1,3 +1,4 @@
+use crate::agent_diff::AgentDiffSingletonEditors;
 use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::MentionLink;
 use crate::thread::{
@@ -53,6 +54,7 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
+    _agent_diff: Entity<AgentDiffSingletonEditors>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -759,6 +761,8 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
+            _agent_diff: cx
+                .new(|cx| AgentDiffSingletonEditors::new(thread.clone(), workspace.clone(), cx)),
             workspace,
             save_thread_task: None,
             messages: Vec::new(),

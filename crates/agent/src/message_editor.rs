@@ -42,7 +42,7 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
+    AgentDiffPane, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
     ToggleContextPicker, ToggleProfileSelector,
 };
 
@@ -382,7 +382,7 @@ impl MessageEditor {
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.edits_expanded = true;
-        AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
         cx.notify();
     }
 
@@ -392,7 +392,8 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(diff) = AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
+        if let Ok(diff) =
+            AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
         {
             let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
