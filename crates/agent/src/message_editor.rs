@@ -413,7 +413,7 @@ impl MessageEditor {
         let active_completion_mode = thread.completion_mode();
 
         Some(
-            IconButton::new("max-mode", IconName::SquarePlus)
+            IconButton::new("max-mode", IconName::ZedMaxMode)
                 .icon_size(IconSize::Small)
                 .toggle_state(active_completion_mode == Some(CompletionMode::Max))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -424,7 +424,7 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(Tooltip::text("Max Mode"))
+                .tooltip(Tooltip::text("Toggle Max Mode"))
                 .into_any_element(),
         )
     }
