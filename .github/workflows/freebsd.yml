@@ -4,7 +4,7 @@ on: [push]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: github-8vcpu-ubuntu-2404
     name: Build Zed on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
@@ -17,9 +17,11 @@ jobs:
         with:
           # envs: "MYTOKEN MYTOKEN2"
           usesh: true
+          release: 13.5
+          copyback: true
           prepare: |
             pkg install -y \
-              curl git rustup-init cmake llvm pkgconf protobuf # ibx11 alsa-lib
+              curl git rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
           run: |
             freebsd-version
             sysctl hw.model
@@ -29,4 +31,11 @@ jobs:
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             cargo build -p remote_server
-            target/debug/remote-server --version
+            target/debug/remote_server --version
+            mkdir -p out/
+            cp target/debug/remote_server out/
+            cargo clean
+      - name: Look around
+        run: |
+          ls -la out/
+          file out/remote_server/
