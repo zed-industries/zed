@@ -175,7 +175,7 @@ mod tests {
 
         let result = connect_socks_proxy_stream(Some(&proxy), ("test", 1080)).await;
         match result {
-            Err(e) => assert!(e.to_string() == "Parsing proxy url failed"),
+            Err(e) => assert_eq!(e.to_string(), "Parsing proxy url failed"),
             Ok(_) => panic!("Connecting on bad proxy should fail"),
         };
     }
