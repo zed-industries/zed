@@ -973,8 +973,8 @@ mod tests {
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
-                    prompt_store,
                     Arc::new(PromptBuilder::new(None).unwrap()),
+                    prompt_store,
                     cx,
                 )
             })

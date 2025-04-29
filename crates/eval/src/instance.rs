@@ -222,8 +222,8 @@ impl ExampleInstance {
         let thread_store = ThreadStore::load(
             project.clone(),
             tools,
-            prompt_store,
             app_state.prompt_builder.clone(),
+            prompt_store,
             cx,
         );
         let meta = self.thread.meta();

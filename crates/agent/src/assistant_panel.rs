@@ -302,8 +302,8 @@ impl AssistantPanel {
                     ThreadStore::load(
                         project,
                         tools.clone(),
-                        prompt_store.clone(),
                         prompt_builder.clone(),
+                        prompt_store.clone(),
                         cx,
                     )
                 })?

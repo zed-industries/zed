@@ -81,8 +81,8 @@ impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
-        prompt_store: Option<Entity<PromptStore>>,
         prompt_builder: Arc<PromptBuilder>,
+        prompt_store: Option<Entity<PromptStore>>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
@@ -101,7 +101,7 @@ impl ThreadStore {
         })
     }
 
-    pub fn new(
+    fn new(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,

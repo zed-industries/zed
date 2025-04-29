@@ -2850,8 +2850,8 @@ fn main() {{
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
-                    None,
                     Arc::new(PromptBuilder::new(None).unwrap()),
+                    None,
                     cx,
                 )
             })
