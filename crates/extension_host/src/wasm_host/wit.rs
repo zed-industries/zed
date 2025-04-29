@@ -745,7 +745,7 @@ impl Extension {
             | Extension::V0_2_0(_)
             | Extension::V0_3_0(_)
             | Extension::V0_4_0(_) => Err(anyhow!(
-                "`context_server_command` not available prior to v0.5.0"
+                "`context_server_configuration` not available prior to v0.5.0"
             )),
         }
     }
