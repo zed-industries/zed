@@ -469,7 +469,9 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
-        tools: (request.tools.len() > 0).then(|| {
+        tools: if request_tools.empty() {
+            vec![]
+        } else {
             vec![google_ai::Tool {
                 function_declarations: request
                     .tools
@@ -481,7 +483,7 @@ pub fn into_google(
                     })
                     .collect(),
             }]
-        }),
+        },
         tool_config: None,
     }
 }

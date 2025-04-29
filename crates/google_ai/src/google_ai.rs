@@ -197,8 +197,8 @@ pub struct GenerateContentRequest {
     pub system_instruction: Option<SystemInstruction>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config: Option<ToolConfig>,
 }
@@ -462,9 +462,12 @@ pub struct CacheContentsRequest {
     pub ttl: Duration,
     pub model: String,
     pub contents: Vec<Content>,
-    pub system_instruction: Content,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Option<Content>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
-    pub tool_config: ToolConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<ToolConfig>,
     // Other fields that could be provided:
     //
     // name: The resource name referring to the cached content. Format: cachedContents/{id}
