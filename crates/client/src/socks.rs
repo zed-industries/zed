@@ -75,7 +75,7 @@ pub(crate) async fn connect_socks_proxy_stream(
 }
 
 /// Parse a `Url´ to a valid Socks Proxy configuration
-fn parse_socks_proxy<'a>(proxy: &'a Url) -> Option<((String, u16), SocksVersion<'a>)> {
+fn parse_socks_proxy(proxy: &Url) -> Option<((String, u16), SocksVersion<'_>)> {
     let scheme = proxy.scheme();
     let socks_version = if scheme.starts_with("socks4") {
         // Parse optional Identification when using Socks V4
