@@ -983,10 +983,10 @@ impl Loader {
         output_path: &Path,
         force_docker: bool,
     ) -> Result<(), Error> {
-        use std::fs::File;
-        use std::io::{self, Read, Write, BufReader, BufWriter, Seek};
-        use std::path::PathBuf;
         use flate2::read::GzDecoder;
+        use std::fs::File;
+        use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
+        use std::path::PathBuf;
         use tar::Archive;
 
         let root_path = root_path.unwrap_or(src_path);
@@ -996,7 +996,9 @@ impl Loader {
 
         // Determine the appropriate SDK filename
         let sdk_filename = format!("wasi-sdk-25.0-{arch}-{platform}.tar.gz");
-        let sdk_url = format!("https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/{sdk_filename}");
+        let sdk_url = format!(
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/{sdk_filename}"
+        );
 
         // Create a directory for the wasi-sdk within the cache directory
         let wasi_sdk_dir = self.cache_path.join("tree-sitter").join("wasi-sdk");
@@ -1086,7 +1088,8 @@ impl Loader {
         // Execute the command
         let status = command
             .spawn()
-            .with_context(|| "Failed to run clang command")?            .wait()?;
+            .with_context(|| "Failed to run clang command")?
+            .wait()?;
 
         if !status.success() {
             return Err(anyhow!("clang command failed"));

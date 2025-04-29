@@ -54,6 +54,7 @@ gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
 language_models.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true

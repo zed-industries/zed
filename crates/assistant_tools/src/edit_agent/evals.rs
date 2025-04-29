@@ -127,6 +127,121 @@ fn eval_delete_run_git_blame() {
     );
 }
 
+#[test]
+fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
+    let input_file_path = "root/lib.rs";
+    let input_file_content =
+        include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
+    let output_file_content =
+        include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/after.rs");
+    let edit_description = "Update compile_parser_to_wasm to use wasi-sdk instead of emscripten";
+    eval(
+        1,
+        0.95,
+        EvalInput {
+            conversation: vec![
+                message(
+                    User,
+                    [text(indoc! {"
+                        Read the `{input_file_path}` file and change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
+                        Use `ureq` to download the SDK for the current platform and architecture.
+                        Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
+                        Compile the parser to wasm using the `bin/clang` executable (or `bin/clang.exe` on windows)
+                        that's inside of the archive.
+                        Don't re-download the SDK if that executable already exists.
+
+                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{language_name}
+
+                        Here are the available wasi-sdk assets:
+                        - wasi-sdk-25.0-x86_64-macos.tar.gz
+                        - wasi-sdk-25.0-arm64-macos.tar.gz
+                        - wasi-sdk-25.0-x86_64-linux.tar.gz
+                        - wasi-sdk-25.0-arm64-linux.tar.gz
+                        - wasi-sdk-25.0-x86_64-linux.tar.gz
+                        - wasi-sdk-25.0-arm64-linux.tar.gz
+                        - wasi-sdk-25.0-x86_64-windows.tar.gz
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: Some(971),
+                            end_line: Some(1050),
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_1",
+                        "read_file",
+                        lines(input_file_content, 971..1050),
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_2",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: Some(1050),
+                            end_line: Some(1100),
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_2",
+                        "read_file",
+                        lines(input_file_content, 1050..1100),
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_3",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: Some(1100),
+                            end_line: Some(1150),
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_3",
+                        "read_file",
+                        lines(input_file_content, 1100..1150),
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_4",
+                        "edit_file",
+                        EditFileToolInput {
+                            display_description: edit_description.into(),
+                            path: input_file_path.into(),
+                        },
+                    )],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: input_file_content.into(),
+            edit_description: edit_description.into(),
+            expected_output: output_file_content.into(),
+        },
+    );
+}
+
 fn message(
     role: Role,
     contents: impl IntoIterator<Item = MessageContent>,
@@ -140,6 +255,15 @@ fn message(
 
 fn text(text: impl Into<String>) -> MessageContent {
     MessageContent::Text(text.into())
+}
+
+fn lines(input: &str, range: Range<usize>) -> String {
+    input
+        .lines()
+        .skip(range.start)
+        .take(range.len())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn tool_use(
@@ -232,7 +356,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, eval: EvalInput) {
                         output.raw_edits,
                         pretty_assertions::StrComparison::new(
                             &output.buffer_text,
-                            &eval.expected_output
+                            &expected_output
                         )
                     );
                 }
