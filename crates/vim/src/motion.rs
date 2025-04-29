@@ -1318,8 +1318,7 @@ impl Motion {
                     // the first character of a blank line. In that case, we'll
                     // want to move one column to the right, to actually include
                     // all characters of the last non-blank line.
-                    end_point.column += 1;
-                    selection.end = end_point.to_display_point(map);
+                    selection.end = movement::saturating_right(map, selection.end)
                 }
             }
         } else if kind == MotionKind::Inclusive {
