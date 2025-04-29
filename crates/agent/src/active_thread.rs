@@ -702,7 +702,7 @@ struct EditMessageState {
     editor: Entity<Editor>,
     last_estimated_token_count: Option<usize>,
     _subscription: Subscription,
-    _update_token_count_task: Option<Task<anyhow::Result<()>>>,
+    _update_token_count_task: Option<Task<()>>,
 }
 
 impl ActiveThread {
@@ -1268,58 +1268,65 @@ impl ActiveThread {
                     .await;
             }
 
-            let token_count = if let Some(task) = cx.update(|cx| {
-                let Some(message) = thread.read(cx).message(message_id) else {
-                    log::error!("Message that was being edited no longer exists");
-                    return None;
-                };
-                let message_text = editor.read(cx).text(cx);
+            let token_count = if let Some(task) = cx
+                .update(|cx| {
+                    let Some(message) = thread.read(cx).message(message_id) else {
+                        log::error!("Message that was being edited no longer exists");
+                        return None;
+                    };
+                    let message_text = editor.read(cx).text(cx);
 
-                if message_text.is_empty() && message.loaded_context.is_empty() {
-                    return None;
-                }
+                    if message_text.is_empty() && message.loaded_context.is_empty() {
+                        return None;
+                    }
 
-                let mut request_message = LanguageModelRequestMessage {
-                    role: language_model::Role::User,
-                    content: Vec::new(),
-                    cache: false,
-                };
+                    let mut request_message = LanguageModelRequestMessage {
+                        role: language_model::Role::User,
+                        content: Vec::new(),
+                        cache: false,
+                    };
 
-                message
-                    .loaded_context
-                    .add_to_request_message(&mut request_message);
+                    message
+                        .loaded_context
+                        .add_to_request_message(&mut request_message);
 
-                if !message_text.is_empty() {
-                    request_message
-                        .content
-                        .push(MessageContent::Text(message_text));
-                }
+                    if !message_text.is_empty() {
+                        request_message
+                            .content
+                            .push(MessageContent::Text(message_text));
+                    }
 
-                let request = language_model::LanguageModelRequest {
-                    thread_id: None,
-                    prompt_id: None,
-                    mode: None,
-                    messages: vec![request_message],
-                    tools: vec![],
-                    stop: vec![],
-                    temperature: None,
-                };
+                    let request = language_model::LanguageModelRequest {
+                        thread_id: None,
+                        prompt_id: None,
+                        mode: None,
+                        messages: vec![request_message],
+                        tools: vec![],
+                        stop: vec![],
+                        temperature: None,
+                    };
 
-                Some(configured_model.model.count_tokens(request, cx))
-            })? {
-                task.await?
+                    Some(configured_model.model.count_tokens(request, cx))
+                })
+                .ok()
+                .flatten()
+            {
+                task.await.log_err()
             } else {
-                0
+                Some(0)
             };
 
-            this.update(cx, |this, cx| {
-                let Some((_message_id, state)) = this.editing_message.as_mut() else {
-                    return;
-                };
+            if let Some(token_count) = token_count {
+                this.update(cx, |this, cx| {
+                    let Some((_message_id, state)) = this.editing_message.as_mut() else {
+                        return;
+                    };
 
-                state.last_estimated_token_count = Some(token_count);
-                cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
-            })
+                    state.last_estimated_token_count = Some(token_count);
+                    cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
+                })
+                .ok();
+            };
         }));
     }
 
