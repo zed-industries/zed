@@ -1,9 +1,8 @@
 use languages::LanguageRegistry;
 use project::Project;
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-use util::ResultExt;
+use std::sync::Arc;
 
-use agent::{ActiveThread, Thread, ThreadStore};
+use agent::{ActiveThread, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
 use prompt_store::PromptBuilder;

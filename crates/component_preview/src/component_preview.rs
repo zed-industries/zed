@@ -77,6 +77,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
 enum PreviewEntry {
     AllComponents,
+    ActiveThread,
     Separator,
     Component(ComponentMetadata, Option<Vec<usize>>),
     SectionHeader(SharedString),
@@ -99,6 +100,7 @@ enum PreviewPage {
     #[default]
     AllComponents,
     Component(ComponentId),
+    ActiveThread,
 }
 
 struct ComponentPreview {
@@ -142,20 +144,9 @@ impl ComponentPreview {
                 load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx).await;
 
             if let Ok(thread_store) = thread_store_task.await {
-                let workspace = workspace_clone.clone();
-                let project = project_clone.clone();
-
                 entity
-                    .update(cx, move |this, cx| {
-                        let active_thread = static_active_thread(
-                            workspace,
-                            language_registry,
-                            thread_store,
-                            window,
-                            cx,
-                        );
-                        this.thread_store = Some(thread_store);
-                        this.active_thread = Some(active_thread);
+                    .update(cx, |this, _cx| {
+                        this.thread_store = Some(thread_store.clone());
                     })
                     .ok();
             }
@@ -205,6 +196,8 @@ impl ComponentPreview {
             active_thread: None,
         };
 
+        component_preview.create_active_thread(window, cx);
+
         if component_preview.cursor_index > 0 {
             component_preview.scroll_to_preview(component_preview.cursor_index, cx);
         }
@@ -217,10 +210,28 @@ impl ComponentPreview {
         Ok(component_preview)
     }
 
+    pub fn create_active_thread(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> &mut Self {
+        let workspace = self.workspace.clone();
+        let language_registry = self.language_registry.clone();
+        if let Some(thread_store) = self.thread_store.clone() {
+            let active_thread =
+                static_active_thread(workspace, language_registry, thread_store, window, cx);
+            self.active_thread = Some(active_thread);
+            cx.notify();
+        }
+
+        self
+    }
+
     pub fn active_page_id(&self, _cx: &App) -> ActivePageId {
         match &self.active_page {
             PreviewPage::AllComponents => ActivePageId::default(),
             PreviewPage::Component(component_id) => ActivePageId(component_id.0.to_string()),
+            PreviewPage::ActiveThread => ActivePageId("active_thread".to_string()),
         }
     }
 
@@ -334,6 +345,7 @@ impl ComponentPreview {
 
         // Always show all components first
         entries.push(PreviewEntry::AllComponents);
+        entries.push(PreviewEntry::ActiveThread);
         entries.push(PreviewEntry::Separator);
 
         let mut scopes: Vec<_> = scope_groups
@@ -434,6 +446,19 @@ impl ComponentPreview {
                     }))
                     .into_any_element()
             }
+            PreviewEntry::ActiveThread => {
+                let selected = self.active_page == PreviewPage::ActiveThread;
+
+                ListItem::new(ix)
+                    .child(Label::new("Active Thread").color(Color::Default))
+                    .selectable(true)
+                    .toggle_state(selected)
+                    .inset(true)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_active_page(PreviewPage::ActiveThread, cx);
+                    }))
+                    .into_any_element()
+            }
             PreviewEntry::Separator => ListItem::new(ix)
                 .child(
                     h_flex()
@@ -516,6 +541,7 @@ impl ComponentPreview {
                             .render_scope_header(ix, shared_string.clone(), window, cx)
                             .into_any_element(),
                         PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
+                        PreviewEntry::ActiveThread => div().w_full().h_0().into_any_element(),
                         PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
                     })
                     .unwrap()
@@ -640,6 +666,17 @@ impl ComponentPreview {
         }
     }
 
+    fn render_active_thread(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("render-active-thread")
+            .size_full()
+            .children(self.active_thread.clone().map(|thread| thread.clone()))
+            .when_none(&self.active_thread.clone(), |this| {
+                this.child("No active thread")
+            })
+            .into_any_element()
+    }
+
     fn test_status_toast(&self, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -749,6 +786,9 @@ impl Render for ComponentPreview {
                         PreviewPage::Component(id) => self
                             .render_component_page(&id, window, cx)
                             .into_any_element(),
+                        PreviewPage::ActiveThread => {
+                            self.render_active_thread(cx).into_any_element()
+                        }
                     }),
             )
     }
@@ -804,12 +844,14 @@ impl Item for ComponentPreview {
         let language_registry = self.language_registry.clone();
         let user_store = self.user_store.clone();
         let weak_workspace = self.workspace.clone();
+        let project = self.project.clone();
         let selected_index = self.cursor_index;
         let active_page = self.active_page.clone();
 
         Some(cx.new(|cx| {
             Self::new(
                 weak_workspace,
+                project,
                 language_registry,
                 user_store,
                 selected_index,
@@ -817,6 +859,7 @@ impl Item for ComponentPreview {
                 window,
                 cx,
             )
+            .expect("Failed to create new component preview")
         }))
     }
 
@@ -883,10 +926,12 @@ impl SerializableItem for ComponentPreview {
             let user_store = user_store.clone();
             let language_registry = language_registry.clone();
             let weak_workspace = workspace.clone();
+            let project = project.clone();
             cx.update(move |window, cx| {
                 Ok(cx.new(|cx| {
                     ComponentPreview::new(
                         weak_workspace,
+                        project,
                         language_registry,
                         user_store,
                         None,
@@ -894,6 +939,7 @@ impl SerializableItem for ComponentPreview {
                         window,
                         cx,
                     )
+                    .expect("Failed to create new component preview")
                 }))
             })?
         })
