@@ -478,9 +478,10 @@ impl AssistantPanel {
                                             .update(cx, |this, cx| {
                                                 this.history_store.update(
                                                     cx,
-                                                    |history_store, _cx| {
-                                                        history_store
-                                                            .remove_recently_opened_entry(&entry);
+                                                    |history_store, cx| {
+                                                        history_store.remove_recently_opened_entry(
+                                                            &entry, cx,
+                                                        );
                                                     },
                                                 );
                                             })

@@ -1,12 +1,13 @@
 use std::{collections::VecDeque, path::Path};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, anyhow};
 use assistant_context_editor::{AssistantContext, SavedContextMetadata};
 use chrono::{DateTime, Utc};
 use futures::future::{TryFutureExt as _, join_all};
 use gpui::{Entity, Task, prelude::*};
 use serde::{Deserialize, Serialize};
 use smol::future::FutureExt;
+use std::time::Duration;
 use ui::{App, SharedString};
 use util::ResultExt as _;
 
@@ -18,6 +19,7 @@ use crate::{
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
 const NAVIGATION_HISTORY_PATH: &str = "agent-navigation-history.json";
+const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
@@ -60,7 +62,7 @@ pub struct HistoryStore {
     context_store: Entity<assistant_context_editor::ContextStore>,
     recently_opened_entries: VecDeque<RecentEntry>,
     _subscriptions: Vec<gpui::Subscription>,
-    _save_recently_opened_entries_task: Task<Result<()>>,
+    _save_recently_opened_entries_task: Task<()>,
 }
 
 impl HistoryStore {
@@ -128,7 +130,7 @@ impl HistoryStore {
             context_store,
             recently_opened_entries: VecDeque::new(),
             _subscriptions: subscriptions,
-            _save_recently_opened_entries_task: Task::ready(Ok(())),
+            _save_recently_opened_entries_task: Task::ready(()),
         }
     }
 
@@ -159,12 +161,7 @@ impl HistoryStore {
         self.entries(cx).into_iter().take(limit).collect()
     }
 
-    pub fn push_recently_opened_entry(&mut self, entry: RecentEntry, cx: &mut Context<Self>) {
-        self.recently_opened_entries
-            .retain(|old_entry| old_entry != &entry);
-        self.recently_opened_entries.push_front(entry);
-        self.recently_opened_entries
-            .truncate(MAX_RECENTLY_OPENED_ENTRIES);
+    fn save_recently_opened_entries(&mut self, cx: &mut Context<Self>) {
         let serialized_entries = self
             .recently_opened_entries
             .iter()
@@ -178,17 +175,34 @@ impl HistoryStore {
             })
             .collect::<Vec<_>>();
 
-        self._save_recently_opened_entries_task = cx.background_spawn(async move {
-            let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
-            let content = serde_json::to_string(&serialized_entries)?;
-            std::fs::write(path, content)?;
-            anyhow::Ok(())
+        self._save_recently_opened_entries_task = cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE)
+                .await;
+            cx.background_spawn(async move {
+                let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
+                let content = serde_json::to_string(&serialized_entries)?;
+                std::fs::write(path, content)?;
+                anyhow::Ok(())
+            })
+            .await
+            .log_err();
         });
     }
 
-    pub fn remove_recently_opened_entry(&mut self, entry: &RecentEntry) {
+    pub fn push_recently_opened_entry(&mut self, entry: RecentEntry, cx: &mut Context<Self>) {
+        self.recently_opened_entries
+            .retain(|old_entry| old_entry != &entry);
+        self.recently_opened_entries.push_front(entry);
+        self.recently_opened_entries
+            .truncate(MAX_RECENTLY_OPENED_ENTRIES);
+        self.save_recently_opened_entries(cx);
+    }
+
+    pub fn remove_recently_opened_entry(&mut self, entry: &RecentEntry, cx: &mut Context<Self>) {
         self.recently_opened_entries
             .retain(|old_entry| old_entry != entry);
+        self.save_recently_opened_entries(cx);
     }
 
     pub fn recently_opened_entries(&self, _cx: &mut Context<Self>) -> VecDeque<RecentEntry> {
