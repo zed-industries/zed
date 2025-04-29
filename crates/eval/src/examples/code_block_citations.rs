@@ -34,7 +34,11 @@ impl Example for CodeBlockCitations {
         ));
 
         // Verify that the messages all have the correct formatting.
-        for mut text in cx.run_to_end().await?.texts() {
+        let texts: Vec<String> = cx.run_to_end().await?.texts().collect();
+
+        for text in texts.iter() {
+            let mut text = text.as_str();
+
             while let Some(index) = text.find(FENCE) {
                 // Advance text past the opening backticks.
                 text = &text[index + FENCE.len()..];
@@ -44,51 +48,98 @@ impl Example for CodeBlockCitations {
                 // Verify the citation format - e.g. ```path/to/foo.txt#L123-456
                 if let Some(citation_len) = text.find('\n') {
                     let citation = &text[..citation_len];
+                    dbg!(&citation);
 
-                    if let Ok(()) = cx.assert(
-                        citation.contains("/"),
-                        format!("{citation:?} contains a slash.",),
-                    ) {
+                    if let Some(content_len) = content_len {
+                        let content = &text[..content_len];
+                        dbg!(content);
+                    } else {
+                        dbg!("(no content after this citation)");
+                    }
+
+                    if let Ok(()) =
+                        cx.assert(citation.contains("/"), format!("Slash in {citation:?}",))
+                    {
                         let path_range = PathWithRange::new(citation);
-                        let path_exists = {
-                            let todo = (); // TODO look this up in the project.
-                            true
-                        };
+                        let path = cx
+                            .agent_thread()
+                            .update(cx, |thread, cx| {
+                                thread
+                                    .project()
+                                    .read(cx)
+                                    .find_project_path(path_range.path, cx)
+                            })
+                            .ok()
+                            .flatten();
 
-                        if let Ok(()) =
-                            cx.assert(path_exists, format!("{citation:?} has valid path"))
+                        if let Ok(path) = cx.assert_some(path, format!("Valid path: {citation:?}"))
                         {
-                            if let Some(content_len) = text.find(FENCE) {
-                                let content = &text[..content_len];
-                                let todo = (); // TODO verify that the file contents actually contain this content.
+                            let buffer_text = {
+                                let buffer = match cx.agent_thread().update(cx, |thread, cx| {
+                                    thread
+                                        .project()
+                                        .update(cx, |project, cx| project.open_buffer(path, cx))
+                                }) {
+                                    Ok(buffer_task) => buffer_task.await.ok(),
+                                    Err(err) => {
+                                        cx.assert(
+                                            false,
+                                            format!("Expected Ok(buffer), not {err:?}"),
+                                        )
+                                        .ok();
+                                        break;
+                                    }
+                                };
 
-                                // Advance past the closing backticks.
-                                text = &text[content_len..];
-                            } else {
-                                cx.assert(false, format!("Code block has closing {FENCE}"))
-                                    .ok();
-                            }
-
-                            let valid_line_range = {
-                                let todo = (); // TODO look this up in the project.
-                                true
+                                let Ok(buffer_text) = cx.assert_some(
+                                    buffer.and_then(|buffer| {
+                                        buffer.read_with(cx, |buffer, _| buffer.text()).ok()
+                                    }),
+                                    "Reading buffer text succeeded",
+                                ) else {
+                                    continue;
+                                };
+                                buffer_text
                             };
 
-                            if let Ok(()) = cx.assert(
-                                valid_line_range,
-                                format!("{citation:?} has valid line range in file."),
-                            ) {
-                                let diff = {
-                                    let todo = (); // TODO look this up in the project. Note that this requires looking up the closing ``` and getting what's in between there.
-                                    ""
-                                };
+                            if let Some(content_len) = content_len {
+                                let content = &text[citation.len()..content_len];
+
                                 cx.assert(
-                                    diff.is_empty(),
-                                    format!("{citation:?} snippet matches line range contents."),
+                                    buffer_text.contains(&content),
+                                    "Code block content was found in file",
                                 )
                                 .ok();
-                            } else {
-                                let todo = (); // TODO there was no valid line range (or no line range at all?) but we can still check if the file contained the snippet.
+
+                                if let Some(range) = path_range.range {
+                                    let start_line_index = range.start.line.saturating_sub(1);
+                                    let line_count =
+                                        range.end.line.saturating_sub(start_line_index);
+                                    let mut snippet = buffer_text
+                                        .lines()
+                                        .skip(start_line_index as usize)
+                                        .take(line_count as usize)
+                                        .collect::<Vec<&str>>()
+                                        .join("\n");
+
+                                    if let Some(start_col) = range.start.col {
+                                        snippet = snippet[start_col as usize..].to_string();
+                                    }
+
+                                    if let Some(end_col) = range.end.col {
+                                        let last_line = snippet.lines().last().unwrap();
+                                        snippet = snippet
+                                            [..snippet.len() - last_line.len() + end_col as usize]
+                                            .to_string();
+                                    }
+
+                                    cx.assert_eq(
+                                        snippet.as_str(),
+                                        content,
+                                        "Code block snippet was at specified line/col",
+                                    )
+                                    .ok();
+                                }
                             }
                         }
                     }
