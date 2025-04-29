@@ -38,7 +38,7 @@ pub fn fetch_cargo_diagnostics(
 ) -> Option<(Task<()>, Receiver<CargoCheckMessage>)> {
     let diagnostics_settings = ProjectSettings::get_global(cx)
         .diagnostics
-        .rust
+        .cargo
         .as_ref()
         .filter(|settings| settings.fetch_cargo_diagnostics)?;
     let command_string = diagnostics_settings

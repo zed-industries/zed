@@ -15,7 +15,8 @@ impl Render for ToolbarControls {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
-        let mut can_fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+        // TODO kb do not allow in non-cargo projects
+        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
             .diagnostics
             .fetch_cargo_diagnostics();
 
@@ -24,22 +25,14 @@ impl Render for ToolbarControls {
             include_warnings = diagnostics.include_warnings;
             has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
             is_updating = diagnostics.update_excerpts_task.is_some()
+                || diagnostics.cargo_diagnostics_task.is_some()
                 || diagnostics
                     .project
                     .read(cx)
                     .language_servers_running_disk_based_diagnostics(cx)
                     .next()
                     .is_some();
-            can_fetch_cargo_diagnostics &= diagnostics.cargo_diagnostics_task.is_none();
         }
-
-        let update_excerpts_tooltip = if can_fetch_cargo_diagnostics {
-            Some("Fetch cargo diagnostics")
-        } else if has_stale_excerpts {
-            Some("Update excerpts")
-        } else {
-            None
-        };
 
         let tooltip = if include_warnings {
             "Exclude Warnings"
@@ -55,25 +48,43 @@ impl Render for ToolbarControls {
 
         h_flex()
             .gap_1()
-            .when_some(update_excerpts_tooltip, |div, update_excerpts_tooltip| {
-                div.child(
-                    IconButton::new("update-excerpts", IconName::Update)
-                        .icon_color(Color::Info)
-                        .shape(IconButtonShape::Square)
-                        .disabled(is_updating)
-                        .tooltip(Tooltip::text(update_excerpts_tooltip))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if let Some(diagnostics) = this.diagnostics() {
-                                diagnostics.update(cx, |diagnostics, cx| {
-                                    if can_fetch_cargo_diagnostics {
-                                        diagnostics.fetch_cargo_diagnostics(window, cx);
-                                    } else {
-                                        diagnostics.update_all_excerpts(window, cx);
-                                    }
-                                });
-                            }
-                        })),
-                )
+            .map(|div| {
+                if is_updating {
+                    div.child(
+                        IconButton::new("stop-updating", IconName::StopFilled)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            // TODO kb for cargo update case, show completion percentage
+                            .tooltip(Tooltip::text("Stop diagnostics update"))
+                            .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
+                                if let Some(diagnostics) = toolbar_controls.diagnostics() {
+                                    diagnostics.update(cx, |diagnostics, _| {
+                                        diagnostics.cargo_diagnostics_task = None;
+                                        diagnostics.update_excerpts_task = None;
+                                    });
+                                }
+                            })),
+                    )
+                } else {
+                    div.child(
+                        IconButton::new("refresh-diagnostics", IconName::Update)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .disabled(!has_stale_excerpts && !fetch_cargo_diagnostics)
+                            .tooltip(Tooltip::text("Refresh diagnostics"))
+                            .on_click(cx.listener(move |toolbar_controls, _, window, cx| {
+                                if let Some(diagnostics) = toolbar_controls.diagnostics() {
+                                    diagnostics.update(cx, |diagnostics, cx| {
+                                        if fetch_cargo_diagnostics {
+                                            diagnostics.fetch_cargo_diagnostics(window, cx);
+                                        } else {
+                                            diagnostics.update_all_excerpts(window, cx);
+                                        }
+                                    });
+                                }
+                            })),
+                    )
+                }
             })
             .child(
                 IconButton::new("toggle-warnings", IconName::Warning)

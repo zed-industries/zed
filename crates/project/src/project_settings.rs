@@ -111,12 +111,12 @@ pub struct DiagnosticsSettings {
 
     /// Configuration, related to Rust language diagnostics.
     #[serde(default)]
-    pub rust: Option<RustDiagnosticsSettings>,
+    pub cargo: Option<CargoDiagnosticsSettings>,
 }
 
 impl DiagnosticsSettings {
     pub fn fetch_cargo_diagnostics(&self) -> bool {
-        self.rust
+        self.cargo
             .as_ref()
             .map_or(false, |rust| rust.fetch_cargo_diagnostics)
     }
@@ -154,7 +154,7 @@ pub struct InlineDiagnosticsSettings {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct RustDiagnosticsSettings {
+pub struct CargoDiagnosticsSettings {
     /// When enabled, Zed runs `cargo check --message-format=json`-based commands and
     /// collect cargo diagnostics instead of rust-analyzer.
     ///

@@ -1,5 +1,5 @@
+mod cargo;
 pub mod items;
-mod rust;
 mod toolbar_controls;
 
 mod diagnostic_renderer;
