@@ -223,12 +223,12 @@ To use these text objects, you need to add bindings to your keymap. Here's an ex
   "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
   "bindings": {
     // Traditional Vim behavior
-    "q": ["vim::PushTextObject", {"text_object": "anyquote"}],
-    "b": ["vim::PushTextObject", {"text_object": "anybracket"}],
+    "q": "vim::AnyQuotes",
+    "b": "vim::AnyBrackets",
 
     // mini.ai plugin behavior
-    "Q": ["vim::PushTextObject", {"text_object": "miniquote"}],
-    "B": ["vim::PushTextObject", {"text_object": "minibracket"}]
+    "Q": "vim::MiniQuotes",
+    "B": "vim::MiniBrackets"
   }
 }
 ```
