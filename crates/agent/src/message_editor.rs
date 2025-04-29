@@ -1138,14 +1138,14 @@ impl MessageEditor {
                 Some(0)
             };
 
-            if let Some(token_count) = token_count {
-                this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
+                if let Some(token_count) = token_count {
                     this.last_estimated_token_count = Some(token_count);
                     cx.emit(MessageEditorEvent::EstimatedTokenCount);
-                    this.update_token_count_task.take();
-                })
-                .ok();
-            }
+                }
+                this.update_token_count_task.take();
+            })
+            .ok();
         }));
     }
 }
