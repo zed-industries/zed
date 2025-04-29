@@ -29,6 +29,7 @@ jobs:
             sysctl hw.ncpu
             sysctl hw.physmem
             sysctl hw.usermem
+            git config --global --add safe.directory /home/runner/work/zed/zed
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             ./script/bundle-freebsd
