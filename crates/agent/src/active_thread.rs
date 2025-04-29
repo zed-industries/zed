@@ -349,23 +349,26 @@ fn render_markdown_code_block(
         ),
         CodeBlockKind::FencedLang(raw_language_name) => Some(render_code_language(
             parsed_markdown.languages_by_name.get(raw_language_name),
-            || raw_language_name.into(),
+            raw_language_name.clone(),
             cx,
         )),
         CodeBlockKind::FencedSrc(path_range) => path_range.path.file_name().map(|file_name| {
             // We tell the model to use /dev/null for the path instead of using ```language
             // because otherwise it consistently fails to use code citations.
             if path_range.path.starts_with("/dev/null") {
+                let ext = path_range
+                    .path
+                    .extension()
+                    .and_then(OsStr::to_str)
+                    .map(|str| SharedString::new(str.to_string()))
+                    .unwrap_or_default();
+
                 render_code_language(
-                    parsed_markdown.languages_by_path.get(&path_range.path),
-                    || {
-                        path_range
-                            .path
-                            .extension()
-                            .and_then(OsStr::to_str)
-                            .map(|str| SharedString::new(str.to_string()))
-                            .unwrap_or_default()
-                    },
+                    parsed_markdown
+                        .languages_by_path
+                        .get(&path_range.path)
+                        .or_else(|| parsed_markdown.languages_by_name.get(&ext)),
+                    ext,
                     cx,
                 )
             } else {
@@ -604,7 +607,7 @@ fn render_markdown_code_block(
 
 fn render_code_language(
     language: Option<&Arc<Language>>,
-    name_fallback: impl FnOnce() -> SharedString,
+    name_fallback: SharedString,
     cx: &App,
 ) -> AnyElement {
     let icon_path = language.and_then(|language| {
@@ -619,7 +622,7 @@ fn render_code_language(
 
     let language_label = language
         .map(|language| language.name().into())
-        .unwrap_or_else(name_fallback);
+        .unwrap_or(name_fallback);
 
     h_flex()
         .gap_1()
