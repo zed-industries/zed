@@ -26,7 +26,6 @@ use project::Project;
 use ui::{Divider, HighlightedLabel, ListItem, ListSubHeader, prelude::*};
 
 use ui_input::SingleLineInput;
-use util::ResultExt;
 use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
@@ -139,19 +138,25 @@ impl ComponentPreview {
         let workspace_clone = workspace.clone();
         let project_clone = project.clone();
 
-        cx.spawn(async move |entity, cx| {
-            let thread_store_task =
-                load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx).await;
+        let entity = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                let thread_store_task =
+                    load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx)
+                        .await;
 
-            if let Ok(thread_store) = thread_store_task.await {
-                entity
-                    .update(cx, |this, _cx| {
-                        this.thread_store = Some(thread_store.clone());
-                    })
-                    .ok();
-            }
-        })
-        .detach();
+                if let Ok(thread_store) = dbg!(thread_store_task.await) {
+                    entity
+                        .update_in(cx, |this, window, cx| {
+                            this.thread_store = Some(thread_store.clone());
+                            this.create_active_thread(window, cx);
+
+                            cx.notify();
+                        })
+                        .ok();
+                }
+            })
+            .detach();
 
         let sorted_components = components().all_sorted();
         let selected_index = selected_index.into().unwrap_or(0);
@@ -196,8 +201,6 @@ impl ComponentPreview {
             active_thread: None,
         };
 
-        component_preview.create_active_thread(window, cx);
-
         if component_preview.cursor_index > 0 {
             component_preview.scroll_to_preview(component_preview.cursor_index, cx);
         }
@@ -207,6 +210,8 @@ impl ComponentPreview {
         let focus_handle = component_preview.filter_editor.read(cx).focus_handle(cx);
         window.focus(&focus_handle);
 
+        dbg!(component_preview.thread_store.clone());
+
         Ok(component_preview)
     }
 
@@ -215,6 +220,7 @@ impl ComponentPreview {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> &mut Self {
+        println!("Creating active thread");
         let workspace = self.workspace.clone();
         let language_registry = self.language_registry.clone();
         if let Some(thread_store) = self.thread_store.clone() {
@@ -223,6 +229,8 @@ impl ComponentPreview {
             self.active_thread = Some(active_thread);
             cx.notify();
         }
+
+        dbg!(self.active_thread.clone());
 
         self
     }
@@ -666,7 +674,9 @@ impl ComponentPreview {
         }
     }
 
-    fn render_active_thread(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_active_thread(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        dbg!(&self.active_thread);
+
         v_flex()
             .id("render-active-thread")
             .size_full()
