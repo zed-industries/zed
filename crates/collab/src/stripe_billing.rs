@@ -500,6 +500,14 @@ impl StripeBilling {
 
         let trial_period_days = if eligible_for_extended_trial { 60 } else { 14 };
 
+        let mut subscription_metadata = std::collections::HashMap::new();
+        if eligible_for_extended_trial {
+            subscription_metadata.insert(
+                "promo_feature_flag".to_string(),
+                AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string(),
+            );
+        }
+
         let mut params = stripe::CreateCheckoutSession::new();
         params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
             trial_period_days: Some(trial_period_days),
@@ -508,6 +516,11 @@ impl StripeBilling {
                     missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
                 }
             }),
+            metadata: if !subscription_metadata.is_empty() {
+                Some(subscription_metadata)
+            } else {
+                None
+            },
             ..Default::default()
         });
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);
@@ -520,12 +533,6 @@ impl StripeBilling {
             quantity: Some(1),
             ..Default::default()
         }]);
-        if eligible_for_extended_trial {
-            params.metadata = Some(std::collections::HashMap::from_iter([(
-                "promo_feature_flag".to_string(),
-                AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string(),
-            )]));
-        }
         params.success_url = Some(success_url);
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
