@@ -25,7 +25,9 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 
-use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
+use project::{
+    DiagnosticSummary, Project, ProjectPath, Worktree, project_settings::ProjectSettings,
+};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -249,9 +251,10 @@ impl ProjectDiagnosticsEditor {
                 .timer(DIAGNOSTICS_UPDATE_DELAY)
                 .await;
             loop {
-                let Some(path) = this.update(cx, |this, _| {
+                let Some(path) = this.update(cx, |this, cx| {
                     let Some(path) = this.paths_to_update.pop_first() else {
                         this.update_excerpts_task.take();
+                        cx.notify();
                         return None;
                     };
                     Some(path)
@@ -324,10 +327,22 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn fetch_cargo_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn fetch_cargo_diagnostics(
+        &mut self,
+        diagnostics_sources: &[Entity<Worktree>],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.cargo_diagnostics_task =
             Some(cx.spawn(async move |project_diagnostics_editor, cx| {
                 // TODO kb
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                project_diagnostics_editor
+                    .update(cx, |project_diagnostics_editor, cx| {
+                        project_diagnostics_editor.cargo_diagnostics_task = None;
+                        cx.notify();
+                    })
+                    .ok();
                 // diagnostics.update_all_excerpts(window, cx);
             }));
     }

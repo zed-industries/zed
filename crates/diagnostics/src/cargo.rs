@@ -1,8 +1,8 @@
 use std::{path::Path, process::Stdio, sync::Arc};
 
-use gpui::{AppContext, Task};
+use gpui::{AppContext, Entity, Task};
 use itertools::Itertools as _;
-use project::project_settings::ProjectSettings;
+use project::{Worktree, project_settings::ProjectSettings};
 use serde::Deserialize as _;
 use settings::Settings;
 use smol::{
@@ -14,6 +14,8 @@ use ui::App;
 use util::ResultExt;
 
 use cargo_metadata::{Artifact, Message, PackageId, diagnostic::Diagnostic};
+
+use crate::ProjectDiagnosticsEditor;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
@@ -32,8 +34,27 @@ pub enum CargoCheckMessage {
     },
 }
 
-pub fn fetch_cargo_diagnostics(
-    cwd: &Path,
+pub fn worktrees_for_diagnostics_fetch(
+    editor: Entity<ProjectDiagnosticsEditor>,
+    cx: &App,
+) -> Vec<Entity<Worktree>> {
+    let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+        .diagnostics
+        .fetch_cargo_diagnostics();
+    if !fetch_cargo_diagnostics {
+        return Vec::new();
+    }
+    editor
+        .read(cx)
+        .project
+        .read(cx)
+        .worktrees(cx)
+        .filter(|worktree| worktree.read(cx).entry_for_path("Cargo.toml").is_some())
+        .collect()
+}
+
+pub fn fetch_worktree_diagnostics(
+    worktree_root: &Path,
     cx: &App,
 ) -> Option<(Task<()>, Receiver<CargoCheckMessage>)> {
     let diagnostics_settings = ProjectSettings::get_global(cx)
@@ -49,7 +70,7 @@ pub fn fetch_cargo_diagnostics(
     let mut command = Command::new(command_parts.next()?)
         .args(command_parts)
         .envs(diagnostics_settings.env.clone())
-        .current_dir(cwd)
+        .current_dir(worktree_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

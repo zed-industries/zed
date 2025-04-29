@@ -1,4 +1,5 @@
 use crate::ProjectDiagnosticsEditor;
+use crate::cargo::worktrees_for_diagnostics_fetch;
 use gpui::{Context, Entity, EventEmitter, ParentElement, Render, WeakEntity, Window};
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;
@@ -15,10 +16,10 @@ impl Render for ToolbarControls {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
-        // TODO kb do not allow in non-cargo projects
-        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
+        let cargo_diagnostics_sources = self
+            .diagnostics()
+            .map(|editor| worktrees_for_diagnostics_fetch(editor, cx))
+            .unwrap_or_default();
 
         if let Some(editor) = self.diagnostics() {
             let diagnostics = editor.read(cx);
@@ -54,13 +55,13 @@ impl Render for ToolbarControls {
                         IconButton::new("stop-updating", IconName::StopFilled)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            // TODO kb for cargo update case, show completion percentage
                             .tooltip(Tooltip::text("Stop diagnostics update"))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
                                 if let Some(diagnostics) = toolbar_controls.diagnostics() {
-                                    diagnostics.update(cx, |diagnostics, _| {
+                                    diagnostics.update(cx, |diagnostics, cx| {
                                         diagnostics.cargo_diagnostics_task = None;
                                         diagnostics.update_excerpts_task = None;
+                                        cx.notify();
                                     });
                                 }
                             })),
@@ -70,15 +71,19 @@ impl Render for ToolbarControls {
                         IconButton::new("refresh-diagnostics", IconName::Update)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .disabled(!has_stale_excerpts && !fetch_cargo_diagnostics)
+                            .disabled(!has_stale_excerpts && cargo_diagnostics_sources.is_empty())
                             .tooltip(Tooltip::text("Refresh diagnostics"))
                             .on_click(cx.listener(move |toolbar_controls, _, window, cx| {
                                 if let Some(diagnostics) = toolbar_controls.diagnostics() {
                                     diagnostics.update(cx, |diagnostics, cx| {
-                                        if fetch_cargo_diagnostics {
-                                            diagnostics.fetch_cargo_diagnostics(window, cx);
-                                        } else {
+                                        if cargo_diagnostics_sources.is_empty() {
                                             diagnostics.update_all_excerpts(window, cx);
+                                        } else {
+                                            diagnostics.fetch_cargo_diagnostics(
+                                                &cargo_diagnostics_sources,
+                                                window,
+                                                cx,
+                                            );
                                         }
                                     });
                                 }
