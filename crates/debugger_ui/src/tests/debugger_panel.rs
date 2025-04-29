@@ -523,8 +523,8 @@ async fn test_handle_error_run_in_terminal_reverse_request(
         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
             kind: None,
             title: None,
-            cwd: "/non-existing/path".into(), // invalid/non-existing path will cause the terminal spawn to fail
-            args: vec![],
+            cwd: "".into(),
+            args: vec!["oops".into(), "oops".into()],
             env: None,
             args_can_be_interpreted_by_shell: None,
         })
