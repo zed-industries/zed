@@ -443,7 +443,7 @@ impl AssistantPanel {
                                 };
                                 history_store.recently_opened_entries(
                                     6,
-                                    |entry| Some(&entry.id) != active_entry_id.as_ref(),
+                                    |entry| /* Some(&entry.id) != active_entry_id.as_ref() */ true,
                                     cx,
                                 )
                             })
@@ -505,6 +505,7 @@ impl AssistantPanel {
                     menu.separator()
                         .action("View All", Box::new(OpenHistory))
                         .keep_open_on_confirm(false)
+                        .fixed_width(rems(24.))
                 });
             weak_panel
                 .update(cx, |panel, _| {
@@ -1037,12 +1038,12 @@ impl AssistantPanel {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
 
-        match &self.active_view {
+        match &new_view {
             ActiveView::Thread { .. } => self.history_store.update(cx, |store, cx| {
                 let active_thread = self.active_thread(cx).read(cx);
-                if active_thread.is_empty() {
-                    return;
-                }
+                // if active_thread.is_empty() {
+                //     return;
+                // }
 
                 let thread_id = active_thread.id();
                 let summary = active_thread.summary_or_default();
@@ -1311,57 +1312,21 @@ impl AssistantPanel {
                     }
                 },
             )
-            .anchor(Corner::TopRight)
+            .anchor(Corner::TopLeft)
             .with_handle(self.assistant_navigation_menu_handle.clone())
             .menu({
                 let this = cx.entity();
-                move |_window, cx| {
-                    this.update(cx, |this, _| this.assistant_navigation_menu.clone())
-                    //Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                    //    if recently_opened.is_empty() {
-                    //        return menu.action("View All", Box::new(OpenHistory));
-                    //    }
-                    //    let mut menu = menu.header("Recently Opened");
-                    //    for entry in recently_opened.iter() {
-                    //        menu = menu.entry_with_end_slot(
-                    //            &entry.title,
-                    //            None,
-                    //            {
-                    //                let this = this.clone();
-                    //                let entry = entry.clone();
-                    //                move |window, cx| {
-                    //                    this.update(cx, {
-                    //                        let entry = entry.clone();
-                    //                        move |this, cx| match entry.id {
-                    //                            RecentEntryId::Thread(thread_id) => this
-                    //                                .open_thread(&thread_id, window, cx)
-                    //                                .detach_and_log_err(cx),
-                    //                            RecentEntryId::Context(path) => this
-                    //                                .open_saved_prompt_editor(path, window, cx)
-                    //                                .detach_and_log_err(cx),
-                    //                        }
-                    //                    })
-                    //                }
-                    //            },
-                    //            IconName::Close,
-                    //            "Close Entry".into(),
-                    //            DeleteRecentlyOpenThread.boxed_clone(),
-                    //            {
-                    //                let this = this.clone();
-                    //                let entry = entry.clone();
-                    //                move |_window, cx| {
-                    //                    this.update(cx, |this, cx| {
-                    //                        this.history_store.update(cx, |history_store, _| {
-                    //                            history_store
-                    //                                .remove_recently_opened_entry(entry.id.clone());
-                    //                        });
-                    //                    });
-                    //                }
-                    //            },
-                    //        );
-                    //    }
-                    //    menu.separator().action("View All", Box::new(OpenHistory))
-                    //}))
+                move |window, cx| {
+                    this.update(cx, |this, cx| {
+                        if let Some(menu) = this.assistant_navigation_menu.as_ref() {
+                            menu.update(cx, |_, cx| {
+                                cx.defer_in(window, |menu, window, cx| {
+                                    menu.rebuild(window, cx);
+                                });
+                            })
+                        }
+                        this.assistant_navigation_menu.clone()
+                    })
                 }
             });
 

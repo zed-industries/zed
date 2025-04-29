@@ -147,6 +147,7 @@ pub struct ContextMenu {
     keep_open_on_confirm: bool,
     eager: bool,
     documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
+    fixed_width: Option<gpui::Length>,
 }
 
 impl Focusable for ContextMenu {
@@ -186,6 +187,7 @@ impl ContextMenu {
                     keep_open_on_confirm: false,
                     eager: false,
                     documentation_aside: None,
+                    fixed_width: None,
                 },
                 window,
                 cx,
@@ -226,6 +228,7 @@ impl ContextMenu {
                     keep_open_on_confirm: true,
                     eager: false,
                     documentation_aside: None,
+                    fixed_width: None,
                 },
                 window,
                 cx,
@@ -259,6 +262,7 @@ impl ContextMenu {
                     keep_open_on_confirm: false,
                     eager: true,
                     documentation_aside: None,
+                    fixed_width: None,
                 },
                 window,
                 cx,
@@ -273,7 +277,7 @@ impl ContextMenu {
     ///
     /// This only works if the [`ContextMenu`] was constructed using [`ContextMenu::build_persistent`]. Otherwise it is
     /// a no-op.
-    fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(builder) = self.builder.clone() else {
             return;
         };
@@ -297,6 +301,7 @@ impl ContextMenu {
                 keep_open_on_confirm: false,
                 eager: false,
                 documentation_aside: None,
+                fixed_width: None,
             },
             window,
             cx,
@@ -519,6 +524,11 @@ impl ContextMenu {
 
     pub fn keep_open_on_confirm(mut self, keep_open: bool) -> Self {
         self.keep_open_on_confirm = keep_open;
+        self
+    }
+
+    pub fn fixed_width(mut self, width: impl Into<gpui::Length>) -> Self {
+        self.fixed_width = Some(width.into());
         self
     }
 
@@ -797,7 +807,7 @@ impl ContextMenu {
                     *icon_position == IconPosition::Start && toggle.is_none(),
                     |flex| flex.child(Icon::new(*icon_name).size(*icon_size).color(icon_color)),
                 )
-                .child(Label::new(label.clone()).color(label_color))
+                .child(Label::new(label.clone()).color(label_color).truncate())
                 .when(*icon_position == IconPosition::End, |flex| {
                     flex.child(Icon::new(*icon_name).size(*icon_size).color(icon_color))
                 })
@@ -805,6 +815,7 @@ impl ContextMenu {
         } else {
             Label::new(label.clone())
                 .color(label_color)
+                .truncate()
                 .into_any_element()
         };
 
@@ -1001,7 +1012,13 @@ impl Render for ContextMenu {
                     .child(
                         v_flex()
                             .id("context-menu")
-                            .min_w(px(200.))
+                            .map(|this| {
+                                if let Some(width) = self.fixed_width {
+                                    this.w(dbg!(width))
+                                } else {
+                                    this.min_w(px(200.))
+                                }
+                            })
                             .max_h(vh(0.75, window))
                             .flex_1()
                             .overflow_y_scroll()
