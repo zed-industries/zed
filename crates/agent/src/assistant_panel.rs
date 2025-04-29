@@ -41,7 +41,7 @@ use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
-use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry, RecentEntryId};
+use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
@@ -121,8 +121,6 @@ pub fn init(cx: &mut App) {
 
 enum ActiveView {
     Thread {
-        id: ThreadId,
-        summary: SharedString,
         change_title_editor: Entity<Editor>,
         _subscriptions: Vec<gpui::Subscription>,
     },
@@ -137,7 +135,6 @@ enum ActiveView {
 
 impl ActiveView {
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
-        let id = thread.read(cx).id().clone();
         let summary = thread.read(cx).summary_or_default();
 
         let editor = cx.new(|cx| {
@@ -187,8 +184,6 @@ impl ActiveView {
         ];
 
         Self::Thread {
-            id,
-            summary,
             change_title_editor: editor,
             _subscriptions: subscriptions,
         }
@@ -441,8 +436,9 @@ impl AssistantPanel {
                     if !recently_opened.is_empty() {
                         menu = menu.header("Recently Opened");
                         for entry in recently_opened.iter() {
+                            let summary = entry.summary(cx);
                             menu = menu.entry_with_end_slot(
-                                &entry.title,
+                                summary,
                                 None,
                                 {
                                     let panel = panel.clone();
@@ -451,13 +447,22 @@ impl AssistantPanel {
                                         panel
                                             .update(cx, {
                                                 let entry = entry.clone();
-                                                move |this, cx| match entry.id {
-                                                    RecentEntryId::Thread(thread_id) => this
-                                                        .open_thread(&thread_id, window, cx)
-                                                        .detach_and_log_err(cx),
-                                                    RecentEntryId::Context(path) => this
-                                                        .open_saved_prompt_editor(path, window, cx)
-                                                        .detach_and_log_err(cx),
+                                                move |this, cx| match entry {
+                                                    RecentEntry::Thread(thread) => {
+                                                        this.open_thread(thread, window, cx)
+                                                    }
+                                                    RecentEntry::Context(context) => {
+                                                        let Some(path) = context.read(cx).path()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        this.open_saved_prompt_editor(
+                                                            path.clone(),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx)
+                                                    }
                                                 }
                                             })
                                             .ok();
@@ -474,9 +479,8 @@ impl AssistantPanel {
                                                 this.history_store.update(
                                                     cx,
                                                     |history_store, _cx| {
-                                                        history_store.remove_recently_opened_entry(
-                                                            entry.id.clone(),
-                                                        );
+                                                        history_store
+                                                            .remove_recently_opened_entry(&entry);
                                                     },
                                                 );
                                             })
@@ -790,7 +794,7 @@ impl AssistantPanel {
         })
     }
 
-    pub(crate) fn open_thread(
+    pub(crate) fn open_thread_by_id(
         &mut self,
         thread_id: &ThreadId,
         window: &mut Window,
@@ -799,71 +803,81 @@ impl AssistantPanel {
         let open_thread_task = self
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx));
-
         cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let thread_view = ActiveView::thread(thread.clone(), window, cx);
-                this.set_active_view(thread_view, window, cx);
-                let message_editor_context_store = cx.new(|_cx| {
-                    crate::context_store::ContextStore::new(
-                        this.project.downgrade(),
-                        Some(this.thread_store.downgrade()),
-                    )
-                });
-                let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
-                    if let ThreadEvent::MessageAdded(_) = &event {
-                        // needed to leave empty state
-                        cx.notify();
-                    }
-                });
-
-                this.thread = cx.new(|cx| {
-                    ActiveThread::new(
-                        thread.clone(),
-                        this.thread_store.clone(),
-                        this.language_registry.clone(),
-                        this.workspace.clone(),
-                        window,
-                        cx,
-                    )
-                });
-
-                let active_thread_subscription =
-                    cx.subscribe(&this.thread, |_, _, event, cx| match &event {
-                        ActiveThreadEvent::EditingMessageTokenCountChanged => {
-                            cx.notify();
-                        }
-                    });
-
-                this.message_editor = cx.new(|cx| {
-                    MessageEditor::new(
-                        this.fs.clone(),
-                        this.workspace.clone(),
-                        message_editor_context_store,
-                        this.prompt_store.clone(),
-                        this.thread_store.downgrade(),
-                        thread,
-                        window,
-                        cx,
-                    )
-                });
-                this.message_editor.focus_handle(cx).focus(window);
-
-                let message_editor_subscription =
-                    cx.subscribe(&this.message_editor, |_, _, event, cx| match event {
-                        MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
-                            cx.notify();
-                        }
-                    });
-
-                this._active_thread_subscriptions = vec![
-                    thread_subscription,
-                    active_thread_subscription,
-                    message_editor_subscription,
-                ];
-            })
+                this.open_thread(thread, window, cx);
+                anyhow::Ok(())
+            })??;
+            Ok(())
         })
+    }
+
+    pub(crate) fn open_thread(
+        &mut self,
+        thread: Entity<Thread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread_view = ActiveView::thread(thread.clone(), window, cx);
+        self.set_active_view(thread_view, window, cx);
+        let message_editor_context_store = cx.new(|_cx| {
+            crate::context_store::ContextStore::new(
+                self.project.downgrade(),
+                Some(self.thread_store.downgrade()),
+            )
+        });
+        let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
+            if let ThreadEvent::MessageAdded(_) = &event {
+                // needed to leave empty state
+                cx.notify();
+            }
+        });
+
+        self.thread = cx.new(|cx| {
+            ActiveThread::new(
+                thread.clone(),
+                self.thread_store.clone(),
+                self.language_registry.clone(),
+                self.workspace.clone(),
+                window,
+                cx,
+            )
+        });
+
+        let active_thread_subscription =
+            cx.subscribe(&self.thread, |_, _, event, cx| match &event {
+                ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                    cx.notify();
+                }
+            });
+
+        self.message_editor = cx.new(|cx| {
+            MessageEditor::new(
+                self.fs.clone(),
+                self.workspace.clone(),
+                message_editor_context_store,
+                self.prompt_store.clone(),
+                self.thread_store.downgrade(),
+                thread,
+                window,
+                cx,
+            )
+        });
+        self.message_editor.focus_handle(cx).focus(window);
+
+        let message_editor_subscription =
+            cx.subscribe(&self.message_editor, |_, _, event, cx| match event {
+                MessageEditorEvent::Changed | MessageEditorEvent::EstimatedTokenCount => {
+                    cx.notify();
+                }
+            });
+
+        self._active_thread_subscriptions = vec![
+            thread_subscription,
+            active_thread_subscription,
+            message_editor_subscription,
+        ];
     }
 
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
@@ -1051,38 +1065,19 @@ impl AssistantPanel {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
 
-        match &new_view {
-            ActiveView::Thread { id, summary, .. } => self.history_store.update(cx, |store, cx| {
-                //let active_thread = self.active_thread(cx).read(cx);
-                // if active_thread.is_empty() {
-                //     return;
-                // }
+        match &self.active_view {
+            ActiveView::Thread { .. } => self.history_store.update(cx, |store, cx| {
+                let active_thread = self.active_thread(cx);
+                if active_thread.read(cx).is_empty() {
+                    return;
+                }
 
-                // let thread_id = active_thread.id();
-                // let summary = active_thread.summary_or_default();
-
-                store.push_recently_opened_entry(
-                    RecentEntry {
-                        id: RecentEntryId::Thread(id.clone()),
-                        title: summary.clone(),
-                    },
-                    cx,
-                );
+                store.push_recently_opened_entry(RecentEntry::Thread(active_thread), cx);
             }),
             ActiveView::PromptEditor { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
-                    let context = context_editor.read(cx).context().read(cx);
-                    if let Some(path) = context.path() {
-                        let summary = context.summary_or_default();
-
-                        store.push_recently_opened_entry(
-                            RecentEntry {
-                                id: RecentEntryId::Context(path.into()),
-                                title: summary,
-                            },
-                            cx,
-                        )
-                    }
+                    let context = context_editor.read(cx).context().clone();
+                    store.push_recently_opened_entry(RecentEntry::Context(context), cx)
                 })
             }
             _ => {}

@@ -46,7 +46,7 @@ use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
-#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
 
 impl ContextId {
@@ -1147,8 +1147,8 @@ impl AssistantContext {
         self.prompt_builder.clone()
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        self.path.as_ref()
     }
 
     pub fn summary(&self) -> Option<&ContextSummary> {

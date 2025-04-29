@@ -504,7 +504,7 @@ impl ContextStore {
     fn loaded_context_for_path(&self, path: &Path, cx: &App) -> Option<Entity<AssistantContext>> {
         self.contexts.iter().find_map(|context| {
             let context = context.upgrade()?;
-            if context.read(cx).path() == Some(path) {
+            if context.read(cx).path().map(Arc::as_ref) == Some(path) {
                 Some(context)
             } else {
                 None

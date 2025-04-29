@@ -270,9 +270,9 @@ impl ThreadHistory {
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.get_match(self.selected_index) {
             let task_result = match entry {
-                HistoryEntry::Thread(thread) => self
-                    .assistant_panel
-                    .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx)),
+                HistoryEntry::Thread(thread) => self.assistant_panel.update(cx, move |this, cx| {
+                    this.open_thread_by_id(&thread.id, window, cx)
+                }),
                 HistoryEntry::Context(context) => {
                     self.assistant_panel.update(cx, move |this, cx| {
                         this.open_saved_prompt_editor(context.path.clone(), window, cx)
@@ -525,7 +525,8 @@ impl RenderOnce for PastThread {
                 move |_event, window, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
-                            this.open_thread(&id, window, cx).detach_and_log_err(cx);
+                            this.open_thread_by_id(&id, window, cx)
+                                .detach_and_log_err(cx);
                         })
                         .ok();
                 }

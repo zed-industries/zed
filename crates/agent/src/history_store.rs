@@ -1,12 +1,10 @@
-use std::{path::Path, sync::Arc};
-
-use assistant_context_editor::SavedContextMetadata;
+use assistant_context_editor::{AssistantContext, SavedContextMetadata};
 use chrono::{DateTime, Utc};
 use gpui::{Entity, prelude::*};
-use ui::SharedString;
+use ui::{App, SharedString};
 
 use crate::{
-    thread::ThreadId,
+    Thread,
     thread_store::{SerializedThreadMetadata, ThreadStore},
 };
 
@@ -26,15 +24,18 @@ impl HistoryEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RecentEntryId {
-    Thread(ThreadId),
-    Context(Arc<Path>),
+pub(crate) enum RecentEntry {
+    Thread(Entity<Thread>),
+    Context(Entity<AssistantContext>),
 }
 
-#[derive(Clone, Debug)]
-pub struct RecentEntry {
-    pub id: RecentEntryId,
-    pub title: SharedString,
+impl RecentEntry {
+    pub(crate) fn summary(&self, cx: &App) -> SharedString {
+        match self {
+            RecentEntry::Thread(thread) => thread.read(cx).summary_or_default(),
+            RecentEntry::Context(context) => context.read(cx).summary_or_default(),
+        }
+    }
 }
 
 pub struct HistoryStore {
@@ -55,28 +56,10 @@ impl HistoryStore {
             cx.observe(&context_store, |_, _, cx| cx.notify()),
         ];
 
-        let recently_opened_entries = {
-            let mut entries = Vec::new();
-            for thread in thread_store.update(cx, |this, _cx| this.reverse_chronological_threads())
-            {
-                entries.push(RecentEntry {
-                    id: RecentEntryId::Thread(thread.id),
-                    title: thread.summary.clone(),
-                });
-            }
-            for context in context_store.update(cx, |this, _cx| this.contexts()) {
-                entries.push(RecentEntry {
-                    id: RecentEntryId::Context(context.path),
-                    title: context.title.into(),
-                });
-            }
-            entries
-        };
-
         Self {
             thread_store,
             context_store,
-            recently_opened_entries,
+            recently_opened_entries: vec![],
             _subscriptions: subscriptions,
         }
     }
@@ -110,13 +93,13 @@ impl HistoryStore {
 
     pub fn push_recently_opened_entry(&mut self, entry: RecentEntry, _cx: &mut Context<Self>) {
         self.recently_opened_entries
-            .retain(|old_entry| old_entry.id != entry.id);
+            .retain(|old_entry| old_entry != &entry);
         self.recently_opened_entries.push(entry);
     }
 
-    pub fn remove_recently_opened_entry(&mut self, id: RecentEntryId) {
+    pub fn remove_recently_opened_entry(&mut self, entry: &RecentEntry) {
         self.recently_opened_entries
-            .retain(|old_entry| old_entry.id != id);
+            .retain(|old_entry| old_entry != entry);
     }
 
     pub fn recently_opened_entries(
