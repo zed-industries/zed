@@ -87,7 +87,9 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
 struct ConfigureContextServer {
     id: Arc<str>,
     installation_instructions: SharedString,
+    settings_validator: Option<jsonschema::Validator>,
     settings_editor: Entity<Editor>,
+    last_error: Option<SharedString>,
 }
 
 struct ConfigureContextServerModal {
@@ -106,9 +108,13 @@ impl ConfigureContextServerModal {
         let context_servers_to_setup = configurations
             .map(|(id, manifest)| {
                 let jsonc_language = jsonc_language.clone();
+                let settings_validator = jsonschema::validator_for(&manifest.settings_schema)
+                    .context("Failed to load JSON schema for context server settings")
+                    .log_err();
                 ConfigureContextServer {
                     id: id.clone(),
                     installation_instructions: manifest.installation_instructions.clone().into(),
+                    settings_validator,
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
                         editor.set_text(manifest.default_settings, window, cx);
@@ -117,6 +123,7 @@ impl ConfigureContextServerModal {
                         }
                         editor
                     }),
+                    last_error: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -142,14 +149,29 @@ impl ConfigureContextServerModal {
             return;
         };
 
-        let configuration = self.context_servers_to_setup.remove(0);
-        let Ok(settings_value) = serde_json_lenient::from_str::<serde_json::Value>(
+        let configuration = &mut self.context_servers_to_setup[0];
+        let settings_value = match serde_json_lenient::from_str::<serde_json::Value>(
             &configuration.settings_editor.read(cx).text(cx),
-        ) else {
-            return;
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                configuration.last_error = Some(error.to_string().into());
+                cx.notify();
+                return;
+            }
         };
 
+        if let Some(validator) = configuration.settings_validator.as_ref() {
+            if let Err(error) = validator.validate(&settings_value) {
+                configuration.last_error = Some(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        }
         let id = configuration.id.clone();
+
+        self.context_servers_to_setup.remove(0);
+
         update_settings_file::<context_server::ContextServerSettings>(
             workspace.read(cx).app_state().fs.clone(),
             cx,
@@ -186,7 +208,7 @@ impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(current) = self.context_servers_to_setup.first() else {
+        let Some(configuration) = self.context_servers_to_setup.first() else {
             return div().child("No context servers to setup");
         };
 
@@ -203,11 +225,11 @@ impl Render for ConfigureContextServerModal {
             .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(
                 Modal::new("configure-context-server", None)
-                    .header(ModalHeader::new().headline(format!("Configure {}", current.id)))
+                    .header(ModalHeader::new().headline(format!("Configure {}", configuration.id)))
                     .section(
                         Section::new()
                             .child(
-                                Label::new(current.installation_instructions.clone())
+                                Label::new(configuration.installation_instructions.clone())
                                     .color(Color::Muted),
                             )
                             .child(
@@ -231,7 +253,7 @@ impl Render for ConfigureContextServerModal {
                                             ..Default::default()
                                         };
                                         EditorElement::new(
-                                            &current.settings_editor,
+                                            &configuration.settings_editor,
                                             EditorStyle {
                                                 background: cx.theme().colors().editor_background,
                                                 local_player: cx.theme().players().local(),
@@ -239,6 +261,29 @@ impl Render for ConfigureContextServerModal {
                                                 syntax: cx.theme().syntax().clone(),
                                                 ..Default::default()
                                             },
+                                        )
+                                    })
+                                    .when_some(configuration.last_error.clone(), |this, error| {
+                                        this.child(
+                                            div()
+                                                .bg(cx.theme().colors().editor_background)
+                                                .rounded_md()
+                                                .child(
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .child(
+                                                            Icon::new(IconName::Warning)
+                                                                .size(IconSize::XSmall)
+                                                                .color(Color::Warning),
+                                                        )
+                                                        .child(
+                                                            Label::new(error)
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted),
+                                                        ),
+                                                ),
                                         )
                                     }),
                             ),

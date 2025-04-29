@@ -247,13 +247,18 @@ impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCom
     }
 }
 
-impl From<ContextServerConfiguration> for extension::ContextServerConfiguration {
-    fn from(value: ContextServerConfiguration) -> Self {
-        Self {
+impl TryFrom<ContextServerConfiguration> for extension::ContextServerConfiguration {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ContextServerConfiguration) -> Result<Self, Self::Error> {
+        let settings_schema: serde_json::Value = serde_json::from_str(&value.settings_schema)
+            .context("Failed to parse settings_schema")?;
+
+        Ok(Self {
             installation_instructions: value.installation_instructions,
             default_settings: value.default_settings,
-            settings_schema: value.settings_schema,
-        }
+            settings_schema,
+        })
     }
 }
 

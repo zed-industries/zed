@@ -6,5 +6,5 @@ pub struct ContextServerConfiguration {
     /// Default settings for the context server
     pub default_settings: String,
     /// JSON schema describing server settings
-    pub settings_schema: String,
+    pub settings_schema: serde_json::Value,
 }

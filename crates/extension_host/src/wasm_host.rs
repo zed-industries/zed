@@ -315,15 +315,19 @@ impl extension::Extension for WasmExtension {
         self.call(|extension, store| {
             async move {
                 let project_resource = store.data_mut().table().push(project)?;
-                let configuration = extension
+                let Some(configuration) = extension
                     .call_context_server_configuration(
                         store,
                         context_server_id.clone(),
                         project_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
-                anyhow::Ok(configuration.map(|c| c.into()))
+                    .map_err(|err| anyhow!("{err}"))?
+                else {
+                    return Ok(None);
+                };
+
+                Ok(Some(configuration.try_into()?))
             }
             .boxed()
         })
