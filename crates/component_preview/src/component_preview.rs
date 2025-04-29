@@ -3,6 +3,7 @@
 //! A view for exploring Zed components.
 
 mod persistence;
+mod preview_support;
 
 use std::iter::Iterator;
 use std::sync::Arc;

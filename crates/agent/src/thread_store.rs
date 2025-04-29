@@ -101,7 +101,7 @@ impl ThreadStore {
         })
     }
 
-    fn new(
+    pub fn new(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
