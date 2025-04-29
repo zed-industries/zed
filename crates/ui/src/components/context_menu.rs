@@ -517,8 +517,8 @@ impl ContextMenu {
         self
     }
 
-    pub fn keep_open_on_confirm(mut self) -> Self {
-        self.keep_open_on_confirm = true;
+    pub fn keep_open_on_confirm(mut self, keep_open: bool) -> Self {
+        self.keep_open_on_confirm = keep_open;
         self
     }
 
@@ -771,6 +771,7 @@ impl ContextMenu {
             end_slot_title,
             end_slot_handler,
         } = entry;
+        let this = cx.weak_entity();
 
         let handler = handler.clone();
         let menu = cx.entity().downgrade();
@@ -919,7 +920,13 @@ impl ContextMenu {
                                     })
                                     .on_click({
                                         let handler = handler.clone();
-                                        move |_, window, cx| handler(None, window, cx)
+                                        move |_, window, cx| {
+                                            handler(None, window, cx);
+                                            this.update(cx, |this, cx| {
+                                                this.rebuild(window, cx);
+                                            })
+                                            .ok();
+                                        }
                                     }),
                             )
                         },

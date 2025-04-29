@@ -419,34 +419,40 @@ impl AssistantPanel {
             }
         });
 
-        cx.defer_in(window, move |this, window, cx| {
-            let panel = cx.weak_entity();
+        let weak_panel = weak_self.clone();
+        window.defer(cx, move |window, cx| {
+            let panel = weak_panel.clone();
             let assistant_navigation_menu =
-                ContextMenu::build_persistent(window, cx, move |menu, window, cx| {
-                    let recently_opened = panel.update(cx, |this, cx| {
-                        this.history_store.update(cx, |history_store, cx| {
-                            let active_entry_id = match &this.active_view {
-                                ActiveView::Thread { .. } => Some(RecentEntryId::Thread(
-                                    this.active_thread(cx).read(cx).id().clone(),
-                                )),
-                                ActiveView::PromptEditor { context_editor, .. } => context_editor
-                                    .read(cx)
-                                    .context()
-                                    .read(cx)
-                                    .path()
-                                    .map(|path| RecentEntryId::Context(path.into())),
-                                ActiveView::History | ActiveView::Configuration => None,
-                            };
-                            history_store.recently_opened_entries(
-                                6,
-                                |entry| Some(&entry.id) != active_entry_id.as_ref(),
-                                cx,
-                            )
-                        });
-                    });
+                ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
+                    let recently_opened = panel
+                        .update(cx, |this, cx| {
+                            this.history_store.update(cx, |history_store, cx| {
+                                let active_entry_id = match &this.active_view {
+                                    ActiveView::Thread { .. } => Some(RecentEntryId::Thread(
+                                        this.active_thread(cx).read(cx).id().clone(),
+                                    )),
+                                    ActiveView::PromptEditor { context_editor, .. } => {
+                                        context_editor
+                                            .read(cx)
+                                            .context()
+                                            .read(cx)
+                                            .path()
+                                            .map(|path| RecentEntryId::Context(path.into()))
+                                    }
+                                    ActiveView::History | ActiveView::Configuration => None,
+                                };
+                                history_store.recently_opened_entries(
+                                    6,
+                                    |entry| Some(&entry.id) != active_entry_id.as_ref(),
+                                    cx,
+                                )
+                            })
+                        })
+                        .unwrap_or_default();
                     if recently_opened.is_empty() {
                         return menu.action("View All", Box::new(OpenHistory));
                     }
+                    let weak_menu = cx.weak_entity();
                     let mut menu = menu.header("Recently Opened");
                     for entry in recently_opened.iter() {
                         menu = menu.entry_with_end_slot(
@@ -477,12 +483,18 @@ impl AssistantPanel {
                             {
                                 let panel = panel.clone();
                                 let entry = entry.clone();
+                                let weak_menu = weak_menu.clone();
                                 move |_window, cx| {
                                     panel
                                         .update(cx, |this, cx| {
-                                            this.history_store.update(cx, |history_store, _| {
+                                            this.history_store.update(cx, |history_store, cx| {
                                                 history_store
                                                     .remove_recently_opened_entry(entry.id.clone());
+                                                weak_menu
+                                                    .update(cx, |_, cx| {
+                                                        cx.notify();
+                                                    })
+                                                    .ok();
                                             });
                                         })
                                         .ok();
@@ -490,8 +502,15 @@ impl AssistantPanel {
                             },
                         );
                     }
-                    menu.separator().action("View All", Box::new(OpenHistory))
+                    menu.separator()
+                        .action("View All", Box::new(OpenHistory))
+                        .keep_open_on_confirm(false)
                 });
+            weak_panel
+                .update(cx, |panel, _| {
+                    panel.assistant_navigation_menu = Some(assistant_navigation_menu);
+                })
+                .ok();
         });
 
         Self {
@@ -1238,21 +1257,6 @@ impl AssistantPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let recently_opened = self.history_store.update(cx, |this, cx| {
-            let active_entry_id = match &self.active_view {
-                ActiveView::Thread { .. } => Some(RecentEntryId::Thread(
-                    self.active_thread(cx).read(cx).id().clone(),
-                )),
-                ActiveView::PromptEditor { context_editor, .. } => context_editor
-                    .read(cx)
-                    .context()
-                    .read(cx)
-                    .path()
-                    .map(|path| RecentEntryId::Context(path.into())),
-                ActiveView::History | ActiveView::Configuration => None,
-            };
-            this.recently_opened_entries(6, |entry| Some(&entry.id) != active_entry_id.as_ref(), cx)
-        });
         let active_thread = self.thread.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
@@ -1311,8 +1315,8 @@ impl AssistantPanel {
             .with_handle(self.assistant_navigation_menu_handle.clone())
             .menu({
                 let this = cx.entity();
-                move |window, cx| {
-                    Some(this.update(cx, |this, _| this.assistant_navigation_menu.clone()))
+                move |_window, cx| {
+                    this.update(cx, |this, _| this.assistant_navigation_menu.clone())
                     //Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                     //    if recently_opened.is_empty() {
                     //        return menu.action("View All", Box::new(OpenHistory));
