@@ -21,7 +21,7 @@ jobs:
           copyback: false
           prepare: |
             pkg install -y \
-              curl git rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
+              bash curl git rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
           run: |
             freebsd-version
             sysctl hw.model
