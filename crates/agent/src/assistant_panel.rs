@@ -1072,12 +1072,12 @@ impl AssistantPanel {
                     return;
                 }
 
-                store.push_recently_opened_entry(RecentEntry::Thread(active_thread));
+                store.push_recently_opened_entry(RecentEntry::Thread(active_thread), cx);
             }),
             ActiveView::PromptEditor { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
                     let context = context_editor.read(cx).context().clone();
-                    store.push_recently_opened_entry(RecentEntry::Context(context))
+                    store.push_recently_opened_entry(RecentEntry::Context(context), cx)
                 })
             }
             _ => {}
