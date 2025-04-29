@@ -80,7 +80,7 @@ fn parse_socks_proxy<'a>(proxy: &'a Url) -> Option<((String, u16), SocksVersion<
     let socks_version = if scheme.starts_with("socks4") {
         // Parse optional Identification when using Socks V4
         let identification = match proxy.username() {
-            username if username.is_empty() => None,
+            "" => None,
             username => Some(Socks4Identification { user_id: username }),
         };
         SocksVersion::V4(identification)
