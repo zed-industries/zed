@@ -168,43 +168,35 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 - You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
 - You can select quoted text with AnyQuotes and bracketed text with AnyBrackets text objects. Zed also provides MiniQuotes and MiniBrackets which offer alternative selection behavior based on the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin. See the [Quote and Bracket text objects](#quote-and-bracket-text-objects) section below for details.
+- You can configure AnyQuotes, AnyBrackets, MiniQuotes, and MiniBrackets text objects for selecting quoted and bracketed text using different selection strategies. See the [Any Bracket Functionality](#any-bracket-functionality) section below for details.
 
-### Quote and Bracket text objects
+### Any Bracket Functionality
 
-Zed provides two different behaviors for selecting quoted and bracketed text, addressing different user preferences:
+Zed offers two different strategies for selecting text surrounded by any quote, or any bracket. These text objects are **not enabled by default** and must be configured in your keymap to be used.
 
 #### AnyQuotes and AnyBrackets (Traditional Vim behavior)
 
-These text objects prioritize the innermost quotes or brackets first, aligning with traditional Vim behavior:
+These text objects implement traditional Vim behavior:
 
 - **Selection priority**: Finds the innermost (closest) quotes or brackets first
 - **Fallback mechanism**: If none are found, falls back to the current line
 - **Character-based matching**: Focuses solely on open and close characters without considering syntax
-
-Usage is identical to traditional Vim text objects:
-- `ci'`, `ci"`, `ci\`` - Change inside various quotes
-- `ca'`, `ca"`, `ca\`` - Change around (including) various quotes
-- `ci(`, `ci[`, `ci{`, `ci<` - Change inside various brackets
-- `ca(`, `ca[`, `ca{`, `ca<` - Change around (including) various brackets
-
-Same patterns work for `di`, `yi`, `da`, `ya` (delete inside, yank inside, delete around, yank around).
+- **Vanilla Vim similarity**: AnyBrackets matches the behavior of commands like `ci<`, `ci(`, etc., in vanilla Vim, including potential edge cases (like considering `>` in `=>` as a closing delimiter)
 
 #### MiniQuotes and MiniBrackets (mini.ai behavior)
 
-These text objects maintain the behavior of the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin:
+These text objects implement the behavior of the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin:
 
 - **Selection priority**: Searches the current line first before expanding outward
 - **Tree-sitter integration**: Uses Tree-sitter queries for more context-aware selections
-- **Syntax-aware matching**: Can distinguish between actual brackets and similar characters in other contexts
-
-The keyboard commands are the same as their "Any" counterparts, but with different selection behavior.
+- **Syntax-aware matching**: Can distinguish between actual brackets and similar characters in other contexts (like `>` in `=>`)
 
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
   - Prefer traditional Vim behavior
-  - Want consistent character-based selection
-  - Need innermost quotes/brackets to be prioritized
+  - Want consistent character-based selection prioritizing innermost delimiters
+  - Need behavior that closely matches vanilla Vim's text objects
 
 - Use **MiniQuotes/MiniBrackets** if you:
   - Prefer the mini.ai plugin behavior
@@ -213,11 +205,11 @@ The keyboard commands are the same as their "Any" counterparts, but with differe
 
 #### Example Configuration
 
-If you want to customize how these text objects are triggered, you can add bindings to your keymap:
+To use these text objects, you need to add bindings to your keymap. Here's an example configuration that makes them available when using text object operators (`i` and `a`) or change-surrounds (`cs`):
 
 ```json
 {
-  "context": "VimControl && !menu",
+  "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
   "bindings": {
     // Traditional Vim behavior
     "q": ["vim::PushTextObject", {"text_object": "anyquote"}],
@@ -229,6 +221,12 @@ If you want to customize how these text objects are triggered, you can add bindi
   }
 }
 ```
+
+With this configuration, you can use commands like:
+- `cib` - Change inside brackets using AnyBrackets behavior
+- `cim` - Change inside brackets using MiniBrackets behavior
+- `ciq` - Change inside quotes using AnyQuotes behavior
+- `ciM` - Change inside quotes using MiniQuotes behavior
 
 ## Command palette
 
