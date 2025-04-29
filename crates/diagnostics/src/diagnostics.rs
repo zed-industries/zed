@@ -8,7 +8,7 @@ mod diagnostic_renderer;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use cargo::{cargo_to_lsp, fetch_worktree_diagnostics};
+use cargo::{fetch_worktree_diagnostics, map_rust_diagnostic_to_lsp};
 use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
@@ -356,49 +356,64 @@ impl ProjectDiagnosticsEditor {
 
                 let mut worktree_diagnostics_tasks = Vec::new();
                 for worktree in diagnostics_sources.iter() {
-                    if let Some((_task, mut worktree_diagnostics)) = cx
+                    if let Some(((_task, worktree_diagnostics), worktree_root)) = cx
                         .update(|_, cx| {
                             let worktree_root = worktree.read(cx).abs_path();
-                            fetch_worktree_diagnostics(&worktree_root, cx)
+                            fetch_worktree_diagnostics(&worktree_root, cx).zip(Some(worktree_root))
                         })
                         .ok()
                         .flatten()
                     {
                         let editor = project_diagnostics_editor.clone();
-                        let worktree = worktree.downgrade();
                         worktree_diagnostics_tasks.push(cx.spawn(async move |cx| {
                             let _task = _task;
-                            let mut current_file_diagnostics =
-                                None::<(String, Vec<cargo_metadata::diagnostic::Diagnostic>)>;
+                            let mut file_diagnostics = HashMap::default();
                             while let Ok(diagnostic) = worktree_diagnostics.recv().await {
-                                let file_changed = todo!("TODO kb");
+                                for (url, diagnostic) in
+                                    map_rust_diagnostic_to_lsp(&worktree_root, &diagnostic)
+                                {
+                                    file_diagnostics
+                                        .entry(url)
+                                        .or_insert_with(Vec::new)
+                                        .push(diagnostic);
+                                }
+
+                                let file_changed = file_diagnostics.len() > 1;
                                 if file_changed {
-                                    if let Some((relative_path, diagnostics)) =
-                                        current_file_diagnostics.take()
-                                    {
-                                        if editor
-                                            .update(cx, |editor, cx| {
-                                                let diagnostics = cargo_to_lsp(diagnostics);
-                                                editor.project.read(cx).lsp_store().update(
-                                                    cx,
-                                                    |lsp_store, cx| {
+                                    if editor
+                                        .update(cx, |editor, cx| {
+                                            editor
+                                                .project
+                                                .read(cx)
+                                                .lsp_store()
+                                                .update(cx, |lsp_store, cx| {
+                                                    for (uri, diagnostics) in
+                                                        file_diagnostics.drain()
+                                                    {
                                                         lsp_store.merge_diagnostics(
                                                             rust_analyzer_server,
-                                                            diagnostics,
+                                                            lsp::PublishDiagnosticsParams {
+                                                                uri,
+                                                                diagnostics,
+                                                                version: None,
+                                                            },
                                                             &[],
-                                                            |d| {
+                                                            |diagnostic| {
                                                                 // TODO kb clean up previous fetches' diagnostics here instead
                                                                 true
                                                             },
                                                             cx,
-                                                        )
-                                                    },
-                                                )
-                                            })
-                                            .is_err()
-                                        {
-                                            return;
-                                        }
+                                                        )?;
+                                                    }
+                                                    anyhow::Ok(())
+                                                })
+                                                .ok()
+                                        })
+                                        .ok()
+                                        .flatten()
+                                        .is_none()
+                                    {
+                                        return;
                                     }
                                 }
                             }
