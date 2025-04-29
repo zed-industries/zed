@@ -239,6 +239,7 @@ impl Render for ConfigureContextServerModal {
                                     .border_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .bg(cx.theme().colors().editor_background)
+                                    .gap_1()
                                     .child({
                                         let settings = ThemeSettings::get_global(cx);
                                         let text_style = TextStyle {
@@ -265,24 +266,19 @@ impl Render for ConfigureContextServerModal {
                                     })
                                     .when_some(configuration.last_error.clone(), |this, error| {
                                         this.child(
-                                            div()
-                                                .bg(cx.theme().colors().editor_background)
-                                                .rounded_md()
+                                            h_flex()
+                                                .gap_1()
+                                                .px_2()
+                                                .py_1()
                                                 .child(
-                                                    h_flex()
-                                                        .gap_1()
-                                                        .px_2()
-                                                        .py_1()
-                                                        .child(
-                                                            Icon::new(IconName::Warning)
-                                                                .size(IconSize::XSmall)
-                                                                .color(Color::Warning),
-                                                        )
-                                                        .child(
-                                                            Label::new(error)
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted),
-                                                        ),
+                                                    Icon::new(IconName::Warning)
+                                                        .size(IconSize::XSmall)
+                                                        .color(Color::Warning),
+                                                )
+                                                .child(
+                                                    Label::new(error)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
                                                 ),
                                         )
                                     }),
