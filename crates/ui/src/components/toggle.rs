@@ -1,6 +1,5 @@
 use gpui::{
-    AnyElement, AnyView, App, ElementId, Entity, Hsla, IntoElement, Styled, Window, div, hsla,
-    prelude::*,
+    AnyElement, AnyView, App, ElementId, Hsla, IntoElement, Styled, Window, div, hsla, prelude::*,
 };
 use std::sync::Arc;
 

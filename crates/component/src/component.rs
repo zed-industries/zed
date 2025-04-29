@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{
-    AnyElement, AnyEntity, App, Entity, IntoElement, RenderOnce, SharedString, Window, div,
-    pattern_slash, prelude::*, px, rems,
+    AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, pattern_slash, prelude::*,
+    px, rems,
 };
 use linkme::distributed_slice;
 use parking_lot::RwLock;
@@ -38,26 +38,12 @@ pub trait Component {
         None
     }
 
-    /// Creates and returns an entity for the component's preview data.
-    ///
-    /// This is only called once per component instance. The returned entity
-    /// is stored and reused across frames, allowing stateful previews.
-    fn create_preview_data(_window: &mut Window, _cx: &mut App) -> Option<AnyEntity> {
-        None
-    }
-
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         None
     }
 
-    // Optional hook for components to handle preview context
-    fn preview_with_context<T: 'static>(
-        _component_id: &ComponentId,
-        _preview_data: Option<Entity<T>>,
-        _window: &mut Window,
-        _cx: &mut App,
-    ) -> Option<AnyElement> {
-        None
+    fn __has_state() -> bool {
+        false
     }
 }
 
@@ -68,7 +54,7 @@ pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
     LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
 
 pub struct ComponentRegistry {
-    components: Vec<(
+    components: HashMap<ComponentId, (
         ComponentScope,
         // name
         &'static str,
@@ -83,7 +69,7 @@ pub struct ComponentRegistry {
 impl ComponentRegistry {
     fn new() -> Self {
         ComponentRegistry {
-            components: Vec::new(),
+            components: HashMap::default(),
             previews: HashMap::default(),
         }
     }
@@ -99,7 +85,7 @@ pub fn init() {
 pub fn register_component<T: Component>() {
     let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
     let mut data = COMPONENT_DATA.write();
-    data.components.push(component_data);
+    data.components.insert(ComponentId(T::name()), component_data);
     data.previews.insert(T::name(), T::preview);
 }
 
@@ -172,6 +158,11 @@ impl AllComponents {
         components.sort_by_key(|a| a.name());
         components
     }
+
+    /// Tries to get a [`ComponentId`] by its name.
+    pub fn id_by_name(&self, name: &str) -> Option<ComponentId> {
+        self.0.values().find(|c| c.name() == name).map(|c| c.id())
+    }
 }
 
 impl Deref for AllComponents {
@@ -190,15 +181,14 @@ impl DerefMut for AllComponents {
 pub fn components() -> AllComponents {
     let data = COMPONENT_DATA.read();
     let mut all_components = AllComponents::new();
-    for (scope, name, sort_name, description) in &data.components {
+    for (id, (scope, name, sort_name, description)) in &data.components {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
         let sort_name = SharedString::new_static(sort_name);
-        let id = ComponentId(name);
         all_components.insert(
             id.clone(),
             ComponentMetadata {
-                id,
+                id: id.clone(),
                 name: component_name,
                 sort_name,
                 scope: scope.clone(),

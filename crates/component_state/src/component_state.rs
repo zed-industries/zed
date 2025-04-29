@@ -1,4 +1,4 @@
-use component::ComponentId;
+use component::{Component, ComponentId, components};
 use gpui::{AnyElement, AnyEntity, App, Entity, Window};
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -21,6 +21,10 @@ impl StatefulComponentRegistry {
             entities: HashMap::new(),
             types: HashMap::new(),
         }
+    }
+
+    pub fn stateful_component_ids(&self) -> Vec<ComponentId> {
+        self.types.keys().cloned().collect()
     }
 
     /// Get an entity for a component, or create it if it doesn't exist
@@ -89,12 +93,15 @@ impl StatefulComponentRegistry {
     }
 }
 
-pub trait ComponentState {
+pub trait ComponentState: Component {
     /// The type of data stored for this component
     type Data: 'static;
 
-    /// Get the component ID to use for storage
-    fn component_id() -> ComponentId;
+    fn id() -> ComponentId {
+        components()
+            .id_by_name(Self::name())
+            .expect("Couldn't get component ID")
+    }
 
     /// Create the initial state data for this component
     fn data(window: &mut Window, cx: &mut App) -> Entity<Self::Data>;
@@ -105,4 +112,18 @@ pub trait ComponentState {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement>;
+
+    fn __has_state() -> bool {
+        true
+    }
+
+    /// Internal function to register the component's data with the
+    /// [`StatefulComponentRegistry`].
+    fn __register_data(
+        state_registry: &mut StatefulComponentRegistry,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        state_registry.get_or_create(&Self::id(), Self::data, window, cx);
+    }
 }

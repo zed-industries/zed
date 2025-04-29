@@ -10,8 +10,7 @@ use std::sync::Arc;
 use client::UserStore;
 use component::{ComponentId, ComponentMetadata, components};
 use gpui::{
-    AnyEntity, App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list,
-    prelude::*,
+    App, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window, list, prelude::*,
 };
 
 use collections::HashMap;
@@ -500,13 +499,13 @@ impl ComponentPreview {
     fn render_preview(
         &mut self,
         component: &ComponentMetadata,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
         let name = component.scopeless_name();
         let scope = component.scope();
         let description = component.description();
-        let component_id = component.id();
+        // let component_id = component.id();
 
         v_flex()
             .py_2()
