@@ -1,6 +1,6 @@
 name = "C"
 grammar = "c"
-path_suffixes = ["c"]
+path_suffixes = ["c", "h"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
