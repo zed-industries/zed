@@ -104,12 +104,6 @@ impl DebugSession {
         &self.mode
     }
 
-    pub(crate) fn running_state(&self) -> Entity<RunningState> {
-        match &self.mode {
-            DebugSessionState::Running(running_state) => running_state.clone(),
-        }
-    }
-
     pub(crate) fn label(&self, cx: &App) -> SharedString {
         if let Some(label) = self.label.get() {
             return label.clone();
@@ -129,6 +123,13 @@ impl DebugSession {
         self.label
             .get_or_init(|| session.read(cx).label())
             .to_owned()
+    }
+
+    #[allow(unused)]
+    pub(crate) fn running_state(&self) -> Entity<RunningState> {
+        match &self.mode {
+            DebugSessionState::Running(running_state) => running_state.clone(),
+        }
     }
 
     pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
