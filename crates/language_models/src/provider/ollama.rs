@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, KeepAlive, get_models, preload_model,
+    ChatMessage, ChatOptions, ChatRequest, KeepAlive, get_models, preload_model, show_model,
     stream_chat_completion,
 };
 use schemars::JsonSchema;
@@ -47,6 +47,8 @@ pub struct AvailableModel {
     pub max_tokens: usize,
     /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
+    /// Whether the model supports tools
+    pub supports_tools: bool,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -75,19 +77,29 @@ impl State {
         cx.spawn(async move |this, cx| {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
-            let mut models: Vec<ollama::Model> = models
-                .into_iter()
-                // Since there is no metadata from the Ollama API
-                // indicating which models are embedding models,
-                // simply filter out models with "-embed" in their name
+            // Since there is no metadata from the Ollama API
+            // indicating which models are embedding models,
+            // simply filter out models with "-embed" in their name
+            let models: Vec<_> = models
+                .iter()
                 .filter(|model| !model.name.contains("-embed"))
-                .map(|model| ollama::Model::new(&model.name, None, None))
                 .collect();
 
-            models.sort_by(|a, b| a.name.cmp(&b.name));
+            let mut ollama_models: Vec<ollama::Model> = Vec::with_capacity(models.len());
+
+            for model in models {
+                let name = model.name.as_str();
+                // TODO: Explore fetching model capabilities in parallel
+                let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
+                let ollama_model =
+                    ollama::Model::new(name, None, None, capabilities.supports_tools());
+                ollama_models.push(ollama_model);
+            }
+
+            ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
-                this.available_models = models;
+                this.available_models = ollama_models;
                 cx.notify();
             })
         })
@@ -189,6 +201,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
+                    supports_tools: model.supports_tools,
                 },
             );
         }
@@ -292,7 +305,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        self.model.supports_tools
     }
 
     fn telemetry_id(&self) -> String {

@@ -68,6 +68,7 @@ pub struct Model {
     pub display_name: Option<String>,
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
+    pub supports_tools: bool,
 }
 
 fn get_max_tokens(name: &str) -> usize {
@@ -91,7 +92,12 @@ fn get_max_tokens(name: &str) -> usize {
 }
 
 impl Model {
-    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
+    pub fn new(
+        name: &str,
+        display_name: Option<&str>,
+        max_tokens: Option<usize>,
+        supports_tools: bool,
+    ) -> Self {
         Self {
             name: name.to_owned(),
             display_name: display_name
@@ -99,6 +105,7 @@ impl Model {
                 .or_else(|| name.strip_suffix(":latest").map(ToString::to_string)),
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
+            supports_tools,
         }
     }
 
@@ -227,6 +234,17 @@ pub struct ModelDetails {
     pub quantization_level: String,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct ModelShow {
+    pub capabilities: Vec<String>,
+}
+
+impl ModelShow {
+    pub fn supports_tools(&self) -> bool {
+        self.capabilities.contains(&"tools".to_string())
+    }
+}
+
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
@@ -321,6 +339,33 @@ pub async fn get_models(
             serde_json::from_str(&body).context("Unable to parse Ollama tag listing")?;
 
         Ok(response.models)
+    } else {
+        Err(anyhow!(
+            "Failed to connect to Ollama API: {} {}",
+            response.status(),
+            body,
+        ))
+    }
+}
+
+/// Fetch details of a model, used to determine model capablities
+pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<ModelShow> {
+    let uri = format!("{api_url}/api/show");
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .body(AsyncBody::from(serde_json::to_string(
+            &serde_json::json!({ "model": model }),
+        )?))?;
+
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    if response.status().is_success() {
+        let details: ModelShow = serde_json::from_str(body.as_str())?;
+        Ok(details)
     } else {
         Err(anyhow!(
             "Failed to connect to Ollama API: {} {}",
