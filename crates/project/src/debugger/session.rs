@@ -1970,6 +1970,18 @@ impl Session {
         source: Option<Source>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        self.output_token.0 += 1;
+        self.output.push_back(dap::OutputEvent {
+            category: None,
+            output: format!("> {expression}"),
+            group: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            data: None,
+            location_reference: None,
+        });
         let request = self.mode.request_dap(EvaluateCommand {
             expression,
             context,
