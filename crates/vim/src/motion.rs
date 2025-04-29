@@ -904,22 +904,10 @@ impl Motion {
                 movement::start_of_paragraph(map, point, times),
                 SelectionGoal::None,
             ),
-            EndOfParagraph => {
-                let mut display_point =
-                    map.clip_at_line_end(movement::end_of_paragraph(map, point, times));
-
-                // If the point's column is not `0`, that means that the point is not at the beginning of a line.
-                // This can happen, for example, when using the `d}` vim command
-                // on a buffer with no newlines at the end. In that case, we
-                // want to extend the point's column 1 position to the right,
-                // ensuring that all characters are deleted.
-                if display_point.column() != 0 {
-                    display_point =
-                        DisplayPoint::new(display_point.row(), display_point.column() + 1);
-                }
-
-                (display_point, SelectionGoal::None)
-            }
+            EndOfParagraph => (
+                map.clip_at_line_end(movement::end_of_paragraph(map, point, times)),
+                SelectionGoal::None,
+            ),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
             StartOfDocument => (
                 start_of_document(map, point, maybe_times),
@@ -1321,6 +1309,17 @@ impl Motion {
                     end_point.row -= 1;
                     end_point.column = 0;
                     selection.end = map.clip_point(map.next_line_boundary(end_point).1, Bias::Left);
+                } else if let Motion::EndOfParagraph = self {
+                    // Special case: When using the "}" motion, it's possible
+                    // that there's no blank lines after the paragraph the
+                    // cursor is currently on.
+                    // In this situation the `end_point.column` value will be
+                    // greater than 0, so the selection doesn't actually end on
+                    // the first character of a blank line. In that case, we'll
+                    // want to move one column to the right, to actually include
+                    // all characters of the last non-blank line.
+                    end_point.column += 1;
+                    selection.end = end_point.to_display_point(map);
                 }
             }
         } else if kind == MotionKind::Inclusive {
