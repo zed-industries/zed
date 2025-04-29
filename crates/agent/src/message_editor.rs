@@ -374,7 +374,7 @@ impl MessageEditor {
 
         self.context_store.update(cx, |store, cx| {
             for image in images {
-                store.add_image(Arc::new(image), cx);
+                store.add_image_instance(Arc::new(image), cx);
             }
         });
     }
