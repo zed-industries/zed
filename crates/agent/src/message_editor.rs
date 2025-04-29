@@ -1134,8 +1134,11 @@ impl Focusable for MessageEditor {
 impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
-        let total_token_usage = thread.total_token_usage();
-        let token_usage_ratio = total_token_usage.ratio();
+        let token_usage_ratio = thread
+            .total_token_usage()
+            .map_or(TokenUsageRatio::Normal, |total_token_usage| {
+                total_token_usage.ratio()
+            });
 
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
