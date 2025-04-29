@@ -1374,39 +1374,50 @@ async fn sync_model_request_usage_with_stripe(
         .await?;
 
     for (usage_meter, usage) in usage_meters {
-        let Some((billing_customer, billing_subscription)) =
-            billing_subscriptions.get(&usage.user_id)
-        else {
-            tracing::warn!(
-                user_id = usage.user_id.0,
-                "Attempted to sync usage meter for user who is not a Stripe customer."
-            );
-            continue;
-        };
+        maybe!(async {
+            let Some((billing_customer, billing_subscription)) =
+                billing_subscriptions.get(&usage.user_id)
+            else {
+                bail!(
+                    "Attempted to sync usage meter for user who is not a Stripe customer: {}",
+                    usage.user_id
+                );
+            };
 
-        let stripe_customer_id = billing_customer
-            .stripe_customer_id
-            .parse::<stripe::CustomerId>()
-            .context("failed to parse Stripe customer ID from database")?;
-        let stripe_subscription_id = billing_subscription
-            .stripe_subscription_id
-            .parse::<stripe::SubscriptionId>()
-            .context("failed to parse Stripe subscription ID from database")?;
+            let stripe_customer_id = billing_customer
+                .stripe_customer_id
+                .parse::<stripe::CustomerId>()
+                .context("failed to parse Stripe customer ID from database")?;
+            let stripe_subscription_id = billing_subscription
+                .stripe_subscription_id
+                .parse::<stripe::SubscriptionId>()
+                .context("failed to parse Stripe subscription ID from database")?;
 
-        let model = llm_db.model_by_id(usage_meter.model_id)?;
+            let model = llm_db.model_by_id(usage_meter.model_id)?;
 
-        let (price_id, meter_event_name) = match model.name.as_str() {
-            "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
-            "claude-3-7-sonnet" => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
-            _ => continue,
-        };
+            let (price_id, meter_event_name) = match model.name.as_str() {
+                "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
+                "claude-3-7-sonnet" => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
+                model_name => {
+                    bail!("Attempted to sync usage meter for unsupported model: {model_name:?}")
+                }
+            };
 
-        stripe_billing
-            .subscribe_to_price(&stripe_subscription_id, price_id)
-            .await?;
-        stripe_billing
-            .bill_model_request_usage(&stripe_customer_id, meter_event_name, usage_meter.requests)
-            .await?;
+            stripe_billing
+                .subscribe_to_price(&stripe_subscription_id, price_id)
+                .await?;
+            stripe_billing
+                .bill_model_request_usage(
+                    &stripe_customer_id,
+                    meter_event_name,
+                    usage_meter.requests,
+                )
+                .await?;
+
+            Ok(())
+        })
+        .await
+        .log_err();
     }
 
     Ok(())
