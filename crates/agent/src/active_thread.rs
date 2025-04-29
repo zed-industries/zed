@@ -1514,8 +1514,6 @@ impl ActiveThread {
 
         let show_feedback = thread.is_turn_end(ix);
 
-        let needs_confirmation = tool_uses.iter().any(|tool_use| tool_use.needs_confirmation);
-
         let generating_label = (is_generating && is_last_message)
             .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
 
@@ -1920,7 +1918,7 @@ impl ActiveThread {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(!needs_confirmation && generating_label.is_some(), |this| {
+            .when(generating_label.is_some(), |this| {
                 this.child(
                     h_flex()
                         .h_8()

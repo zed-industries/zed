@@ -661,7 +661,7 @@ impl Session {
                         local.unset_breakpoints_from_paths(paths, cx).detach();
                     }
                 }
-                BreakpointStoreEvent::ActiveDebugLineChanged => {}
+                BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             })
             .detach();
             cx.on_app_quit(Self::on_app_quit).detach();
@@ -1924,6 +1924,7 @@ impl Session {
                     .insert(variables_reference, variables.clone());
 
                 cx.emit(SessionEvent::Variables);
+                cx.emit(SessionEvent::InvalidateInlineValue);
                 Some(variables)
             },
             cx,

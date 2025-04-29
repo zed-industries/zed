@@ -1,4 +1,5 @@
 use sea_orm::entity::prelude::*;
+use serde::Serialize;
 
 use crate::llm::db::ModelId;
 
@@ -9,6 +10,7 @@ pub struct Model {
     pub id: i32,
     pub subscription_usage_id: i32,
     pub model_id: ModelId,
+    pub mode: CompletionMode,
     pub requests: i32,
 }
 
@@ -41,3 +43,13 @@ impl Related<super::model::Entity> for Entity {
 }
 
 impl ActiveModelBehavior for ActiveModel {}
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug, EnumIter, DeriveActiveEnum, Hash, Serialize)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMode {
+    #[sea_orm(string_value = "normal")]
+    Normal,
+    #[sea_orm(string_value = "max")]
+    Max,
+}

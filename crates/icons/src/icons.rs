@@ -247,6 +247,7 @@ pub enum IconName {
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
+    ZedMaxMode,
     ZedPredict,
     ZedPredictDisabled,
     ZedPredictDown,

@@ -12,6 +12,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
+use util::path;
 
 #[gpui::test]
 async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -19,7 +20,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     let fs = FakeFs::new(executor.clone());
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     workspace
         .update(cx, |workspace, window, cx| {

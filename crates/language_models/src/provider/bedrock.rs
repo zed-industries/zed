@@ -15,10 +15,11 @@ use bedrock::bedrock_client::types::{
     StopReason,
 };
 use bedrock::{
-    BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
-    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
-    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
-    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent, BedrockMessage,
+    BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock,
+    BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema,
+    BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus,
+    BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -625,6 +626,24 @@ pub fn into_bedrock(
                             } else {
                                 None
                             }
+                        }
+                        MessageContent::Thinking { text, signature } => {
+                            let thinking = BedrockThinkingTextBlock::builder()
+                                .text(text)
+                                .set_signature(signature)
+                                .build()
+                                .context("failed to build reasoning block")
+                                .log_err()?;
+
+                            Some(BedrockInnerContent::ReasoningContent(
+                                BedrockThinkingBlock::ReasoningText(thinking),
+                            ))
+                        }
+                        MessageContent::RedactedThinking(blob) => {
+                            let redacted =
+                                BedrockThinkingBlock::RedactedContent(BedrockBlob::new(blob));
+
+                            Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
                         MessageContent::ToolUse(tool_use) => BedrockToolUseBlock::builder()
                             .name(tool_use.name.to_string())
