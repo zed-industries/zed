@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
+use crate::ui::AnimatedLabel;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -721,9 +722,12 @@ impl MessageEditor {
         let border_color = cx.theme().colors().border;
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+
         let is_edit_changes_expanded = self.edits_expanded;
+        let is_generating = self.thread.read(cx).is_generating();
 
         v_flex()
+            .mt_1()
             .mx_2()
             .bg(bg_edit_files_disclosure)
             .border_1()
@@ -758,25 +762,44 @@ impl MessageEditor {
                                         cx.notify();
                                     })),
                             )
-                            .child(
-                                Label::new("Edits")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                            .child(
-                                Label::new(format!(
-                                    "{} {}",
-                                    changed_buffers.len(),
-                                    if changed_buffers.len() == 1 {
-                                        "file"
-                                    } else {
-                                        "files"
-                                    }
-                                ))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
+                            .map(|this| {
+                                if is_generating {
+                                    this.child(
+                                        AnimatedLabel::new(format!(
+                                            "Editing {} {}",
+                                            changed_buffers.len(),
+                                            if changed_buffers.len() == 1 {
+                                                "file"
+                                            } else {
+                                                "files"
+                                            }
+                                        ))
+                                        .size(LabelSize::Small),
+                                    )
+                                } else {
+                                    this.child(
+                                        Label::new("Edits")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("•").size(LabelSize::XSmall).color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(format!(
+                                            "{} {}",
+                                            changed_buffers.len(),
+                                            if changed_buffers.len() == 1 {
+                                                "file"
+                                            } else {
+                                                "files"
+                                            }
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                }
+                            }),
                     )
                     .child(
                         Button::new("review", "Review Changes")
@@ -866,7 +889,7 @@ impl MessageEditor {
                                 .justify_between()
                                 .bg(cx.theme().colors().editor_background)
                                 .hover(|style| style.bg(hover_color))
-                                .when(index + 1 < changed_buffers.len(), |parent| {
+                                .when(index < changed_buffers.len() - 1, |parent| {
                                     parent.border_color(border_color).border_b_1()
                                 })
                                 .child(
@@ -882,9 +905,9 @@ impl MessageEditor {
                                                 .gap_0p5()
                                                 .children(name_label)
                                                 .children(parent_label),
-                                        ) // TODO: show lines changed
-                                        .child(Label::new("+").color(Color::Created))
-                                        .child(Label::new("-").color(Color::Deleted)),
+                                        ), // TODO: Implement line diff
+                                           // .child(Label::new("+").color(Color::Created))
+                                           // .child(Label::new("-").color(Color::Deleted)),
                                 )
                                 .child(
                                     div().visible_on_hover("edited-code").child(
