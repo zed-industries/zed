@@ -51,7 +51,6 @@ pub struct ContextMenuEntry {
     documentation_aside: Option<Rc<dyn Fn(&mut App) -> AnyElement>>,
     end_slot_icon: Option<IconName>,
     end_slot_title: Option<SharedString>,
-    end_slot_action: Option<Box<dyn Action>>,
     end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
 }
 
@@ -69,7 +68,6 @@ impl ContextMenuEntry {
             disabled: false,
             documentation_aside: None,
             end_slot_icon: None,
-            end_slot_action: None,
             end_slot_title: None,
             end_slot_handler: None,
         }
@@ -143,6 +141,7 @@ pub struct ContextMenu {
     selected_index: Option<usize>,
     delayed: bool,
     clicked: bool,
+    end_slot_action: Option<Box<dyn Action>>,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
     eager: bool,
@@ -188,6 +187,7 @@ impl ContextMenu {
                     eager: false,
                     documentation_aside: None,
                     fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -229,6 +229,7 @@ impl ContextMenu {
                     eager: false,
                     documentation_aside: None,
                     fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -263,6 +264,7 @@ impl ContextMenu {
                     eager: true,
                     documentation_aside: None,
                     fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -302,6 +304,7 @@ impl ContextMenu {
                 eager: false,
                 documentation_aside: None,
                 fixed_width: None,
+                end_slot_action: None,
             },
             window,
             cx,
@@ -355,7 +358,6 @@ impl ContextMenu {
             disabled: false,
             documentation_aside: None,
             end_slot_icon: None,
-            end_slot_action: None,
             end_slot_title: None,
             end_slot_handler: None,
         }));
@@ -369,7 +371,6 @@ impl ContextMenu {
         handler: impl Fn(&mut Window, &mut App) + 'static,
         end_slot_icon: IconName,
         end_slot_title: SharedString,
-        end_slot_action: Box<dyn Action>,
         end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
@@ -385,7 +386,6 @@ impl ContextMenu {
             documentation_aside: None,
             end_slot_icon: Some(end_slot_icon),
             end_slot_title: Some(end_slot_title),
-            end_slot_action: Some(end_slot_action),
             end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
         }));
         self
@@ -411,7 +411,6 @@ impl ContextMenu {
             disabled: false,
             documentation_aside: None,
             end_slot_icon: None,
-            end_slot_action: None,
             end_slot_title: None,
             end_slot_handler: None,
         }));
@@ -466,7 +465,6 @@ impl ContextMenu {
             disabled: false,
             documentation_aside: None,
             end_slot_icon: None,
-            end_slot_action: None,
             end_slot_title: None,
             end_slot_handler: None,
         }));
@@ -495,7 +493,6 @@ impl ContextMenu {
             disabled: true,
             documentation_aside: None,
             end_slot_icon: None,
-            end_slot_action: None,
             end_slot_title: None,
             end_slot_handler: None,
         }));
@@ -515,7 +512,6 @@ impl ContextMenu {
             disabled: false,
             documentation_aside: None,
             end_slot_icon: None,
-            end_slot_action: None,
             end_slot_title: None,
             end_slot_handler: None,
         }));
@@ -542,6 +538,11 @@ impl ContextMenu {
 
     pub fn fixed_width(mut self, width: impl Into<gpui::Length>) -> Self {
         self.fixed_width = Some(width.into());
+        self
+    }
+
+    pub fn end_slot_action(mut self, action: Box<dyn Action>) -> Self {
+        self.end_slot_action = Some(action);
         self
     }
 
@@ -574,7 +575,7 @@ impl ContextMenu {
         cx.emit(DismissEvent);
     }
 
-    pub fn end_slot(&mut self, _: &menu::EndSlot, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn end_slot(&mut self, _: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
         let Some(item) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
             return;
         };
@@ -805,7 +806,6 @@ impl ContextMenu {
             disabled,
             documentation_aside,
             end_slot_icon,
-            end_slot_action,
             end_slot_title,
             end_slot_handler,
         } = entry;
@@ -924,7 +924,7 @@ impl ContextMenu {
                     .when_some(
                         end_slot_icon
                             .as_ref()
-                            .zip(end_slot_action.as_ref())
+                            .zip(self.end_slot_action.as_ref())
                             .zip(end_slot_title.as_ref())
                             .zip(end_slot_handler.as_ref()),
                         |el, (((icon, action), title), handler)| {
@@ -1062,7 +1062,9 @@ impl Render for ContextMenu {
                             .on_action(cx.listener(ContextMenu::select_previous))
                             .on_action(cx.listener(ContextMenu::confirm))
                             .on_action(cx.listener(ContextMenu::cancel))
-                            .on_action(cx.listener(ContextMenu::end_slot))
+                            .when_some(self.end_slot_action.as_ref(), |el, action| {
+                                el.on_boxed_action(&**action, cx.listener(ContextMenu::end_slot))
+                            })
                             .when(!self.delayed, |mut el| {
                                 for item in self.items.iter() {
                                     if let ContextMenuItem::Entry(ContextMenuEntry {

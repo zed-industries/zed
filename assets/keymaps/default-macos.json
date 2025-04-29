@@ -43,7 +43,6 @@
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
-      "cmd-backspace": "menu::EndSlot",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -294,7 +293,8 @@
       "cmd-ctrl-a": "agent::ToggleNavigationMenu",
       "shift-escape": "agent::ExpandMessageEditor",
       "cmd-e": "agent::ChatMode",
-      "cmd-alt-e": "agent::RemoveAllContext"
+      "cmd-alt-e": "agent::RemoveAllContext",
+      "cmd-backspace": "agent::DeleteRecentlyOpenThread"
     }
   },
   {

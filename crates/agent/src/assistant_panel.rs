@@ -430,7 +430,7 @@ impl AssistantPanel {
         window.defer(cx, move |window, cx| {
             let panel = weak_panel.clone();
             let assistant_navigation_menu =
-                ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
+                ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
                     let recently_opened = panel
                         .update(cx, |this, cx| {
                             this.history_store.update(cx, |history_store, cx| {
@@ -438,57 +438,60 @@ impl AssistantPanel {
                             })
                         })
                         .unwrap_or_default();
-                    if recently_opened.is_empty() {
-                        // FIXME better empty state
-                        return menu.action("View All", Box::new(OpenHistory));
+                    if !recently_opened.is_empty() {
+                        menu = menu.header("Recently Opened");
+                        for entry in recently_opened.iter() {
+                            menu = menu.entry_with_end_slot(
+                                &entry.title,
+                                None,
+                                {
+                                    let panel = panel.clone();
+                                    let entry = entry.clone();
+                                    move |window, cx| {
+                                        panel
+                                            .update(cx, {
+                                                let entry = entry.clone();
+                                                move |this, cx| match entry.id {
+                                                    RecentEntryId::Thread(thread_id) => this
+                                                        .open_thread(&thread_id, window, cx)
+                                                        .detach_and_log_err(cx),
+                                                    RecentEntryId::Context(path) => this
+                                                        .open_saved_prompt_editor(path, window, cx)
+                                                        .detach_and_log_err(cx),
+                                                }
+                                            })
+                                            .ok();
+                                    }
+                                },
+                                IconName::Close,
+                                "Close Entry".into(),
+                                {
+                                    let panel = panel.clone();
+                                    let entry = entry.clone();
+                                    move |_window, cx| {
+                                        panel
+                                            .update(cx, |this, cx| {
+                                                this.history_store.update(
+                                                    cx,
+                                                    |history_store, _cx| {
+                                                        history_store.remove_recently_opened_entry(
+                                                            entry.id.clone(),
+                                                        );
+                                                    },
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+                        }
+                        menu = menu.separator();
                     }
-                    let mut menu = menu.header("Recently Opened");
-                    for entry in recently_opened.iter() {
-                        menu = menu.entry_with_end_slot(
-                            &entry.title,
-                            None,
-                            {
-                                let panel = panel.clone();
-                                let entry = entry.clone();
-                                move |window, cx| {
-                                    panel
-                                        .update(cx, {
-                                            let entry = entry.clone();
-                                            move |this, cx| match entry.id {
-                                                RecentEntryId::Thread(thread_id) => this
-                                                    .open_thread(&thread_id, window, cx)
-                                                    .detach_and_log_err(cx),
-                                                RecentEntryId::Context(path) => this
-                                                    .open_saved_prompt_editor(path, window, cx)
-                                                    .detach_and_log_err(cx),
-                                            }
-                                        })
-                                        .ok();
-                                }
-                            },
-                            IconName::Close,
-                            "Close Entry".into(),
-                            DeleteRecentlyOpenThread.boxed_clone(),
-                            {
-                                let panel = panel.clone();
-                                let entry = entry.clone();
-                                move |_window, cx| {
-                                    panel
-                                        .update(cx, |this, cx| {
-                                            this.history_store.update(cx, |history_store, cx| {
-                                                history_store
-                                                    .remove_recently_opened_entry(entry.id.clone());
-                                            });
-                                        })
-                                        .ok();
-                                }
-                            },
-                        );
-                    }
-                    menu.separator()
-                        .action("View All", Box::new(OpenHistory))
+
+                    menu.action("View All", Box::new(OpenHistory))
                         .keep_open_on_confirm(false)
                         .fixed_width(rems(24.))
+                        .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
                 });
             weak_panel
                 .update(cx, |panel, _| {
