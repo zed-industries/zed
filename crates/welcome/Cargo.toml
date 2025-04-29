@@ -33,6 +33,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smol.workspace = true
 telemetry.workspace = true
 theme.workspace = true
 theme_selector.workspace = true

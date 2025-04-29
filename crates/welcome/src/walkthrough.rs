@@ -3,7 +3,8 @@ use client::telemetry::Telemetry;
 use fs::Fs;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
-    ListState, ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
+    ListState, ParentElement, Render, Styled, Subscription, TextOverflow, WeakEntity, Window, list,
+    svg,
 };
 use persistence::WALKTHROUGH_DB;
 use settings::SettingsStore;
@@ -47,6 +48,39 @@ pub struct Walkthrough {
 }
 
 impl Walkthrough {
+    pub fn checkbox_section(
+        &mut self,
+        ix: usize,
+        title: &'static str,
+        description: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let active = ix == self.active_step;
+        let theme = cx.theme().clone();
+
+        div()
+            .size_full()
+            .p_2()
+            .child(
+                h_flex()
+                    .rounded_md()
+                    .size_full()
+                    .p_4()
+                    .border_1()
+                    .when(active, |div| div.bg(theme.colors().element_background))
+                    .id(title)
+                    .on_click(select_step(ix, cx))
+                    .border_color(theme.colors().border)
+                    .child(v_flex().child(Label::new(title)).when(active, |div| {
+                        div.text_sm()
+                            .size_full()
+                            .text_color(theme.colors().text_muted)
+                            .child(description)
+                    })),
+            )
+            .into_any()
+    }
+
     pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         let this = cx.new(|cx| {
             let this = cx.weak_entity();
@@ -78,17 +112,20 @@ impl Walkthrough {
 
 impl Render for Walkthrough {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .justify_center()
+        div()
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .key_context("Walkthrough")
             .track_focus(&self.focus_handle(cx))
+            .w_full()
+            .p_5()
             .child(
                 v_flex()
+                    .items_center()
+                    .relative()
+                    .top(vh(0.15, window))
                     .child(
                         v_flex()
-                            .w_full()
                             .child(
                                 svg()
                                     .path("icons/logo_96.svg")
@@ -114,17 +151,21 @@ impl Render for Walkthrough {
                     )
                     .child(
                         h_flex()
-                            .flex_wrap()
-                            .justify_center()
+                            .w(px(768.))
+                            .h_128()
                             .child(
                                 list(self.steps.clone())
-                                    .with_sizing_behavior(ListSizingBehavior::Infer),
+                                    .with_sizing_behavior(ListSizingBehavior::Infer)
+                                    .h_full()
+                                    .w_96(),
                             )
-                            .child(STEPS[self.active_step].render_subpane(
-                                self.active_step,
-                                self,
-                                window,
-                                cx,
+                            .child(div().w_96().h_full().child(
+                                STEPS[self.active_step].render_subpane(
+                                    self.active_step,
+                                    self,
+                                    window,
+                                    cx,
+                                ),
                             )),
                     ),
             )
@@ -163,15 +204,16 @@ impl WalkthroughStep for ThemeStep {
     fn render_checkbox(
         &self,
         ix: usize,
-        _walkthrough: &mut Walkthrough,
+        walkthrough: &mut Walkthrough,
         window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div()
-            .child(Label::new("Pick a Theme").render(window, cx))
-            .id(ix)
-            .on_click(select_step(ix, cx))
-            .into_any_element()
+        walkthrough.checkbox_section(
+            ix,
+            "Pick a Theme",
+            "Select one of our built-in themes, or download one from the extensions page",
+            cx,
+        )
     }
 
     fn render_subpane(
@@ -211,15 +253,11 @@ impl WalkthroughStep for SettingsStep {
     fn render_checkbox(
         &self,
         ix: usize,
-        _walkthrough: &mut Walkthrough,
+        walkthrough: &mut Walkthrough,
         window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div()
-            .child(Label::new("Configure Zed").render(window, cx))
-            .id(ix)
-            .on_click(select_step(ix, cx))
-            .into_any_element()
+        walkthrough.checkbox_section(ix, "Configure Zed", "Set initial settings and/or import from other editors", cx)
     }
 
     fn render_subpane(
@@ -245,15 +283,16 @@ impl WalkthroughStep for AiIntegrations {
     fn render_checkbox(
         &self,
         ix: usize,
-        _walkthrough: &mut Walkthrough,
+        walkthrough: &mut Walkthrough,
         window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div()
-            .child(Label::new("AI Setup").render(window, cx))
-            .id(ix)
-            .on_click(select_step(ix, cx))
-            .into_any_element()
+        walkthrough.checkbox_section(
+            ix,
+            "AI Setup",
+            "Log in and pick providers for agentic editing and edit predictions",
+            cx,
+        )
     }
 
     fn render_subpane(
@@ -274,15 +313,16 @@ impl WalkthroughStep for DataSharing {
     fn render_checkbox(
         &self,
         ix: usize,
-        _walkthrough: &mut Walkthrough,
-        window: &mut Window,
+        walkthrough: &mut Walkthrough,
+        _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div()
-            .child(Label::new("Data Sharing").render(window, cx))
-            .id(ix)
-            .on_click(select_step(ix, cx))
-            .into_any_element()
+        walkthrough.checkbox_section(
+            ix,
+            "Data Sharing",
+            "Pick which data you send to the zed team",
+            cx,
+        )
     }
 
     fn render_subpane(
@@ -305,15 +345,16 @@ impl WalkthroughStep for OpenProject {
     fn render_checkbox(
         &self,
         ix: usize,
-        _walkthrough: &mut Walkthrough,
-        window: &mut Window,
+        walkthrough: &mut Walkthrough,
+        _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div()
-            .child(Label::new("Open a Project").render(window, cx))
-            .id(ix)
-            .on_click(select_step(ix, cx))
-            .into_any_element()
+        walkthrough.checkbox_section(
+            ix,
+            "Open a Project",
+            "Pick a recent project you had open in another editor",
+            cx,
+        )
     }
 
     fn render_subpane(
