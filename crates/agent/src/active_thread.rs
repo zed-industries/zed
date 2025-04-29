@@ -23,7 +23,7 @@ use gpui::{
     Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
     linear_color_stop, linear_gradient, list, percentage, pulsating_between,
 };
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
     LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, RequestUsage, Role,
     StopReason,
@@ -33,6 +33,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, Par
 use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
+use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -346,130 +347,127 @@ fn render_markdown_code_block(
                 .child(Label::new("untitled").size(LabelSize::Small))
                 .into_any_element(),
         ),
-        CodeBlockKind::FencedLang(raw_language_name) => Some(
-            h_flex()
-                .gap_1()
-                .children(
-                    parsed_markdown
-                        .languages_by_name
-                        .get(raw_language_name)
-                        .and_then(|language| {
-                            language
-                                .config()
-                                .matcher
-                                .path_suffixes
-                                .iter()
-                                .find_map(|extension| {
-                                    file_icons::FileIcons::get_icon(Path::new(extension), cx)
-                                })
-                                .map(Icon::from_path)
-                                .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-                        }),
-                )
-                .child(
-                    Label::new(
-                        parsed_markdown
-                            .languages_by_name
-                            .get(raw_language_name)
-                            .map(|language| language.name().into())
-                            .clone()
-                            .unwrap_or_else(|| raw_language_name.clone()),
-                    )
-                    .size(LabelSize::Small),
-                )
-                .into_any_element(),
-        ),
+        CodeBlockKind::FencedLang(raw_language_name) => Some(render_code_language(
+            parsed_markdown.languages_by_name.get(raw_language_name),
+            || raw_language_name.into(),
+            cx,
+        )),
         CodeBlockKind::FencedSrc(path_range) => path_range.path.file_name().map(|file_name| {
-            let content = if let Some(parent) = path_range.path.parent() {
-                h_flex()
-                    .ml_1()
-                    .gap_1()
-                    .child(
-                        Label::new(file_name.to_string_lossy().to_string()).size(LabelSize::Small),
-                    )
-                    .child(
-                        Label::new(parent.to_string_lossy().to_string())
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .into_any_element()
-            } else {
-                Label::new(path_range.path.to_string_lossy().to_string())
-                    .size(LabelSize::Small)
-                    .ml_1()
-                    .into_any_element()
-            };
-
-            h_flex()
-                .id(("code-block-header-label", ix))
-                .w_full()
-                .max_w_full()
-                .px_1()
-                .gap_0p5()
-                .cursor_pointer()
-                .rounded_sm()
-                .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
-                .tooltip(Tooltip::text("Jump to File"))
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .children(
-                            file_icons::FileIcons::get_icon(&path_range.path, cx)
-                                .map(Icon::from_path)
-                                .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
-                        )
-                        .child(content)
-                        .child(
-                            Icon::new(IconName::ArrowUpRight)
-                                .size(IconSize::XSmall)
-                                .color(Color::Ignored),
-                        ),
+            // We tell the model to use /dev/null for the path instead of using ```language
+            // because otherwise it consistently fails to use code citations.
+            if path_range.path.starts_with("/dev/null") {
+                render_code_language(
+                    parsed_markdown.languages_by_path.get(&path_range.path),
+                    || {
+                        path_range
+                            .path
+                            .extension()
+                            .and_then(OsStr::to_str)
+                            .map(|str| SharedString::new(str.to_string()))
+                            .unwrap_or_default()
+                    },
+                    cx,
                 )
-                .on_click({
-                    let path_range = path_range.clone();
-                    move |_, window, cx| {
-                        workspace
-                            .update(cx, {
-                                |workspace, cx| {
-                                    let Some(project_path) = workspace
-                                        .project()
-                                        .read(cx)
-                                        .find_project_path(&path_range.path, cx)
-                                    else {
-                                        return;
-                                    };
-                                    let Some(target) = path_range.range.as_ref().map(|range| {
-                                        Point::new(
-                                            // Line number is 1-based
-                                            range.start.line.saturating_sub(1),
-                                            range.start.col.unwrap_or(0),
-                                        )
-                                    }) else {
-                                        return;
-                                    };
-                                    let open_task =
-                                        workspace.open_path(project_path, None, true, window, cx);
-                                    window
-                                        .spawn(cx, async move |cx| {
-                                            let item = open_task.await?;
-                                            if let Some(active_editor) = item.downcast::<Editor>() {
-                                                active_editor
-                                                    .update_in(cx, |editor, window, cx| {
-                                                        editor.go_to_singleton_buffer_point(
-                                                            target, window, cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
-                                            anyhow::Ok(())
-                                        })
-                                        .detach_and_log_err(cx);
-                                }
-                            })
-                            .ok();
-                    }
-                })
-                .into_any_element()
+            } else {
+                let content = if let Some(parent) = path_range.path.parent() {
+                    h_flex()
+                        .ml_1()
+                        .gap_1()
+                        .child(
+                            Label::new(file_name.to_string_lossy().to_string())
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            Label::new(parent.to_string_lossy().to_string())
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .into_any_element()
+                } else {
+                    Label::new(path_range.path.to_string_lossy().to_string())
+                        .size(LabelSize::Small)
+                        .ml_1()
+                        .into_any_element()
+                };
+
+                h_flex()
+                    .id(("code-block-header-label", ix))
+                    .w_full()
+                    .max_w_full()
+                    .px_1()
+                    .gap_0p5()
+                    .cursor_pointer()
+                    .rounded_sm()
+                    .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
+                    .tooltip(Tooltip::text("Jump to File"))
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .children(
+                                file_icons::FileIcons::get_icon(&path_range.path, cx)
+                                    .map(Icon::from_path)
+                                    .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
+                            )
+                            .child(content)
+                            .child(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Ignored),
+                            ),
+                    )
+                    .on_click({
+                        let path_range = path_range.clone();
+                        move |_, window, cx| {
+                            workspace
+                                .update(cx, {
+                                    |workspace, cx| {
+                                        let Some(project_path) = workspace
+                                            .project()
+                                            .read(cx)
+                                            .find_project_path(&path_range.path, cx)
+                                        else {
+                                            return;
+                                        };
+                                        let Some(target) = path_range.range.as_ref().map(|range| {
+                                            Point::new(
+                                                // Line number is 1-based
+                                                range.start.line.saturating_sub(1),
+                                                range.start.col.unwrap_or(0),
+                                            )
+                                        }) else {
+                                            return;
+                                        };
+                                        let open_task = workspace.open_path(
+                                            project_path,
+                                            None,
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                        window
+                                            .spawn(cx, async move |cx| {
+                                                let item = open_task.await?;
+                                                if let Some(active_editor) =
+                                                    item.downcast::<Editor>()
+                                                {
+                                                    active_editor
+                                                        .update_in(cx, |editor, window, cx| {
+                                                            editor.go_to_singleton_buffer_point(
+                                                                target, window, cx,
+                                                            );
+                                                        })
+                                                        .ok();
+                                                }
+                                                anyhow::Ok(())
+                                            })
+                                            .detach_and_log_err(cx);
+                                    }
+                                })
+                                .ok();
+                        }
+                    })
+                    .into_any_element()
+            }
         }),
     };
 
@@ -602,6 +600,32 @@ fn render_markdown_code_block(
                 }
             },
         )
+}
+
+fn render_code_language(
+    language: Option<&Arc<Language>>,
+    name_fallback: impl FnOnce() -> SharedString,
+    cx: &App,
+) -> AnyElement {
+    let icon_path = language.and_then(|language| {
+        language
+            .config()
+            .matcher
+            .path_suffixes
+            .iter()
+            .find_map(|extension| file_icons::FileIcons::get_icon(Path::new(extension), cx))
+            .map(Icon::from_path)
+    });
+
+    let language_label = language
+        .map(|language| language.name().into())
+        .unwrap_or_else(name_fallback);
+
+    h_flex()
+        .gap_1()
+        .children(icon_path.map(|icon| icon.color(Color::Muted).size(IconSize::Small)))
+        .child(Label::new(language_label).size(LabelSize::Small))
+        .into_any_element()
 }
 
 fn open_markdown_link(
