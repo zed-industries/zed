@@ -30,6 +30,7 @@ ui.workspace = true
 ui_input.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
+util.workspace = true
 
 # Dependencies for supporting specific previews
 agent.workspace = true

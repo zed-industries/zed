@@ -8,6 +8,7 @@ mod preview_support;
 use std::iter::Iterator;
 use std::sync::Arc;
 
+use agent::{ActiveThread, ThreadStore};
 use client::UserStore;
 use component::{ComponentId, ComponentMetadata, components};
 use gpui::{
@@ -20,10 +21,12 @@ use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use persistence::COMPONENT_PREVIEW_DB;
+use preview_support::active_thread::{load_preview_thread_store, static_active_thread};
 use project::Project;
 use ui::{Divider, HighlightedLabel, ListItem, ListSubHeader, prelude::*};
 
 use ui_input::SingleLineInput;
+use util::ResultExt;
 use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
@@ -34,6 +37,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
     cx.observe_new(move |workspace: &mut Workspace, _window, cx| {
         let app_state = app_state.clone();
+        let project = workspace.project().clone();
         let weak_workspace = cx.entity().downgrade();
 
         workspace.register_action(
@@ -46,6 +50,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                 let component_preview = cx.new(|cx| {
                     ComponentPreview::new(
                         weak_workspace.clone(),
+                        project.clone(),
                         language_registry,
                         user_store,
                         None,
@@ -53,6 +58,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                         window,
                         cx,
                     )
+                    // TODO: don't panic here if we fail to create
+                    .expect("Failed to create component preview")
                 });
 
                 workspace.add_item_to_active_pane(
@@ -106,21 +113,55 @@ struct ComponentPreview {
     cursor_index: usize,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     user_store: Entity<UserStore>,
     filter_editor: Entity<SingleLineInput>,
     filter_text: String,
+
+    // preview support
+    thread_store: Option<Entity<ThreadStore>>,
+    active_thread: Option<Entity<ActiveThread>>,
 }
 
 impl ComponentPreview {
     pub fn new(
         workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         language_registry: Arc<LanguageRegistry>,
         user_store: Entity<UserStore>,
         selected_index: impl Into<Option<usize>>,
         active_page: Option<PreviewPage>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Self {
+    ) -> anyhow::Result<Self> {
+        let workspace_clone = workspace.clone();
+        let project_clone = project.clone();
+
+        cx.spawn(async move |entity, cx| {
+            let thread_store_task =
+                load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx).await;
+
+            if let Ok(thread_store) = thread_store_task.await {
+                let workspace = workspace_clone.clone();
+                let project = project_clone.clone();
+
+                entity
+                    .update(cx, move |this, cx| {
+                        let active_thread = static_active_thread(
+                            workspace,
+                            language_registry,
+                            thread_store,
+                            window,
+                            cx,
+                        );
+                        this.thread_store = Some(thread_store);
+                        this.active_thread = Some(active_thread);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+
         let sorted_components = components().all_sorted();
         let selected_index = selected_index.into().unwrap_or(0);
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
@@ -152,6 +193,7 @@ impl ComponentPreview {
             language_registry,
             user_store,
             workspace,
+            project,
             active_page,
             component_map: components().0,
             components: sorted_components,
@@ -159,6 +201,8 @@ impl ComponentPreview {
             cursor_index: selected_index,
             filter_editor,
             filter_text: String::new(),
+            thread_store: None,
+            active_thread: None,
         };
 
         if component_preview.cursor_index > 0 {
@@ -170,7 +214,7 @@ impl ComponentPreview {
         let focus_handle = component_preview.filter_editor.read(cx).focus_handle(cx);
         window.focus(&focus_handle);
 
-        component_preview
+        Ok(component_preview)
     }
 
     pub fn active_page_id(&self, _cx: &App) -> ActivePageId {

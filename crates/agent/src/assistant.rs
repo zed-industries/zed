@@ -42,7 +42,7 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, Thread, ThreadEvent};
-pub use crate::thread_store::ThreadStore;
+pub use crate::thread_store::{SharedProjectContext, ThreadStore};
 pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 
 actions!(

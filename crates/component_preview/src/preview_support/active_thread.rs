@@ -1,35 +1,52 @@
-use std::sync::Arc;
+use languages::LanguageRegistry;
+use project::Project;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+use util::ResultExt;
 
 use agent::{ActiveThread, Thread, ThreadStore};
 use assistant_tool::ToolWorkingSet;
-use gpui::{AppContext, WeakEntity};
+use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
 use prompt_store::PromptBuilder;
-use ui::App;
+use ui::{App, Window};
 use workspace::Workspace;
 
-fn static_active_thread(
-    weak_workspace: WeakEntity<Workspace>,
+pub async fn load_preview_thread_store(
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Task<anyhow::Result<Entity<ThreadStore>>> {
+    cx.spawn(async move |cx| {
+        workspace
+            .update(cx, |_, cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    cx.new(|_| ToolWorkingSet::default()),
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    None,
+                    cx,
+                )
+            })?
+            .await
+    })
+}
+
+pub fn static_active_thread(
+    workspace: WeakEntity<Workspace>,
+    language_registry: Arc<LanguageRegistry>,
+    thread_store: Entity<ThreadStore>,
+    window: &mut Window,
     cx: &mut App,
-) -> anyhow::Result<ActiveThread> {
-    if let Some(workspace) = weak_workspace.upgrade() {
-        let project = workspace.read(cx).project().clone();
-        let tools = cx.new(|_| ToolWorkingSet::default());
-        let prompt_builder = Arc::new(PromptBuilder::new(None)?);
-        // let system_prompt = cx.new(|_| SystemPrompt::default());
+) -> Entity<ActiveThread> {
+    let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
 
-        let thread_store = cx.new(|cx| {
-            Ok(ThreadStore::new(
-                project.clone(),
-                tools.clone(),
-                prompt_builder.clone(),
-                None,
-                cx,
-            ))
-        });
-
-        let thread = Thread::new(project.clone(), tools, prompt_builder, system_prompt, cx);
-        Ok(ActiveThread::new(thread))
-    } else {
-        anyhow::bail!("Workspace is no longer available")
-    }
+    cx.new(|cx| {
+        ActiveThread::new(
+            thread,
+            thread_store,
+            language_registry,
+            workspace.clone(),
+            window,
+            cx,
+        )
+    })
 }
