@@ -12,6 +12,7 @@ workspace = true
 path = "src/assistant_tools.rs"
 
 [dependencies]
+aho-corasick.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 buffer_diff.workspace = true

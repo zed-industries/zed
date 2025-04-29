@@ -3,6 +3,7 @@ mod edit_parser;
 mod evals;
 
 use crate::{Template, Templates};
+use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use assistant_tool::ActionLog;
 use edit_parser::{EditParser, EditParserEvent};
@@ -61,8 +62,8 @@ impl EditAgent {
         let edit_chunks = self
             .request_edits(snapshot, edit_description, previous_messages, cx)
             .await?;
-        let chunks = self.apply_edits(buffer, edit_chunks, cx).await?;
-        Ok(chunks)
+        let raw_output = self.apply_edits(buffer, edit_chunks, cx).await?;
+        Ok(raw_output)
     }
 
     // todo!("add tests for this")
@@ -213,6 +214,30 @@ impl EditAgent {
     }
 
     fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {
+        let range = Self::resolve_location_exact(buffer, search_query)
+            .or_else(|| Self::resolve_location_fuzzy(buffer, search_query))?;
+
+        // Expand the range to include entire lines.
+        let mut start = buffer.offset_to_point(buffer.clip_offset(range.start, Bias::Left));
+        start.column = 0;
+        let mut end = buffer.offset_to_point(buffer.clip_offset(range.end, Bias::Right));
+        if end.column > 0 {
+            end.column = buffer.line_len(end.row);
+        }
+
+        Some(buffer.point_to_offset(start)..buffer.point_to_offset(end))
+    }
+
+    fn resolve_location_exact(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {
+        let search = AhoCorasick::new([search_query]).ok()?;
+        let mat = search
+            .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
+            .next()?
+            .expect("buffer can't error");
+        Some(mat.range())
+    }
+
+    fn resolve_location_fuzzy(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {
         const INSERTION_COST: u32 = 3;
         const DELETION_COST: u32 = 10;
         const WHITESPACE_INSERTION_COST: u32 = 1;
@@ -297,16 +322,9 @@ impl EditAgent {
             }
         }
 
-        let mut start = buffer.offset_to_point(buffer.clip_offset(buffer_ix, Bias::Left));
-        start.column = 0;
-        let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
-        if end.column > 0 {
-            end.column = buffer.line_len(end.row);
-        }
-
-        let score = equal_bytes as f32 / query_len as f32;
-        if score >= 0.8 {
-            Some(buffer.point_to_offset(start)..buffer.point_to_offset(end))
+        let matched_query_ratio = equal_bytes as f32 / query_len as f32;
+        if matched_query_ratio >= 0.9 {
+            Some(buffer_ix..best_buffer_end)
         } else {
             None
         }
@@ -435,6 +453,17 @@ mod tests {
 
     #[gpui::test]
     fn test_resolve_location(cx: &mut App) {
+        assert_location_resolution(
+            concat!(
+                "    Lorem\n",
+                "«    ipsum»\n",
+                "    dolor sit amet\n",
+                "    consecteur",
+            ),
+            "ipsum",
+            cx,
+        );
+
         assert_location_resolution(
             concat!(
                 "    Lorem\n",

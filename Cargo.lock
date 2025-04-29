@@ -701,6 +701,7 @@ dependencies = [
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "assistant_tool",
  "buffer_diff",
