@@ -1,5 +1,6 @@
 use super::{
     breakpoint_store::BreakpointStore,
+    dap_command::EvaluateCommand,
     locators,
     session::{self, Session, SessionStateEvent},
 };
@@ -897,19 +898,18 @@ impl DapStore {
                             .clone()
                             .unwrap_or_else(|| snapshot.text_for_range(range.clone()).collect());
 
-                        let Ok(eval_task) = session.update(cx, |session, cx| {
-                            session.evaluate(
+                        let Ok(eval_task) = session.update(cx, |session, _| {
+                            session.mode.request_dap(EvaluateCommand {
                                 expression,
-                                Some(EvaluateArgumentsContext::Variables),
-                                Some(stack_frame_id),
-                                None,
-                                cx,
-                            )
+                                frame_id: Some(stack_frame_id),
+                                source: None,
+                                context: Some(EvaluateArgumentsContext::Variables),
+                            })
                         }) else {
                             continue;
                         };
 
-                        if let Some(response) = eval_task.await {
+                        if let Some(response) = eval_task.await.log_err() {
                             inlay_hints.push(InlayHint {
                                 position: snapshot.anchor_after(range.end),
                                 label: InlayHintLabel::String(format!(": {}", response.result)),
