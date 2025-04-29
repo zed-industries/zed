@@ -14,16 +14,18 @@ use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git::repository::DiffType;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task,
+    WeakEntity,
 };
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, StopReason,
-    TokenUsage,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
+    StopReason, TokenUsage,
 };
+use postage::stream::Stream as _;
 use project::Project;
 use project::git_store::{GitStore, GitStoreCheckpoint, RepositoryState};
 use prompt_store::{ModelContext, PromptBuilder};
@@ -36,10 +38,11 @@ use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 use zed_llm_client::CompletionMode;
 
+use crate::ThreadStore;
 use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
-    SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
-    SerializedToolUse, SharedProjectContext,
+    SerializedLanguageModel, SerializedMessage, SerializedMessageSegment, SerializedThread,
+    SerializedToolResult, SerializedToolUse, SharedProjectContext,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
@@ -243,6 +246,16 @@ pub enum DetailedSummaryState {
     },
 }
 
+impl DetailedSummaryState {
+    fn text(&self) -> Option<SharedString> {
+        if let Self::Generated { text, .. } = self {
+            Some(text.clone())
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct TotalTokenUsage {
     pub total: usize,
@@ -259,7 +272,11 @@ impl TotalTokenUsage {
         #[cfg(not(debug_assertions))]
         let warning_threshold: f32 = 0.8;
 
-        if self.total >= self.max {
+        // When the maximum is unknown because there is no selected model,
+        // avoid showing the token limit warning.
+        if self.max == 0 {
+            TokenUsageRatio::Normal
+        } else if self.total >= self.max {
             TokenUsageRatio::Exceeded
         } else if self.total as f32 / self.max as f32 >= warning_threshold {
             TokenUsageRatio::Warning
@@ -290,7 +307,9 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
-    detailed_summary_state: DetailedSummaryState,
+    detailed_summary_task: Task<Option<()>>,
+    detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
+    detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
     completion_mode: Option<CompletionMode>,
     messages: Vec<Message>,
     next_message_id: MessageId,
@@ -317,6 +336,7 @@ pub struct Thread {
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
     remaining_turns: u32,
+    configured_model: Option<ConfiguredModel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,12 +355,17 @@ impl Thread {
         system_prompt: SharedProjectContext,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
+        let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
-            detailed_summary_state: DetailedSummaryState::NotGenerated,
+            detailed_summary_task: Task::ready(None),
+            detailed_summary_tx,
+            detailed_summary_rx,
             completion_mode: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
@@ -370,6 +395,7 @@ impl Thread {
             last_auto_capture_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
+            configured_model,
         }
     }
 
@@ -390,13 +416,30 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
+        let (detailed_summary_tx, detailed_summary_rx) =
+            postage::watch::channel_with(serialized.detailed_summary_state);
+
+        let configured_model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            serialized
+                .model
+                .and_then(|model| {
+                    let model = SelectedModel {
+                        provider: model.provider.clone().into(),
+                        model: model.model.clone().into(),
+                    };
+                    registry.select_model(&model, cx)
+                })
+                .or_else(|| registry.default_model())
+        });
 
         Self {
             id,
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            detailed_summary_state: serialized.detailed_summary_state,
+            detailed_summary_task: Task::ready(None),
+            detailed_summary_tx,
+            detailed_summary_rx,
             completion_mode: None,
             messages: serialized
                 .messages
@@ -446,6 +489,7 @@ impl Thread {
             last_auto_capture_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
+            configured_model,
         }
     }
 
@@ -485,6 +529,22 @@ impl Thread {
         self.project_context.clone()
     }
 
+    pub fn get_or_init_configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
+        if self.configured_model.is_none() {
+            self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        }
+        self.configured_model.clone()
+    }
+
+    pub fn configured_model(&self) -> Option<ConfiguredModel> {
+        self.configured_model.clone()
+    }
+
+    pub fn set_configured_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+        self.configured_model = model;
+        cx.notify();
+    }
+
     pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
 
     pub fn summary_or_default(&self) -> SharedString {
@@ -506,19 +566,6 @@ impl Thread {
         if current_summary != &new_summary {
             self.summary = Some(new_summary);
             cx.emit(ThreadEvent::SummaryChanged);
-        }
-    }
-
-    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
-        self.latest_detailed_summary()
-            .unwrap_or_else(|| self.text().into())
-    }
-
-    fn latest_detailed_summary(&self) -> Option<SharedString> {
-        if let DetailedSummaryState::Generated { text, .. } = &self.detailed_summary_state {
-            Some(text.clone())
-        } else {
-            None
         }
     }
 
@@ -941,8 +988,15 @@ impl Thread {
                 initial_project_snapshot,
                 cumulative_token_usage: this.cumulative_token_usage,
                 request_token_usage: this.request_token_usage.clone(),
-                detailed_summary_state: this.detailed_summary_state.clone(),
+                detailed_summary_state: this.detailed_summary_rx.borrow().clone(),
                 exceeded_window_error: this.exceeded_window_error.clone(),
+                model: this
+                    .configured_model
+                    .as_ref()
+                    .map(|model| SerializedLanguageModel {
+                        provider: model.provider.id().0.to_string(),
+                        model: model.model.id().0.to_string(),
+                    }),
             })
         })
     }
@@ -1540,25 +1594,34 @@ impl Thread {
         });
     }
 
-    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) -> Option<Task<()>> {
-        let last_message_id = self.messages.last().map(|message| message.id)?;
+    pub fn start_generating_detailed_summary_if_needed(
+        &mut self,
+        thread_store: WeakEntity<ThreadStore>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
+            return;
+        };
 
-        match &self.detailed_summary_state {
+        match &*self.detailed_summary_rx.borrow() {
             DetailedSummaryState::Generating { message_id, .. }
             | DetailedSummaryState::Generated { message_id, .. }
                 if *message_id == last_message_id =>
             {
                 // Already up-to-date
-                return None;
+                return;
             }
             _ => {}
         }
 
-        let ConfiguredModel { model, provider } =
-            LanguageModelRegistry::read_global(cx).thread_summary_model()?;
+        let Some(ConfiguredModel { model, provider }) =
+            LanguageModelRegistry::read_global(cx).thread_summary_model()
+        else {
+            return;
+        };
 
         if !provider.is_authenticated(cx) {
-            return None;
+            return;
         }
 
         let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
@@ -1570,16 +1633,24 @@ impl Thread {
 
         let request = self.to_summarize_request(added_user_message.into());
 
-        let task = cx.spawn(async move |thread, cx| {
+        *self.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generating {
+            message_id: last_message_id,
+        };
+
+        // Replace the detailed summarization task if there is one, cancelling it. It would probably
+        // be better to allow the old task to complete, but this would require logic for choosing
+        // which result to prefer (the old task could complete after the new one, resulting in a
+        // stale summary).
+        self.detailed_summary_task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion_text(request, &cx);
             let Some(mut messages) = stream.await.log_err() else {
                 thread
-                    .update(cx, |this, _cx| {
-                        this.detailed_summary_state = DetailedSummaryState::NotGenerated;
+                    .update(cx, |thread, _cx| {
+                        *thread.detailed_summary_tx.borrow_mut() =
+                            DetailedSummaryState::NotGenerated;
                     })
-                    .log_err();
-
-                return;
+                    .ok()?;
+                return None;
             };
 
             let mut new_detailed_summary = String::new();
@@ -1591,25 +1662,56 @@ impl Thread {
             }
 
             thread
-                .update(cx, |this, _cx| {
-                    this.detailed_summary_state = DetailedSummaryState::Generated {
+                .update(cx, |thread, _cx| {
+                    *thread.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generated {
                         text: new_detailed_summary.into(),
                         message_id: last_message_id,
                     };
                 })
-                .log_err();
+                .ok()?;
+
+            // Save thread so its summary can be reused later
+            if let Some(thread) = thread.upgrade() {
+                if let Ok(Ok(save_task)) = cx.update(|cx| {
+                    thread_store
+                        .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
+                }) {
+                    save_task.await.log_err();
+                }
+            }
+
+            Some(())
         });
+    }
 
-        self.detailed_summary_state = DetailedSummaryState::Generating {
-            message_id: last_message_id,
-        };
+    pub async fn wait_for_detailed_summary_or_text(
+        this: &Entity<Self>,
+        cx: &mut AsyncApp,
+    ) -> Option<SharedString> {
+        let mut detailed_summary_rx = this
+            .read_with(cx, |this, _cx| this.detailed_summary_rx.clone())
+            .ok()?;
+        loop {
+            match detailed_summary_rx.recv().await? {
+                DetailedSummaryState::Generating { .. } => {}
+                DetailedSummaryState::NotGenerated => {
+                    return this.read_with(cx, |this, _cx| this.text().into()).ok();
+                }
+                DetailedSummaryState::Generated { text, .. } => return Some(text),
+            }
+        }
+    }
 
-        Some(task)
+    pub fn latest_detailed_summary_or_text(&self) -> SharedString {
+        self.detailed_summary_rx
+            .borrow()
+            .text()
+            .unwrap_or_else(|| self.text().into())
     }
 
     pub fn is_generating_detailed_summary(&self) -> bool {
         matches!(
-            self.detailed_summary_state,
+            &*self.detailed_summary_rx.borrow(),
             DetailedSummaryState::Generating { .. }
         )
     }
@@ -1676,7 +1778,7 @@ impl Thread {
             tool_use_id.clone(),
             tool_name,
             Err(anyhow!("Error parsing input JSON: {error}")),
-            cx,
+            self.configured_model.as_ref(),
         );
         let ui_text = if let Some(pending_tool_use) = &pending_tool_use {
             pending_tool_use.ui_text.clone()
@@ -1751,7 +1853,7 @@ impl Thread {
                             tool_use_id.clone(),
                             tool_name,
                             output,
-                            cx,
+                            thread.configured_model.as_ref(),
                         );
                         thread.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
                     })
@@ -1769,10 +1871,9 @@ impl Thread {
         cx: &mut Context<Self>,
     ) {
         if self.all_tools_finished() {
-            let model_registry = LanguageModelRegistry::read_global(cx);
-            if let Some(ConfiguredModel { model, .. }) = model_registry.default_model() {
+            if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
                 if !canceled {
-                    self.send_to_model(model, window, cx);
+                    self.send_to_model(model.clone(), window, cx);
                 }
                 self.auto_capture_telemetry(cx);
             }
@@ -1807,6 +1908,14 @@ impl Thread {
 
         self.finalize_pending_checkpoint(cx);
         canceled
+    }
+
+    /// Signals that any in-progress editing should be canceled.
+    ///
+    /// This method is used to notify listeners (like ActiveThread) that
+    /// they should cancel any editing operations.
+    pub fn cancel_editing(&mut self, cx: &mut Context<Self>) {
+        cx.emit(ThreadEvent::CancelEditing);
     }
 
     pub fn feedback(&self) -> Option<ThreadFeedback> {
@@ -2189,8 +2298,8 @@ impl Thread {
         self.cumulative_token_usage
     }
 
-    pub fn token_usage_up_to_message(&self, message_id: MessageId, cx: &App) -> TotalTokenUsage {
-        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
+    pub fn token_usage_up_to_message(&self, message_id: MessageId) -> TotalTokenUsage {
+        let Some(model) = self.configured_model.as_ref() else {
             return TotalTokenUsage::default();
         };
 
@@ -2218,20 +2327,17 @@ impl Thread {
         }
     }
 
-    pub fn total_token_usage(&self, cx: &App) -> TotalTokenUsage {
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let Some(model) = model_registry.default_model() else {
-            return TotalTokenUsage::default();
-        };
+    pub fn total_token_usage(&self) -> Option<TotalTokenUsage> {
+        let model = self.configured_model.as_ref()?;
 
         let max = model.model.max_token_count();
 
         if let Some(exceeded_error) = &self.exceeded_window_error {
             if model.model.id() == exceeded_error.model_id {
-                return TotalTokenUsage {
+                return Some(TotalTokenUsage {
                     total: exceeded_error.token_count,
                     max,
-                };
+                });
             }
         }
 
@@ -2240,7 +2346,7 @@ impl Thread {
             .unwrap_or_default()
             .total_tokens() as usize;
 
-        TotalTokenUsage { total, max }
+        Some(TotalTokenUsage { total, max })
     }
 
     fn token_usage_at_last_message(&self) -> Option<TokenUsage> {
@@ -2271,8 +2377,12 @@ impl Thread {
             "Permission to run tool action denied by user"
         ));
 
-        self.tool_use
-            .insert_tool_output(tool_use_id.clone(), tool_name, err, cx);
+        self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            tool_name,
+            err,
+            self.configured_model.as_ref(),
+        );
         self.tool_finished(tool_use_id.clone(), None, true, window, cx);
     }
 }
@@ -2327,6 +2437,7 @@ pub enum ThreadEvent {
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
+    CancelEditing,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
@@ -2703,6 +2814,7 @@ fn main() {{
             prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);
+            language_model::init_settings(cx);
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);

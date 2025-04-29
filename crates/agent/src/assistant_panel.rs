@@ -268,6 +268,7 @@ pub struct AssistantPanel {
     thread: Entity<ActiveThread>,
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
+    _default_model_subscription: Subscription,
     context_store: Entity<assistant_context_editor::ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     configuration: Option<Entity<AssistantConfiguration>>,
@@ -408,6 +409,20 @@ impl AssistantPanel {
             }
         });
 
+        let _default_model_subscription = cx.subscribe(
+            &LanguageModelRegistry::global(cx),
+            |this, _, event: &language_model::Event, cx| match event {
+                language_model::Event::DefaultModelChanged => {
+                    this.thread
+                        .read(cx)
+                        .thread()
+                        .clone()
+                        .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
+                }
+                _ => {}
+            },
+        );
+
         Self {
             active_view,
             workspace,
@@ -423,6 +438,7 @@ impl AssistantPanel {
                 active_thread_subscription,
                 message_editor_subscription,
             ],
+            _default_model_subscription,
             context_store,
             prompt_store,
             configuration: None,
@@ -1274,12 +1290,13 @@ impl AssistantPanel {
         let is_generating = thread.is_generating();
         let message_editor = self.message_editor.read(cx);
 
-        let conversation_token_usage = thread.total_token_usage(cx);
+        let conversation_token_usage = thread.total_token_usage()?;
+
         let (total_token_usage, is_estimating) = if let Some((editing_message_id, unsent_tokens)) =
             self.thread.read(cx).editing_message_id()
         {
             let combined = thread
-                .token_usage_up_to_message(editing_message_id, cx)
+                .token_usage_up_to_message(editing_message_id)
                 .add(unsent_tokens);
 
             (combined, unsent_tokens > 0)
