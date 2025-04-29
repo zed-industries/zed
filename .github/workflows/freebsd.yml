@@ -19,14 +19,12 @@ jobs:
           usesh: true
           prepare: |
             pkg install -y \
-              curl git rustup-init cmake llvm protobuf # ibx11 alsa-lib
+              curl git rustup-init cmake llvm pkgconf protobuf # ibx11 alsa-lib
           run: |
-            pwd
-            ls -lah
-            whoami
-            env
             freebsd-version
             sysctl hw.model
             sysctl hw.ncpu
             sysctl hw.physmem
             sysctl hw.usermem
+            cargo build -p remote_server
+            target/debug/remote-server --version
