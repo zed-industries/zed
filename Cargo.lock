@@ -730,6 +730,8 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "task",
+ "terminal_view",
  "tree-sitter-rust",
  "ui",
  "unindent",

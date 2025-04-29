@@ -1408,6 +1408,13 @@ impl Terminal {
         }
     }
 
+    pub fn get_content(&self) -> String {
+        let term = self.term.lock_unfair();
+        let start = AlacPoint::new(term.topmost_line(), Column(0));
+        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+        term.bounds_to_string(start, end)
+    }
+
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
         let term = self.term.clone();
         let terminal = term.lock_unfair();
