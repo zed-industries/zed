@@ -178,9 +178,9 @@ Zed offers two different strategies for selecting text surrounded by any quote, 
 
 Each text object type works with specific characters:
 
-| Text Object | Characters |
-|-------------|------------|
-| AnyQuotes/MiniQuotes | Single quote (`'`), Double quote (`"`), Backtick (`` ` ``) |
+| Text Object              | Characters                                                                             |
+| ------------------------ | -------------------------------------------------------------------------------------- |
+| AnyQuotes/MiniQuotes     | Single quote (`'`), Double quote (`"`), Backtick (`` ` ``)                             |
 | AnyBrackets/MiniBrackets | Parentheses (`()`), Square brackets (`[]`), Curly braces (`{}`), Angle brackets (`<>`) |
 
 Both "Any" and "Mini" variants work with the same character sets, but differ in their selection strategy.
@@ -205,6 +205,7 @@ These text objects implement the behavior of the [mini.ai](https://github.com/ec
 #### Choosing Between Approaches
 
 - Use **AnyQuotes/AnyBrackets** if you:
+
   - Prefer traditional Vim behavior
   - Want consistent character-based selection prioritizing innermost delimiters
   - Need behavior that closely matches vanilla Vim's text objects
@@ -234,6 +235,7 @@ To use these text objects, you need to add bindings to your keymap. Here's an ex
 ```
 
 With this configuration, you can use commands like:
+
 - `cib` - Change inside brackets using AnyBrackets behavior
 - `cim` - Change inside brackets using MiniBrackets behavior
 - `ciq` - Change inside quotes using AnyQuotes behavior
