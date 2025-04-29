@@ -43,6 +43,7 @@
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
+      "cmd-backspace": "menu::EndSlot",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -291,7 +292,6 @@
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-ctrl-a": "agent::ToggleNavigationMenu",
-      "shift-delete": "agent::DeleteRecentlyOpenThread",
       "shift-escape": "agent::ExpandMessageEditor",
       "cmd-e": "agent::ChatMode",
       "cmd-alt-e": "agent::RemoveAllContext"

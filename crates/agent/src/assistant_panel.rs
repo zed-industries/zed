@@ -442,7 +442,6 @@ impl AssistantPanel {
                         // FIXME better empty state
                         return menu.action("View All", Box::new(OpenHistory));
                     }
-                    let weak_menu = cx.weak_entity();
                     let mut menu = menu.header("Recently Opened");
                     for entry in recently_opened.iter() {
                         menu = menu.entry_with_end_slot(
@@ -473,18 +472,12 @@ impl AssistantPanel {
                             {
                                 let panel = panel.clone();
                                 let entry = entry.clone();
-                                let weak_menu = weak_menu.clone();
                                 move |_window, cx| {
                                     panel
                                         .update(cx, |this, cx| {
                                             this.history_store.update(cx, |history_store, cx| {
                                                 history_store
                                                     .remove_recently_opened_entry(entry.id.clone());
-                                                weak_menu
-                                                    .update(cx, |_, cx| {
-                                                        cx.notify();
-                                                    })
-                                                    .ok();
                                             });
                                         })
                                         .ok();

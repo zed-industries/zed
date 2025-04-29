@@ -527,6 +527,19 @@ impl ContextMenu {
         self
     }
 
+    pub fn trigger_end_slot_handler(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
+            return;
+        };
+        let ContextMenuItem::Entry(entry) = entry else {
+            return;
+        };
+        let Some(handler) = entry.end_slot_handler.as_ref() else {
+            return;
+        };
+        handler(None, window, cx);
+    }
+
     pub fn fixed_width(mut self, width: impl Into<gpui::Length>) -> Self {
         self.fixed_width = Some(width.into());
         self
@@ -559,6 +572,21 @@ impl ContextMenu {
     pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
         cx.emit(DismissEvent);
+    }
+
+    pub fn end_slot(&mut self, _: &menu::EndSlot, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
+            return;
+        };
+        let ContextMenuItem::Entry(entry) = item else {
+            return;
+        };
+        let Some(handler) = entry.end_slot_handler.as_ref() else {
+            return;
+        };
+        handler(None, window, cx);
+        self.rebuild(window, cx);
+        cx.notify();
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
@@ -935,6 +963,7 @@ impl ContextMenu {
                                             handler(None, window, cx);
                                             this.update(cx, |this, cx| {
                                                 this.rebuild(window, cx);
+                                                cx.notify();
                                             })
                                             .ok();
                                         }
@@ -1014,7 +1043,7 @@ impl Render for ContextMenu {
                             .id("context-menu")
                             .map(|this| {
                                 if let Some(width) = self.fixed_width {
-                                    this.w(dbg!(width))
+                                    this.w(width)
                                 } else {
                                     this.min_w(px(200.))
                                 }
@@ -1033,6 +1062,7 @@ impl Render for ContextMenu {
                             .on_action(cx.listener(ContextMenu::select_previous))
                             .on_action(cx.listener(ContextMenu::confirm))
                             .on_action(cx.listener(ContextMenu::cancel))
+                            .on_action(cx.listener(ContextMenu::end_slot))
                             .when(!self.delayed, |mut el| {
                                 for item in self.items.iter() {
                                     if let ContextMenuItem::Entry(ContextMenuEntry {
