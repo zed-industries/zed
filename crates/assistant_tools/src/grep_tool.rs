@@ -13,9 +13,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
 use ui::IconName;
+use util::RangeExt;
 use util::markdown::MarkdownInlineCode;
 use util::paths::PathMatcher;
-use util::{RangeExt, markdown::MarkdownString};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GrepToolInput {
