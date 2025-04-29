@@ -746,7 +746,13 @@ mod tests {
         let task = cx.update(|cx| tool.run(input, &[], project, action_log, None, cx));
 
         match task.output.await {
-            Ok(result) => result,
+            Ok(result) => {
+                if cfg!(windows) {
+                    result.replace("root\\", "root/")
+                } else {
+                    result
+                }
+            }
             Err(e) => panic!("Failed to run grep tool: {}", e),
         }
     }
