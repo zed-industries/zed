@@ -1,7 +1,6 @@
 package zed:extension;
 
 world extension {
-    import context-server;
     import github;
     import http-client;
     import platform;
@@ -9,7 +8,6 @@ world extension {
     import nodejs;
 
     use common.{env-vars, range};
-    use context-server.{context-server-configuration};
     use lsp.{completion, symbol};
     use process.{command};
     use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
@@ -140,9 +138,6 @@ world extension {
 
     /// Returns the command used to start up a context server.
     export context-server-command: func(context-server-id: string, project: borrow<project>) -> result<command, string>;
-
-    /// Returns the configuration for a context server.
-    export context-server-configuration: func(context-server-id: string, project: borrow<project>) -> result<option<context-server-configuration>, string>;
 
     /// Returns a list of packages as suggestions to be included in the `/docs`
     /// search results.

@@ -640,6 +640,14 @@ pub struct SerializedThread {
     pub detailed_summary_state: DetailedSummaryState,
     #[serde(default)]
     pub exceeded_window_error: Option<ExceededWindowError>,
+    #[serde(default)]
+    pub model: Option<SerializedLanguageModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializedLanguageModel {
+    pub provider: String,
+    pub model: String,
 }
 
 impl SerializedThread {
@@ -774,6 +782,7 @@ impl LegacySerializedThread {
             request_token_usage: Vec::new(),
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
+            model: None,
         }
     }
 }

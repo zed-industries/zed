@@ -322,16 +322,35 @@ async fn create_billing_subscription(
         CustomerId::from_str(&existing_customer.stripe_customer_id)
             .context("failed to parse customer ID")?
     } else {
-        let customer = Customer::create(
-            &stripe_client,
-            CreateCustomer {
-                email: user.email_address.as_deref(),
-                ..Default::default()
-            },
-        )
-        .await?;
+        let existing_customer = if let Some(email) = user.email_address.as_deref() {
+            let customers = Customer::list(
+                &stripe_client,
+                &stripe::ListCustomers {
+                    email: Some(email),
+                    ..Default::default()
+                },
+            )
+            .await?;
 
-        customer.id
+            customers.data.first().cloned()
+        } else {
+            None
+        };
+
+        if let Some(existing_customer) = existing_customer {
+            existing_customer.id
+        } else {
+            let customer = Customer::create(
+                &stripe_client,
+                CreateCustomer {
+                    email: user.email_address.as_deref(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customer.id
+        }
     };
 
     let success_url = format!(
@@ -374,7 +393,9 @@ async fn create_billing_subscription(
                 zed_llm_client::LanguageModelProvider::Anthropic,
                 "claude-3-7-sonnet",
             )?;
-            let stripe_model = stripe_billing.register_model(default_model).await?;
+            let stripe_model = stripe_billing
+                .register_model_for_token_based_usage(default_model)
+                .await?;
             stripe_billing
                 .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
                 .await?
@@ -1224,9 +1245,9 @@ async fn find_or_create_billing_customer(
     Ok(Some(billing_customer))
 }
 
-const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
+const SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
-pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
+pub fn sync_llm_token_usage_with_stripe_periodically(app: Arc<AppState>) {
     let Some(stripe_billing) = app.stripe_billing.clone() else {
         log::warn!("failed to retrieve Stripe billing object");
         return;
@@ -1241,17 +1262,19 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
         let executor = executor.clone();
         async move {
             loop {
-                sync_with_stripe(&app, &llm_db, &stripe_billing)
+                sync_token_usage_with_stripe(&app, &llm_db, &stripe_billing)
                     .await
                     .context("failed to sync LLM usage to Stripe")
                     .trace_err();
-                executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
+                executor
+                    .sleep(SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL)
+                    .await;
             }
         }
     });
 }
 
-async fn sync_with_stripe(
+async fn sync_token_usage_with_stripe(
     app: &Arc<AppState>,
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
@@ -1282,14 +1305,119 @@ async fn sync_with_stripe(
             .parse()
             .context("failed to parse stripe customer id from db")?;
 
-        let stripe_model = stripe_billing.register_model(&model).await?;
+        let stripe_model = stripe_billing
+            .register_model_for_token_based_usage(&model)
+            .await?;
         stripe_billing
             .subscribe_to_model(&stripe_subscription_id, &stripe_model)
             .await?;
         stripe_billing
-            .bill_model_usage(&stripe_customer_id, &stripe_model, &event)
+            .bill_model_token_usage(&stripe_customer_id, &stripe_model, &event)
             .await?;
         llm_db.consume_billing_event(event.id).await?;
+    }
+
+    Ok(())
+}
+
+const SYNC_LLM_REQUEST_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
+
+pub fn sync_llm_request_usage_with_stripe_periodically(app: Arc<AppState>) {
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::warn!("failed to retrieve Stripe billing object");
+        return;
+    };
+    let Some(llm_db) = app.llm_db.clone() else {
+        log::warn!("failed to retrieve LLM database");
+        return;
+    };
+
+    let executor = app.executor.clone();
+    executor.spawn_detached({
+        let executor = executor.clone();
+        async move {
+            loop {
+                sync_model_request_usage_with_stripe(&app, &llm_db, &stripe_billing)
+                    .await
+                    .context("failed to sync LLM request usage to Stripe")
+                    .trace_err();
+                executor
+                    .sleep(SYNC_LLM_REQUEST_USAGE_WITH_STRIPE_INTERVAL)
+                    .await;
+            }
+        }
+    });
+}
+
+async fn sync_model_request_usage_with_stripe(
+    app: &Arc<AppState>,
+    llm_db: &Arc<LlmDatabase>,
+    stripe_billing: &Arc<StripeBilling>,
+) -> anyhow::Result<()> {
+    let usage_meters = llm_db
+        .get_current_subscription_usage_meters(Utc::now())
+        .await?;
+    let user_ids = usage_meters
+        .iter()
+        .map(|(_, usage)| usage.user_id)
+        .collect::<HashSet<UserId>>();
+    let billing_subscriptions = app
+        .db
+        .get_active_zed_pro_billing_subscriptions(user_ids)
+        .await?;
+
+    let claude_3_5_sonnet = stripe_billing
+        .find_price_by_lookup_key("claude-3-5-sonnet-requests")
+        .await?;
+    let claude_3_7_sonnet = stripe_billing
+        .find_price_by_lookup_key("claude-3-7-sonnet-requests")
+        .await?;
+
+    for (usage_meter, usage) in usage_meters {
+        maybe!(async {
+            let Some((billing_customer, billing_subscription)) =
+                billing_subscriptions.get(&usage.user_id)
+            else {
+                bail!(
+                    "Attempted to sync usage meter for user who is not a Stripe customer: {}",
+                    usage.user_id
+                );
+            };
+
+            let stripe_customer_id = billing_customer
+                .stripe_customer_id
+                .parse::<stripe::CustomerId>()
+                .context("failed to parse Stripe customer ID from database")?;
+            let stripe_subscription_id = billing_subscription
+                .stripe_subscription_id
+                .parse::<stripe::SubscriptionId>()
+                .context("failed to parse Stripe subscription ID from database")?;
+
+            let model = llm_db.model_by_id(usage_meter.model_id)?;
+
+            let (price_id, meter_event_name) = match model.name.as_str() {
+                "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
+                "claude-3-7-sonnet" => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
+                model_name => {
+                    bail!("Attempted to sync usage meter for unsupported model: {model_name:?}")
+                }
+            };
+
+            stripe_billing
+                .subscribe_to_price(&stripe_subscription_id, price_id)
+                .await?;
+            stripe_billing
+                .bill_model_request_usage(
+                    &stripe_customer_id,
+                    meter_event_name,
+                    usage_meter.requests,
+                )
+                .await?;
+
+            Ok(())
+        })
+        .await
+        .log_err();
     }
 
     Ok(())

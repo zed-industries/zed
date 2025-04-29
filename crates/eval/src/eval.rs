@@ -17,7 +17,7 @@ use client::{Client, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
-use gpui::http_client::{Uri, read_proxy_from_env};
+use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -358,7 +358,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
-        .and_then(|input| input.parse::<Uri>().ok())
+        .and_then(|input| input.parse().ok())
         .or_else(read_proxy_from_env);
     let http = {
         let _guard = Tokio::handle(cx).enter();
