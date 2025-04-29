@@ -228,7 +228,6 @@ impl Tool for EditFileTool {
 
                             PathBuf::from(format!("failed_tool_{}.txt", hasher.finish()))
                         };
-                        dbg!(&path.display());
                         std::fs::write(path, old_string_with_buffer).unwrap();
                         anyhow!("Failed to match the provided `old_string`")
                     }

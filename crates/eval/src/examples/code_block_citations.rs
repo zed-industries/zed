@@ -50,7 +50,6 @@ impl Example for CodeBlockCitations {
                 // Verify the citation format - e.g. ```path/to/foo.txt#L123-456
                 if let Some(citation_len) = text.find('\n') {
                     let citation = &text[..citation_len];
-                    dbg!(&citation);
 
                     if let Ok(()) =
                         cx.assert(citation.contains("/"), format!("Slash in {citation:?}",))
@@ -98,9 +97,6 @@ impl Example for CodeBlockCitations {
                             };
 
                             if let Some(content_len) = content_len {
-                                dbg!(&text[..content_len]);
-                                dbg!(&text[citation.len()..content_len - citation.len()]);
-
                                 // + 1 because there's a newline character after the citation.
                                 let content =
                                     &text[(citation.len() + 1)..content_len - (citation.len() + 1)];
