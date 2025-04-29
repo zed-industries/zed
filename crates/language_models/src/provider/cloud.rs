@@ -269,13 +269,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        let model = CloudModel::Anthropic(anthropic::Model::default());
+        let model = CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet);
         Some(self.create_language_model(model, llm_api_token))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        let model = CloudModel::Anthropic(anthropic::Model::default_fast());
+        let model = CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet);
         Some(self.create_language_model(model, llm_api_token))
     }
 
