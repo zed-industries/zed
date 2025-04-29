@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{Cents, Result, llm};
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use chrono::{Datelike, Utc};
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ pub struct StripeBilling {
 struct StripeBillingState {
     meters_by_event_name: HashMap<String, StripeMeter>,
     price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
+    prices_by_lookup_key: HashMap<String, stripe::Price>,
 }
 
 pub struct StripeModelTokenPrices {
@@ -63,6 +64,10 @@ impl StripeBilling {
         }
 
         for price in prices.data {
+            if let Some(lookup_key) = price.lookup_key.clone() {
+                state.prices_by_lookup_key.insert(lookup_key, price.clone());
+            }
+
             if let Some(recurring) = price.recurring {
                 if let Some(meter) = recurring.meter {
                     state.price_ids_by_meter_id.insert(meter, price.id);
@@ -73,6 +78,16 @@ impl StripeBilling {
         log::info!("StripeBilling: initialized");
 
         Ok(())
+    }
+
+    pub async fn find_price_by_lookup_key(&self, lookup_key: &str) -> Result<stripe::Price> {
+        self.state
+            .read()
+            .await
+            .prices_by_lookup_key
+            .get(lookup_key)
+            .cloned()
+            .ok_or_else(|| crate::Error::Internal(anyhow!("")))
     }
 
     pub async fn register_model_for_token_based_usage(
@@ -350,7 +365,7 @@ impl StripeBilling {
     pub async fn bill_model_request_usage(
         &self,
         customer_id: &stripe::CustomerId,
-        model: &StripeModelTokenPrices,
+        event_name: &str,
         requests: i32,
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
@@ -360,7 +375,7 @@ impl StripeBilling {
             &self.client,
             StripeCreateMeterEventParams {
                 identifier: &format!("model_requests/{}", idempotency_key),
-                event_name: &model.input_cache_creation_tokens_price.meter_event_name,
+                event_name,
                 payload: StripeCreateMeterEventPayload {
                     value: requests as u64,
                     stripe_customer_id: customer_id,
