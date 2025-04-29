@@ -28,6 +28,7 @@ use settings::Settings;
 use std::any::TypeId;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use util::ResultExt;
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -272,25 +273,7 @@ impl DebugPanel {
                 window,
                 move |this, session, event: &SessionStateEvent, window, cx| match event {
                     SessionStateEvent::Restart => {
-                        let mut curr_session = session.clone();
-                        while let Some(parent_session) = curr_session
-                            .read_with(cx, |session, _| session.parent_session().cloned())
-                        {
-                            curr_session = parent_session;
-                        }
-
-                        let definition = curr_session.update(cx, |session, _| session.definition());
-                        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
-
-                        cx.spawn_in(window, async move |this, cx| {
-                            task.await;
-
-                            this.update_in(cx, |this, window, cx| {
-                                this.start_from_definition(definition, window, cx)
-                            })?
-                            .await
-                        })
-                        .detach_and_log_err(cx);
+                        this.handle_restart_request(session.clone(), window, cx);
                     }
                     SessionStateEvent::SpawnChildSession { request } => {
                         this.handle_start_debugging_request(request, session.clone(), window, cx);
@@ -342,6 +325,52 @@ impl DebugPanel {
         Ok(())
     }
 
+    fn handle_restart_request(
+        &mut self,
+        mut curr_session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        while let Some(parent_session) =
+            curr_session.read_with(cx, |session, _| session.parent_session().cloned())
+        {
+            curr_session = parent_session;
+        }
+
+        let Some(worktree) = curr_session.read(cx).worktree() else {
+            log::error!("Attempted to start a child session from non local debug session");
+            return;
+        };
+
+        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let breakpoint_store = self.project.read(cx).breakpoint_store();
+        let definition = curr_session.read(cx).definition().clone();
+        let binary = curr_session.read(cx).binary().clone();
+        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+        cx.spawn_in(window, async move |this, cx| {
+            task.await;
+
+            let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
+                let session = dap_store.new_session(definition.clone(), None, cx);
+
+                let task = session.update(cx, |session, cx| {
+                    session.boot(
+                        binary,
+                        worktree,
+                        breakpoint_store,
+                        dap_store_handle.downgrade(),
+                        cx,
+                    )
+                });
+                (session, task)
+            })?;
+            Self::register_session(this, session, cx).await?;
+            task.await
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn handle_start_debugging_request(
         &mut self,
         request: &StartDebuggingRequestArguments,
@@ -376,26 +405,8 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-
-            match task.await {
-                Err(e) => {
-                    this.update(cx, |this, cx| {
-                        this.workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.show_error(&e, cx);
-                            })
-                            .ok();
-                    })
-                    .ok();
-
-                    session
-                        .update(cx, |session, cx| session.shutdown(cx))?
-                        .await;
-                }
-                Ok(_) => Self::register_session(this, session, cx).await?,
-            }
-
-            anyhow::Ok(())
+            Self::register_session(this, session, cx).await?;
+            task.await
         })
         .detach_and_log_err(cx);
     }
