@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use assistant_context_editor::{AssistantContext, SavedContextMetadata};
 use chrono::{DateTime, Utc};
 use gpui::{Entity, prelude::*};
@@ -7,6 +9,8 @@ use crate::{
     Thread,
     thread_store::{SerializedThreadMetadata, ThreadStore},
 };
+
+const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
 
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
@@ -41,7 +45,7 @@ impl RecentEntry {
 pub struct HistoryStore {
     thread_store: Entity<ThreadStore>,
     context_store: Entity<assistant_context_editor::ContextStore>,
-    recently_opened_entries: Vec<RecentEntry>,
+    recently_opened_entries: VecDeque<RecentEntry>,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -59,7 +63,8 @@ impl HistoryStore {
         Self {
             thread_store,
             context_store,
-            recently_opened_entries: vec![],
+            // FIXME persistence
+            recently_opened_entries: VecDeque::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -91,10 +96,12 @@ impl HistoryStore {
         self.entries(cx).into_iter().take(limit).collect()
     }
 
-    pub fn push_recently_opened_entry(&mut self, entry: RecentEntry, _cx: &mut Context<Self>) {
+    pub fn push_recently_opened_entry(&mut self, entry: RecentEntry) {
         self.recently_opened_entries
             .retain(|old_entry| old_entry != &entry);
-        self.recently_opened_entries.push(entry);
+        self.recently_opened_entries.push_front(entry);
+        self.recently_opened_entries
+            .truncate(MAX_RECENTLY_OPENED_ENTRIES);
     }
 
     pub fn remove_recently_opened_entry(&mut self, entry: &RecentEntry) {
@@ -102,19 +109,12 @@ impl HistoryStore {
             .retain(|old_entry| old_entry != entry);
     }
 
-    pub fn recently_opened_entries(
-        &self,
-        limit: usize,
-        _cx: &mut Context<Self>,
-    ) -> Vec<RecentEntry> {
+    pub fn recently_opened_entries(&self, _cx: &mut Context<Self>) -> VecDeque<RecentEntry> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_THREAD_HISTORY").is_ok() {
-            return Vec::new();
+            return VecDeque::new();
         }
 
-        let start = self.recently_opened_entries.len().saturating_sub(limit);
-        let mut entries = self.recently_opened_entries[start..].to_owned();
-        entries.reverse();
-        entries
+        self.recently_opened_entries.clone()
     }
 }

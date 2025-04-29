@@ -429,7 +429,7 @@ impl AssistantPanel {
                     let recently_opened = panel
                         .update(cx, |this, cx| {
                             this.history_store.update(cx, |history_store, cx| {
-                                history_store.recently_opened_entries(6, cx)
+                                history_store.recently_opened_entries(cx)
                             })
                         })
                         .unwrap_or_default();
@@ -1072,12 +1072,12 @@ impl AssistantPanel {
                     return;
                 }
 
-                store.push_recently_opened_entry(RecentEntry::Thread(active_thread), cx);
+                store.push_recently_opened_entry(RecentEntry::Thread(active_thread));
             }),
             ActiveView::PromptEditor { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
                     let context = context_editor.read(cx).context().clone();
-                    store.push_recently_opened_entry(RecentEntry::Context(context), cx)
+                    store.push_recently_opened_entry(RecentEntry::Context(context))
                 })
             }
             _ => {}
