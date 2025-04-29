@@ -22,4 +22,5 @@ schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
+time.workspace = true
 workspace-hack.workspace = true

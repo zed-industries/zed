@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use time::OffsetDateTime;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -98,6 +101,73 @@ pub async fn count_tokens(
     } else {
         Err(anyhow!(
             "error during countTokens, status code: {:?}, body: {}",
+            response.status(),
+            text
+        ))
+    }
+}
+
+pub async fn cache_contents(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    request: CacheContentsRequest,
+) -> Result<CacheContentsResponse> {
+    if let Some(user_content) = request
+        .contents
+        .iter()
+        .find(|content| content.role == Role::User)
+    {
+        if user_content.parts.is_empty() {
+            bail!("User content must contain at least one part");
+        }
+    }
+    let uri = format!("{api_url}/v1beta/cacheContents?key={api_key}");
+    let request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    let http_request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(http_request).await?;
+    let mut text = String::new();
+    response.body_mut().read_to_string(&mut text).await?;
+    if response.status().is_success() {
+        Ok(serde_json::from_str::<CacheContentsResponse>(&text)?)
+    } else {
+        Err(anyhow!(
+            "error during cacheContents, status code: {:?}, body: {}",
+            response.status(),
+            text
+        ))
+    }
+}
+
+pub async fn update_cache(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    cache_name: &CacheName,
+    request: UpdateCacheRequest,
+) -> Result<UpdateCacheResponse> {
+    let uri = format!(
+        "{api_url}/v1beta/cacheContents/{}?key={api_key}",
+        &cache_name.0
+    );
+    let request_builder = HttpRequest::builder()
+        .method(Method::PATCH)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    let http_request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let mut response = client.send(http_request).await?;
+    let mut text = String::new();
+    response.body_mut().read_to_string(&mut text).await?;
+    if response.status().is_success() {
+        Ok(serde_json::from_str::<UpdateCacheResponse>(&text)?)
+    } else {
+        Err(anyhow!(
+            "error during update of cacheContents, status code: {:?}, body: {}",
             response.status(),
             text
         ))
@@ -382,6 +452,168 @@ pub struct FunctionDeclaration {
     pub parameters: serde_json::Value,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheContentsRequest {
+    #[serde(
+        serialize_with = "serialize_duration",
+        deserialize_with = "deserialize_duration"
+    )]
+    pub ttl: Duration,
+    pub model: String,
+    pub contents: Vec<Content>,
+    pub system_instruction: Content,
+    pub tools: Vec<Tool>,
+    pub tool_config: ToolConfig,
+    // Other fields that could be provided:
+    //
+    // name: The resource name referring to the cached content. Format: cachedContents/{id}
+    // display_name: user-generated meaningful display name of the cached content. Maximum 128 Unicode characters.
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheContentsResponse {
+    pub name: CacheName,
+    #[serde(
+        serialize_with = "time::serde::rfc3339::serialize",
+        deserialize_with = "time::serde::rfc3339::deserialize"
+    )]
+    pub expire_time: OffsetDateTime,
+    pub usage_metadata: UsageMetadata,
+    // Other fields that could be provided:
+    //
+    // create_time: Creation time of the cache entry.
+    // update_time: When the cache entry was last updated in UTC time.
+    // usage_metadata: Metadata on the usage of the cached content.
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCacheRequest {
+    #[serde(
+        serialize_with = "serialize_duration",
+        deserialize_with = "deserialize_duration"
+    )]
+    pub ttl: Duration,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCacheResponse {
+    #[serde(
+        serialize_with = "time::serde::rfc3339::serialize",
+        deserialize_with = "time::serde::rfc3339::deserialize"
+    )]
+    pub expire_time: OffsetDateTime,
+}
+
+#[derive(Debug)]
+pub struct CacheName(String);
+
+const CACHE_NAME_PREFIX: &str = "cachedContents/";
+
+impl Serialize for CacheName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{CACHE_NAME_PREFIX}{}", &self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for CacheName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+        if let Some(name) = string.strip_prefix(CACHE_NAME_PREFIX) {
+            Ok(CacheName(name.to_string()))
+        } else {
+            return Err(serde::de::Error::custom(format!(
+                "Expected cache name to begin with {}, got: {}",
+                CACHE_NAME_PREFIX, string
+            )));
+        }
+    }
+}
+
+/// Serializes a Duration as a string in the format "X.Ys" where X is the whole seconds
+/// and Y is up to 9 decimal places of fractional seconds.
+pub fn serialize_duration<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let secs = duration.as_secs();
+    let nanos = duration.subsec_nanos();
+
+    // Format with only the necessary decimal places (up to 9)
+    let formatted = if nanos == 0 {
+        format!("{}s", secs)
+    } else {
+        // Remove trailing zeros from nanos
+        let mut nanos_str = format!("{:09}", nanos);
+        while nanos_str.ends_with('0') && nanos_str.len() > 1 {
+            nanos_str.pop();
+        }
+        format!("{}.{}s", secs, nanos_str)
+    };
+
+    serializer.serialize_str(&formatted)
+}
+
+pub fn deserialize_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let duration_str = String::deserialize(deserializer)?;
+
+    let Some(num_part) = duration_str.strip_suffix('s') else {
+        return Err(serde::de::Error::custom(format!(
+            "Duration must end with 's', got: {}",
+            duration_str
+        )));
+    };
+
+    // Check if the string contains a decimal point
+    if let Some(decimal_ix) = num_part.find('.') {
+        let secs_part = &num_part[0..decimal_ix];
+        let frac_len = (num_part.len() - (decimal_ix + 1)).min(9);
+        let frac_start_ix = decimal_ix + 1;
+        let frac_end_ix = frac_start_ix + frac_len;
+        let frac_part = &num_part[frac_start_ix..frac_end_ix];
+
+        let secs = u64::from_str_radix(secs_part, 10).map_err(|e| {
+            serde::de::Error::custom(format!(
+                "Invalid seconds in duration: {}. Error: {}",
+                duration_str, e
+            ))
+        })?;
+
+        let frac_number = frac_part.parse::<u32>().map_err(|e| {
+            serde::de::Error::custom(format!(
+                "Invalid fractional seconds in duration: {}. Error: {}",
+                duration_str, e
+            ))
+        })?;
+
+        let nanos = frac_number * 10u32.pow(9 - frac_len as u32);
+
+        Ok(Duration::new(secs, nanos))
+    } else {
+        // No decimal point, just whole seconds
+        let secs = u64::from_str_radix(num_part, 10).map_err(|e| {
+            serde::de::Error::custom(format!(
+                "Invalid duration format: {}. Error: {}",
+                duration_str, e
+            ))
+        })?;
+
+        Ok(Duration::new(secs, 0))
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
@@ -504,5 +736,56 @@ impl Model {
 impl std::fmt::Display for Model {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.id())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_duration_serialization() {
+        #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+        struct Example {
+            #[serde(
+                serialize_with = "serialize_duration",
+                deserialize_with = "deserialize_duration"
+            )]
+            duration: Duration,
+        }
+
+        let example = Example {
+            duration: Duration::from_secs(5),
+        };
+        let serialized = serde_json::to_string(&example).unwrap();
+        let deserialized: Example = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(serialized, r#"{"duration":"5s"}"#);
+        assert_eq!(deserialized, example);
+
+        let example = Example {
+            duration: Duration::from_millis(5534),
+        };
+        let serialized = serde_json::to_string(&example).unwrap();
+        let deserialized: Example = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(serialized, r#"{"duration":"5.534s"}"#);
+        assert_eq!(deserialized, example);
+
+        let example = Example {
+            duration: Duration::from_nanos(12345678900),
+        };
+        let serialized = serde_json::to_string(&example).unwrap();
+        let deserialized: Example = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(serialized, r#"{"duration":"12.3456789s"}"#);
+        assert_eq!(deserialized, example);
+
+        // Deserializer doesn't panic for too many fractional digits
+        let deserialized: Example =
+            serde_json::from_str(r#"{"duration":"5.12345678905s"}"#).unwrap();
+        assert_eq!(
+            deserialized,
+            Example {
+                duration: Duration::from_nanos(5123456789)
+            }
+        );
     }
 }
