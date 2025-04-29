@@ -20,7 +20,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
@@ -354,7 +354,7 @@ fn main() {
             .as_ref()
             .and_then(|input| {
                 input
-                    .parse::<Uri>()
+                    .parse::<Url>()
                     .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                     .ok()
             })
@@ -378,7 +378,7 @@ fn main() {
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
-        cx.set_http_client(client.http_client().clone());
+        cx.set_http_client(client.http_client());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);

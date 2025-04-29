@@ -1,12 +1,12 @@
-use super::DapLocator;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use dap::{DapLocator, DebugRequest};
 use serde_json::Value;
 use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use task::DebugTaskDefinition;
+use task::SpawnInTerminal;
 
 pub(crate) struct CargoLocator;
 
@@ -37,26 +37,31 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    async fn run_locator(
-        &self,
-        mut debug_config: DebugTaskDefinition,
-    ) -> Result<DebugTaskDefinition> {
-        let Some(launch_config) = (match &mut debug_config.request {
-            task::DebugRequest::Launch(launch_config) => Some(launch_config),
-            _ => None,
-        }) else {
-            return Err(anyhow!("Couldn't get launch config in locator"));
+    fn accepts(&self, build_config: &SpawnInTerminal) -> bool {
+        if build_config.command != "cargo" {
+            return false;
+        }
+        let Some(command) = build_config.args.first().map(|s| s.as_str()) else {
+            return false;
         };
+        if matches!(command, "check" | "run") {
+            return false;
+        }
+        !matches!(command, "test" | "bench")
+            || build_config.args.iter().any(|arg| arg == "--no-run")
+    }
 
-        let Some(cwd) = launch_config.cwd.clone() else {
+    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
+        let Some(cwd) = build_config.cwd.clone() else {
             return Err(anyhow!(
                 "Couldn't get cwd from debug config which is needed for locators"
             ));
         };
 
         let mut child = Command::new("cargo")
-            .args(&launch_config.args)
+            .args(&build_config.args)
             .arg("--message-format=json")
+            .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .spawn()?;
@@ -85,19 +90,16 @@ impl DapLocator for CargoLocator {
             return Err(anyhow!("Couldn't get executable in cargo locator"));
         };
 
-        let is_test = launch_config
-            .args
-            .first()
-            .map_or(false, |arg| arg == "test");
+        let is_test = build_config.args.first().map_or(false, |arg| arg == "test");
 
         let mut test_name = None;
         if is_test {
-            if let Some(package_index) = launch_config
+            if let Some(package_index) = build_config
                 .args
                 .iter()
                 .position(|arg| arg == "-p" || arg == "--package")
             {
-                test_name = launch_config
+                test_name = build_config
                     .args
                     .get(package_index + 2)
                     .filter(|name| !name.starts_with("--"))
@@ -116,12 +118,17 @@ impl DapLocator for CargoLocator {
             return Err(anyhow!("Couldn't get executable in cargo locator"));
         };
 
-        launch_config.program = executable;
+        let args = test_name.into_iter().collect();
 
-        launch_config.args.clear();
-        if let Some(test_name) = test_name {
-            launch_config.args.push(test_name);
-        }
-        Ok(debug_config)
+        Ok(DebugRequest::Launch(task::LaunchRequest {
+            program: executable,
+            cwd: build_config.cwd.clone(),
+            args,
+            env: build_config
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }))
     }
 }

@@ -460,6 +460,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                mode: None,
                 tools: Vec::new(),
                 stop: Vec::new(),
                 temperature: None,
@@ -503,7 +504,7 @@ impl CodegenAlternative {
             }
         }
 
-        let http_client = cx.http_client().clone();
+        let http_client = cx.http_client();
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);

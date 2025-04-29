@@ -20,7 +20,7 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, TaskKind, parse_json_with_comments,
+    SettingsStore, parse_json_with_comments,
 };
 pub use vscode_import::VsCodeSettings;
 

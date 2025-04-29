@@ -12,7 +12,7 @@ use super::dap_command::{
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
-use dap::adapters::DebugAdapterBinary;
+use dap::adapters::{DebugAdapterBinary, DebugTaskDefinition};
 use dap::messages::Response;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
@@ -40,7 +40,6 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::DebugTaskDefinition;
 use text::{PointUtf16, ToPointUtf16};
 use util::{ResultExt, merge_json_value_into};
 use worktree::Worktree;
@@ -123,7 +122,6 @@ pub enum Mode {
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     binary: DebugAdapterBinary,
-    root_binary: Option<Arc<DebugAdapterBinary>>,
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
@@ -159,12 +157,6 @@ impl LocalMode {
             messages_tx.unbounded_send(message).ok();
         });
 
-        let root_binary = if let Some(parent_session) = parent_session.as_ref() {
-            Some(parent_session.read_with(&cx, |session, _| session.root_binary().clone())?)
-        } else {
-            None
-        };
-
         let client = Arc::new(
             if let Some(client) = parent_session
                 .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
@@ -185,7 +177,6 @@ impl LocalMode {
             breakpoint_store,
             worktree,
             tmp_breakpoint: None,
-            root_binary,
             binary,
             executor: cx.background_executor().clone(),
         })
@@ -664,6 +655,7 @@ impl Session {
                 BreakpointStoreEvent::ActiveDebugLineChanged => {}
             })
             .detach();
+            cx.on_app_quit(Self::on_app_quit).detach();
 
             let this = Self {
                 mode: Mode::Building,
@@ -797,19 +789,6 @@ impl Session {
         &self.capabilities
     }
 
-    pub(crate) fn root_binary(&self) -> Arc<DebugAdapterBinary> {
-        match &self.mode {
-            Mode::Building => {
-                // todo(debugger): Implement root_binary for building mode
-                unimplemented!()
-            }
-            Mode::Running(running) => running
-                .root_binary
-                .clone()
-                .unwrap_or_else(|| Arc::new(running.binary.clone())),
-        }
-    }
-
     pub fn binary(&self) -> &DebugAdapterBinary {
         let Mode::Running(local_mode) = &self.mode else {
             panic!("Session is not local");
@@ -818,10 +797,10 @@ impl Session {
     }
 
     pub fn adapter_name(&self) -> SharedString {
-        self.definition.adapter.clone().into()
+        self.definition.adapter.clone()
     }
 
-    pub fn label(&self) -> String {
+    pub fn label(&self) -> SharedString {
         self.definition.label.clone()
     }
 
@@ -852,7 +831,7 @@ impl Session {
     }
 
     pub(super) fn request_initialize(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let adapter_id = self.definition.adapter.clone();
+        let adapter_id = String::from(self.definition.adapter.clone());
         let request = Initialize { adapter_id };
         match &self.mode {
             Mode::Running(local_mode) => {
@@ -1483,6 +1462,16 @@ impl Session {
         } else {
             cx.emit(SessionStateEvent::Restart);
         }
+    }
+
+    fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let debug_adapter = self.adapter_client();
+
+        cx.background_spawn(async move {
+            if let Some(client) = debug_adapter {
+                client.shutdown().await.log_err();
+            }
+        })
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {

@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
 /// the tool will return the file's symbol outline instead of its contents,
@@ -82,7 +82,7 @@ impl Tool for ContentsTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ContentsToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
 
                 match (input.start, input.end) {
                     (Some(start), None) => format!("Read {path} (from line {start})"),

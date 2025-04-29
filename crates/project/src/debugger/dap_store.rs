@@ -1,7 +1,7 @@
 use super::{
     breakpoint_store::BreakpointStore,
     dap_command::EvaluateCommand,
-    locators::DapLocator,
+    locators,
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
@@ -14,10 +14,12 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, EvaluateArguments,
-    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments, Source,
-    StackFrameId, StartDebuggingRequestArguments,
-    adapters::{DapStatus, DebugAdapterBinary, DebugAdapterName, TcpArguments},
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    Source, StackFrameId, StartDebuggingRequestArguments,
+    adapters::{
+        DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
+    },
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
@@ -50,12 +52,13 @@ use std::{
     ffi::OsStr,
     net::Ipv4Addr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Once},
 };
-use task::{DebugTaskDefinition, DebugTaskTemplate};
+use task::{DebugScenario, SpawnInTerminal};
 use util::ResultExt as _;
 use worktree::Worktree;
 
+#[derive(Debug)]
 pub enum DapStoreEvent {
     DebugClientStarted(SessionId),
     DebugSessionInitialized(SessionId),
@@ -95,7 +98,6 @@ pub struct LocalDapStore {
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    locators: HashMap<String, Arc<dyn DapLocator>>,
 }
 
 pub struct SshDapStore {
@@ -118,9 +120,14 @@ pub struct DapStore {
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
-    pub fn init(client: &AnyProtoClient) {
+    pub fn init(client: &AnyProtoClient, cx: &mut App) {
+        static ADD_LOCATORS: Once = Once::new();
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
+        ADD_LOCATORS.call_once(|| {
+            DapRegistry::global(cx)
+                .add_locator("cargo".into(), Arc::new(locators::cargo::CargoLocator {}))
+        });
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -135,13 +142,6 @@ impl DapStore {
         breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.on_app_quit(Self::shutdown_sessions).detach();
-
-        let locators = HashMap::from_iter([(
-            "cargo".to_string(),
-            Arc::new(super::locators::cargo::CargoLocator {}) as _,
-        )]);
-
         let mode = DapStoreMode::Local(LocalDapStore {
             fs,
             environment,
@@ -149,7 +149,6 @@ impl DapStore {
             node_runtime,
             toolchain_store,
             language_registry,
-            locators,
         });
 
         Self::new(mode, breakpoint_store, worktree_store, cx)
@@ -275,7 +274,7 @@ impl DapStore {
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
                     project_id: ssh.upstream_project_id,
-                    task: Some(definition.to_proto()),
+                    definition: Some(definition.to_proto()),
                 });
                 let ssh_client = ssh.ssh_client.clone();
 
@@ -328,34 +327,100 @@ impl DapStore {
         }
     }
 
+    pub fn debug_scenario_for_build_task(
+        &self,
+        mut build: SpawnInTerminal,
+        unresoved_label: SharedString,
+        adapter: SharedString,
+        cx: &mut App,
+    ) -> Option<DebugScenario> {
+        build.args = build
+            .args
+            .into_iter()
+            .map(|arg| {
+                if arg.starts_with("$") {
+                    arg.strip_prefix("$")
+                        .and_then(|arg| build.env.get(arg).map(ToOwned::to_owned))
+                        .unwrap_or_else(|| arg)
+                } else {
+                    arg
+                }
+            })
+            .collect();
+
+        DapRegistry::global(cx)
+            .locators()
+            .values()
+            .find(|locator| locator.accepts(&build))
+            .map(|_| DebugScenario {
+                adapter,
+                label: format!("Debug `{}`", build.label).into(),
+                build: Some(unresoved_label),
+                request: None,
+                initialize_args: None,
+                tcp_connection: None,
+                stop_on_entry: None,
+            })
+    }
+
     pub fn run_debug_locator(
         &mut self,
-        template: DebugTaskTemplate,
+        mut build_command: SpawnInTerminal,
         cx: &mut Context<Self>,
-    ) -> Task<Result<DebugTaskDefinition>> {
-        let Some(locator_name) = template.locator else {
-            return Task::ready(Ok(template.definition));
-        };
-
+    ) -> Task<Result<DebugRequest>> {
         match &self.mode {
-            DapStoreMode::Local(local) => {
-                if let Some(locator) = local.locators.get(&locator_name).cloned() {
-                    cx.background_spawn(
-                        async move { locator.run_locator(template.definition).await },
-                    )
+            DapStoreMode::Local(_) => {
+                // Pre-resolve args with existing environment.
+                build_command.args = build_command
+                    .args
+                    .into_iter()
+                    .map(|arg| {
+                        if arg.starts_with("$") {
+                            arg.strip_prefix("$")
+                                .and_then(|arg| build_command.env.get(arg).map(ToOwned::to_owned))
+                                .unwrap_or_else(|| arg)
+                        } else {
+                            arg
+                        }
+                    })
+                    .collect();
+                let locators = DapRegistry::global(cx)
+                    .locators()
+                    .values()
+                    .filter(|locator| locator.accepts(&build_command))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !locators.is_empty() {
+                    cx.background_spawn(async move {
+                        for locator in locators {
+                            let result = locator
+                                .run(build_command.clone())
+                                .await
+                                .log_with_level(log::Level::Error);
+                            if let Some(result) = result {
+                                return Ok(result);
+                            }
+                        }
+                        Err(anyhow!(
+                            "None of the locators for task `{}` completed successfully",
+                            build_command.label
+                        ))
+                    })
                 } else {
-                    Task::ready(Err(anyhow!("Couldn't find locator {}", locator_name)))
+                    Task::ready(Err(anyhow!(
+                        "Couldn't find any locator for task `{}`. Specify the `attach` or `launch` arguments in your debug scenario definition",
+                        build_command.label
+                    )))
                 }
             }
             DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::RunDebugLocator {
+                let request = ssh.upstream_client.request(proto::RunDebugLocators {
                     project_id: ssh.upstream_project_id,
-                    locator: locator_name,
-                    task: Some(template.definition.to_proto()),
+                    build_command: Some(build_command.to_proto()),
                 });
                 cx.background_spawn(async move {
                     let response = request.await?;
-                    DebugTaskDefinition::from_proto(response)
+                    DebugRequest::from_proto(response)
                 })
             }
             DapStoreMode::Collab => {
@@ -944,22 +1009,19 @@ impl DapStore {
 
     async fn handle_run_debug_locator(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::RunDebugLocator>,
+        envelope: TypedEnvelope<proto::RunDebugLocators>,
         mut cx: AsyncApp,
-    ) -> Result<proto::DebugTaskDefinition> {
-        let template = DebugTaskTemplate {
-            locator: Some(envelope.payload.locator),
-            definition: DebugTaskDefinition::from_proto(
-                envelope
-                    .payload
-                    .task
-                    .ok_or_else(|| anyhow!("missing definition"))?,
-            )?,
-        };
-        let definition = this
-            .update(&mut cx, |this, cx| this.run_debug_locator(template, cx))?
+    ) -> Result<proto::DebugRequest> {
+        let task = envelope
+            .payload
+            .build_command
+            .ok_or_else(|| anyhow!("missing definition"))?;
+        let build_task = SpawnInTerminal::from_proto(task);
+        let request = this
+            .update(&mut cx, |this, cx| this.run_debug_locator(build_task, cx))?
             .await?;
-        Ok(definition.to_proto())
+
+        Ok(request.to_proto())
     }
 
     async fn handle_get_debug_adapter_binary(
@@ -970,7 +1032,7 @@ impl DapStore {
         let definition = DebugTaskDefinition::from_proto(
             envelope
                 .payload
-                .task
+                .definition
                 .ok_or_else(|| anyhow!("missing definition"))?,
         )?;
         let binary = this

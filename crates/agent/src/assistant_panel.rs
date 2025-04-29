@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    AssistantPanelDelegate, ConfigurationError, ContextEditor, SlashCommandCompletionProvider,
-    humanize_token_count, make_lsp_adapter_delegate, render_remaining_tokens,
+    AssistantContext, AssistantPanelDelegate, ConfigurationError, ContextEditor, ContextEvent,
+    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
+    render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -116,6 +117,8 @@ enum ActiveView {
     },
     PromptEditor {
         context_editor: Entity<ContextEditor>,
+        title_editor: Entity<Editor>,
+        _subscriptions: Vec<gpui::Subscription>,
     },
     History,
     Configuration,
@@ -176,6 +179,83 @@ impl ActiveView {
             _subscriptions: subscriptions,
         }
     }
+
+    pub fn prompt_editor(
+        context_editor: Entity<ContextEditor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let title = context_editor.read(cx).title(cx).to_string();
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(title, window, cx);
+            editor
+        });
+
+        // This is a workaround for `editor.set_text` emitting a `BufferEdited` event, which would
+        // cause a custom summary to be set. The presence of this custom summary would cause
+        // summarization to not happen.
+        let mut suppress_first_edit = true;
+
+        let subscriptions = vec![
+            window.subscribe(&editor, cx, {
+                {
+                    let context_editor = context_editor.clone();
+                    move |editor, event, window, cx| match event {
+                        EditorEvent::BufferEdited => {
+                            if suppress_first_edit {
+                                suppress_first_edit = false;
+                                return;
+                            }
+                            let new_summary = editor.read(cx).text(cx);
+
+                            context_editor.update(cx, |context_editor, cx| {
+                                context_editor
+                                    .context()
+                                    .update(cx, |assistant_context, cx| {
+                                        assistant_context.set_custom_summary(new_summary, cx);
+                                    })
+                            })
+                        }
+                        EditorEvent::Blurred => {
+                            if editor.read(cx).text(cx).is_empty() {
+                                let summary = context_editor
+                                    .read(cx)
+                                    .context()
+                                    .read(cx)
+                                    .summary_or_default();
+
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(summary, window, cx);
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }),
+            window.subscribe(&context_editor.read(cx).context().clone(), cx, {
+                let editor = editor.clone();
+                move |assistant_context, event, window, cx| match event {
+                    ContextEvent::SummaryGenerated => {
+                        let summary = assistant_context.read(cx).summary_or_default();
+
+                        editor.update(cx, |editor, cx| {
+                            editor.set_text(summary, window, cx);
+                        })
+                    }
+                    _ => {}
+                }
+            }),
+        ];
+
+        Self::PromptEditor {
+            context_editor,
+            title_editor: editor,
+            _subscriptions: subscriptions,
+        }
+    }
 }
 
 pub struct AssistantPanel {
@@ -188,6 +268,7 @@ pub struct AssistantPanel {
     thread: Entity<ActiveThread>,
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
+    _default_model_subscription: Subscription,
     context_store: Entity<assistant_context_editor::ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     configuration: Option<Entity<AssistantConfiguration>>,
@@ -328,6 +409,20 @@ impl AssistantPanel {
             }
         });
 
+        let _default_model_subscription = cx.subscribe(
+            &LanguageModelRegistry::global(cx),
+            |this, _, event: &language_model::Event, cx| match event {
+                language_model::Event::DefaultModelChanged => {
+                    this.thread
+                        .read(cx)
+                        .thread()
+                        .clone()
+                        .update(cx, |thread, cx| thread.get_or_init_configured_model(cx));
+                }
+                _ => {}
+            },
+        );
+
         Self {
             active_view,
             workspace,
@@ -343,6 +438,7 @@ impl AssistantPanel {
                 active_thread_subscription,
                 message_editor_subscription,
             ],
+            _default_model_subscription,
             context_store,
             prompt_store,
             configuration: None,
@@ -502,9 +598,7 @@ impl AssistantPanel {
         });
 
         self.set_active_view(
-            ActiveView::PromptEditor {
-                context_editor: context_editor.clone(),
-            },
+            ActiveView::prompt_editor(context_editor.clone(), window, cx),
             window,
             cx,
         );
@@ -578,10 +672,9 @@ impl AssistantPanel {
                         cx,
                     )
                 });
+
                 this.set_active_view(
-                    ActiveView::PromptEditor {
-                        context_editor: editor,
-                    },
+                    ActiveView::prompt_editor(editor.clone(), window, cx),
                     window,
                     cx,
                 );
@@ -821,7 +914,7 @@ impl AssistantPanel {
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         match &self.active_view {
-            ActiveView::PromptEditor { context_editor } => Some(context_editor.clone()),
+            ActiveView::PromptEditor { context_editor, .. } => Some(context_editor.clone()),
             _ => None,
         }
     }
@@ -864,7 +957,7 @@ impl Focusable for AssistantPanel {
         match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
-            ActiveView::PromptEditor { context_editor } => context_editor.focus_handle(cx),
+            ActiveView::PromptEditor { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -988,9 +1081,34 @@ impl AssistantPanel {
                         .into_any_element()
                 }
             }
-            ActiveView::PromptEditor { context_editor } => {
-                let title = SharedString::from(context_editor.read(cx).title(cx).to_string());
-                Label::new(title).ml_2().truncate().into_any_element()
+            ActiveView::PromptEditor {
+                title_editor,
+                context_editor,
+                ..
+            } => {
+                let context_editor = context_editor.read(cx);
+                let summary = context_editor.context().read(cx).summary();
+
+                match summary {
+                    None => Label::new(AssistantContext::DEFAULT_SUMMARY.clone())
+                        .truncate()
+                        .ml_2()
+                        .into_any_element(),
+                    Some(summary) => {
+                        if summary.done {
+                            div()
+                                .ml_2()
+                                .w_full()
+                                .child(title_editor.clone())
+                                .into_any_element()
+                        } else {
+                            Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                                .ml_2()
+                                .truncate()
+                                .into_any_element()
+                        }
+                    }
+                }
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
             ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
@@ -1172,12 +1290,13 @@ impl AssistantPanel {
         let is_generating = thread.is_generating();
         let message_editor = self.message_editor.read(cx);
 
-        let conversation_token_usage = thread.total_token_usage(cx);
+        let conversation_token_usage = thread.total_token_usage()?;
+
         let (total_token_usage, is_estimating) = if let Some((editing_message_id, unsent_tokens)) =
             self.thread.read(cx).editing_message_id()
         {
             let combined = thread
-                .token_usage_up_to_message(editing_message_id, cx)
+                .token_usage_up_to_message(editing_message_id)
                 .add(unsent_tokens);
 
             (combined, unsent_tokens > 0)
@@ -1263,7 +1382,7 @@ impl AssistantPanel {
 
                 Some(token_count)
             }
-            ActiveView::PromptEditor { context_editor } => {
+            ActiveView::PromptEditor { context_editor, .. } => {
                 let element = render_remaining_tokens(context_editor, cx)?;
 
                 Some(element.into_any_element())
@@ -1871,7 +1990,9 @@ impl Render for AssistantPanel {
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor { context_editor } => parent.child(context_editor.clone()),
+                ActiveView::PromptEditor { context_editor, .. } => {
+                    parent.child(context_editor.clone())
+                }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
     }

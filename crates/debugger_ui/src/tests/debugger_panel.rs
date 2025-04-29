@@ -1,7 +1,12 @@
-use crate::{persistence::DebuggerPaneItem, tests::start_debug_session, *};
+use crate::{
+    persistence::DebuggerPaneItem,
+    tests::{start_debug_session, start_debug_session_with},
+    *,
+};
 use dap::{
     ErrorResponse, Message, RunInTerminalRequestArguments, SourceBreakpoint,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    adapters::DebugTaskDefinition,
     client::SessionId,
     requests::{
         Continue, Disconnect, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
@@ -19,12 +24,14 @@ use project::{
 };
 use serde_json::json;
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
+use task::LaunchRequest;
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
@@ -398,14 +405,6 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
             assert!(running.read(cx).debug_terminal.read(cx).terminal.is_some());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -478,14 +477,6 @@ async fn test_handle_start_debugging_request(
         .unwrap();
 
     assert_eq!(&fake_config, launched_with.lock().as_ref().unwrap());
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 // // covers that we always send a response back, if something when wrong,
@@ -556,14 +547,6 @@ async fn test_handle_error_run_in_terminal_reverse_request(
             );
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -662,14 +645,6 @@ async fn test_handle_start_debugging_reverse_request(
         send_response.load(std::sync::atomic::Ordering::SeqCst),
         "Expected to receive response from reverse request"
     );
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(child_session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1093,14 +1068,6 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
                 .update(cx, |session, cx| session.continue_thread(thread_id, cx));
         });
     }
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1256,14 +1223,6 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
         "SetBreakpoint request must be called after editor is saved"
     );
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1383,14 +1342,6 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
 
     cx.dispatch_action(crate::ClearAllBreakpoints);
     cx.run_until_parked();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -1439,4 +1390,73 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
             "Session wouldn't exist if it was shutdown"
         );
     });
+}
+
+#[gpui::test]
+async fn test_we_send_arguments_from_user_config(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        "/project",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let debug_definition = DebugTaskDefinition {
+        adapter: "fake-adapter".into(),
+        request: dap::DebugRequest::Launch(LaunchRequest {
+            program: "main.rs".to_owned(),
+            args: vec!["arg1".to_owned(), "arg2".to_owned()],
+            cwd: Some("/Random_path".into()),
+            env: HashMap::from_iter(vec![("KEY".to_owned(), "VALUE".to_owned())]),
+        }),
+        label: "test".into(),
+        initialize_args: None,
+        tcp_connection: None,
+        stop_on_entry: None,
+    };
+
+    let launch_handler_called = Arc::new(AtomicBool::new(false));
+
+    start_debug_session_with(&workspace, cx, debug_definition.clone(), {
+        let debug_definition = debug_definition.clone();
+        let launch_handler_called = launch_handler_called.clone();
+
+        move |client| {
+            let debug_definition = debug_definition.clone();
+            let launch_handler_called = launch_handler_called.clone();
+
+            client.on_request::<dap::requests::Launch, _>(move |_, args| {
+                launch_handler_called.store(true, Ordering::SeqCst);
+
+                let obj = args.raw.as_object().unwrap();
+                let sent_definition = serde_json::from_value::<DebugTaskDefinition>(
+                    obj.get(&"raw_request".to_owned()).unwrap().clone(),
+                )
+                .unwrap();
+
+                assert_eq!(sent_definition, debug_definition);
+
+                Ok(())
+            });
+        }
+    })
+    .ok();
+
+    cx.run_until_parked();
+
+    assert!(
+        launch_handler_called.load(Ordering::SeqCst),
+        "Launch request handler was not called"
+    );
 }

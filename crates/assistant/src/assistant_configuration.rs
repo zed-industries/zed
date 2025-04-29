@@ -193,7 +193,7 @@ impl Focusable for ConfigurationView {
 impl Item for ConfigurationView {
     type Event = ConfigurationViewEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Configuration".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Configuration".into()
     }
 }

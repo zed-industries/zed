@@ -17,7 +17,7 @@ use client::{Client, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
-use gpui::http_client::{Uri, read_proxy_from_env};
+use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -358,7 +358,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
-        .and_then(|input| input.parse::<Uri>().ok())
+        .and_then(|input| input.parse().ok())
         .or_else(read_proxy_from_env);
     let http = {
         let _guard = Tokio::handle(cx).enter();
@@ -371,7 +371,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     Project::init_settings(cx);
 
     let client = Client::production(cx);
-    cx.set_http_client(client.http_client().clone());
+    cx.set_http_client(client.http_client());
 
     let git_binary_path = None;
     let fs = Arc::new(RealFs::new(
@@ -411,7 +411,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         tx.send(Some(options)).log_err();
     })
     .detach();
-    let node_runtime = NodeRuntime::new(client.http_client().clone(), rx);
+    let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 
@@ -420,7 +420,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
-    assistant_tools::init(client.http_client().clone(), cx);
+    assistant_tools::init(client.http_client(), cx);
     context_server::init(cx);
     prompt_store::init(cx);
     let stdout_is_a_pty = false;

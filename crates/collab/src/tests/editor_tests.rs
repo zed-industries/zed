@@ -680,6 +680,7 @@ async fn test_collaborating_with_code_actions(
         editor.toggle_code_actions(
             &ToggleCodeActions {
                 deployed_from_indicator: None,
+                quick_launch: false,
             },
             window,
             cx,

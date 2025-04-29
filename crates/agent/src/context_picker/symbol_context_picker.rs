@@ -171,10 +171,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let mat = &self.matches[ix];
 
         Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
-            render_symbol_context_entry(
-                ElementId::NamedInteger("symbol-ctx-picker".into(), ix),
-                mat,
-            ),
+            render_symbol_context_entry(ElementId::named_usize("symbol-ctx-picker", ix), mat),
         ))
     }
 }

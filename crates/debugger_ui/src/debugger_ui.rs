@@ -35,6 +35,13 @@ actions!(
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
         CreateDebuggingSession,
+        FocusConsole,
+        FocusVariables,
+        FocusBreakpointList,
+        FocusFrames,
+        FocusModules,
+        FocusLoadedSources,
+        FocusTerminal,
     ]
 );
 
