@@ -779,7 +779,6 @@ pub enum PromptEditorMode {
     Terminal {
         id: TerminalInlineAssistId,
         codegen: Entity<TerminalCodegen>,
-        height_in_lines: u8,
     },
 }
 
@@ -962,11 +961,7 @@ impl PromptEditor<TerminalCodegen> {
         cx: &mut Context<Self>,
     ) -> Self {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
-        let mode = PromptEditorMode::Terminal {
-            id,
-            codegen,
-            height_in_lines: 1,
-        };
+        let mode = PromptEditorMode::Terminal { id, codegen };
 
         let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -1033,27 +1028,9 @@ impl PromptEditor<TerminalCodegen> {
     }
 
     fn count_lines(&mut self, cx: &mut Context<Self>) {
-        let height_in_lines = cmp::max(
-            2, // Make the editor at least two lines tall, to account for padding and buttons.
-            cmp::min(
-                self.editor
-                    .update(cx, |editor, cx| editor.max_point(cx).row().0 + 1),
-                Self::MAX_LINES as u32,
-            ),
-        ) as u8;
-
-        match &mut self.mode {
-            PromptEditorMode::Terminal {
-                height_in_lines: current_height,
-                ..
-            } => {
-                if height_in_lines != *current_height {
-                    *current_height = height_in_lines;
-                    cx.emit(PromptEditorEvent::Resized { height_in_lines });
-                }
-            }
-            PromptEditorMode::Buffer { .. } => unreachable!(),
-        }
+        // todo: the terminal scrolling needs to be fixed so that we don't have to
+        // guess our height here.
+        cx.emit(PromptEditorEvent::Resized { height_in_lines: 1 });
     }
 
     fn handle_codegen_changed(&mut self, _: Entity<TerminalCodegen>, cx: &mut Context<Self>) {
