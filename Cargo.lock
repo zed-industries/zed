@@ -6126,13 +6126,16 @@ name = "google_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "futures 0.3.31",
  "http_client",
+ "reqwest_client",
  "schemars",
  "serde",
  "serde_json",
  "strum 0.27.1",
  "time",
+ "tokio",
  "workspace-hack",
 ]
 

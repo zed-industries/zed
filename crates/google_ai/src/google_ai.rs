@@ -236,7 +236,7 @@ pub struct SystemInstruction {
     pub parts: Vec<Part>,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,

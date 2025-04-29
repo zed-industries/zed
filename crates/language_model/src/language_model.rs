@@ -237,12 +237,14 @@ impl Default for LanguageModelTextStream {
 // Challenge: `cachedContents` does *not* support reusing an existing cache, and so input tokens are
 // recomputed for the entire cache. This means that it is not helpful to
 
+/*
 struct CacheState {
     // Merkle style hash (include prior hash when computing next hash)
     caches: HashMap<LanguageModelMessageHash, CacheName>,
 }
 
 struct CacheName(String);
+*/
 
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;

@@ -24,3 +24,8 @@ serde_json.workspace = true
 strum.workspace = true
 time.workspace = true
 workspace-hack.workspace = true
+
+[dev-dependencies]
+clap = { version = "4.4", features = ["derive", "env"] }
+tokio = { version = "1.28", features = ["full"] }
+reqwest_client.workspace = true
