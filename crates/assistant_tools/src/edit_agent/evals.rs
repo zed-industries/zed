@@ -1,5 +1,8 @@
 use super::*;
-use crate::{ReadFileToolInput, streaming_edit_file_tool::StreamingEditFileToolInput};
+use crate::{
+    ReadFileToolInput, grep_tool::GrepToolInput,
+    streaming_edit_file_tool::StreamingEditFileToolInput,
+};
 use Role::*;
 use anyhow::{Context, anyhow};
 use client::{Client, UserStore};
@@ -252,6 +255,80 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     );
 }
 
+#[test]
+fn eval_disable_cursor_blinking() {
+    let input_file_path = "root/editor.rs";
+    let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
+    let output_file_content = include_str!("evals/fixtures/disable_cursor_blinking/after.rs");
+    let edit_description = "Comment out the call to `BlinkManager::enable`";
+    eval(
+        100,
+        0.95,
+        EvalInput {
+            conversation: vec![
+                message(User, [text("Let's research how to cursor blinking works.")]),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "grep",
+                        GrepToolInput {
+                            regex: "blink".into(),
+                            include_pattern: None,
+                            offset: 0,
+                            case_sensitive: false,
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_1",
+                        "grep",
+                        vec![
+                            lines(input_file_content, 100..400),
+                            lines(input_file_content, 800..1300),
+                            lines(input_file_content, 1600..2000),
+                            lines(input_file_content, 5000..5500),
+                            lines(input_file_content, 8000..9000),
+                            lines(input_file_content, 18455..18470),
+                            lines(input_file_content, 20000..20500),
+                            lines(input_file_content, 21000..21300),
+                        ]
+                        .join("Match found:\n\n"),
+                    )],
+                ),
+                message(
+                    User,
+                    [text(indoc! {"
+                        Comment out the lines that interact with the BlinkManager.
+                        Keep the outer `update` blocks, but comments everything that's inside (including if statements).
+                        Don't add additional comments.
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_4",
+                        "edit_file",
+                        StreamingEditFileToolInput {
+                            display_description: edit_description.into(),
+                            path: input_file_path.into(),
+                        },
+                    )],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: input_file_content.into(),
+            edit_description: edit_description.into(),
+            expected_output: ExpectedOutput {
+                text: output_file_content.into(),
+                comparison: ComparisonKind::IgnoreEmptyLines,
+            },
+        },
+    );
+}
+
 fn message(
     role: Role,
     contents: impl IntoIterator<Item = MessageContent>,
@@ -379,14 +456,14 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
         failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
         for (_buffer_output, evals) in failed_evals {
+            let eval = evals.first().unwrap();
+
             println!("Eval failed {} times", evals.len());
-            for eval in evals {
-                if let Some(judge_output) = &eval.comparison.judge_output {
-                    println!("Judge Output:\n{}", judge_output);
-                }
-                println!("Diff:\n{}", eval.diff);
-                println!("Raw Edits:\n{}", eval.raw_edits);
+            if let Some(judge_output) = &eval.comparison.judge_output {
+                println!("Judge Output:\n{}", judge_output);
             }
+            println!("Diff:\n{}", eval.diff);
+            println!("Raw Edits:\n{}", eval.raw_edits);
         }
 
         panic!(
