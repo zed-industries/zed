@@ -347,21 +347,19 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut failed_evals = HashMap::default();
     let mut errored_evals = HashMap::default();
     while let Ok(output) = rx.recv() {
-        if output
-            .as_ref()
-            .map_or(true, |output| output.comparison.score <= 80)
-        {
-            failed_count += 1;
-            match output {
-                Ok(output) => {
+        match output {
+            Ok(output) => {
+                if output.comparison.score < 80 {
+                    failed_count += 1;
                     failed_evals
                         .entry(output.buffer_text.clone())
                         .or_insert(Vec::new())
                         .push(output);
                 }
-                Err(error) => {
-                    *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
-                }
+            }
+            Err(error) => {
+                failed_count += 1;
+                *errored_evals.entry(format!("{:?}", error)).or_insert(0) += 1;
             }
         }
 
