@@ -11,8 +11,9 @@ use anyhow::Result;
 use cargo::{
     FetchStatus, FetchUpdate, cargo_diagnostics_sources, fetch_worktree_diagnostics,
     is_outdated_cargo_fetch_diagnostic, map_rust_diagnostic_to_lsp, next_cargo_fetch_generation,
+    url_from_abs_path,
 };
-use collections::{BTreeSet, HashMap};
+use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
@@ -30,7 +31,8 @@ use language::{
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use project::{
     DiagnosticSummary, Project, ProjectPath, Worktree,
-    lsp_store::rust_analyzer_ext::RUST_ANALYZER_NAME, project_settings::ProjectSettings,
+    lsp_store::rust_analyzer_ext::{CARGO_DIAGNOSTICS_SOURCE_NAME, RUST_ANALYZER_NAME},
+    project_settings::ProjectSettings,
 };
 use settings::Settings;
 use std::{
@@ -385,6 +387,7 @@ impl ProjectDiagnosticsEditor {
             };
 
             let mut worktree_diagnostics_tasks = Vec::new();
+            let mut paths_with_reported_cargo_diagnostics = HashSet::default();
             if let Some(rust_analyzer_server) = rust_analyzer_server {
                 let can_continue = editor
                     .update(cx, |editor, cx| {
@@ -394,7 +397,7 @@ impl ProjectDiagnosticsEditor {
                                 .project
                                 .read(cx)
                                 .lsp_store()
-                                .update(cx, |lsp_store, _| {
+                                .update(cx, |lsp_store, cx| {
                                     if let Some(rust_analyzer_status) = lsp_store
                                         .language_server_statuses
                                         .get_mut(&rust_analyzer_server)
@@ -402,6 +405,17 @@ impl ProjectDiagnosticsEditor {
                                         rust_analyzer_status
                                             .progress_tokens
                                             .insert(fetch_cargo_diagnostics_token());
+                                        paths_with_reported_cargo_diagnostics.extend(editor.diagnostics.iter().filter_map(|(buffer_id, diagnostics)| {
+                                            if diagnostics.iter().any(|d| d.diagnostic.source.as_deref() == Some(CARGO_DIAGNOSTICS_SOURCE_NAME)) {
+                                                Some(*buffer_id)
+                                            } else {
+                                                None
+                                            }
+                                        }).filter_map(|buffer_id| {
+                                            let buffer = lsp_store.buffer_store().read(cx).get(buffer_id)?;
+                                            let path = buffer.read(cx).file()?.as_local()?.abs_path(cx);
+                                            Some(url_from_abs_path(&path))
+                                        }));
                                         true
                                     } else {
                                         false
@@ -434,6 +448,7 @@ impl ProjectDiagnosticsEditor {
                                 let _task = _task;
                                 let mut file_diagnostics = HashMap::default();
                                 let mut diagnostics_total = 0;
+                                let mut updated_urls = HashSet::default();
                                 while let Ok(fetch_update) = worktree_diagnostics.recv().await {
                                     match fetch_update {
                                         FetchUpdate::Diagnostic(diagnostic) => {
@@ -467,6 +482,8 @@ impl ProjectDiagnosticsEditor {
                                                                 {
                                                                     diagnostics.dedup();
                                                                     diagnostics_total += diagnostics.len();
+                                                                    updated_urls.insert(uri.clone());
+
                                                                     lsp_store.merge_diagnostics(
                                                                     rust_analyzer_server,
                                                                     lsp::PublishDiagnosticsParams {
@@ -506,7 +523,7 @@ impl ProjectDiagnosticsEditor {
                                                 })
                                                 .is_err()
                                             {
-                                                return;
+                                                return updated_urls;
                                             }
                                         }
                                     }
@@ -524,19 +541,21 @@ impl ProjectDiagnosticsEditor {
                                                 {
                                                     diagnostics.dedup();
                                                     diagnostics_total += diagnostics.len();
+                                                    updated_urls.insert(uri.clone());
+
                                                     lsp_store.merge_diagnostics(
-                                                    rust_analyzer_server,
-                                                    lsp::PublishDiagnosticsParams {
-                                                        uri,
-                                                        diagnostics,
-                                                        version: None,
-                                                    },
-                                                    &[],
-                                                    |diagnostic, _| {
-                                                        !is_outdated_cargo_fetch_diagnostic(diagnostic)
-                                                    },
-                                                    cx,
-                                                )?;
+                                                        rust_analyzer_server,
+                                                        lsp::PublishDiagnosticsParams {
+                                                            uri,
+                                                            diagnostics,
+                                                            version: None,
+                                                        },
+                                                        &[],
+                                                        |diagnostic, _| {
+                                                            !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                                        },
+                                                        cx,
+                                                    )?;
                                                 }
                                                 anyhow::Ok(())
                                             })?;
@@ -544,7 +563,8 @@ impl ProjectDiagnosticsEditor {
                                         anyhow::Ok(())
                                     })
                                     .ok();
-                                log::info!("Cargo returned {diagnostics_total} unique diagnostics for worktree {worktree_root:?}");
+                                log::info!("Fetched {diagnostics_total} cargo diagnostics for worktree {worktree_root:?}");
+                                updated_urls
                             }));
                         }
                     }
@@ -554,14 +574,40 @@ impl ProjectDiagnosticsEditor {
                     );
                 }
             }
-            let _: Vec<()> = futures::future::join_all(worktree_diagnostics_tasks).await;
 
+
+            let updated_urls = futures::future::join_all(worktree_diagnostics_tasks).await.into_iter().flatten().collect();
+            if let Some(rust_analyzer_server) = rust_analyzer_server {
             editor
-                .update(cx, |editor, cx| {
+                .update_in(cx, |editor, window, cx| {
+                    editor
+                        .project
+                        .read(cx)
+                        .lsp_store()
+                        .update(cx, |lsp_store, cx| {
+                            for uri_to_cleanup in paths_with_reported_cargo_diagnostics.difference(&updated_urls).cloned() {
+                                lsp_store.merge_diagnostics(
+                                    rust_analyzer_server,
+                                    lsp::PublishDiagnosticsParams {
+                                        uri: uri_to_cleanup,
+                                        diagnostics: Vec::new(),
+                                        version: None,
+                                    },
+                                    &[],
+                                    |diagnostic, _| {
+                                        !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                    },
+                                    cx,
+                                ).ok();
+                            }
+                        });
+                    editor.update_all_excerpts(window, cx);
+
                     editor.stop_cargo_diagnostics_fetch(cx);
                     cx.notify();
                 })
                 .ok();
+            }
         }));
     }
 
