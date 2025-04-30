@@ -229,7 +229,8 @@ impl ExampleContext {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
                     }
                 },
-                ThreadEvent::StreamedAssistantText(_, _)
+                ThreadEvent::NewRequest
+                | ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
                 | ThreadEvent::UsePendingTools { .. } => {}
                 ThreadEvent::ToolFinished {

@@ -1,4 +1,4 @@
-use crate::agent_diff::AgentDiffSingletonEditors;
+use crate::agent_diff::AgentDiff;
 use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::MentionLink;
 use crate::thread::{
@@ -54,7 +54,6 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
-    agent_diff: Entity<AgentDiffSingletonEditors>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -757,12 +756,13 @@ impl ActiveThread {
             }
         });
 
+        // todo! is this the right place to do this?
+        AgentDiff::register_active_thread(&workspace, &thread, cx);
+
         let mut this = Self {
             language_registry,
             thread_store,
             thread: thread.clone(),
-            agent_diff: cx
-                .new(|cx| AgentDiffSingletonEditors::new(thread.clone(), workspace.clone(), cx)),
             workspace,
             save_thread_task: None,
             messages: Vec::new(),
@@ -804,10 +804,6 @@ impl ActiveThread {
 
     pub fn thread(&self) -> &Entity<Thread> {
         &self.thread
-    }
-
-    pub fn agent_diff(&self) -> &Entity<AgentDiffSingletonEditors> {
-        &self.agent_diff
     }
 
     pub fn is_empty(&self) -> bool {
@@ -948,6 +944,9 @@ impl ActiveThread {
             }
             ThreadEvent::UsageUpdated(usage) => {
                 self.last_usage = Some(*usage);
+            }
+            ThreadEvent::NewRequest => {
+                cx.notify();
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
