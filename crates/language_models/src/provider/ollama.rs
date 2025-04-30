@@ -19,6 +19,7 @@ use ollama::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
@@ -216,6 +217,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     model: model.clone(),
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
+                    tool_id: Arc::new(AtomicU32::new(0)),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -254,6 +256,8 @@ pub struct OllamaLanguageModel {
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
+    /// Create unique tool ids by concatenating with model id
+    tool_id: Arc<AtomicU32>,
 }
 
 impl OllamaLanguageModel {
@@ -355,10 +359,13 @@ impl LanguageModel for OllamaLanguageModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
+        let id = self.id.0.to_string();
+        let tool_ids = Arc::clone(&self.tool_id);
+
         let future = self.request_limiter.stream(async move {
             let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
             let stream = response
-                .map_ok(|delta| match delta.message {
+                .map_ok(move |delta| match delta.message {
                     ChatMessage::User { content } => LanguageModelCompletionEvent::Text(content),
                     ChatMessage::Assistant {
                         content,
@@ -370,7 +377,11 @@ impl LanguageModel for OllamaLanguageModel {
                                 OllamaToolCall::Function(function) => {
                                     LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                                         // TODO: id's should be unique to that tool call
-                                        id: LanguageModelToolUseId::from("test"),
+                                        id: LanguageModelToolUseId::from(format!(
+                                            "{}-{}",
+                                            id,
+                                            tool_ids.fetch_add(1, Ordering::Relaxed)
+                                        )),
                                         name: Arc::from(function.name),
                                         raw_input: serde_json::to_string(&function.arguments)
                                             .unwrap(),
