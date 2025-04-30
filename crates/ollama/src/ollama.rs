@@ -296,13 +296,9 @@ pub async fn stream_chat_completion(
 
         Ok(reader
             .lines()
-            .filter_map(move |line| async move {
-                match line {
-                    Ok(line) => {
-                        Some(serde_json::from_str(&line).context("Unable to parse chat response"))
-                    }
-                    Err(e) => Some(Err(e.into())),
-                }
+            .map(|line| match line {
+                Ok(line) => serde_json::from_str(&line).context("Unable to parse chat response"),
+                Err(e) => Err(e.into()),
             })
             .boxed())
     } else {
