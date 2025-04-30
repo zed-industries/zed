@@ -798,5 +798,6 @@ ignored = [
     "serde",
     "component",
     "linkme",
+    "documented",
     "workspace-hack",
 ]
