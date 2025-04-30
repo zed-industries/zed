@@ -1,0 +1,51 @@
+# This file contains metadata for license for C libraries bundled with Zed
+# The licenses themselves are stored under assets/licenses
+
+[libbsd]
+name = "libbsd - Utility functions from BSD systems"
+repo = "https://gitlab.freedesktop.org/libbsd/libbsd"
+spdx = "BSD-3-clause AND BSD-2-Clause AND ISC AND MIT AND Beerware"
+url = "https://gitlab.freedesktop.org/libbsd/libbsd/-/raw/main/COPYING"
+file = "COPYING"
+
+[libcrypto]
+name = "libcrypto - OpenSSL cryptographic library"
+repo = "https://github.com/openssl/openssl"
+spdx = "Apache-2.0"
+url = "https://raw.githubusercontent.com/openssl/openssl/refs/heads/master/LICENSE.txt"
+file = "LICENSE.txt"
+
+[libssl]
+name = "libssl - OpenSSL cryptographic library"
+repo = "https://github.com/openssl/openssl"
+spdx = "Apache-2.0"
+url = "https://raw.githubusercontent.com/openssl/openssl/refs/heads/master/LICENSE.txt"
+file = "LICENSE.txt"
+
+[libXau]
+name = "libXau - X11 Authorization Protocol"
+repo = "https://gitlab.freedesktop.org/xorg/lib/libxau"
+spdx = "MIT-open-group"
+url = "https://gitlab.freedesktop.org/xorg/lib/libxau/-/raw/master/COPYING"
+file = "COPYING"
+
+[libxcb]
+name = "libxcb - X protocol C-language Binding (XCB)"
+repo = "https://gitlab.freedesktop.org/xorg/lib/libxcb"
+spdx = "X11-distribute-modifications-variant"
+url = "https://gitlab.freedesktop.org/xorg/lib/libxcb/-/raw/master/COPYING"
+file = "COPYING"
+
+[libxkbcommon]
+name = "libxkbcommon - keymap handling library for toolkits and window systems"
+repo = "https://github.com/xkbcommon/libxkbcommon"
+spdx = "MIT AND MIT-open-group AND MIT-CMU AND HPND AND HPND-sell-variant ABD LicenseRef-digital-equipment-corporation AND X11"
+url = "https://raw.githubusercontent.com/xkbcommon/libxkbcommon/refs/heads/master/LICENSE"
+file = "LICENSE"
+
+[libxkbcommon-x11]
+name = "libxkbcommon-x11 - keymap handling library for toolkits and window systems"
+repo = "https://github.com/xkbcommon/libxkbcommon"
+spdx = "MIT AND MIT-open-group AND MIT-CMU AND HPND AND HPND-sell-variant ABD LicenseRef-digital-equipment-corporation AND X11"
+url = "https://raw.githubusercontent.com/xkbcommon/libxkbcommon/refs/heads/master/LICENSE"
+file = "LICENSE"
