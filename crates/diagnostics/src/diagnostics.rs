@@ -35,7 +35,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp::{self, Ordering},
+    cmp,
     ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
@@ -437,15 +437,20 @@ impl ProjectDiagnosticsEditor {
                                 while let Ok(fetch_update) = worktree_diagnostics.recv().await {
                                     match fetch_update {
                                         FetchUpdate::Diagnostic(diagnostic) => {
-                                            diagnostics_total += 1;
                                             for (url, diagnostic) in map_rust_diagnostic_to_lsp(
                                                 &worktree_root,
                                                 &diagnostic,
                                             ) {
-                                                file_diagnostics
+                                                let file_diagnostics = file_diagnostics
                                                     .entry(url)
-                                                    .or_insert_with(Vec::new)
-                                                    .push(diagnostic);
+                                                    .or_insert_with(Vec::<lsp::Diagnostic>::new);
+                                                let i = file_diagnostics
+                                                    .binary_search_by(|probe| {
+                                                        probe.range.start.cmp(&diagnostic.range.start)
+                                                            .then(probe.range.end.cmp(&diagnostic.range.end))
+                                                    })
+                                                    .unwrap_or_else(|i| i);
+                                                file_diagnostics.insert(i, diagnostic);
                                             }
 
                                             let file_changed = file_diagnostics.len() > 1;
@@ -457,9 +462,11 @@ impl ProjectDiagnosticsEditor {
                                                             .read(cx)
                                                             .lsp_store()
                                                             .update(cx, |lsp_store, cx| {
-                                                                for (uri, diagnostics) in
+                                                                for (uri, mut diagnostics) in
                                                                     file_diagnostics.drain()
                                                                 {
+                                                                    diagnostics.dedup();
+                                                                    diagnostics_total += diagnostics.len();
                                                                     lsp_store.merge_diagnostics(
                                                                     rust_analyzer_server,
                                                                     lsp::PublishDiagnosticsParams {
@@ -504,7 +511,40 @@ impl ProjectDiagnosticsEditor {
                                         }
                                     }
                                 }
-                                log::info!("Fetched {diagnostics_total} for worktree {worktree_root:?}");
+
+                                editor
+                                    .update_in(cx, |editor, window, cx| {
+                                        editor
+                                            .project
+                                            .read(cx)
+                                            .lsp_store()
+                                            .update(cx, |lsp_store, cx| {
+                                                for (uri, mut diagnostics) in
+                                                    file_diagnostics.drain()
+                                                {
+                                                    diagnostics.dedup();
+                                                    diagnostics_total += diagnostics.len();
+                                                    lsp_store.merge_diagnostics(
+                                                    rust_analyzer_server,
+                                                    lsp::PublishDiagnosticsParams {
+                                                        uri,
+                                                        diagnostics,
+                                                        version: None,
+                                                    },
+                                                    &[],
+                                                    |diagnostic, _| {
+                                                        !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                                    },
+                                                    cx,
+                                                )?;
+                                                }
+                                                anyhow::Ok(())
+                                            })?;
+                                        editor.update_all_excerpts(window, cx);
+                                        anyhow::Ok(())
+                                    })
+                                    .ok();
+                                log::info!("Cargo returned {diagnostics_total} unique diagnostics for worktree {worktree_root:?}");
                             }));
                         }
                     }
@@ -669,20 +709,16 @@ impl ProjectDiagnosticsEditor {
                 })?;
 
                 for item in more {
-                    let insert_pos = blocks
-                        .binary_search_by(|existing| {
-                            match existing.initial_range.start.cmp(&item.initial_range.start) {
-                                Ordering::Equal => item
-                                    .initial_range
-                                    .end
-                                    .cmp(&existing.initial_range.end)
-                                    .reverse(),
-                                other => other,
-                            }
+                    let i = blocks
+                        .binary_search_by(|probe| {
+                            probe
+                                .initial_range
+                                .start
+                                .cmp(&item.initial_range.start)
+                                .then(probe.initial_range.end.cmp(&item.initial_range.end))
                         })
-                        .unwrap_or_else(|pos| pos);
-
-                    blocks.insert(insert_pos, item);
+                        .unwrap_or_else(|i| i);
+                    blocks.insert(i, item);
                 }
             }
 
@@ -695,10 +731,22 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
-                excerpt_ranges.push(ExcerptRange {
-                    context: excerpt_range,
-                    primary: b.initial_range.clone(),
-                })
+                let i = excerpt_ranges
+                    .binary_search_by(|probe| {
+                        probe
+                            .context
+                            .start
+                            .cmp(&excerpt_range.start)
+                            .then(probe.context.end.cmp(&excerpt_range.end))
+                    })
+                    .unwrap_or_else(|i| i);
+                excerpt_ranges.insert(
+                    i,
+                    ExcerptRange {
+                        context: excerpt_range,
+                        primary: b.initial_range.clone(),
+                    },
+                )
             }
 
             this.update_in(cx, |this, window, cx| {
