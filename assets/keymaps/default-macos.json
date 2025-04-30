@@ -62,6 +62,10 @@
     }
   },
   {
+    // `Editor` context applies to all editor modes
+    // - auto_height (multi-line: inline assistant, git commit messages, etc)
+    // - single_line (command palette, renaming a file, etc)
+    // - full (main editor buffers, assistant text threads)
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -76,8 +80,6 @@
       "ctrl-t": "editor::Transpose",
       "ctrl-k": "editor::KillRingCut",
       "ctrl-y": "editor::KillRingYank",
-      "cmd-k cmd-q": "editor::Rewrap",
-      "cmd-k q": "editor::Rewrap",
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-delete": "editor::DeleteToEndOfLine",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
@@ -106,7 +108,6 @@
       "left": "editor::MoveLeft",
       "ctrl-f": "editor::MoveRight",
       "right": "editor::MoveRight",
-      "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
       "cmd-left": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
@@ -135,8 +136,6 @@
       "cmd-shift-down": "editor::SelectToEnd",
       "cmd-a": "editor::SelectAll",
       "cmd-l": "editor::SelectLine",
-      "cmd-shift-i": "editor::Format",
-      "alt-shift-o": "editor::OrganizeImports",
       "cmd-shift-left": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
@@ -145,17 +144,7 @@
       "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-v": ["editor::MovePageDown", { "center_cursor": true }],
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
-      "ctrl-cmd-space": "editor::ShowCharacterPalette",
-      "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-'": "editor::ToggleSelectedDiffHunks",
-      "cmd-\"": "editor::ExpandAllDiffHunks",
-      "cmd-alt-g b": "editor::ToggleGitBlame",
-      "cmd-i": "editor::ShowSignatureHelp",
-      "f9": "editor::ToggleBreakpoint",
-      "shift-f9": "editor::EditLogBreakpoint",
-      "ctrl-f12": "editor::GoToDeclaration",
-      "alt-ctrl-f12": "editor::GoToDeclarationSplit",
-      "ctrl-cmd-e": "editor::ToggleEditPrediction"
+      "ctrl-cmd-space": "editor::ShowCharacterPalette"
     }
   },
   {
@@ -174,7 +163,22 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
-      "alt-enter": "editor::OpenSelectionsInMultibuffer"
+      "cmd-k cmd-q": "editor::Rewrap",
+      "cmd-k q": "editor::Rewrap",
+      "ctrl-l": "editor::ScrollCursorCenter",
+      "cmd-i": "editor::ShowSignatureHelp",
+      "cmd-shift-i": "editor::Format",
+      "alt-shift-o": "editor::OrganizeImports",
+      "ctrl-cmd-e": "editor::ToggleEditPrediction",
+      "f9": "editor::ToggleBreakpoint",
+      "shift-f9": "editor::EditLogBreakpoint",
+      "ctrl-f12": "editor::GoToDeclaration",
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer",
+      "cmd-;": "editor::ToggleLineNumbers",
+      "cmd-'": "editor::ToggleSelectedDiffHunks",
+      "cmd-\"": "editor::ExpandAllDiffHunks",
+      "cmd-alt-g b": "editor::ToggleGitBlame"
     }
   },
   {
@@ -509,21 +513,18 @@
       //   defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 70 '<dict><key>enabled</key><false/></dict>'
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
       "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
-      "cmd-k cmd-i": "editor::Hover",
-      "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
-      "f8": "editor::GoToDiagnostic",
-      "shift-f8": "editor::GoToPreviousDiagnostic",
-      "f2": "editor::Rename",
-      "f12": "editor::GoToDefinition",
-      "alt-f12": "editor::GoToDefinitionSplit",
-      "cmd-f12": "editor::GoToTypeDefinition",
-      "shift-f12": "editor::GoToImplementation",
-      "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
-      "alt-shift-f12": "editor::FindAllReferences",
       "cmd-|": "editor::MoveToEnclosingBracket",
       "ctrl-m": "editor::MoveToEnclosingBracket",
+      "cmd-\\": "pane::SplitRight"
+    }
+  },
+  // VSCode Bindings full Editors (e.g. buffers)
+  {
+    "context": "Editor && mode == full",
+    "use_key_equivalents": true,
+    "bindings": {
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
       "cmd-k cmd-l": "editor::ToggleFold",
@@ -547,20 +548,24 @@
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
-      "cmd-\\": "pane::SplitRight",
+      "cmd-k cmd-i": "editor::Hover",
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
+      "f8": "editor::GoToDiagnostic",
+      "shift-f8": "editor::GoToPreviousDiagnostic",
+      "f2": "editor::Rename",
+      "f12": "editor::GoToDefinition",
+      "alt-f12": "editor::GoToDefinitionSplit",
+      "cmd-f12": "editor::GoToTypeDefinition",
+      "shift-f12": "editor::GoToImplementation",
+      "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
+      "alt-shift-f12": "editor::FindAllReferences",
       "cmd-k v": "markdown::OpenPreviewToTheSide",
       "cmd-shift-v": "markdown::OpenPreview",
       "ctrl-cmd-c": "editor::DisplayCursorNames",
+      "cmd-shift-o": "outline::Toggle",
+      "ctrl-g": "go_to_line::Toggle",
       "cmd-shift-backspace": "editor::GoToPreviousChange",
       "cmd-shift-alt-backspace": "editor::GoToNextChange"
-    }
-  },
-  {
-    "context": "Editor && mode == full",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-shift-o": "outline::Toggle",
-      "ctrl-g": "go_to_line::Toggle"
     }
   },
   {
