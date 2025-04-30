@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
-use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -37,32 +37,6 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
-
-pub(crate) struct PyprojectTomlManifestProvider;
-
-impl ManifestProvider for PyprojectTomlManifestProvider {
-    fn name(&self) -> ManifestName {
-        SharedString::new_static("pyproject.toml").into()
-    }
-
-    fn search(
-        &self,
-        ManifestQuery {
-            path,
-            depth,
-            delegate,
-        }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
-        for path in path.ancestors().take(depth) {
-            let p = path.join("pyproject.toml");
-            if delegate.exists(&p, Some(false)) {
-                return Some(path.into());
-            }
-        }
-
-        None
-    }
-}
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -326,9 +300,6 @@ impl LspAdapter for PythonLspAdapter {
             }
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
     }
 }
 
@@ -1174,9 +1145,6 @@ impl LspAdapter for PyLspAdapter {
 
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
     }
 }
 
