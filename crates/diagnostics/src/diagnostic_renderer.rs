@@ -3,7 +3,7 @@ use std::{ops::Range, sync::Arc};
 use editor::{
     Anchor, Editor, EditorSnapshot, ToOffset,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle},
-    hover_markdown_style,
+    hover_popover::diagnostics_markdown_style,
     scroll::Autoscroll,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
@@ -215,16 +215,19 @@ impl DiagnosticBlock {
             .border_color(border_color)
             .max_w(max_width)
             .child(
-                MarkdownElement::new(self.markdown.clone(), hover_markdown_style(bcx.window, cx))
-                    .on_url_click({
-                        move |link, window, cx| {
-                            editor
-                                .update(cx, |editor, cx| {
-                                    Self::open_link(editor, &diagnostics_editor, link, window, cx)
-                                })
-                                .ok();
-                        }
-                    }),
+                MarkdownElement::new(
+                    self.markdown.clone(),
+                    diagnostics_markdown_style(bcx.window, cx),
+                )
+                .on_url_click({
+                    move |link, window, cx| {
+                        editor
+                            .update(cx, |editor, cx| {
+                                Self::open_link(editor, &diagnostics_editor, link, window, cx)
+                            })
+                            .ok();
+                    }
+                }),
             )
             .into_any_element()
     }
