@@ -18,6 +18,8 @@ pub trait PlatformKeyboardMapper {
 pub struct TestKeyboardMapper {
     #[cfg(target_os = "windows")]
     mapper: super::WindowsKeyboardMapper,
+    #[cfg(target_os = "macos")]
+    mapper: super::MacKeyboardMapper,
 }
 
 impl PlatformKeyboardMapper for TestKeyboardMapper {
@@ -32,6 +34,8 @@ impl TestKeyboardMapper {
         Self {
             #[cfg(target_os = "windows")]
             mapper: super::WindowsKeyboardMapper::new(),
+            #[cfg(target_os = "macos")]
+            mapper: super::MacKeyboardMapper::new(),
         }
     }
 }
