@@ -87,6 +87,7 @@ pub struct AssistantSettings {
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
+    pub stream_edits: bool,
 }
 
 impl AssistantSettings {
@@ -218,6 +219,7 @@ impl AssistantSettingsContent {
                     profiles: None,
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
+                    stream_edits: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -245,6 +247,7 @@ impl AssistantSettingsContent {
                 profiles: None,
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
+                stream_edits: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -495,6 +498,7 @@ impl Default for VersionedAssistantSettingsContent {
             profiles: None,
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
+            stream_edits: None,
         })
     }
 }
@@ -550,6 +554,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: "primary_screen"
     notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
+    /// Whether to stream edits from the agent as they are received.
+    ///
+    /// Default: false
+    stream_edits: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -712,6 +720,7 @@ impl Settings for AssistantSettings {
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
+            merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.default_profile, value.default_profile);
 
             if let Some(profiles) = value.profiles {
@@ -843,6 +852,7 @@ mod tests {
                                 profiles: None,
                                 always_allow_tool_actions: None,
                                 notify_when_agent_waiting: None,
+                                stream_edits: None,
                             },
                         )),
                     }
