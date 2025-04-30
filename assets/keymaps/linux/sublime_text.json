@@ -32,24 +32,15 @@
       "ctrl-alt-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::MoveLineUp",
       "ctrl-shift-down": "editor::MoveLineDown",
-      "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-l": "editor::SplitSelectionIntoLines",
-      "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
       "ctrl-shift-d": "editor::DuplicateSelection",
       "alt-f3": "editor::SelectAllMatches", // find_all_under
       // "ctrl-f3": "", // find_under (cancels any selections)
       // "cmd-alt-shift-g": "" // find_under_prev (cancels any selections)
       "f9": "editor::SortLinesCaseSensitive",
       "ctrl-f9": "editor::SortLinesCaseInsensitive",
-      "f12": "editor::GoToDefinition",
-      "ctrl-f12": "editor::GoToDefinitionSplit",
-      "shift-f12": "editor::FindAllReferences",
-      "ctrl-shift-f12": "editor::FindAllReferences",
-      "ctrl-.": "editor::GoToHunk",
-      "ctrl-,": "editor::GoToPreviousHunk",
       "ctrl-k ctrl-u": "editor::ConvertToUpperCase",
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
-      "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
       "f3": "editor::FindNextMatch",
@@ -59,7 +50,16 @@
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "ctrl-r": "outline::Toggle"
+      "ctrl-r": "outline::Toggle",
+      "ctrl-shift-m": "editor::SelectLargerSyntaxNode",
+      "ctrl-shift-a": "editor::SelectLargerSyntaxNode",
+      "f12": "editor::GoToDefinition",
+      "ctrl-f12": "editor::GoToDefinitionSplit",
+      "shift-f12": "editor::FindAllReferences",
+      "ctrl-shift-f12": "editor::FindAllReferences",
+      "ctrl-.": "editor::GoToHunk",
+      "ctrl-,": "editor::GoToPreviousHunk",
+      "shift-alt-m": "markdown::OpenPreviewToTheSide"
     }
   },
   {
