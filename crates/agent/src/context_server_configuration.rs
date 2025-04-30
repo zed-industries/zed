@@ -374,16 +374,11 @@ impl Render for ConfigureContextServerModal {
                                                 ),
                                         )
                                     }),
-                            ),
-                    )
-                    .footer(
-                        ModalFooter::new()
+                            )
                             .when(configuration.waiting_for_context_server, |this| {
-                                this.start_slot(
+                                this.child(
                                     h_flex()
-                                        .w_full()
-                                        .justify_start()
-                                        .gap_1()
+                                        .gap_1p5()
                                         .child(
                                             Icon::new(IconName::ArrowCircle)
                                                 .size(IconSize::XSmall)
@@ -405,43 +400,45 @@ impl Render for ConfigureContextServerModal {
                                                 .color(Color::Muted),
                                         ),
                                 )
-                            })
-                            .end_slot(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("cancel", "Cancel")
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Cancel,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                            }),
+                    )
+                    .footer(
+                        ModalFooter::new().end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("cancel", "Cancel")
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Cancel,
+                                                &focus_handle,
+                                                window,
+                                                cx,
                                             )
-                                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                                this.completed = true;
-                                                cx.emit(DismissEvent);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("configure-server", "Configure MCP")
-                                            .disabled(configuration.waiting_for_context_server)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.completed = true;
+                                            cx.emit(DismissEvent);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("configure-server", "Configure MCP")
+                                        .disabled(configuration.waiting_for_context_server)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Confirm,
+                                                &focus_handle,
+                                                window,
+                                                cx,
                                             )
-                                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                                this.confirm(cx)
-                                            })),
-                                    ),
-                            ),
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.confirm(cx)
+                                        })),
+                                ),
+                        ),
                     ),
             )
     }

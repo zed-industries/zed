@@ -974,6 +974,7 @@
     "context": "ConfigureContextServerModal",
     "use_key_equivalents": true,
     "bindings": {
+      "escape": "menu::Cancel",
       "ctrl-enter": "menu::Confirm"
     }
   }
