@@ -401,11 +401,12 @@ impl AssistantPanel {
                 }
             });
 
+        let thread_id = thread.read(cx).id().clone();
         let history_store = cx.new(|cx| {
             HistoryStore::new(
                 thread_store.clone(),
                 context_store.clone(),
-                [RecentEntry::Thread(thread.clone())],
+                [RecentEntry::Thread(thread_id, thread.clone())],
                 cx,
             )
         });
@@ -467,7 +468,7 @@ impl AssistantPanel {
                                             .update(cx, {
                                                 let entry = entry.clone();
                                                 move |this, cx| match entry {
-                                                    RecentEntry::Thread(thread) => {
+                                                    RecentEntry::Thread(_, thread) => {
                                                         this.open_thread(thread, window, cx)
                                                     }
                                                     RecentEntry::Context(context) => {
@@ -1099,7 +1100,8 @@ impl AssistantPanel {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
                     if thread.read(cx).is_empty() {
-                        store.remove_recently_opened_entry(&RecentEntry::Thread(thread), cx);
+                        let id = thread.read(cx).id().clone();
+                        store.remove_recently_opened_thread(id, cx);
                     }
                 }
             }),
@@ -1109,7 +1111,8 @@ impl AssistantPanel {
         match &new_view {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
-                    store.push_recently_opened_entry(RecentEntry::Thread(thread), cx);
+                    let id = thread.read(cx).id().clone();
+                    store.push_recently_opened_entry(RecentEntry::Thread(id, thread), cx);
                 }
             }),
             ActiveView::PromptEditor { context_editor, .. } => {
