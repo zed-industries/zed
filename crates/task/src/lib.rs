@@ -20,6 +20,7 @@ pub use debug_format::{
 };
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates,
+    substitute_variables_in_map, substitute_variables_in_str,
 };
 pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;
