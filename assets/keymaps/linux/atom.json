@@ -10,11 +10,6 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-l": "language_selector::Toggle", // grammar-selector:show
-      "ctrl-|": "pane::RevealInProjectPanel", // tree-view:reveal-active-file
-      "ctrl-b": "editor::GoToDefinition", // fuzzy-finder:toggle-buffer-finder
-      "ctrl-alt-b": "editor::GoToDefinitionSplit", // N/A: From JetBrains
-      "ctrl-<": "editor::ScrollCursorCenter", // editor:scroll-to-cursor
       "f3": ["editor::SelectNext", { "replace_newest": true }], // find-and-replace:find-next
       "shift-f3": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
       "alt-shift-down": "editor::AddSelectionBelow", // editor:add-selection-below
@@ -25,14 +20,19 @@
       "ctrl-shift-d": "editor::DuplicateLineDown", // editor:duplicate-lines
       "ctrl-up": "editor::MoveLineUp", // editor:move-line-up
       "ctrl-down": "editor::MoveLineDown", // editor:move-line-down
-      "ctrl-\\": "workspace::ToggleLeftDock", // tree-view:toggle
-      "ctrl-shift-m": "markdown::OpenPreviewToTheSide" // markdown-preview:toggle
+      "ctrl-\\": "workspace::ToggleLeftDock" // tree-view:toggle (overrides bind in default keymap)
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "ctrl-r": "outline::Toggle" // symbols-view:toggle-project-symbols
+      "ctrl-shift-l": "language_selector::Toggle", // grammar-selector:show
+      "ctrl-|": "pane::RevealInProjectPanel", // tree-view:reveal-active-file
+      "ctrl-b": "editor::GoToDefinition", // fuzzy-finder:toggle-buffer-finder
+      "ctrl-alt-b": "editor::GoToDefinitionSplit", // N/A: From JetBrains
+      "ctrl-<": "editor::ScrollCursorCenter", // editor:scroll-to-cursor
+      "ctrl-r": "outline::Toggle", // symbols-view:toggle-project-symbols
+      "ctrl-shift-m": "markdown::OpenPreviewToTheSide" // markdown-preview:toggle
     }
   },
   {
