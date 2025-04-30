@@ -435,7 +435,8 @@ impl AssistantPanel {
                         .unwrap_or_default();
 
                     if !recently_opened.is_empty() {
-                        menu = menu.fixed_width(px(320.).into()).header("Recently Opened");
+                        menu = menu.header("Recently Opened");
+
                         for entry in recently_opened.iter() {
                             let summary = entry.summary(cx);
                             menu = menu.entry_with_end_slot(
@@ -491,12 +492,14 @@ impl AssistantPanel {
                                 },
                             );
                         }
+
                         menu = menu.separator();
                     }
 
                     menu.action("View All", Box::new(OpenHistory))
-                        .keep_open_on_confirm(false)
                         .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
+                        .fixed_width(px(320.).into())
+                        .keep_open_on_confirm(false)
                         .key_context("NavigationMenu")
                 });
             weak_panel
