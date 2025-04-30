@@ -274,7 +274,7 @@ impl ProjectDiagnosticsEditor {
             loop {
                 let Some(path) = this.update(cx, |this, cx| {
                     let Some(path) = this.paths_to_update.pop_first() else {
-                        this.update_excerpts_task.take();
+                        this.update_excerpts_task = None;
                         cx.notify();
                         return None;
                     };
@@ -341,7 +341,23 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_all_diagnostics(window, cx);
+        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+
+        if fetch_cargo_diagnostics {
+            if self.cargo_diagnostics_fetch.task.is_some() {
+                self.stop_cargo_diagnostics_fetch(cx);
+            } else {
+                self.update_all_diagnostics(window, cx);
+            }
+        } else {
+            if self.update_excerpts_task.is_some() {
+                self.update_excerpts_task = None;
+            } else {
+                self.update_all_diagnostics(window, cx);
+            }
+        }
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
