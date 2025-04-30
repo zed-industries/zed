@@ -32,6 +32,9 @@ impl ThemePreviewTile {
 impl RenderOnce for ThemePreviewTile {
     fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
         let color = self.theme.colors();
+        let syntax = self.theme.syntax();
+        let syntax_colors = [syntax.get("foo.bar")];
+
         let root_radius = px(8.0);
         let root_border = px(2.0);
         let root_padding = px(2.0);
@@ -51,9 +54,19 @@ impl RenderOnce for ThemePreviewTile {
         let sidebar_skeleton = (0..sidebar_skeleton_items)
             .map(|i| {
                 let width = sidebar_seeded_width(self.seed, i);
-                item_skeleton(relative(width).into(), px(3.), color.text_muted)
+                item_skeleton(
+                    relative(width).into(),
+                    px(3.),
+                    color.text.alpha(width - 0.25),
+                )
             })
             .collect::<Vec<_>>();
+
+        // This should be rows of horizontal item skeletons
+        // using colors from the syntax_colors vec.
+        // It will create something that looks like syntax highlighting.
+        //
+        // let pseudo_code_skeleton = todo!("Implement pseudo code skeleton");
 
         let sidebar = div()
             .h_full()
@@ -71,6 +84,90 @@ impl RenderOnce for ThemePreviewTile {
                     .children(sidebar_skeleton),
             );
 
+        // Generate abstract code blocks using syntax theme colors
+        let pseudo_code_skeleton = |theme: Arc<Theme>, seed: f32| -> AnyElement {
+            let colors = theme.colors();
+            let syntax = theme.syntax();
+
+            // Get syntax colors for different code elements
+            let keyword_color = syntax.get("keyword").color;
+            let function_color = syntax.get("function").color;
+            let string_color = syntax.get("string").color;
+            let comment_color = syntax.get("comment").color;
+            let variable_color = syntax.get("variable").color;
+            let type_color = syntax.get("type").color;
+            let punctuation_color = syntax.get("punctuation").color;
+
+            // Array of colors to pick from for code elements
+            let syntax_colors = [
+                keyword_color,
+                function_color,
+                string_color,
+                variable_color,
+                type_color,
+                punctuation_color,
+                comment_color,
+            ];
+
+            // Generate random line configuration based on seed
+            let line_width = |line_idx: usize, block_idx: usize| -> f32 {
+                let val = (seed * 100.0 + line_idx as f32 * 20.0 + block_idx as f32 * 5.0).sin()
+                    * 0.5
+                    + 0.5;
+                0.05 + val * 0.25 // Width between 5% and 30%
+            };
+
+            // Generate indentation based on seed and line index
+            let indentation = |line_idx: usize| -> f32 {
+                let val = (seed * 200.0 + line_idx as f32 * 15.0).cos() * 0.5 + 0.5;
+                val * 0.3 // Indent between 0% and 30%
+            };
+
+            // Pick a color based on seed, line and block index
+            let pick_color = |line_idx: usize, block_idx: usize| -> Hsla {
+                let idx = ((seed * 10.0 + line_idx as f32 * 7.0 + block_idx as f32 * 3.0).sin()
+                    * 3.5)
+                    .abs() as usize
+                    % syntax_colors.len();
+                syntax_colors[idx].unwrap_or(colors.text)
+            };
+
+            // Number of code lines
+            let line_count = 7;
+
+            // Create the lines
+            let lines = (0..line_count)
+                .map(|line_idx| {
+                    // Each line has 1-4 blocks based on seed and line index
+                    let block_count = (((seed * 30.0 + line_idx as f32 * 12.0).sin() * 0.5 + 0.5)
+                        * 3.0)
+                        .round() as usize
+                        + 1;
+
+                    let indent = indentation(line_idx);
+
+                    // Create the blocks for this line
+                    let blocks = (0..block_count)
+                        .map(|block_idx| {
+                            let width = line_width(line_idx, block_idx);
+                            let color = pick_color(line_idx, block_idx);
+                            item_skeleton(relative(width).into(), px(6.), color)
+                        })
+                        .collect::<Vec<_>>();
+
+                    // Create a flex container for this line
+                    h_flex().gap_2().ml(relative(indent)).children(blocks)
+                })
+                .collect::<Vec<_>>();
+
+            v_flex()
+                .size_full()
+                .p_1()
+                .gap_2()
+                .children(lines)
+                .into_any_element()
+        };
+
         let pane = div()
             .h_full()
             .flex_grow()
@@ -84,7 +181,14 @@ impl RenderOnce for ThemePreviewTile {
                     .h(relative(0.1))
                     .bg(color.tab_bar_background),
             )
-            .child(div().flex_1().w_full().bg(color.editor_background));
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .bg(color.editor_background)
+                    .p_2()
+                    .child(pseudo_code_skeleton(self.theme.clone(), self.seed)),
+            );
 
         let content = div().size_full().flex().child(sidebar).child(pane);
 
