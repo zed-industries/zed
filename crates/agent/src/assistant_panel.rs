@@ -31,7 +31,8 @@ use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
+    Banner, ContextMenu, Divider, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -1300,62 +1301,61 @@ impl AssistantPanel {
 
         let focus_handle = self.focus_handle(cx);
 
-        let go_back_button = match &self.active_view {
-            ActiveView::History | ActiveView::Configuration => Some(
-                IconButton::new("go-back", IconName::ArrowLeft)
-                    .icon_size(IconSize::Small)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.go_back(&workspace::GoBack, window, cx);
-                    }))
-                    .tooltip({
-                        let focus_handle = focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Go Back",
-                                &workspace::GoBack,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    }),
-            ),
-            _ => None,
-        };
-
-        let recent_entries_menu = PopoverMenu::new("agent-nav-menu")
-            .trigger_with_tooltip(
-                IconButton::new("agent-nav-menu", IconName::MenuAlt)
-                    .icon_size(IconSize::Small)
-                    .style(ui::ButtonStyle::Subtle),
-                {
+        let go_back_button = div().child(
+            IconButton::new("go-back", IconName::ArrowLeft)
+                .icon_size(IconSize::Small)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.go_back(&workspace::GoBack, window, cx);
+                }))
+                .tooltip({
                     let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
-                            "Toggle Panel Menu",
-                            &ToggleNavigationMenu,
+                            "Go Back",
+                            &workspace::GoBack,
                             &focus_handle,
                             window,
                             cx,
                         )
                     }
-                },
-            )
-            .anchor(Corner::TopLeft)
-            .with_handle(self.assistant_navigation_menu_handle.clone())
-            .menu({
-                let menu = self.assistant_navigation_menu.clone();
-                move |window, cx| {
-                    if let Some(menu) = menu.as_ref() {
-                        menu.update(cx, |_, cx| {
-                            cx.defer_in(window, |menu, window, cx| {
-                                menu.rebuild(window, cx);
-                            });
-                        })
+                }),
+        );
+
+        let recent_entries_menu = div().child(
+            PopoverMenu::new("agent-nav-menu")
+                .trigger_with_tooltip(
+                    IconButton::new("agent-nav-menu", IconName::MenuAlt)
+                        .icon_size(IconSize::Small)
+                        .style(ui::ButtonStyle::Subtle),
+                    {
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Panel Menu",
+                                &ToggleNavigationMenu,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    },
+                )
+                .anchor(Corner::TopLeft)
+                .with_handle(self.assistant_navigation_menu_handle.clone())
+                .menu({
+                    let menu = self.assistant_navigation_menu.clone();
+                    move |window, cx| {
+                        if let Some(menu) = menu.as_ref() {
+                            menu.update(cx, |_, cx| {
+                                cx.defer_in(window, |menu, window, cx| {
+                                    menu.rebuild(window, cx);
+                                });
+                            })
+                        }
+                        menu.clone()
                     }
-                    menu.clone()
-                }
-            });
+                }),
+        );
 
         let agent_extra_menu = PopoverMenu::new("assistant-menu")
             .trigger_with_tooltip(
@@ -1406,11 +1406,13 @@ impl AssistantPanel {
             .border_color(cx.theme().colors().border)
             .child(
                 h_flex()
-                    .w_full()
+                    .size_full()
                     .pl_1()
                     .gap_1()
-                    .child(recent_entries_menu)
-                    .children(go_back_button)
+                    .child(match &self.active_view {
+                        ActiveView::History | ActiveView::Configuration => go_back_button,
+                        _ => recent_entries_menu,
+                    })
                     .child(self.render_title_view(window, cx)),
             )
             .child(
