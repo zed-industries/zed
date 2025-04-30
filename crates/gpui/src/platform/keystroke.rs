@@ -94,11 +94,19 @@ impl Keystroke {
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
+        Self::parse_with_separator(source, '-')
+    }
+
+    /// This allows separators other than `-` to be used.
+    pub fn parse_with_separator(
+        source: &str,
+        separator: char,
+    ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut modifiers = Modifiers::none();
         let mut key = None;
         let mut key_char = None;
 
-        let mut components = source.split('-').peekable();
+        let mut components = source.split(separator).peekable();
         while let Some(component) = components.next() {
             if component.eq_ignore_ascii_case("ctrl") {
                 modifiers.control = true;
@@ -137,8 +145,8 @@ impl Keystroke {
             let mut key_str = component.to_string();
 
             if let Some(next) = components.peek() {
-                if next.is_empty() && source.ends_with('-') {
-                    key = Some(String::from("-"));
+                if next.is_empty() && source.ends_with(separator) {
+                    key = Some(String::from(separator));
                     break;
                 } else if next.len() > 1 && next.starts_with('>') {
                     key = Some(key_str);
