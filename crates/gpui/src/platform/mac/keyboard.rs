@@ -251,3 +251,53 @@ const TYPEABLE_CODES: &[u16] = &[
     0x002f, // . Period
     0x002c, // / Slash
 ];
+
+#[cfg(test)]
+mod tests {
+    use crate::{Keystroke, Modifiers, PlatformKeyboardMapper};
+
+    use super::MacKeyboardMapper;
+
+    #[test]
+    fn test_parse_vscode_shortcuts() {
+        let mapper = MacKeyboardMapper::new();
+
+        let vsc_keystroke = Keystroke {
+            modifiers: Modifiers::command_shift(),
+            key: "a".to_string(),
+            key_char: None,
+        };
+        let gpui_keystroke = mapper.vscode_keystroke_to_gpui_keystroke(vsc_keystroke.clone());
+        assert_eq!(gpui_keystroke, vsc_keystroke);
+
+        let vsc_keystroke = Keystroke {
+            modifiers: Modifiers::command_shift(),
+            key: "=".to_string(),
+            key_char: None,
+        };
+        let gpui_keystroke = mapper.vscode_keystroke_to_gpui_keystroke(vsc_keystroke.clone());
+        assert_eq!(
+            gpui_keystroke,
+            Keystroke {
+                modifiers: Modifiers::command(),
+                key: "+".to_string(),
+                key_char: None,
+            }
+        );
+
+        let vsc_keystroke = Keystroke {
+            modifiers: Modifiers::command_shift(),
+            key: "1".to_string(),
+            key_char: None,
+        };
+        let gpui_keystroke = mapper.vscode_keystroke_to_gpui_keystroke(vsc_keystroke.clone());
+        assert_eq!(
+            gpui_keystroke,
+            Keystroke {
+                modifiers: Modifiers::command(),
+                key: "!".to_string(),
+                key_char: None,
+            }
+        );
+    }
+}
