@@ -1,5 +1,6 @@
-use crate::{code_symbols_tool::file_outline, schema::json_schema_for};
+use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
+use assistant_tool::outline;
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 
@@ -154,9 +155,9 @@ impl Tool for ReadFileTool {
 
                     Ok(result)
                 } else {
-                    // File is too big, so return an error with the outline
+                    // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
-                    let outline = file_outline(project, file_path, action_log, None, cx).await?;
+                    let outline = outline::file_outline(project, file_path, action_log, None, cx).await?;
                     Ok(formatdoc! {"
                         This file was too big to read all at once. Here is an outline of its symbols:
 
