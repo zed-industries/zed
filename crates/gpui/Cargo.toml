@@ -144,6 +144,11 @@ objc2-metal = { version = "0.2", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.61"
+windows-numerics = "0.2"
+windows-registry = "0.5"
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 
@@ -188,7 +193,6 @@ wayland-protocols-plasma = { version = "0.2.0", features = [
     "client",
 ], optional = true }
 
-
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }
 x11rb = { version = "0.13.1", features = [
@@ -218,9 +222,6 @@ blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
-windows-core = "0.61"
-windows-numerics = "0.2"
-windows-registry = "0.5"
 
 [dev-dependencies]
 backtrace = "0.3"
