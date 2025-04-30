@@ -441,27 +441,23 @@ pub fn vscode_settings_file() -> &'static PathBuf {
     let rel_path = "Code/User/settings.json";
     #[cfg(target_os = "macos")]
     {
-        LOGS_DIR.get_or_init(|| {
-            if cfg!(target_os = "macos") {
-                home_dir()
-                    .join("Library/Application Support")
-                    .join(rel_path)
-            } else {
-                home_dir().join(".config").join(rel_path)
-            }
-        })
+        return LOGS_DIR.get_or_init(|| {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        });
     }
     #[cfg(target_os = "windows")]
     {
-        LOGS_DIR.get_or_init(|| {
+        return LOGS_DIR.get_or_init(|| {
             dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
                 .join(rel_path)
-        })
+        });
     }
     #[cfg(not(any(target_os = "macis", target_os = "windows")))]
     {
-        LOGS_DIR.get_or_init(|| config_dir().join(rel_path))
+        return LOGS_DIR.get_or_init(|| config_dir().join(rel_path));
     }
 }
 
