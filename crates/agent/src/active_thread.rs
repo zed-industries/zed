@@ -1570,10 +1570,11 @@ impl ActiveThread {
             });
 
         // For all items that should be aligned with the LLM's response.
-        const RESPONSE_PADDING_X: Pixels = px(18.);
+        const RESPONSE_PADDING_X: Pixels = px(19.);
 
         let feedback_container = h_flex()
             .group("feedback_container")
+            .mt_1()
             .py_2()
             .px(RESPONSE_PADDING_X)
             .gap_1()
@@ -1697,7 +1698,7 @@ impl ActiveThread {
                         if let Some(edit_message_editor) = edit_message_editor.clone() {
                             let settings = ThemeSettings::get_global(cx);
                             let font_size = TextSize::Small.rems(cx);
-                            let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+                            let line_height = font_size.to_pixels(window.rem_size()) * 1.75;
 
                             let text_style = TextStyle {
                                 color: cx.theme().colors().text,
@@ -1781,8 +1782,7 @@ impl ActiveThread {
                         .cursor_pointer()
                         .child(
                             h_flex()
-                                .p_2()
-                                .pt_3()
+                                .p_2p5()
                                 .gap_1()
                                 .children(message_content)
                                 .when_some(edit_message_editor.clone(), |this, edit_editor| {
