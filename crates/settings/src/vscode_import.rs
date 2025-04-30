@@ -131,19 +131,25 @@ impl VsCodeShortcuts {
         })
     }
 
-    pub fn parse_shortcuts(&self, keyboard_mapper: &dyn PlatformKeyboardMapper) {
+    pub fn parse_shortcuts(
+        &self,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) -> Vec<(String, String)> {
+        let mut skipped = Vec::new();
         for content in self.content.iter() {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
-            let Some(keystroke) = Keystroke::parse(shortcut).ok() else {
+            let Some(keystroke) = Keystroke::parse_with_separator(shortcut, '+').ok() else {
                 continue;
             };
-            if keystroke.key.starts_with('[') && keystroke.key.ends_with(']') {
-                println!(
-                    "Unable to parse keystroke that using Scan Code: {}",
-                    shortcut
-                );
+            if (keystroke.key.starts_with('[') && keystroke.key.ends_with(']'))
+                || keystroke.key.starts_with("oem")
+            {
+                skipped.push((
+                    shortcut.to_string(),
+                    format!("Unable to parse keystroke that using Scan Code or Virtual Key"),
+                ));
                 continue;
             }
             let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
@@ -158,6 +164,7 @@ impl VsCodeShortcuts {
                 shortcut, keystroke, action
             );
         }
+        skipped
     }
 
     pub fn to_json(self) -> String {
@@ -221,18 +228,37 @@ mod tests {
     use super::VsCodeShortcuts;
 
     #[test]
-    fn test_load_vscode_shortcuts_with_scan_code() {
+    fn test_load_vscode_shortcuts() {
         let content = r#"
         [
             {
                 "key": "shift+[BracketRight]",
                 "command": "list.focusFirst",
+            },
+            {
+                "key": "ctrl+shift+oem_3",
+                "command": "list.focusFirst",
             }
         ]
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
-        assert_eq!(shortcuts.content.len(), 1);
+        assert_eq!(shortcuts.content.len(), 2);
         let keyboard_mapper = TestKeyboardMapper::new();
-        shortcuts.parse_shortcuts(&keyboard_mapper);
+        let result = shortcuts.parse_shortcuts(&keyboard_mapper);
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result[0],
+            (
+                "shift+[BracketRight]".to_string(),
+                "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
+            )
+        );
+        assert_eq!(
+            result[1],
+            (
+                "ctrl+shift+oem_3".to_string(),
+                "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
+            )
+        );
     }
 }
