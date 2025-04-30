@@ -473,6 +473,11 @@ impl ThemeSettingsContent {
         }
     }
 
+    /// Sets the theme for the given appearance to the theme with the specified name.
+    pub fn set_static_theme(&mut self, theme_name: String) {
+        self.theme = Some(ThemeSelection::Static(theme_name.to_string()));
+    }
+
     /// Sets the icon theme for the given appearance to the icon theme with the specified name.
     pub fn set_icon_theme(&mut self, icon_theme_name: String, appearance: Appearance) {
         if let Some(selection) = self.icon_theme.as_mut() {

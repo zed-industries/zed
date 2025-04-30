@@ -1,1 +1,1 @@
-mod theme_preview;
+pub mod theme_preview;

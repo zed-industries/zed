@@ -1,4 +1,3 @@
-#![allow(unused, dead_code)]
 use gpui::{Hsla, Length};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
@@ -173,6 +172,7 @@ impl RenderOnce for ThemePreviewTile {
                 div()
                     .size_full()
                     .overflow_hidden()
+                    .rounded(root_radius)
                     .bg(color.editor_background)
                     .p_2()
                     .child(pseudo_code_skeleton(self.theme.clone(), self.seed)),
@@ -261,7 +261,7 @@ impl Component for ThemePreviewTile {
                                 themes_to_preview
                                     .iter()
                                     .enumerate()
-                                    .map(|(i, theme)| {
+                                    .map(|(_i, theme)| {
                                         div().w(px(200.)).h(px(140.)).child(ThemePreviewTile::new(
                                             theme.clone(),
                                             false,

@@ -9,6 +9,7 @@ use gpui::{
 use persistence::WALKTHROUGH_DB;
 use settings::SettingsStore;
 use std::sync::Arc;
+use theme::ThemeRegistry;
 use theme::{Appearance, ThemeSettings};
 use ui::prelude::*;
 use workspace::{
@@ -17,6 +18,8 @@ use workspace::{
     register_serializable_item,
 };
 use zed_actions::{ExtensionCategoryFilter, Extensions};
+
+use crate::welcome_ui::theme_preview::ThemePreviewTile;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
@@ -153,7 +156,7 @@ impl Render for Walkthrough {
                     .child(
                         h_flex()
                             .w(px(768.))
-                            .h_128()
+                            .h_full()
                             .child(
                                 list(self.steps.clone())
                                     .with_sizing_behavior(ListSizingBehavior::Infer)
@@ -217,80 +220,98 @@ impl WalkthroughStep for ThemeStep {
         )
     }
 
+    //             .child(
+
     fn render_subpane(
         &self,
         _ix: usize,
         walkthrough: &mut Walkthrough,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        let current = cx.theme().name.clone();
+        const THEME_PREVIEW_SEED: f32 = 0.42;
+        let theme_registry = ThemeRegistry::global(cx);
+        let current_theme = cx.theme().clone();
         let fs = walkthrough.fs.clone();
-        // let registry = ThemeRegistry::global(cx);
-        // let mut themes = registry.list();
 
-        let make_button = |name: &'static str, _image_path: &str, fs: Arc<dyn Fs>| {
-            Button::new(name, name)
-                .when(current == name, |this| this.toggle_state(true))
-                .on_click(move |_event, window, cx| {
-                    let name = name.to_string();
-                    // TODO: filter click event?
-                    telemetry::event!("Settings Changed", setting = "theme", value = &name);
-                    let appearance = Appearance::from(window.appearance());
-                    let fs = fs.clone();
-                    settings::update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-                        settings.set_theme(name, appearance);
-                    });
-                })
+        let mut theme_preview_tile = |theme_name: &'static str,
+                                      fs: Arc<dyn Fs>|
+         -> Option<AnyElement> {
+            let theme = theme_registry.get(theme_name).ok()?;
+            let is_selected = current_theme.id == theme.id;
+            Some(
+                v_flex()
+                    .items_center()
+                    .id(theme.name.clone())
+                    .child(
+                        div().w(px(200.)).h(px(120.)).child(
+                            ThemePreviewTile::new(theme.clone(), is_selected, THEME_PREVIEW_SEED)
+                                .render(window, cx)
+                                .into_any_element(),
+                        ),
+                    )
+                    .text_ui_sm(cx)
+                    .child(theme.name.clone())
+                    .on_click(move |_event, window, cx| {
+                        let name = theme_name.to_string();
+                        // TODO: filter click event?
+                        telemetry::event!("Settings Changed", setting = "theme", value = &name);
+                        let appearance = Appearance::from(window.appearance());
+                        settings::update_settings_file::<ThemeSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| {
+                                settings.set_theme(name, appearance);
+                            },
+                        );
+                    })
+                    .into_any(),
+            )
         };
+
         v_flex()
+            .size_full()
             .child(
-                h_flex().m_32().flex_wrap().justify_center().children(
-                    [
-                        ("One Light", "path/to/image"),
-                        ("One Dark", "path/to/image"),
-                        ("Ayu Light", "path/to/image"),
-                        ("Ayu Dark", "path/to/image"),
-                        ("Gruvbox Light", "path/to/image"),
-                        ("Gruvbox Dark", "path/to/image"),
-                    ]
-                    .map(|(name, path)| make_button(name, path, fs.clone())),
-                ),
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .child(theme_preview_tile("One Dark", fs.clone()).unwrap())
+                            .child(theme_preview_tile("One Light", fs.clone()).unwrap()),
+                    )
+                    .child(
+                        h_flex()
+                            .child(theme_preview_tile("Ayu Dark", fs.clone()).unwrap())
+                            .child(theme_preview_tile("Ayu Light", fs.clone()).unwrap()),
+                    )
+                    .child(
+                        h_flex()
+                            .child(theme_preview_tile("Gruvbox Dark", fs.clone()).unwrap())
+                            .child(theme_preview_tile("Gruvbox Light", fs.clone()).unwrap()),
+                    ),
             )
             .child(
-                h_flex().justify_between().children([
-                    Button::new("install-theme", "Browse More Themes")
-                        .icon(IconName::SwatchBook)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            telemetry::event!("Welcome Theme Changed");
-                            this.workspace
-                                .update(cx, |_workspace, cx| {
-                                    window.dispatch_action(
-                                        Box::new(Extensions {
-                                            category_filter: Some(ExtensionCategoryFilter::Themes),
-                                        }),
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        })),
-                    // Button::new("theme-docs", "Open Theme Docs")
-                    //     .icon(IconName::SwatchBook)
-                    //     .icon_size(IconSize::XSmall)
-                    //     .icon_color(Color::Muted)
-                    //     .icon_position(IconPosition::Start)
-                    //     .on_click(cx.listener(|this, _, window, cx| {
-                    //         telemetry::event!("Welcome Theme Changed");
-                    //         this.workspace
-                    //             .update(cx, |_workspace, cx| {
-                    //                 cx.open_url("https://zed.dev/docs/themes");
-                    //             })
-                    //             .ok();
-                    //     })),
-                ]),
+                h_flex().justify_between().children([Button::new(
+                    "install-theme",
+                    "Browse More Themes",
+                )
+                .icon(IconName::SwatchBook)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    telemetry::event!("Welcome Theme Changed");
+                    this.workspace
+                        .update(cx, |_workspace, cx| {
+                            window.dispatch_action(
+                                Box::new(Extensions {
+                                    category_filter: Some(ExtensionCategoryFilter::Themes),
+                                }),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }))]),
             )
             .into_any()
     }
@@ -302,7 +323,7 @@ impl WalkthroughStep for SettingsStep {
         &self,
         ix: usize,
         walkthrough: &mut Walkthrough,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         walkthrough.checkbox_section(
@@ -347,10 +368,7 @@ impl WalkthroughStep for SettingsStep {
                     this.child(
                         h_flex()
                             .child(Button::new("import-vscode", "Import VsCode settings"))
-                            .child(format!(
-                                "settings file last modified {}",
-                                "TODO ago",
-                            )),
+                            .child(format!("settings file last modified {}", "TODO ago",)),
                     )
                 },
             )
@@ -365,7 +383,7 @@ impl WalkthroughStep for AiIntegrations {
         &self,
         ix: usize,
         walkthrough: &mut Walkthrough,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         walkthrough.checkbox_section(
