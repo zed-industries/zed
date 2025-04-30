@@ -426,7 +426,16 @@ pub fn global_ssh_config_file() -> &'static Path {
     Path::new("/etc/ssh/ssh_config")
 }
 
-/// Returns the path to the vscode user settings file
+pub fn user_ssh_config_file() -> PathBuf {
+    home_dir().join(".ssh/config")
+}
+
+pub fn global_ssh_config_file() -> &'static Path {
+    Path::new("/etc/ssh/ssh_config")
+}
+
+/// Returns the path to the vscode user settings file.
+/// Note: This returns the `Default` profile settings file.
 pub fn vscode_settings_file() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     let rel_path = "Code/User/settings.json";
@@ -456,7 +465,8 @@ pub fn vscode_settings_file() -> &'static PathBuf {
     }
 }
 
-/// Returns the path to the vscode user keymap file
+/// Returns the path to the vscode user keymap file.
+/// Note: This returns the `Default` profile keymap file.
 pub fn vscode_shortcuts_file() -> &'static PathBuf {
     static RESULT: OnceLock<PathBuf> = OnceLock::new();
     let rel_path = "Code/User/keybindings.json";
