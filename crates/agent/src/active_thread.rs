@@ -1,5 +1,7 @@
 use crate::context::{AgentContextHandle, RULES_ICON};
-use crate::context_picker::MentionLink;
+use crate::context_picker::{ContextPicker, MentionLink};
+use crate::context_store::ContextStore;
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
     ThreadFeedback,
@@ -14,6 +16,7 @@ use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
+use editor::actions::MoveUp;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
@@ -41,7 +44,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, TextSize, Tooltip, prelude::*,
+    Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -49,6 +53,7 @@ use workspace::Workspace;
 use zed_actions::assistant::OpenRulesLibrary;
 
 pub struct ActiveThread {
+    context_store: Entity<ContextStore>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
@@ -61,7 +66,7 @@ pub struct ActiveThread {
     hide_scrollbar_task: Option<Task<()>>,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
-    editing_message: Option<(MessageId, EditMessageState)>,
+    editing_message: Option<(MessageId, EditingMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     expanded_code_blocks: HashMap<(MessageId, usize), bool>,
@@ -725,10 +730,12 @@ fn open_markdown_link(
     }
 }
 
-struct EditMessageState {
+struct EditingMessageState {
     editor: Entity<Editor>,
+    context_strip: Entity<ContextStrip>,
+    context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     last_estimated_token_count: Option<usize>,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
     _update_token_count_task: Option<Task<()>>,
 }
 
@@ -736,6 +743,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
+        context_store: Entity<ContextStore>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -758,6 +766,7 @@ impl ActiveThread {
         let mut this = Self {
             language_registry,
             thread_store,
+            context_store,
             thread: thread.clone(),
             workspace,
             save_thread_task: None,
@@ -1237,38 +1246,72 @@ impl ActiveThread {
             return;
         };
 
-        let buffer = cx.new(|cx| {
-            MultiBuffer::singleton(cx.new(|cx| Buffer::local(message_text.clone(), cx)), cx)
+        let editor = crate::message_editor::create_editor(
+            self.workspace.clone(),
+            self.context_store.downgrade(),
+            self.thread_store.downgrade(),
+            window,
+            cx,
+        );
+        editor.update(cx, |editor, cx| {
+            editor.set_text(message_text.clone(), window, cx);
         });
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight { max_lines: 8 },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.focus_handle(cx).focus(window);
-            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
-            editor
-        });
-        let subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
+        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::BufferEdited => {
                 this.update_editing_message_token_count(true, cx);
             }
             _ => {}
         });
+
+        let context_picker_menu_handle = PopoverMenuHandle::default();
+        let context_strip = cx.new(|cx| {
+            ContextStrip::new(
+                self.context_store.clone(),
+                self.workspace.clone(),
+                Some(self.thread_store.downgrade()),
+                context_picker_menu_handle.clone(),
+                SuggestContextKind::File,
+                window,
+                cx,
+            )
+        });
+
+        let context_strip_subscription =
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
+
         self.editing_message = Some((
             message_id,
-            EditMessageState {
+            EditingMessageState {
                 editor: editor.clone(),
+                context_strip,
+                context_picker_menu_handle,
                 last_estimated_token_count: None,
-                _subscription: subscription,
+                _subscriptions: [buffer_edited_subscription, context_strip_subscription],
                 _update_token_count_task: None,
             },
         ));
         self.update_editing_message_token_count(false, cx);
         cx.notify();
+    }
+
+    fn handle_context_strip_event(
+        &mut self,
+        _context_strip: &Entity<ContextStrip>,
+        event: &ContextStripEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((_, state)) = self.editing_message.as_ref() {
+            match event {
+                ContextStripEvent::PickerDismissed
+                | ContextStripEvent::BlurredEmpty
+                | ContextStripEvent::BlurredDown => {
+                    let editor_focus_handle = state.editor.focus_handle(cx);
+                    window.focus(&editor_focus_handle);
+                }
+                ContextStripEvent::BlurredUp => {}
+            }
+        }
     }
 
     fn update_editing_message_token_count(&mut self, debounce: bool, cx: &mut Context<Self>) {
@@ -1355,6 +1398,40 @@ impl ActiveThread {
                 .ok();
             };
         }));
+    }
+
+    fn toggle_context_picker(
+        &mut self,
+        _: &crate::ToggleContextPicker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((_, state)) = self.editing_message.as_mut() {
+            let handle = state.context_picker_menu_handle.clone();
+            window.defer(cx, move |window, cx| {
+                handle.toggle(window, cx);
+            });
+        }
+    }
+
+    fn remove_all_context(
+        &mut self,
+        _: &crate::RemoveAllContext,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_store.update(cx, |store, _cx| store.clear());
+        cx.notify();
+    }
+
+    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, state)) = self.editing_message.as_mut() {
+            if state.context_picker_menu_handle.is_deployed() {
+                cx.propagate();
+            } else {
+                state.context_strip.focus_handle(cx).focus(window);
+            }
+        }
     }
 
     fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -1519,6 +1596,52 @@ impl ActiveThread {
         }
     }
 
+    fn render_edit_message_editor(
+        &self,
+        state: &EditingMessageState,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let font_size = TextSize::Small.rems(cx);
+        let line_height = font_size.to_pixels(window.rem_size()) * 1.75;
+
+        let colors = cx.theme().colors();
+
+        let text_style = TextStyle {
+            color: colors.text,
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: font_size.into(),
+            line_height: line_height.into(),
+            ..Default::default()
+        };
+
+        v_flex()
+            .key_context("EditMessageEditor")
+            .on_action(cx.listener(Self::toggle_context_picker))
+            .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::cancel_editing_message))
+            .on_action(cx.listener(Self::confirm_editing_message))
+            .min_h_6()
+            .flex_grow()
+            .w_full()
+            .gap_2()
+            .child(state.context_strip.clone())
+            .child(EditorElement::new(
+                &state.editor,
+                EditorStyle {
+                    background: colors.editor_background,
+                    local_player: cx.theme().players().local(),
+                    text: text_style,
+                    syntax: cx.theme().syntax().clone(),
+                    ..Default::default()
+                },
+            ))
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -1551,11 +1674,11 @@ impl ActiveThread {
         let generating_label = (is_generating && is_last_message)
             .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
 
-        let edit_message_editor = self
+        let editing_message_state = self
             .editing_message
             .as_ref()
             .filter(|(id, _)| *id == message_id)
-            .map(|(_, state)| state.editor.clone());
+            .map(|(_, state)| state);
 
         let colors = cx.theme().colors();
         let editor_bg_color = colors.editor_background;
@@ -1694,54 +1817,22 @@ impl ActiveThread {
                 .w_full()
                 .gap_1()
                 .when(!message_is_empty, |parent| {
-                    parent.child(
-                        if let Some(edit_message_editor) = edit_message_editor.clone() {
-                            let settings = ThemeSettings::get_global(cx);
-                            let font_size = TextSize::Small.rems(cx);
-                            let line_height = font_size.to_pixels(window.rem_size()) * 1.75;
-
-                            let text_style = TextStyle {
-                                color: cx.theme().colors().text,
-                                font_family: settings.buffer_font.family.clone(),
-                                font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                                font_features: settings.buffer_font.features.clone(),
-                                font_size: font_size.into(),
-                                line_height: line_height.into(),
-                                ..Default::default()
-                            };
-
-                            div()
-                                .key_context("EditMessageEditor")
-                                .on_action(cx.listener(Self::cancel_editing_message))
-                                .on_action(cx.listener(Self::confirm_editing_message))
-                                .min_h_6()
-                                .flex_grow()
-                                .w_full()
-                                .child(EditorElement::new(
-                                    &edit_message_editor,
-                                    EditorStyle {
-                                        background: colors.editor_background,
-                                        local_player: cx.theme().players().local(),
-                                        text: text_style,
-                                        syntax: cx.theme().syntax().clone(),
-                                        ..Default::default()
-                                    },
-                                ))
-                                .into_any()
-                        } else {
-                            div()
-                                .min_h_6()
-                                .child(self.render_message_content(
-                                    message_id,
-                                    rendered_message,
-                                    has_tool_uses,
-                                    workspace.clone(),
-                                    window,
-                                    cx,
-                                ))
-                                .into_any()
-                        },
-                    )
+                    parent.child(if let Some(state) = editing_message_state.as_ref() {
+                        self.render_edit_message_editor(state, window, cx)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .min_h_6()
+                            .child(self.render_message_content(
+                                message_id,
+                                rendered_message,
+                                has_tool_uses,
+                                workspace.clone(),
+                                window,
+                                cx,
+                            ))
+                            .into_any_element()
+                    })
                 })
                 .when(!added_context.is_empty(), |parent| {
                     parent.child(h_flex().flex_wrap().gap_1().children(
@@ -1785,8 +1876,8 @@ impl ActiveThread {
                                 .p_2p5()
                                 .gap_1()
                                 .children(message_content)
-                                .when_some(edit_message_editor.clone(), |this, edit_editor| {
-                                    let edit_editor_clone = edit_editor.clone();
+                                .when_some(editing_message_state, |this, state| {
+                                    let focus_handle = state.editor.focus_handle(cx).clone();
                                     this.w_full().justify_between().child(
                                         h_flex()
                                             .gap_0p5()
@@ -1797,16 +1888,17 @@ impl ActiveThread {
                                                 )
                                                 .shape(ui::IconButtonShape::Square)
                                                 .icon_color(Color::Error)
-                                                .tooltip(move |window, cx| {
-                                                    let focus_handle =
-                                                        edit_editor_clone.focus_handle(cx);
-                                                    Tooltip::for_action_in(
-                                                        "Cancel Edit",
-                                                        &menu::Cancel,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Cancel Edit",
+                                                            &menu::Cancel,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
                                                 })
                                                 .on_click(cx.listener(Self::handle_cancel_click)),
                                             )
@@ -1815,18 +1907,20 @@ impl ActiveThread {
                                                     "confirm-edit-message",
                                                     IconName::Check,
                                                 )
-                                                .disabled(edit_editor.read(cx).is_empty(cx))
+                                                .disabled(state.editor.read(cx).is_empty(cx))
                                                 .shape(ui::IconButtonShape::Square)
                                                 .icon_color(Color::Success)
-                                                .tooltip(move |window, cx| {
-                                                    let focus_handle = edit_editor.focus_handle(cx);
-                                                    Tooltip::for_action_in(
-                                                        "Regenerate",
-                                                        &menu::Confirm,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Regenerate",
+                                                            &menu::Confirm,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
                                                 })
                                                 .on_click(
                                                     cx.listener(Self::handle_regenerate_click),
@@ -1835,7 +1929,7 @@ impl ActiveThread {
                                     )
                                 }),
                         )
-                        .when(edit_message_editor.is_none(), |this| {
+                        .when(editing_message_state.is_none(), |this| {
                             this.tooltip(Tooltip::text("Click To Edit"))
                         })
                         .on_click(cx.listener({
