@@ -158,7 +158,7 @@ impl VsCodeShortcuts {
             let when = content.get("when").and_then(|when| when.as_str());
             // TODO: vscode_shortcut_command_to_zed_action
             let action = command.to_string();
-            let keystroke = keyboard_mapper.vscode_keystroke_to_gpui_keystroke(keystroke);
+            let keystroke = keyboard_mapper.get_shifted_key(keystroke);
             println!(
                 "Parsed shortcut: {} -> {:#?}, {}",
                 shortcut, keystroke, action

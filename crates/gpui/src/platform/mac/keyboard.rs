@@ -6,7 +6,7 @@ use core_graphics::event::CGKeyCode;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
 use crate::{
-    Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformKeyboardLayout, PlatformKeyboardMapper,
     platform::mac::{LMGetKbdType, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData},
 };
 
@@ -87,17 +87,22 @@ impl MacKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for MacKeyboardMapper {
-    fn vscode_keystroke_to_gpui_keystroke(&self, mut keystroke: Keystroke) -> Keystroke {
-        if !keystroke.modifiers.shift || is_alphabetic_key(&keystroke.key) {
-            return keystroke;
+    fn get_shifted_key(&self, key: &str) -> anyhow::Result<String> {
+        if is_alphabetic_key(key) {
+            return Ok(key.to_uppercase());
         }
-        if let Some(scan_code) = self.key_to_code.get(&keystroke.key) {
-            if let Some(shifted_key) = self.code_to_shifted_key.get(scan_code) {
-                keystroke.key = shifted_key.clone();
-                keystroke.modifiers.shift = false;
-            }
+        let Some(scan_code) = self.key_to_code.get(key) else {
+            return Err(anyhow::anyhow!("Key not found: {}", key));
+        };
+        if let Some(shifted_key) = self.code_to_shifted_key.get(scan_code) {
+            Ok(shifted_key.clone())
+        } else {
+            Err(anyhow::anyhow!(
+                "Shifted key not found for key {} with scan code: {}",
+                key,
+                scan_code
+            ))
         }
-        keystroke
     }
 }
 
@@ -254,50 +259,45 @@ const TYPEABLE_CODES: &[u16] = &[
 
 #[cfg(test)]
 mod tests {
-    use crate::{Keystroke, Modifiers, PlatformKeyboardMapper};
+    use crate::PlatformKeyboardMapper;
 
     use super::MacKeyboardMapper;
 
     #[test]
-    fn test_parse_vscode_shortcuts() {
+    fn test_get_shifted_key() {
         let mapper = MacKeyboardMapper::new();
 
-        let vsc_keystroke = Keystroke {
-            modifiers: Modifiers::command_shift(),
-            key: "a".to_string(),
-            key_char: None,
-        };
-        let gpui_keystroke = mapper.vscode_keystroke_to_gpui_keystroke(vsc_keystroke.clone());
-        assert_eq!(gpui_keystroke, vsc_keystroke);
+        for ch in 'a'..'z' {
+            let key = ch.to_string();
+            let shifted_key = key.to_uppercase();
+            assert_eq!(mapper.get_shifted_key(&key).unwrap(), shifted_key);
+        }
 
-        let vsc_keystroke = Keystroke {
-            modifiers: Modifiers::command_shift(),
-            key: "=".to_string(),
-            key_char: None,
-        };
-        let gpui_keystroke = mapper.vscode_keystroke_to_gpui_keystroke(vsc_keystroke.clone());
-        assert_eq!(
-            gpui_keystroke,
-            Keystroke {
-                modifiers: Modifiers::command(),
-                key: "+".to_string(),
-                key_char: None,
-            }
-        );
-
-        let vsc_keystroke = Keystroke {
-            modifiers: Modifiers::command_shift(),
-            key: "1".to_string(),
-            key_char: None,
-        };
-        let gpui_keystroke = mapper.vscode_keystroke_to_gpui_keystroke(vsc_keystroke.clone());
-        assert_eq!(
-            gpui_keystroke,
-            Keystroke {
-                modifiers: Modifiers::command(),
-                key: "!".to_string(),
-                key_char: None,
-            }
-        );
+        let shift_pairs = [
+            ("1", "!"),
+            ("2", "@"),
+            ("3", "#"),
+            ("4", "$"),
+            ("5", "%"),
+            ("6", "^"),
+            ("7", "&"),
+            ("8", "*"),
+            ("9", "("),
+            ("0", ")"),
+            ("`", "~"),
+            ("-", "_"),
+            ("=", "+"),
+            ("[", "{"),
+            ("]", "}"),
+            ("\\", "|"),
+            (";", ":"),
+            ("'", "\""),
+            (",", "<"),
+            (".", ">"),
+            ("/", "?"),
+        ];
+        for (key, shifted_key) in shift_pairs {
+            assert_eq!(mapper.get_shifted_key(key).unwrap(), shifted_key);
+        }
     }
 }

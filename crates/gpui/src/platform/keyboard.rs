@@ -1,4 +1,4 @@
-use super::Keystroke;
+use anyhow::Result;
 
 /// A trait for platform-specific keyboard layouts
 pub trait PlatformKeyboardLayout {
@@ -11,7 +11,7 @@ pub trait PlatformKeyboardLayout {
 /// TODO:
 pub trait PlatformKeyboardMapper {
     /// TODO:
-    fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke;
+    fn get_shifted_key(&self, key: &str) -> Result<String>;
 }
 
 /// TODO:
@@ -23,8 +23,8 @@ pub struct TestKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for TestKeyboardMapper {
-    fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke {
-        self.mapper.vscode_keystroke_to_gpui_keystroke(keystroke)
+    fn get_shifted_key(&self, key: &str) -> Result<String> {
+        self.mapper.get_shifted_key(key)
     }
 }
 
