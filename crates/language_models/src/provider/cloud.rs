@@ -689,7 +689,8 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
-                let request = into_google(request, model.id().into());
+                let model_id = model.id().to_string();
+                let generate_content_request = into_google(request, model_id.clone());
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -707,9 +708,9 @@ impl LanguageModel for CloudLanguageModel {
                         };
                     let request_body = CountTokensBody {
                         provider: zed_llm_client::LanguageModelProvider::Google,
-                        model: model.id().into(),
+                        model: model_id,
                         provider_request: serde_json::to_value(&google_ai::CountTokensRequest {
-                            contents: request.contents,
+                            generate_content_request,
                         })?,
                     };
                     let request = request_builder
@@ -868,7 +869,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
-                            model: request.model.clone(),
+                            model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)?,
                         },
                     )

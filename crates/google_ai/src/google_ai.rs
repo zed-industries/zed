@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::mem;
 
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
@@ -14,25 +15,13 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
-    if request.contents.is_empty() {
-        bail!("Request must contain at least one content item");
-    }
+    validate_generate_content_request(&request)?;
 
-    if let Some(user_content) = request
-        .contents
-        .iter()
-        .find(|content| content.role == Role::User)
-    {
-        if user_content.parts.is_empty() {
-            bail!("User content must contain at least one part");
-        }
-    }
+    // The `model` field is emptied as it is provided as a path parameter.
+    let model_id = mem::take(&mut request.model.model_id);
 
-    let uri = format!(
-        "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
-        model = request.model
-    );
-    request.model.clear();
+    let uri =
+        format!("{api_url}/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={api_key}",);
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -79,18 +68,22 @@ pub async fn count_tokens(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    model_id: &str,
     request: CountTokensRequest,
 ) -> Result<CountTokensResponse> {
-    let uri = format!("{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",);
-    let request = serde_json::to_string(&request)?;
+    validate_generate_content_request(&request.generate_content_request)?;
 
+    let uri = format!(
+        "{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",
+        model_id = &request.generate_content_request.model.model_id,
+    );
+
+    let request = serde_json::to_string(&request)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(&uri)
         .header("Content-Type", "application/json");
-
     let http_request = request_builder.body(AsyncBody::from(request))?;
+
     let mut response = client.send(http_request).await?;
     let mut text = String::new();
     response.body_mut().read_to_string(&mut text).await?;
@@ -172,6 +165,28 @@ pub async fn update_cache(
     }
 }
 
+pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Result<()> {
+    if request.model.is_empty() {
+        bail!("Model must be specified");
+    }
+
+    if request.contents.is_empty() {
+        bail!("Request must contain at least one content item");
+    }
+
+    if let Some(user_content) = request
+        .contents
+        .iter()
+        .find(|content| content.role == Role::User)
+    {
+        if user_content.parts.is_empty() {
+            bail!("User content must contain at least one part");
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Task {
     #[serde(rename = "generateContent")]
@@ -189,8 +204,8 @@ pub enum Task {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentRequest {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub model: String,
+    #[serde(default, skip_serializing_if = "ModelName::is_empty")]
+    pub model: ModelName,
     pub contents: Vec<Content>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<SystemInstruction>,
@@ -420,7 +435,7 @@ pub struct SafetyRating {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensRequest {
-    pub contents: Vec<Content>,
+    pub generate_content_request: GenerateContentRequest,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -534,10 +549,15 @@ pub struct UpdateCacheResponse {
     )]
     pub expire_time: OffsetDateTime,
 }
+#[derive(Debug, Default)]
+pub struct ModelName {
+    pub model_id: String,
+}
 
 #[derive(Debug)]
 pub struct CacheName(String);
 
+const MODEL_NAME_PREFIX: &str = "models/";
 const CACHE_NAME_PREFIX: &str = "cachedContents/";
 
 impl Serialize for CacheName {
@@ -561,6 +581,40 @@ impl<'de> Deserialize<'de> for CacheName {
             return Err(serde::de::Error::custom(format!(
                 "Expected cache name to begin with {}, got: {}",
                 CACHE_NAME_PREFIX, string
+            )));
+        }
+    }
+}
+
+impl ModelName {
+    pub fn is_empty(&self) -> bool {
+        self.model_id.is_empty()
+    }
+}
+
+impl Serialize for ModelName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{MODEL_NAME_PREFIX}{}", &self.model_id))
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+        if let Some(id) = string.strip_prefix(MODEL_NAME_PREFIX) {
+            Ok(Self {
+                model_id: id.to_string(),
+            })
+        } else {
+            return Err(serde::de::Error::custom(format!(
+                "Expected model name to begin with {}, got: {}",
+                MODEL_NAME_PREFIX, string
             )));
         }
     }
