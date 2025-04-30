@@ -106,10 +106,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     let running_state =
         active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
             cx.focus_self(window);
-            item.mode()
-                .as_running()
-                .expect("Session should be running by this point")
-                .clone()
+            item.running_state().clone()
         });
 
     running_state.update_in(cx, |this, window, cx| {
