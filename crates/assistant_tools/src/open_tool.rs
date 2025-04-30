@@ -6,10 +6,7 @@ use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat}
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownEscaped;
 
@@ -88,4 +85,63 @@ fn to_absolute_path(
     project
         .find_project_path(PathBuf::from(potential_path), cx)
         .and_then(|project_path| project.absolute_path(&project_path, cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use settings::SettingsStore;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_to_absolute_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            serde_json::json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                    "lib.rs": "pub fn lib_fn() {}"
+                },
+                "docs": {
+                    "readme.md": "# Project Documentation"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        // Test cases where the function should return Some
+        cx.update(|cx| {
+            // Project-relative paths should return Some
+            let result = to_absolute_path("root/src/main.rs", project.clone(), cx);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().to_string_lossy(), "/root/src/main.rs");
+
+            let result = to_absolute_path("root/docs/readme.md", project.clone(), cx);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().to_string_lossy(), "/root/docs/readme.md");
+
+            // External URL should return None
+            let result = to_absolute_path("https://example.com", project.clone(), cx);
+            assert_eq!(result, None, "External URLs should return None");
+
+            // Path outside project
+            let result = to_absolute_path("../invalid/path", project.clone(), cx);
+            assert_eq!(result, None, "Paths outside the project should return None");
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
 }
