@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, FxHasher, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::future;
+use futures::future::{self, Shared};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
     CacheBaseRef, CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
@@ -64,7 +64,7 @@ pub struct GoogleLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
-    cache: HashMap<CacheKey, CacheEntry>,
+    cache: HashMap<CacheKey, Shared<Task<CacheEntry>>>,
     _subscription: Subscription,
 }
 
@@ -294,7 +294,7 @@ pub struct GoogleLanguageModel {
 impl GoogleLanguageModel {
     fn stream_completion(
         &self,
-        request: google_ai::GenerateContentRequest,
+        request: impl 'static + Send + Future<Output = google_ai::GenerateContentRequest>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -315,7 +315,7 @@ impl GoogleLanguageModel {
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
-                request,
+                request.await,
             );
             request.await.context("failed to stream completion")
         }
@@ -415,7 +415,7 @@ impl LanguageModel for GoogleLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
@@ -450,7 +450,7 @@ impl LanguageModel for GoogleLanguageModel {
             .collect::<Vec<_>>();
 
         let now = UtcDateTime::now();
-        let cache_prefix_len_and_name = self
+        let cache_prefix_len_and_task = self
             .state
             .read_with(cx, |state, _cx| {
                 content_cache_keys
@@ -462,11 +462,15 @@ impl LanguageModel for GoogleLanguageModel {
                             .cache
                             .get(cache_key)
                             // todo! subtract some time from expiry time
-                            .and_then(|cache_entry| {
-                                if cache_entry.expire_time > now {
-                                    Some((ix + 1, cache_entry.name.clone()))
+                            .and_then(|cache_task| {
+                                if let Some(cache_entry) = cache_task.clone().now_or_never() {
+                                    if cache_entry.expire_time > now {
+                                        Some((ix + 1, cache_task.clone()))
+                                    } else {
+                                        None
+                                    }
                                 } else {
-                                    None
+                                    Some((ix + 1, cache_task.clone()))
                                 }
                             })
                     })
@@ -488,49 +492,39 @@ impl LanguageModel for GoogleLanguageModel {
             None
         };
 
-        if let Some((prefix_len, cache_name)) = cache_prefix_len_and_name {
-            request.cached_content = Some(cache_name);
-            request.contents.drain(..prefix_len);
-            request.system_instruction = None;
-            request.tools = None;
-            request.tool_config = None;
-        }
+        let request = async move {
+            if let Some((prefix_len, cache_task)) = cache_prefix_len_and_task {
+                let cache_entry = cache_task.await;
+                request.cached_content = Some(cache_entry.name);
+                request.contents.drain(..prefix_len);
+                request.system_instruction = None;
+                request.tools = None;
+                request.tool_config = None;
+            }
+            request
+        };
 
         let stream_request = self.stream_completion(request, cx);
-        let create_task = if let Some((request, new_cache_key)) =
+        if let Some((request, new_cache_key)) =
             create_cache_request.zip(content_cache_keys.last().copied())
         {
-            let create_task = cx.background_spawn(self.create_cache(request, cx));
-            cx.spawn({
-                let state = self.state.clone();
-                async move |cx| {
-                    let Some(create_response) = create_task.await.log_err() else {
-                        return;
-                    };
-                    state
-                        .update(cx, |state, _cx| {
-                            state.cache.insert(
-                                new_cache_key,
-                                CacheEntry {
-                                    name: create_response.name,
-                                    expire_time: create_response.expire_time.to_utc(),
-                                },
-                            )
-                        })
-                        .ok();
-                }
-            })
-        } else {
-            Task::ready(())
-        };
+            let request = self.create_cache(request, cx);
+            let create_task = cx.background_spawn(async move {
+                let response = request.await;
+            });
+            self.state
+                .update(cx, |state, _cx| {
+                    state.cache.insert(new_cache_key, create_task.shared());
+                })
+                .ok();
+        }
 
         // todo! two requests in request_limiter?
         let future = self.request_limiter.stream(async move {
             let response = stream_request
                 .await
                 .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
-            Ok(map_to_language_model_completion_events(response)
-                .chain(futures::stream::once(create_task).filter_map(|_| async move { None })))
+            Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
