@@ -69,7 +69,10 @@ fn eval_extract_handle_command_output() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: output_file_content.into(),
+            expected_output: ExpectedOutput {
+                text: output_file_content.into(),
+                comparison: ComparisonKind::IgnoreEmptyLines,
+            },
         },
     );
 }
@@ -123,7 +126,10 @@ fn eval_delete_run_git_blame() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: output_file_content.into(),
+            expected_output: ExpectedOutput {
+                text: output_file_content.into(),
+                comparison: ComparisonKind::IgnoreEmptyLines,
+            },
         },
     );
 }
@@ -238,7 +244,10 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: output_file_content.into(),
+            expected_output: ExpectedOutput {
+                text: output_file_content.into(),
+                comparison: ComparisonKind::Judge,
+            },
         },
     );
 }
@@ -265,6 +274,18 @@ fn lines(input: &str, range: Range<usize>) -> String {
         .take(range.len())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[derive(Clone)]
+struct ExpectedOutput {
+    text: String,
+    comparison: ComparisonKind,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum ComparisonKind {
+    IgnoreEmptyLines,
+    Judge,
 }
 
 fn tool_use(
@@ -300,7 +321,7 @@ struct EvalInput {
     input_path: PathBuf,
     input_content: String,
     edit_description: String,
-    expected_output: String,
+    expected_output: ExpectedOutput,
 }
 
 fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
@@ -328,7 +349,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     while let Ok(output) = rx.recv() {
         if output
             .as_ref()
-            .map_or(true, |output| output.diff_comparison.score <= 80)
+            .map_or(true, |output| output.comparison.score <= 80)
         {
             failed_count += 1;
             match output {
@@ -362,7 +383,9 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         for (_buffer_output, evals) in failed_evals {
             println!("Eval failed {} times", evals.len());
             for eval in evals {
-                println!("Judge Output:\n{}", eval.diff_comparison.raw_output);
+                if let Some(judge_output) = &eval.comparison.judge_output {
+                    println!("Judge Output:\n{}", judge_output);
+                }
                 println!("Diff:\n{}", eval.diff);
                 println!("Raw Edits:\n{}", eval.raw_edits);
             }
@@ -386,7 +409,7 @@ fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
 }
 
 struct EvalOutput {
-    diff_comparison: DiffComparison,
+    comparison: DiffComparison,
     buffer_text: String,
     raw_edits: String,
     diff: String,
@@ -487,13 +510,28 @@ impl EditAgentTest {
             .await?;
         let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
         let actual_diff = language::unified_diff(&eval.input_content, &buffer_text);
-        let expected_diff = language::unified_diff(&eval.input_content, &eval.expected_output);
-        let diff_comparison = self
-            .compare_diffs(&actual_diff, &expected_diff, &cx.to_async())
-            .await
-            .context("failed comparing diffs")?;
+        let diff_comparison = match eval.expected_output.comparison {
+            ComparisonKind::IgnoreEmptyLines => DiffComparison {
+                score: if strip_empty_lines(&buffer_text)
+                    == strip_empty_lines(&eval.expected_output.text)
+                {
+                    100
+                } else {
+                    0
+                },
+                judge_output: None,
+            },
+            ComparisonKind::Judge => {
+                let expected_diff =
+                    language::unified_diff(&eval.input_content, &eval.expected_output.text);
+                self.compare_diffs(&actual_diff, &expected_diff, &cx.to_async())
+                    .await
+                    .context("failed comparing diffs")?
+            }
+        };
+
         Ok(EvalOutput {
-            diff_comparison,
+            comparison: diff_comparison,
             diff: actual_diff,
             buffer_text,
             raw_edits: raw_output,
@@ -535,7 +573,7 @@ impl EditAgentTest {
                 let score = score_match.as_str().parse().unwrap_or(0);
                 return Ok(DiffComparison {
                     score,
-                    raw_output: output,
+                    judge_output: Some(output),
                 });
             }
         }
@@ -550,7 +588,7 @@ impl EditAgentTest {
 #[derive(Debug, Eq, PartialEq, Hash)]
 struct DiffComparison {
     score: usize,
-    raw_output: String,
+    judge_output: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -561,4 +599,11 @@ pub struct DiffJudgeTemplate {
 
 impl Template for DiffJudgeTemplate {
     const TEMPLATE_NAME: &'static str = "diff_judge.hbs";
+}
+
+fn strip_empty_lines(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
