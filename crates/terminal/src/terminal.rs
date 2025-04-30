@@ -61,8 +61,9 @@ use thiserror::Error;
 
 use gpui::{
     AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformKeyboardMapper, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -1232,17 +1233,18 @@ impl Terminal {
         self.events.push_back(InternalEvent::ToggleViMode);
     }
 
-    pub fn vi_motion(&mut self, keystroke: &Keystroke) {
+    pub fn vi_motion(
+        &mut self,
+        keystroke: &Keystroke,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) {
         if !self.vi_mode_enabled {
             return;
         }
 
-        let mut key = keystroke.key.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
-
-        let motion: Option<ViMotion> = match key.as_str() {
+        let keystroke = keyboard_mapper.to_vim_keystroke(keystroke);
+        let key = keystroke.key.as_str();
+        let motion: Option<ViMotion> = match key {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
@@ -1272,7 +1274,7 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
+        let scroll_motion = match key {
             "g" => Some(AlacScroll::Top),
             "G" => Some(AlacScroll::Bottom),
             "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
@@ -1293,7 +1295,7 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
+        match key {
             "v" => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;
@@ -1324,14 +1326,19 @@ impl Terminal {
         }
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+    pub fn try_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        alt_is_meta: bool,
+        mapper: &dyn PlatformKeyboardMapper,
+    ) -> bool {
         if self.vi_mode_enabled {
-            self.vi_motion(keystroke);
+            self.vi_motion(keystroke, mapper);
             return true;
         }
 
         // Keep default terminal behavior
-        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
+        let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta, mapper);
         if let Some(esc) = esc {
             self.input(esc);
             true

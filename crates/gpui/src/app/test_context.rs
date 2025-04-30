@@ -402,10 +402,12 @@ impl TestAppContext {
     /// in Zed, this will run backspace on the current editor through the command palette.
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        let keyboard_mapper = self.test_platform.keyboard_mapper();
         for keystroke in keystrokes
             .split(' ')
             .map(Keystroke::parse)
             .map(Result::unwrap)
+            .map(|keystroke| keyboard_mapper.map_keystroke(keystroke, false))
         {
             self.dispatch_keystroke(window, keystroke);
         }

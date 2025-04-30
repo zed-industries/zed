@@ -24,9 +24,10 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
+    ForegroundExecutor, Keymap, LinuxDispatcher, LinuxKeyboardMapper, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, Result, ScreenCaptureSource,
+    Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -136,6 +137,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.with_common(|common| common.text_system.clone())
+    }
+
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        Box::new(LinuxKeyboardMapper::new())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
@@ -855,26 +860,6 @@ impl crate::Modifiers {
             platform,
             function: false,
         }
-    }
-}
-
-pub(crate) struct LinuxKeyboardLayout {
-    id: String,
-}
-
-impl PlatformKeyboardLayout for LinuxKeyboardLayout {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.id
-    }
-}
-
-impl LinuxKeyboardLayout {
-    pub(crate) fn new(id: String) -> Self {
-        Self { id }
     }
 }
 

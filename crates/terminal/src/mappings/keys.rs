@@ -1,6 +1,6 @@
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
-use gpui::Keystroke;
+use gpui::{Keystroke, PlatformKeyboardMapper};
 
 #[derive(Debug, PartialEq, Eq)]
 enum AlacModifiers {
@@ -41,8 +41,14 @@ impl AlacModifiers {
     }
 }
 
-pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
-    let modifiers = AlacModifiers::new(keystroke);
+pub fn to_esc_str(
+    keystroke: &Keystroke,
+    mode: &TermMode,
+    alt_is_meta: bool,
+    mapper: &dyn PlatformKeyboardMapper,
+) -> Option<String> {
+    let keystroke = mapper.to_vim_keystroke(keystroke);
+    let modifiers = AlacModifiers::new(&keystroke);
 
     // Manual Bindings including modifiers
     let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
@@ -135,57 +141,57 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         // NumpadEnter, Action::Esc("\n".into());
         //Mappings for caret notation keys
         ("a", AlacModifiers::Ctrl) => Some("\x01".to_string()), //1
-        ("A", AlacModifiers::CtrlShift) => Some("\x01".to_string()), //1
+        ("A", AlacModifiers::Ctrl) => Some("\x01".to_string()), //1
         ("b", AlacModifiers::Ctrl) => Some("\x02".to_string()), //2
-        ("B", AlacModifiers::CtrlShift) => Some("\x02".to_string()), //2
+        ("B", AlacModifiers::Ctrl) => Some("\x02".to_string()), //2
         ("c", AlacModifiers::Ctrl) => Some("\x03".to_string()), //3
-        ("C", AlacModifiers::CtrlShift) => Some("\x03".to_string()), //3
+        ("C", AlacModifiers::Ctrl) => Some("\x03".to_string()), //3
         ("d", AlacModifiers::Ctrl) => Some("\x04".to_string()), //4
-        ("D", AlacModifiers::CtrlShift) => Some("\x04".to_string()), //4
+        ("D", AlacModifiers::Ctrl) => Some("\x04".to_string()), //4
         ("e", AlacModifiers::Ctrl) => Some("\x05".to_string()), //5
-        ("E", AlacModifiers::CtrlShift) => Some("\x05".to_string()), //5
+        ("E", AlacModifiers::Ctrl) => Some("\x05".to_string()), //5
         ("f", AlacModifiers::Ctrl) => Some("\x06".to_string()), //6
-        ("F", AlacModifiers::CtrlShift) => Some("\x06".to_string()), //6
+        ("F", AlacModifiers::Ctrl) => Some("\x06".to_string()), //6
         ("g", AlacModifiers::Ctrl) => Some("\x07".to_string()), //7
-        ("G", AlacModifiers::CtrlShift) => Some("\x07".to_string()), //7
+        ("G", AlacModifiers::Ctrl) => Some("\x07".to_string()), //7
         ("h", AlacModifiers::Ctrl) => Some("\x08".to_string()), //8
-        ("H", AlacModifiers::CtrlShift) => Some("\x08".to_string()), //8
+        ("H", AlacModifiers::Ctrl) => Some("\x08".to_string()), //8
         ("i", AlacModifiers::Ctrl) => Some("\x09".to_string()), //9
-        ("I", AlacModifiers::CtrlShift) => Some("\x09".to_string()), //9
+        ("I", AlacModifiers::Ctrl) => Some("\x09".to_string()), //9
         ("j", AlacModifiers::Ctrl) => Some("\x0a".to_string()), //10
-        ("J", AlacModifiers::CtrlShift) => Some("\x0a".to_string()), //10
+        ("J", AlacModifiers::Ctrl) => Some("\x0a".to_string()), //10
         ("k", AlacModifiers::Ctrl) => Some("\x0b".to_string()), //11
-        ("K", AlacModifiers::CtrlShift) => Some("\x0b".to_string()), //11
+        ("K", AlacModifiers::Ctrl) => Some("\x0b".to_string()), //11
         ("l", AlacModifiers::Ctrl) => Some("\x0c".to_string()), //12
-        ("L", AlacModifiers::CtrlShift) => Some("\x0c".to_string()), //12
+        ("L", AlacModifiers::Ctrl) => Some("\x0c".to_string()), //12
         ("m", AlacModifiers::Ctrl) => Some("\x0d".to_string()), //13
-        ("M", AlacModifiers::CtrlShift) => Some("\x0d".to_string()), //13
+        ("M", AlacModifiers::Ctrl) => Some("\x0d".to_string()), //13
         ("n", AlacModifiers::Ctrl) => Some("\x0e".to_string()), //14
-        ("N", AlacModifiers::CtrlShift) => Some("\x0e".to_string()), //14
+        ("N", AlacModifiers::Ctrl) => Some("\x0e".to_string()), //14
         ("o", AlacModifiers::Ctrl) => Some("\x0f".to_string()), //15
-        ("O", AlacModifiers::CtrlShift) => Some("\x0f".to_string()), //15
+        ("O", AlacModifiers::Ctrl) => Some("\x0f".to_string()), //15
         ("p", AlacModifiers::Ctrl) => Some("\x10".to_string()), //16
-        ("P", AlacModifiers::CtrlShift) => Some("\x10".to_string()), //16
+        ("P", AlacModifiers::Ctrl) => Some("\x10".to_string()), //16
         ("q", AlacModifiers::Ctrl) => Some("\x11".to_string()), //17
-        ("Q", AlacModifiers::CtrlShift) => Some("\x11".to_string()), //17
+        ("Q", AlacModifiers::Ctrl) => Some("\x11".to_string()), //17
         ("r", AlacModifiers::Ctrl) => Some("\x12".to_string()), //18
-        ("R", AlacModifiers::CtrlShift) => Some("\x12".to_string()), //18
+        ("R", AlacModifiers::Ctrl) => Some("\x12".to_string()), //18
         ("s", AlacModifiers::Ctrl) => Some("\x13".to_string()), //19
-        ("S", AlacModifiers::CtrlShift) => Some("\x13".to_string()), //19
+        ("S", AlacModifiers::Ctrl) => Some("\x13".to_string()), //19
         ("t", AlacModifiers::Ctrl) => Some("\x14".to_string()), //20
-        ("T", AlacModifiers::CtrlShift) => Some("\x14".to_string()), //20
+        ("T", AlacModifiers::Ctrl) => Some("\x14".to_string()), //20
         ("u", AlacModifiers::Ctrl) => Some("\x15".to_string()), //21
-        ("U", AlacModifiers::CtrlShift) => Some("\x15".to_string()), //21
+        ("U", AlacModifiers::Ctrl) => Some("\x15".to_string()), //21
         ("v", AlacModifiers::Ctrl) => Some("\x16".to_string()), //22
-        ("V", AlacModifiers::CtrlShift) => Some("\x16".to_string()), //22
+        ("V", AlacModifiers::Ctrl) => Some("\x16".to_string()), //22
         ("w", AlacModifiers::Ctrl) => Some("\x17".to_string()), //23
-        ("W", AlacModifiers::CtrlShift) => Some("\x17".to_string()), //23
+        ("W", AlacModifiers::Ctrl) => Some("\x17".to_string()), //23
         ("x", AlacModifiers::Ctrl) => Some("\x18".to_string()), //24
-        ("X", AlacModifiers::CtrlShift) => Some("\x18".to_string()), //24
+        ("X", AlacModifiers::Ctrl) => Some("\x18".to_string()), //24
         ("y", AlacModifiers::Ctrl) => Some("\x19".to_string()), //25
-        ("Y", AlacModifiers::CtrlShift) => Some("\x19".to_string()), //25
+        ("Y", AlacModifiers::Ctrl) => Some("\x19".to_string()), //25
         ("z", AlacModifiers::Ctrl) => Some("\x1a".to_string()), //26
-        ("Z", AlacModifiers::CtrlShift) => Some("\x1a".to_string()), //26
+        ("Z", AlacModifiers::Ctrl) => Some("\x1a".to_string()), //26
         ("@", AlacModifiers::Ctrl) => Some("\x00".to_string()), //0
         ("[", AlacModifiers::Ctrl) => Some("\x1b".to_string()), //27
         ("\\", AlacModifiers::Ctrl) => Some("\x1c".to_string()), //28
@@ -201,7 +207,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
 
     // Automated bindings applying modifiers
     if modifiers.any() {
-        let modifier_code = modifier_code(keystroke);
+        let modifier_code = modifier_code(&keystroke);
         let modified_esc_str = match keystroke.key.as_ref() {
             "up" => Some(format!("\x1b[1;{}A", modifier_code)),
             "down" => Some(format!("\x1b[1;{}B", modifier_code)),
@@ -284,12 +290,13 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 
 #[cfg(test)]
 mod test {
-    use gpui::Modifiers;
+    use gpui::{Modifiers, TestKeyboardMapper};
 
     use super::*;
 
     #[test]
     fn test_scroll_keys() {
+        let mapper = TestKeyboardMapper::new();
         //These keys should be handled by the scrolling element directly
         //Need to signify this by returning 'None'
         let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
@@ -298,26 +305,26 @@ mod test {
         let shift_end = Keystroke::parse("shift-end").unwrap();
 
         let none = TermMode::NONE;
-        assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
-        assert_eq!(to_esc_str(&shift_pagedown, &none, false), None);
-        assert_eq!(to_esc_str(&shift_home, &none, false), None);
-        assert_eq!(to_esc_str(&shift_end, &none, false), None);
+        assert_eq!(to_esc_str(&shift_pageup, &none, false, &mapper), None);
+        assert_eq!(to_esc_str(&shift_pagedown, &none, false, &mapper), None);
+        assert_eq!(to_esc_str(&shift_home, &none, false, &mapper), None);
+        assert_eq!(to_esc_str(&shift_end, &none, false, &mapper), None);
 
         let alt_screen = TermMode::ALT_SCREEN;
         assert_eq!(
-            to_esc_str(&shift_pageup, &alt_screen, false),
+            to_esc_str(&shift_pageup, &alt_screen, false, &mapper),
             Some("\x1b[5;2~".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_pagedown, &alt_screen, false),
+            to_esc_str(&shift_pagedown, &alt_screen, false, &mapper),
             Some("\x1b[6;2~".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_home, &alt_screen, false),
+            to_esc_str(&shift_home, &alt_screen, false, &mapper),
             Some("\x1b[1;2H".to_string())
         );
         assert_eq!(
-            to_esc_str(&shift_end, &alt_screen, false),
+            to_esc_str(&shift_end, &alt_screen, false, &mapper),
             Some("\x1b[1;2F".to_string())
         );
 
@@ -326,17 +333,18 @@ mod test {
         let any = TermMode::ANY;
 
         assert_eq!(
-            to_esc_str(&pageup, &any, false),
+            to_esc_str(&pageup, &any, false, &mapper),
             Some("\x1b[5~".to_string())
         );
         assert_eq!(
-            to_esc_str(&pagedown, &any, false),
+            to_esc_str(&pagedown, &any, false, &mapper),
             Some("\x1b[6~".to_string())
         );
     }
 
     #[test]
     fn test_plain_inputs() {
+        let mapper = TestKeyboardMapper::new();
         let ks = Keystroke {
             modifiers: Modifiers {
                 control: false,
@@ -348,11 +356,12 @@ mod test {
             key: "🖖🏻".to_string(), //2 char string
             key_char: None,
         };
-        assert_eq!(to_esc_str(&ks, &TermMode::NONE, false), None);
+        assert_eq!(to_esc_str(&ks, &TermMode::NONE, false, &mapper), None);
     }
 
     #[test]
     fn test_application_mode() {
+        let mapper = TestKeyboardMapper::new();
         let app_cursor = TermMode::APP_CURSOR;
         let none = TermMode::NONE;
 
@@ -361,31 +370,44 @@ mod test {
         let left = Keystroke::parse("left").unwrap();
         let right = Keystroke::parse("right").unwrap();
 
-        assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".to_string()));
-        assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".to_string()));
-        assert_eq!(to_esc_str(&right, &none, false), Some("\x1b[C".to_string()));
-        assert_eq!(to_esc_str(&left, &none, false), Some("\x1b[D".to_string()));
+        assert_eq!(
+            to_esc_str(&up, &none, false, &mapper),
+            Some("\x1b[A".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&down, &none, false, &mapper),
+            Some("\x1b[B".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&right, &none, false, &mapper),
+            Some("\x1b[C".to_string())
+        );
+        assert_eq!(
+            to_esc_str(&left, &none, false, &mapper),
+            Some("\x1b[D".to_string())
+        );
 
         assert_eq!(
-            to_esc_str(&up, &app_cursor, false),
+            to_esc_str(&up, &app_cursor, false, &mapper),
             Some("\x1bOA".to_string())
         );
         assert_eq!(
-            to_esc_str(&down, &app_cursor, false),
+            to_esc_str(&down, &app_cursor, false, &mapper),
             Some("\x1bOB".to_string())
         );
         assert_eq!(
-            to_esc_str(&right, &app_cursor, false),
+            to_esc_str(&right, &app_cursor, false, &mapper),
             Some("\x1bOC".to_string())
         );
         assert_eq!(
-            to_esc_str(&left, &app_cursor, false),
+            to_esc_str(&left, &app_cursor, false, &mapper),
             Some("\x1bOD".to_string())
         );
     }
 
     #[test]
     fn test_ctrl_codes() {
+        let mapper = TestKeyboardMapper::new();
         let letters_lower = 'a'..='z';
         let letters_upper = 'A'..='Z';
         let mode = TermMode::ANY;
@@ -395,12 +417,14 @@ mod test {
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-shift-{}", lower)).unwrap(),
                     &mode,
-                    false
+                    false,
+                    &mapper
                 ),
                 to_esc_str(
                     &Keystroke::parse(&format!("ctrl-{}", upper)).unwrap(),
                     &mode,
-                    false
+                    false,
+                    &mapper
                 ),
                 "On letter: {}/{}",
                 lower,
@@ -411,13 +435,15 @@ mod test {
 
     #[test]
     fn alt_is_meta() {
+        let mapper = TestKeyboardMapper::new();
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
             assert_eq!(
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
                     &TermMode::NONE,
-                    true
+                    true,
+                    &mapper
                 )
                 .unwrap(),
                 format!("\x1b{}", character)
@@ -435,7 +461,8 @@ mod test {
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
                     &TermMode::NONE,
-                    true
+                    true,
+                    &mapper
                 )
                 .unwrap(),
                 format!("\x1b{}", key)

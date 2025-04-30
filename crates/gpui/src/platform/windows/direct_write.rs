@@ -33,7 +33,6 @@ struct FontInfo {
     features: IDWriteTypography,
     fallbacks: Option<IDWriteFontFallback>,
     is_system_font: bool,
-    is_emoji: bool,
 }
 
 pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
@@ -375,7 +374,6 @@ impl DirectWriteState {
             let Some(identifier) = get_font_identifier(&font_face, &self.components.locale) else {
                 continue;
             };
-            let is_emoji = unsafe { font_face.IsColorFont().as_bool() };
             let Some(direct_write_features) =
                 (unsafe { self.generate_font_features(font_features).log_err() })
             else {
@@ -389,7 +387,6 @@ impl DirectWriteState {
                 features: direct_write_features,
                 fallbacks,
                 is_system_font,
-                is_emoji,
             };
             let font_id = FontId(self.fonts.len());
             self.fonts.push(font_info);
@@ -1174,6 +1171,7 @@ impl<'a> StringIndexConverter<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
         for (ix, c) in self.text[self.utf8_ix..].char_indices() {
             if self.utf8_ix + ix >= utf8_target {

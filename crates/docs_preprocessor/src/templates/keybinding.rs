@@ -31,11 +31,12 @@ impl Template for KeybindingTemplate {
         let action = args.get("action").map(String::as_str).unwrap_or("");
         let macos_binding = context.find_binding("macos", action).unwrap_or_default();
         let linux_binding = context.find_binding("linux", action).unwrap_or_default();
+        let windows_binding = context.find_binding("windows", action).unwrap_or_default();
 
-        if macos_binding.is_empty() && linux_binding.is_empty() {
+        if macos_binding.is_empty() && linux_binding.is_empty() && windows_binding.is_empty() {
             return "<div>No default binding</div>".to_string();
         }
 
-        format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
+        format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}|{windows_binding}</kbd>")
     }
 }
