@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{App, IconName, SharedString, Window};
+use ui::{App, SharedString, Window};
 
 use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
@@ -38,6 +38,10 @@ impl CreaseSnapshot {
         CreaseSnapshot {
             creases: SumTree::new(snapshot),
         }
+    }
+
+    pub fn creases(&self) -> impl Iterator<Item = &Crease<Anchor>> {
+        self.creases.iter().map(|item| &item.crease)
     }
 
     /// Returns the first Crease starting on the specified buffer row.
@@ -147,7 +151,7 @@ pub enum Crease<T> {
 /// Metadata about a [`Crease`], that is used for serialization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreaseMetadata {
-    pub icon: IconName,
+    pub icon_path: SharedString,
     pub label: SharedString,
 }
 
@@ -235,6 +239,13 @@ impl<T> Crease<T> {
         match self {
             Crease::Inline { range, .. } => range,
             Crease::Block { range, .. } => range,
+        }
+    }
+
+    pub fn metadata(&self) -> Option<&CreaseMetadata> {
+        match self {
+            Self::Inline { metadata, .. } => metadata.as_ref(),
+            Self::Block { .. } => None,
         }
     }
 }

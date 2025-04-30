@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 pub use completion_provider::ContextPickerCompletionProvider;
-use editor::display_map::{Crease, FoldId};
+use editor::display_map::{Crease, CreaseMetadata, FoldId};
 use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use fetch_context_picker::FetchContextPicker;
 use file_context_picker::FileContextPicker;
@@ -675,13 +675,14 @@ fn selection_ranges(
     })
 }
 
-pub(crate) fn insert_fold_for_mention(
+pub(crate) fn insert_crease_for_mention(
     excerpt_id: ExcerptId,
     crease_start: text::Anchor,
     content_len: usize,
     crease_label: SharedString,
     crease_icon_path: SharedString,
     editor_entity: Entity<Editor>,
+    window: &mut Window,
     cx: &mut App,
 ) {
     editor_entity.update(cx, |editor, cx| {
@@ -701,9 +702,8 @@ pub(crate) fn insert_fold_for_mention(
             editor_entity.downgrade(),
         );
 
-        editor.display_map.update(cx, |display_map, cx| {
-            display_map.fold(vec![crease], cx);
-        });
+        editor.insert_creases(vec![crease.clone()], cx);
+        editor.fold_creases(vec![crease], false, window, cx);
     });
 }
 
@@ -714,20 +714,20 @@ pub fn crease_for_mention(
     editor_entity: WeakEntity<Editor>,
 ) -> Crease<Anchor> {
     let placeholder = FoldPlaceholder {
-        render: render_fold_icon_button(icon_path, label, editor_entity),
+        render: render_fold_icon_button(icon_path.clone(), label.clone(), editor_entity),
         merge_adjacent: false,
         ..Default::default()
     };
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    let crease = Crease::inline(
+    Crease::inline(
         range,
         placeholder.clone(),
         fold_toggle("mention"),
         render_trailer,
-    );
-    crease
+    )
+    .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(

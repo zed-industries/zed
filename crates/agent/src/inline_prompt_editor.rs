@@ -1,6 +1,6 @@
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
-use crate::context_picker::ContextPicker;
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::terminal_codegen::TerminalCodegen;
@@ -9,6 +9,7 @@ use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
+use editor::AnchorRangeExt as _;
 use editor::{
     Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
     actions::{MoveDown, MoveUp},
@@ -245,13 +246,35 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
+        let existing_creases = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            editor.display_map.update(cx, |display_map, cx| {
+                display_map
+                    .snapshot(cx)
+                    .crease_snapshot
+                    .creases()
+                    .filter_map(|crease| {
+                        Some((
+                            crease.range().to_offset(&snapshot),
+                            crease.metadata()?.clone(),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        dbg!(&existing_creases);
+
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&self.mode, window, cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
+            // editor.display_map.update(cx, |display_map, cx| {
+            //     display_map.insert_creases(existing_creases, cx)
+            // });
+
             if focus {
                 window.focus(&editor.focus_handle(cx));
             }
@@ -862,6 +885,16 @@ impl PromptEditor<BufferCodegen> {
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
             editor
         });
+        let prompt_editor_entity = prompt_editor.downgrade();
+        prompt_editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.clone(),
+                context_store.downgrade(),
+                thread_store.clone(),
+                prompt_editor_entity,
+            ))));
+        });
+
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 

@@ -310,7 +310,7 @@ impl ContextPickerCompletionProvider {
                             let context_store = context_store.clone();
                             let selections = selections.clone();
                             let selection_infos = selection_infos.clone();
-                            move |_, _: &mut Window, cx: &mut App| {
+                            move |_, window: &mut Window, cx: &mut App| {
                                 context_store.update(cx, |context_store, cx| {
                                     for (buffer, range) in &selections {
                                         context_store.add_selection(
@@ -323,7 +323,7 @@ impl ContextPickerCompletionProvider {
 
                                 let editor = editor.clone();
                                 let selection_infos = selection_infos.clone();
-                                cx.defer(move |cx| {
+                                window.defer(cx, move |window, cx| {
                                     let mut current_offset = 0;
                                     for (file_name, link, line_range) in selection_infos.iter() {
                                         let snapshot =
@@ -354,9 +354,8 @@ impl ContextPickerCompletionProvider {
                                         );
 
                                         editor.update(cx, |editor, cx| {
-                                            editor.display_map.update(cx, |display_map, cx| {
-                                                display_map.fold(vec![crease], cx);
-                                            });
+                                            editor.insert_creases(vec![crease.clone()], cx);
+                                            editor.fold_creases(vec![crease], false, window, cx);
                                         });
 
                                         current_offset += text_len + 1;
@@ -875,20 +874,21 @@ fn confirm_completion_callback(
     editor: Entity<Editor>,
     add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, _, cx| {
+    Arc::new(move |_, window, cx| {
         add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        cx.defer(move |cx| {
-            crate::context_picker::insert_fold_for_mention(
+        window.defer(cx, move |window, cx| {
+            crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
                 start,
                 content_len,
                 crease_text,
                 crease_icon_path,
                 editor,
+                window,
                 cx,
             );
         });
