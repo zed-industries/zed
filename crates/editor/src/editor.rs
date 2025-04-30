@@ -1737,7 +1737,7 @@ impl Editor {
             workspace: None,
             input_enabled: true,
             use_modal_editing: mode.is_full(),
-            read_only: false,
+            read_only: mode.is_minimap(),
             use_autoclose: true,
             use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
