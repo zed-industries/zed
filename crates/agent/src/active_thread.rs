@@ -1257,6 +1257,8 @@ impl ActiveThread {
         );
         editor.update(cx, |editor, cx| {
             editor.set_text(message_text.clone(), window, cx);
+            editor.focus_handle(cx).focus(window);
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
         });
         let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::BufferEdited => {
@@ -1655,7 +1657,6 @@ impl ActiveThread {
             .flex_grow()
             .w_full()
             .gap_2()
-            .child(state.context_strip.clone())
             .child(EditorElement::new(
                 &state.editor,
                 EditorStyle {
@@ -1666,6 +1667,7 @@ impl ActiveThread {
                     ..Default::default()
                 },
             ))
+            .child(state.context_strip.clone())
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
