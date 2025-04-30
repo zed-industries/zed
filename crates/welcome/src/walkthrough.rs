@@ -20,6 +20,7 @@ use workspace::{
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::welcome_ui::theme_preview::ThemePreviewTile;
+use crate::welcome_ui::transparent_tabs::TransparentTabs;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
@@ -33,21 +34,14 @@ pub fn init(cx: &mut App) {
     register_serializable_item::<Walkthrough>(cx);
 }
 
-const STEPS: [&'static dyn WalkthroughStep; 5] = [
-    &ThemeStep,
-    &SettingsStep,
-    &AiIntegrations,
-    &DataSharing,
-    &OpenProject,
-];
-
 pub struct Walkthrough {
     active_step: usize,
     workspace: WeakEntity<Workspace>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     _telemetry: Arc<Telemetry>,
-    steps: ListState,
+    list: ListState,
+    steps: Vec<Box<dyn WalkthroughStep>>,
     _settings_subscription: Subscription,
 }
 
@@ -88,6 +82,15 @@ impl Walkthrough {
     pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         let this = cx.new(|cx| {
             let this = cx.weak_entity();
+            let steps = vec![
+                Box::new(ThemeStep {
+                    selection: cx.new(|_| 0),
+                }) as Box<dyn WalkthroughStep>,
+                Box::new(SettingsStep),
+                Box::new(AiIntegrations),
+                Box::new(DataSharing),
+                Box::new(OpenProject),
+            ];
             Walkthrough {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
@@ -95,13 +98,15 @@ impl Walkthrough {
                 _telemetry: workspace.client().telemetry().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_: &mut Walkthrough, cx| cx.notify()),
-                steps: ListState::new(
-                    STEPS.len(),
+                steps,
+                list: ListState::new(
+                    steps.len(),
                     gpui::ListAlignment::Top,
                     px(1000.),
                     move |ix, window, cx| {
                         this.update(cx, |this, cx| {
-                            STEPS[ix].render_checkbox(ix, this, window, cx)
+                            let current_step = &this.steps[ix];
+                            current_step.render_checkbox(ix, this, window, cx)
                         })
                         .unwrap_or_else(|_| div().into_any())
                     },
@@ -158,13 +163,13 @@ impl Render for Walkthrough {
                             .w(px(768.))
                             .h_full()
                             .child(
-                                list(self.steps.clone())
+                                list(self.list.clone())
                                     .with_sizing_behavior(ListSizingBehavior::Infer)
                                     .h_full()
                                     .w_96(),
                             )
                             .child(div().w_96().h_full().child(
-                                STEPS[self.active_step].render_subpane(
+                                self.steps[self.active_step].render_subpane(
                                     self.active_step,
                                     self,
                                     window,
@@ -203,7 +208,9 @@ fn select_step(
     })
 }
 
-struct ThemeStep;
+struct ThemeStep {
+    selection: Entity<usize>,
+}
 impl WalkthroughStep for ThemeStep {
     fn render_checkbox(
         &self,
@@ -230,14 +237,13 @@ impl WalkthroughStep for ThemeStep {
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         const THEME_PREVIEW_SEED: f32 = 0.42;
-        let theme_registry = ThemeRegistry::global(cx);
-        let current_theme = cx.theme().clone();
+
         let fs = walkthrough.fs.clone();
 
-        let mut theme_preview_tile = |theme_name: &'static str,
-                                      fs: Arc<dyn Fs>|
-         -> Option<AnyElement> {
-            let theme = theme_registry.get(theme_name).ok()?;
+        let mut theme_preview_tile = |theme_name: &str, fs: Arc<dyn Fs>| -> Option<AnyElement> {
+            let theme_registry = ThemeRegistry::global(cx);
+            let theme = theme_registry.clone().get(theme_name).ok()?;
+            let current_theme = cx.theme().clone();
             let is_selected = current_theme.id == theme.id;
             Some(
                 v_flex()
@@ -256,7 +262,6 @@ impl WalkthroughStep for ThemeStep {
                         let name = theme_name.to_string();
                         // TODO: filter click event?
                         telemetry::event!("Settings Changed", setting = "theme", value = &name);
-                        let appearance = Appearance::from(window.appearance());
                         settings::update_settings_file::<ThemeSettings>(
                             fs.clone(),
                             cx,
@@ -272,23 +277,40 @@ impl WalkthroughStep for ThemeStep {
         v_flex()
             .size_full()
             .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
+                TransparentTabs::new(self.selection.clone())
+                    .tab("Dark", |_window, _app| {
+                        v_flex()
                             .child(theme_preview_tile("One Dark", fs.clone()).unwrap())
-                            .child(theme_preview_tile("One Light", fs.clone()).unwrap()),
-                    )
-                    .child(
-                        h_flex()
                             .child(theme_preview_tile("Ayu Dark", fs.clone()).unwrap())
-                            .child(theme_preview_tile("Ayu Light", fs.clone()).unwrap()),
-                    )
-                    .child(
-                        h_flex()
                             .child(theme_preview_tile("Gruvbox Dark", fs.clone()).unwrap())
-                            .child(theme_preview_tile("Gruvbox Light", fs.clone()).unwrap()),
-                    ),
+                    })
+                    .tab("Light", |_window, _app| {
+                        v_flex()
+                            .child(theme_preview_tile("One Light", fs.clone()).unwrap())
+                            .child(theme_preview_tile("Ayu Light", fs.clone()).unwrap())
+                            .child(theme_preview_tile("Gruvbox Light", fs.clone()).unwrap())
+                    })
+                    // TODO: picking a theme in the system tab should set both your light and dark themes
+                    .tab("System", |window, _app| {
+                        let current = match window.appearance() {
+                            gpui::WindowAppearance::Light
+                            | gpui::WindowAppearance::VibrantLight => "light",
+                            gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => {
+                                "dark"
+                            }
+                        };
+                        v_flex()
+                            .child(
+                                theme_preview_tile(&format!("One {current}"), fs.clone()).unwrap(),
+                            )
+                            .child(
+                                theme_preview_tile(&format!("Ayu {current}"), fs.clone()).unwrap(),
+                            )
+                            .child(
+                                theme_preview_tile(&format!("Gruvbox {current}"), fs.clone())
+                                    .unwrap(),
+                            )
+                    }),
             )
             .child(
                 h_flex().justify_between().children([Button::new(
