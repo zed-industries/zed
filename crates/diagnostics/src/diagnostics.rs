@@ -10,7 +10,7 @@ mod diagnostics_tests;
 use anyhow::Result;
 use cargo::{
     FetchStatus, FetchUpdate, cargo_diagnostics_sources, fetch_worktree_diagnostics,
-    map_rust_diagnostic_to_lsp,
+    is_outdated_cargo_fetch_diagnostic, map_rust_diagnostic_to_lsp, next_cargo_fetch_generation,
 };
 use collections::{BTreeSet, HashMap};
 use diagnostic_renderer::DiagnosticBlock;
@@ -35,8 +35,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp,
-    cmp::Ordering,
+    cmp::{self, Ordering},
     ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
@@ -78,12 +77,12 @@ pub(crate) struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
-    cargo_diagnostics_fetch: Option<CargoDiagnosticsFetchState>,
+    cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     _subscription: Subscription,
 }
 
 struct CargoDiagnosticsFetchState {
-    _task: Task<()>,
+    task: Option<Task<()>>,
     rust_analyzer: Option<LanguageServerId>,
 }
 
@@ -250,7 +249,10 @@ impl ProjectDiagnosticsEditor {
             editor,
             paths_to_update: Default::default(),
             update_excerpts_task: None,
-            cargo_diagnostics_fetch: None,
+            cargo_diagnostics_fetch: CargoDiagnosticsFetchState {
+                task: None,
+                rust_analyzer: None,
+            },
             _subscription: project_event_subscription,
         };
         this.update_all_diagnostics(window, cx);
@@ -368,7 +370,7 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let task = cx.spawn_in(window, async move |editor, cx| {
+        self.cargo_diagnostics_fetch.task = Some(cx.spawn_in(window, async move |editor, cx| {
             let rust_analyzer_server = editor
                 .update(cx, |editor, cx| {
                     editor
@@ -386,39 +388,34 @@ impl ProjectDiagnosticsEditor {
             if let Some(rust_analyzer_server) = rust_analyzer_server {
                 let can_continue = editor
                     .update(cx, |editor, cx| {
-                        if let Some(cargo_diagnostics_fetch) = &mut editor.cargo_diagnostics_fetch {
-                            cargo_diagnostics_fetch.rust_analyzer = Some(rust_analyzer_server);
-                            let status_inserted =
-                                editor
-                                    .project
-                                    .read(cx)
-                                    .lsp_store()
-                                    .update(cx, |lsp_store, _| {
-                                        if let Some(rust_analyzer_status) = lsp_store
-                                            .language_server_statuses
-                                            .get_mut(&rust_analyzer_server)
-                                        {
-                                            rust_analyzer_status
-                                                .progress_tokens
-                                                .insert(fetch_cargo_diagnostics_token());
-                                            true
-                                        } else {
-                                            false
-                                        }
-                                    });
-                            if status_inserted {
-                                editor.update_cargo_fetch_status(FetchStatus::Started, cx);
-                                Some(())
-                            } else {
-                                None
-                            }
+                        editor.cargo_diagnostics_fetch.rust_analyzer = Some(rust_analyzer_server);
+                        let status_inserted =
+                            editor
+                                .project
+                                .read(cx)
+                                .lsp_store()
+                                .update(cx, |lsp_store, _| {
+                                    if let Some(rust_analyzer_status) = lsp_store
+                                        .language_server_statuses
+                                        .get_mut(&rust_analyzer_server)
+                                    {
+                                        rust_analyzer_status
+                                            .progress_tokens
+                                            .insert(fetch_cargo_diagnostics_token());
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                });
+                        if status_inserted {
+                            editor.update_cargo_fetch_status(FetchStatus::Started, cx);
+                            next_cargo_fetch_generation();
+                            true
                         } else {
-                            None
+                            false
                         }
                     })
-                    .ok()
-                    .flatten()
-                    .is_some();
+                    .unwrap_or(false);
 
                 if can_continue {
                     for worktree in diagnostics_sources.iter() {
@@ -468,8 +465,9 @@ impl ProjectDiagnosticsEditor {
                                                                         version: None,
                                                                     },
                                                                     &[],
-                                                                    // TODO kb clean up previous fetches' diagnostics here instead
-                                                                    |_| true,
+                                                                    |diagnostic| {
+                                                                        !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                                                    },
                                                                     cx,
                                                                 )?;
                                                                 }
@@ -521,20 +519,11 @@ impl ProjectDiagnosticsEditor {
                     cx.notify();
                 })
                 .ok();
-        });
-
-        self.cargo_diagnostics_fetch = Some(CargoDiagnosticsFetchState {
-            _task: task,
-            rust_analyzer: None,
-        });
+        }));
     }
 
     fn update_cargo_fetch_status(&self, status: FetchStatus, cx: &mut App) {
-        let Some(rust_analyzer) = self
-            .cargo_diagnostics_fetch
-            .as_ref()
-            .and_then(|fetch| fetch.rust_analyzer)
-        else {
+        let Some(rust_analyzer) = self.cargo_diagnostics_fetch.rust_analyzer else {
             return;
         };
 
@@ -571,7 +560,7 @@ impl ProjectDiagnosticsEditor {
 
     fn stop_cargo_diagnostics_fetch(&mut self, cx: &mut App) {
         self.update_cargo_fetch_status(FetchStatus::Finished, cx);
-        self.cargo_diagnostics_fetch = None;
+        self.cargo_diagnostics_fetch.task = None;
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either

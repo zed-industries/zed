@@ -27,7 +27,7 @@ impl Render for ToolbarControls {
             include_warnings = diagnostics.include_warnings;
             has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
             is_updating = diagnostics.update_excerpts_task.is_some()
-                || diagnostics.cargo_diagnostics_fetch.is_some()
+                || diagnostics.cargo_diagnostics_fetch.task.is_some()
                 || diagnostics
                     .project
                     .read(cx)

@@ -1,6 +1,7 @@
 use std::{
     path::{Component, Path, Prefix},
     process::Stdio,
+    sync::atomic::{self, AtomicUsize},
 };
 
 use cargo_metadata::{
@@ -10,8 +11,9 @@ use cargo_metadata::{
 use collections::HashMap;
 use gpui::{AppContext, Entity, Task};
 use itertools::Itertools as _;
+use language::Diagnostic;
 use project::{Worktree, project_settings::ProjectSettings};
-use serde::Deserialize as _;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::{
     channel::Receiver,
@@ -145,6 +147,32 @@ pub fn fetch_worktree_diagnostics(
     Some((cargo_diagnostics_fetch_task, rx))
 }
 
+static CARGO_DIAGNOSTICS_FETCH_GENERATION: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct CargoFetchDiagnosticData {
+    generation: usize,
+}
+
+pub fn next_cargo_fetch_generation() {
+    CARGO_DIAGNOSTICS_FETCH_GENERATION.fetch_add(1, atomic::Ordering::Release);
+}
+
+pub fn is_outdated_cargo_fetch_diagnostic(diagnostic: &Diagnostic) -> bool {
+    if let Some(data) = diagnostic
+        .data
+        .clone()
+        .map(|data| serde_json::from_value::<CargoFetchDiagnosticData>(data).ok())
+        .flatten()
+    {
+        let current_generation = CARGO_DIAGNOSTICS_FETCH_GENERATION.load(atomic::Ordering::Acquire);
+        data.generation < dbg!(current_generation)
+    } else {
+        false
+    }
+    //
+}
+
 /// Converts a Rust root diagnostic to LSP form
 ///
 /// This flattens the Rust diagnostic by:
@@ -240,6 +268,12 @@ pub(crate) fn map_rust_diagnostic_to_lsp(
         _ => None,
     };
 
+    let generation = CARGO_DIAGNOSTICS_FETCH_GENERATION.load(atomic::Ordering::Acquire);
+    let data = Some(
+        serde_json::to_value(CargoFetchDiagnosticData { generation })
+            .expect("Serializing a regular Rust struct"),
+    );
+
     primary_spans
         .iter()
         .flat_map(|primary_span| {
@@ -307,7 +341,7 @@ pub(crate) fn map_rust_diagnostic_to_lsp(
                     } else {
                         Some(tags.clone())
                     },
-                    data: Some(serde_json::json!({ "rendered": cargo_diagnostic.rendered })),
+                    data: data.clone(),
                 };
                 diagnostics.push((secondary_location.uri, diagnostic));
             }
@@ -335,7 +369,7 @@ pub(crate) fn map_rust_diagnostic_to_lsp(
                     } else {
                         Some(tags.clone())
                     },
-                    data: Some(serde_json::json!({ "rendered": cargo_diagnostic.rendered })),
+                    data: data.clone(),
                 },
             ));
 
@@ -358,7 +392,7 @@ pub(crate) fn map_rust_diagnostic_to_lsp(
                         message: sub.message.clone(),
                         related_information: Some(vec![back_ref.clone()]),
                         tags: None, // don't apply modifiers again
-                        data: None,
+                        data: data.clone(),
                     },
                 ));
             }
