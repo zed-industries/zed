@@ -1,13 +1,16 @@
 use anyhow::{Context as _, Result, anyhow};
-use collections::BTreeMap;
+use collections::{BTreeMap, FxHasher, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
+use futures::future;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
+    CacheBaseRef, CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
+    GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
 };
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    AnyView, App, AppContext, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle,
+    WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -23,10 +26,13 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::hash::{Hash as _, Hasher as _};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
+use time::UtcDateTime;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
@@ -58,7 +64,32 @@ pub struct GoogleLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    cache: HashMap<CacheKey, CacheEntry>,
     _subscription: Subscription,
+}
+
+#[derive(Clone)]
+pub struct CacheEntry {
+    pub name: CacheName,
+    pub expire_time: UtcDateTime,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub struct CacheKey(u64);
+
+impl CacheKey {
+    pub fn base(cache_base: &CacheBaseRef) -> Self {
+        let mut hasher = FxHasher::default();
+        cache_base.hash(&mut hasher);
+        Self(hasher.finish())
+    }
+
+    pub fn with_message(predecessor: Self, message: &Content) -> Self {
+        let mut hasher = FxHasher::default();
+        predecessor.0.hash(&mut hasher);
+        message.hash(&mut hasher);
+        Self(hasher.finish())
+    }
 }
 
 const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
@@ -148,6 +179,7 @@ impl GoogleLanguageModelProvider {
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
+            cache: Default::default(),
         });
 
         Self { http_client, state }
@@ -274,7 +306,7 @@ impl GoogleLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         async move {
@@ -286,6 +318,29 @@ impl GoogleLanguageModel {
                 request,
             );
             request.await.context("failed to stream completion")
+        }
+        .boxed()
+    }
+
+    fn create_cache(
+        &self,
+        request: google_ai::CreateCacheRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<CreateCacheResponse>> {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).google;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let request =
+                google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request);
+            request.await.context("failed to create cache")
         }
         .boxed()
     }
@@ -370,13 +425,112 @@ impl LanguageModel for GoogleLanguageModel {
             >,
         >,
     > {
-        let request = into_google(request, self.model.id().to_string());
-        let request = self.stream_completion(request, cx);
+        let is_last_message_cached = request
+            .messages
+            .last()
+            .map_or(false, |content| content.cache);
+
+        let mut request = into_google(request, self.model.id().to_string());
+
+        let base_cache_key = CacheKey::base(&CacheBaseRef {
+            model: &request.model,
+            system_instruction: &request.system_instruction,
+            tools: &request.tools,
+            tool_config: &request.tool_config,
+        });
+        let mut prev_cache_key = base_cache_key;
+        let content_cache_keys = request
+            .contents
+            .iter()
+            .map(|content| {
+                let key = CacheKey::with_message(prev_cache_key, content);
+                prev_cache_key = key;
+                key
+            })
+            .collect::<Vec<_>>();
+
+        let now = UtcDateTime::now();
+        let cache_prefix_len_and_name = self
+            .state
+            .read_with(cx, |state, _cx| {
+                content_cache_keys
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find_map(|(ix, cache_key)| {
+                        state
+                            .cache
+                            .get(cache_key)
+                            // todo! subtract some time from expiry time
+                            .and_then(|cache_entry| {
+                                if cache_entry.expire_time > now {
+                                    Some((ix + 1, cache_entry.name.clone()))
+                                } else {
+                                    None
+                                }
+                            })
+                    })
+            })
+            .ok()
+            .flatten();
+
+        let create_cache_request = if is_last_message_cached {
+            Some(CreateCacheRequest {
+                // todo! Configuration
+                ttl: Duration::from_secs(60 * 5),
+                model: request.model.clone(),
+                contents: request.contents.clone(),
+                system_instruction: request.system_instruction.clone(),
+                tools: request.tools.clone(),
+                tool_config: request.tool_config.clone(),
+            })
+        } else {
+            None
+        };
+
+        if let Some((prefix_len, cache_name)) = cache_prefix_len_and_name {
+            request.cached_content = Some(cache_name);
+            request.contents.drain(..prefix_len);
+            request.system_instruction = None;
+            request.tools = None;
+            request.tool_config = None;
+        }
+
+        let stream_request = self.stream_completion(request, cx);
+        let create_task = if let Some((request, new_cache_key)) =
+            create_cache_request.zip(content_cache_keys.last().copied())
+        {
+            let create_task = cx.background_spawn(self.create_cache(request, cx));
+            cx.spawn({
+                let state = self.state.clone();
+                async move |cx| {
+                    let Some(create_response) = create_task.await.log_err() else {
+                        return;
+                    };
+                    state
+                        .update(cx, |state, _cx| {
+                            state.cache.insert(
+                                new_cache_key,
+                                CacheEntry {
+                                    name: create_response.name,
+                                    expire_time: create_response.expire_time.to_utc(),
+                                },
+                            )
+                        })
+                        .ok();
+                }
+            })
+        } else {
+            Task::ready(())
+        };
+
+        // todo! two requests in request_limiter?
         let future = self.request_limiter.stream(async move {
-            let response = request
+            let response = stream_request
                 .await
                 .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
-            Ok(map_to_language_model_completion_events(response))
+            Ok(map_to_language_model_completion_events(response)
+                .chain(futures::stream::once(create_task).filter_map(|_| async move { None })))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }

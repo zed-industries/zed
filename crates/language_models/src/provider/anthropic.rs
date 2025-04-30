@@ -461,6 +461,7 @@ impl LanguageModel for AnthropicModel {
             self.model.max_output_tokens(),
             self.model.mode(),
         );
+
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request

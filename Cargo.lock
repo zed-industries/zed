@@ -7829,6 +7829,7 @@ dependencies = [
  "theme",
  "thiserror 2.0.12",
  "tiktoken-rs",
+ "time",
  "tokio",
  "ui",
  "util",

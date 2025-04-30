@@ -20,8 +20,8 @@ aws_http_client.workspace = true
 bedrock.workspace = true
 client.workspace = true
 collections.workspace = true
-credentials_provider.workspace = true
 copilot = { workspace = true, features = ["schemars"] }
+credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
@@ -50,6 +50,7 @@ strum.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
+time.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 util.workspace = true

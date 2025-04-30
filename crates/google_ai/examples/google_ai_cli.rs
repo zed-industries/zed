@@ -289,13 +289,14 @@ async fn main() -> Result<()> {
                     role: Role::User,
                     parts: vec![Part::TextPart(TextPart { text: prompt_text })],
                 }],
-                system_instruction: system_instruction.as_ref().map(|instruction| Content {
-                    role: Role::User,
-                    parts: vec![Part::TextPart(TextPart {
-                        text: instruction.clone(),
-                    })],
+                system_instruction: system_instruction.as_ref().map(|instruction| {
+                    SystemInstruction {
+                        parts: vec![Part::TextPart(TextPart {
+                            text: instruction.clone(),
+                        })],
+                    }
                 }),
-                tools: Vec::new(),
+                tools: None,
                 tool_config: None,
             };
 

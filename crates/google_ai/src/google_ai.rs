@@ -28,7 +28,7 @@ pub async fn stream_generate_content(
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    let request = request_builder.body(AsyncBody::from(dbg!(serde_json::to_string(&request)?)))?;
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -248,7 +248,7 @@ pub struct GenerateContentCandidate {
     pub citation_metadata: Option<CitationMetadata>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Content {
     #[serde(default)]
@@ -256,20 +256,20 @@ pub struct Content {
     pub role: Role,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemInstruction {
     pub parts: Vec<Part>,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
     Model,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Part {
     TextPart(TextPart),
@@ -278,32 +278,32 @@ pub enum Part {
     FunctionResponsePart(FunctionResponsePart),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextPart {
     pub text: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InlineDataPart {
     pub inline_data: GenerativeContentBlob,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerativeContentBlob {
     pub mime_type: String,
     pub data: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionCallPart {
     pub function_call: FunctionCall,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub function_response: FunctionResponse,
@@ -446,31 +446,31 @@ pub struct CountTokensResponse {
     pub total_tokens: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionResponse {
     pub name: String,
     pub response: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub function_declarations: Vec<FunctionDeclaration>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolConfig {
     pub function_calling_config: FunctionCallingConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionCallingConfig {
     pub mode: FunctionCallingMode,
@@ -478,7 +478,7 @@ pub struct FunctionCallingConfig {
     pub allowed_function_names: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FunctionCallingMode {
     Auto,
@@ -486,14 +486,14 @@ pub enum FunctionCallingMode {
     None,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionDeclaration {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCacheRequest {
     #[serde(
@@ -504,15 +504,24 @@ pub struct CreateCacheRequest {
     pub model: ModelName,
     pub contents: Vec<Content>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<Content>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<Tool>,
+    pub system_instruction: Option<SystemInstruction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config: Option<ToolConfig>,
     // Other fields that could be provided:
     //
     // name: The resource name referring to the cached content. Format: cachedContents/{id}
     // display_name: user-generated meaningful display name of the cached content. Maximum 128 Unicode characters.
+}
+
+// todo! rename CacheBaseRefs
+#[derive(Hash, PartialEq, Eq)]
+pub struct CacheBaseRef<'a> {
+    pub model: &'a ModelName,
+    pub system_instruction: &'a Option<SystemInstruction>,
+    pub tools: &'a Option<Vec<Tool>>,
+    pub tool_config: &'a Option<ToolConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -555,12 +564,12 @@ pub struct UpdateCacheResponse {
 const MODEL_NAME_PREFIX: &str = "models/";
 const CACHE_NAME_PREFIX: &str = "cachedContents/";
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
 pub struct ModelName {
     pub model_id: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CacheName {
     pub cache_id: String,
 }
