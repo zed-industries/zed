@@ -6,19 +6,24 @@ use std::{
 
 use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
     WeakEntity,
 };
+use picker::{PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
+use project::{TaskContexts, WorktreeId, task_store::TaskStore};
 use settings::Settings;
 use task::{DebugScenario, LaunchRequest, TaskContext};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
-    ContextMenu, Disableable, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
-    LabelCommon as _, ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton,
-    ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, InteractiveElement,
+    IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing, ParentElement, RenderOnce,
+    SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Window, div, h_flex,
+    relative, rems, v_flex,
 };
+use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
@@ -259,6 +264,7 @@ impl NewSessionModal {
                                     worktree.as_ref().map(|worktree| worktree.read(cx).id()),
                                 )
                             })
+                            .map(|(_source_kind, scenario)| scenario)
                             .collect()
                     })
                     .ok()
@@ -619,3 +625,192 @@ impl Focusable for NewSessionModal {
 }
 
 impl ModalView for NewSessionModal {}
+
+struct DebugScenarioDelegate {
+    task_store: Entity<TaskStore>,
+    task_contexts: TaskContexts,
+    worktree_id: WorktreeId,
+    candidates: Option<Vec<DebugScenario>>,
+    selected_index: usize,
+    matches: Vec<StringMatch>,
+    prompt: String,
+    debug_panel: Entity<DebugPanel>,
+}
+
+impl DebugScenarioDelegate {
+    fn new(
+        worktree_id: WorktreeId,
+        task_contexts: TaskContexts,
+        task_store: Entity<TaskStore>,
+        debug_panel: Entity<DebugPanel>,
+    ) -> Self {
+        Self {
+            task_store,
+            task_contexts,
+            worktree_id,
+            candidates: None,
+            selected_index: 0,
+            matches: Vec::new(),
+            prompt: String::new(),
+            debug_panel,
+        }
+    }
+}
+
+impl PickerDelegate for DebugScenarioDelegate {
+    type ListItem = ui::ListItem;
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<picker::Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
+        "".into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> gpui::Task<()> {
+        let candidates: Vec<_> = match &self.candidates {
+            Some(candidates) => candidates
+                .into_iter()
+                .enumerate()
+                .map(|(index, candidate)| {
+                    StringMatchCandidate::new(index, &candidate.label.to_string())
+                })
+                .collect(),
+            None => {
+                let scenarios: Vec<_> = self
+                    .task_store
+                    .read(cx)
+                    .task_inventory()
+                    .iter()
+                    .flat_map(|item| item.read(cx).list_debug_scenarios(Some(self.worktree_id)))
+                    .map(|item| item.1)
+                    .collect();
+
+                self.candidates = Some(scenarios.clone());
+
+                scenarios
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, candidate)| {
+                        StringMatchCandidate::new(index, &candidate.label.to_string())
+                    })
+                    .collect()
+            }
+        };
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                1000,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+
+            picker
+                .update(cx, |picker, _| {
+                    let delegate = &mut picker.delegate;
+
+                    delegate.matches = matches;
+                    delegate.prompt = query;
+
+                    if delegate.matches.is_empty() {
+                        delegate.selected_index = 0;
+                    } else {
+                        delegate.selected_index =
+                            delegate.selected_index.min(delegate.matches.len() - 1);
+                    }
+                })
+                .log_err();
+        })
+    }
+
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
+        let debug_scenario = self
+            .matches
+            .get(self.selected_index())
+            .and_then(|match_candidate| {
+                self.candidates
+                    .as_ref()
+                    .map(|candidates| candidates[match_candidate.candidate_id].clone())
+            });
+
+        let Some(debug_scenario) = debug_scenario else {
+            return;
+        };
+
+        let task_context = self
+            .task_contexts
+            .other_worktree_contexts
+            .iter()
+            .find(|(worktree_id, _)| worktree_id == &self.worktree_id)
+            .map(|item| item.1.clone());
+
+        self.debug_panel.update(cx, |panel, cx| {
+            panel.start_session(
+                debug_scenario,
+                task_context.unwrap_or_default(),
+                None,
+                window,
+                cx,
+            );
+        });
+
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut Context<picker::Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let hit = &self.matches[ix];
+
+        let highlighted_location = HighlightedMatch {
+            text: hit.string.clone(),
+            highlight_positions: hit.positions.clone(),
+            char_count: hit.string.chars().count(),
+            color: Color::Default,
+        };
+
+        let icon = Icon::new(IconName::Settings)
+            .color(Color::Muted)
+            .size(ui::IconSize::Small);
+
+        Some(
+            ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
+                .inset(true)
+                .start_slot::<Icon>(icon)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(highlighted_location.render(window, cx)),
+        )
+    }
+}

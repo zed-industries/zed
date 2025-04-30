@@ -206,14 +206,14 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
-    pub fn list_debug_scenarios(&self, worktree: Option<WorktreeId>) -> Vec<DebugScenario> {
+    pub fn list_debug_scenarios(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> Vec<(TaskSourceKind, DebugScenario)> {
         let global_scenarios = self.global_debug_scenarios_from_settings();
         let worktree_scenarios = self.worktree_scenarios_from_settings(worktree);
 
-        worktree_scenarios
-            .chain(global_scenarios)
-            .map(|(_, scenario)| scenario)
-            .collect()
+        worktree_scenarios.chain(global_scenarios).collect()
     }
 
     pub fn task_template_by_label(
