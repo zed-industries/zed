@@ -179,81 +179,54 @@ impl FileContextHandle {
             log::error!("file context missing path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx);
+        let full_path: Arc<Path> = file.full_path(cx).into();
         let rope = buffer_ref.as_rope().clone();
         let buffer = self.buffer.clone();
 
-        // Check if the file exceeds MAX_FILE_SIZE
-        let file_size = rope.len();
-
-        // For large files, use outline instead of full content
-        // For large files, use outline instead of full content
-        if file_size > outline::AUTO_OUTLINE_SIZE {
-            let buffer = buffer.clone();
-
-            cx.spawn(async move |cx| {
+        cx.spawn(async move |cx| {
+            // For large files, use outline instead of full content
+            if rope.len() > outline::AUTO_OUTLINE_SIZE {
                 // Wait until the buffer has been fully parsed, so we can read its outline
-                let mut parse_status = buffer
-                    .read_with(cx, |buffer, _| buffer.parse_status())
-                    .ok()?;
-                while *parse_status.borrow() != ParseStatus::Idle {
-                    parse_status.changed().await.ok()?;
-                }
+                if let Ok(mut parse_status) =
+                    buffer.read_with(cx, |buffer, _| buffer.parse_status())
+                {
+                    while *parse_status.borrow() != ParseStatus::Idle {
+                        parse_status.changed().await.log_err();
+                    }
 
-                // Get the outline
-                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
-                let outline = snapshot.outline(None);
+                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
+                        if let Some(outline) = snapshot.outline(None) {
+                            let items = outline
+                                .items
+                                .into_iter()
+                                .map(|item| item.to_point(&snapshot));
 
-                if let Some(outline) = outline {
-                    // Render the outline
-                    let items = outline
-                        .items
-                        .into_iter()
-                        .map(|item| item.to_point(&snapshot));
-                    match outline::render_outline(items, None, 0, usize::MAX).await {
-                        Ok(outline_text) => {
-                            let context = AgentContext::File(FileContext {
-                                handle: self,
-                                full_path: full_path.into(),
-                                text: outline_text.into(),
-                                is_outline: true,
-                            });
-                            Some((context, vec![buffer]))
-                        }
-                        Err(_) => {
-                            // Fallback to full content if outline rendering fails
-                            let context = AgentContext::File(FileContext {
-                                handle: self,
-                                full_path: full_path.into(),
-                                text: rope.to_string().into(),
-                                is_outline: false,
-                            });
-                            Some((context, vec![buffer]))
+                            if let Ok(outline_text) =
+                                outline::render_outline(items, None, 0, usize::MAX).await
+                            {
+                                let context = AgentContext::File(FileContext {
+                                    handle: self,
+                                    full_path,
+                                    text: outline_text.into(),
+                                    is_outline: true,
+                                });
+                                return Some((context, vec![buffer]));
+                            }
                         }
                     }
-                } else {
-                    // Fallback to full content if no outline is available
-                    let context = AgentContext::File(FileContext {
-                        handle: self,
-                        full_path: full_path.into(),
-                        text: rope.to_string().into(),
-                        is_outline: false,
-                    });
-                    Some((context, vec![buffer]))
                 }
-            })
-        } else {
-            // For smaller files, use the full content
-            cx.background_spawn(async move {
-                let context = AgentContext::File(FileContext {
-                    handle: self,
-                    full_path: full_path.into(),
-                    text: rope.to_string().into(),
-                    is_outline: false,
-                });
-                Some((context, vec![buffer]))
-            })
-        }
+            }
+
+            // Fallback to full content if we couldn't build an outline
+            // (or didn't need to because the file was small enough)
+            let context = AgentContext::File(FileContext {
+                handle: self,
+                full_path,
+                text: rope.to_string().into(),
+                is_outline: false,
+            });
+            Some((context, vec![buffer]))
+        })
     }
 }
 
