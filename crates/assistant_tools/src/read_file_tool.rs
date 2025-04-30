@@ -333,6 +333,67 @@ mod test {
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
     }
 
+    #[gpui::test]
+    async fn test_read_file_line_range_edge_cases(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        // start_line of 0 should be treated as 1
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "root/multiline.txt",
+                    "start_line": 0,
+                    "end_line": 2
+                });
+                Arc::new(ReadFileTool)
+                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .output
+            })
+            .await;
+        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+
+        // end_line of 0 should result in at least 1 line
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "root/multiline.txt",
+                    "start_line": 1,
+                    "end_line": 0
+                });
+                Arc::new(ReadFileTool)
+                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .output
+            })
+            .await;
+        assert_eq!(result.unwrap(), "Line 1");
+
+        // when start_line > end_line, should still return at least 1 line
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "root/multiline.txt",
+                    "start_line": 3,
+                    "end_line": 2
+                });
+                Arc::new(ReadFileTool)
+                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .output
+            })
+            .await;
+        assert_eq!(result.unwrap(), "Line 3");
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
