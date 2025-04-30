@@ -236,6 +236,7 @@ pub struct ModelDetails {
 
 #[derive(Deserialize, Debug)]
 pub struct ModelShow {
+    #[serde(default)]
     pub capabilities: Vec<String>,
 }
 
@@ -503,5 +504,62 @@ mod tests {
             }
             _ => panic!("Deserialized wrong role"),
         }
+    }
+
+    #[test]
+    fn parse_show_model() {
+        let response = serde_json::json!({
+            "license": "LLAMA 3.2 COMMUNITY LICENSE AGREEMENT...",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "llama",
+                "families": ["llama"],
+                "parameter_size": "3.2B",
+                "quantization_level": "Q4_K_M"
+            },
+            "model_info": {
+                "general.architecture": "llama",
+                "general.basename": "Llama-3.2",
+                "general.file_type": 15,
+                "general.finetune": "Instruct",
+                "general.languages": ["en", "de", "fr", "it", "pt", "hi", "es", "th"],
+                "general.parameter_count": 3212749888u64,
+                "general.quantization_version": 2,
+                "general.size_label": "3B",
+                "general.tags": ["facebook", "meta", "pytorch", "llama", "llama-3", "text-generation"],
+                "general.type": "model",
+                "llama.attention.head_count": 24,
+                "llama.attention.head_count_kv": 8,
+                "llama.attention.key_length": 128,
+                "llama.attention.layer_norm_rms_epsilon": 0.00001,
+                "llama.attention.value_length": 128,
+                "llama.block_count": 28,
+                "llama.context_length": 131072,
+                "llama.embedding_length": 3072,
+                "llama.feed_forward_length": 8192,
+                "llama.rope.dimension_count": 128,
+                "llama.rope.freq_base": 500000,
+                "llama.vocab_size": 128256,
+                "tokenizer.ggml.bos_token_id": 128000,
+                "tokenizer.ggml.eos_token_id": 128009,
+                "tokenizer.ggml.merges": null,
+                "tokenizer.ggml.model": "gpt2",
+                "tokenizer.ggml.pre": "llama-bpe",
+                "tokenizer.ggml.token_type": null,
+                "tokenizer.ggml.tokens": null
+            },
+            "tensors": [
+                { "name": "rope_freqs.weight", "type": "F32", "shape": [64] },
+                { "name": "token_embd.weight", "type": "Q4_K_S", "shape": [3072, 128256] }
+            ],
+            "capabilities": ["completion", "tools"],
+            "modified_at": "2025-04-29T21:24:41.445877632+03:00"
+        });
+
+        let result: ModelShow = serde_json::from_value(response).unwrap();
+        assert!(result.supports_tools());
+        assert!(result.capabilities.contains(&"tools".to_string()));
+        assert!(result.capabilities.contains(&"completion".to_string()));
     }
 }
