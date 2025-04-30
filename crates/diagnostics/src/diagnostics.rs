@@ -23,6 +23,7 @@ use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
 use lsp::DiagnosticSeverity;
+
 use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
 use settings::Settings;
 use std::{
@@ -521,7 +522,7 @@ impl ProjectDiagnosticsEditor {
                                 markdown::MarkdownElement::rendered_text(
                                     markdown.clone(),
                                     cx,
-                                    editor::hover_markdown_style,
+                                    editor::hover_popover::diagnostics_markdown_style,
                                 )
                             },
                         );
