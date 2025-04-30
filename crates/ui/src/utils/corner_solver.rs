@@ -1,27 +1,32 @@
 use gpui::Pixels;
 
-/// Calculates the child’s outer border-box corner radius for a single nested level.
+/// Calculates the child’s content-corner radius for a single nested level.
 ///
-/// child_radius = max(0, parent_radius − parent_border − parent_padding)
+/// child_content_radius = max(0, parent_radius - parent_border - parent_padding - self_border)
+///
+/// - parent_radius: outer corner radius of the parent element
+/// - parent_border: border width of the parent element
+/// - parent_padding: padding of the parent element
+/// - self_border: border width of this child element (for content inset)
 pub fn inner_corner_radius(
     parent_radius: Pixels,
     parent_border: Pixels,
     parent_padding: Pixels,
+    self_border: Pixels,
 ) -> Pixels {
-    (parent_radius - parent_border - parent_padding).max(Pixels::ZERO)
+    (parent_radius - parent_border - parent_padding - self_border).max(Pixels::ZERO)
 }
 
 /// Solver for arbitrarily deep nested corner radii.
 ///
-/// For each level i:
-///   Rᵢ = max(0, Rᵢ₋₁ − Bᵢ₋₁ − Pᵢ₋₁)
-/// where R₀ = root outer radius, B₀/P₀ = root border/padding,
-/// and children store (border, padding) for subsequent levels.
+/// Each nested level’s outer border-box radius is:
+///   R₀ = max(0, root_radius - root_border - root_padding)
+///   Rᵢ = max(0, Rᵢ₋₁ - childᵢ₋₁_border - childᵢ₋₁_padding) for i > 0
 pub struct CornerSolver {
     root_radius: Pixels,
     root_border: Pixels,
     root_padding: Pixels,
-    children: Vec<(Pixels, Pixels)>,
+    children: Vec<(Pixels, Pixels)>, // (border, padding)
 }
 
 impl CornerSolver {
@@ -40,16 +45,16 @@ impl CornerSolver {
     }
 
     pub fn corner_radius(&self, level: usize) -> Pixels {
-        let mut r = inner_corner_radius(self.root_radius, self.root_border, self.root_padding);
         if level == 0 {
-            return r;
+            return (self.root_radius - self.root_border - self.root_padding).max(Pixels::ZERO);
         }
         if level >= self.children.len() {
             return Pixels::ZERO;
         }
+        let mut r = (self.root_radius - self.root_border - self.root_padding).max(Pixels::ZERO);
         for i in 0..level {
             let (b, p) = self.children[i];
-            r = inner_corner_radius(r, b, p);
+            r = (r - b - p).max(Pixels::ZERO);
         }
         r
     }
@@ -62,8 +67,16 @@ mod tests {
 
     #[test]
     fn test_inner_corner_radius() {
-        assert_eq!(inner_corner_radius(px(10.0), px(2.0), px(3.0)), px(5.0));
-        assert_eq!(inner_corner_radius(px(4.0), px(2.0), px(3.0)), px(0.0));
+        // 10 - 2 (parent border) - 3 (parent padding) - 1 (self border) = 4
+        assert_eq!(
+            inner_corner_radius(px(10.0), px(2.0), px(3.0), px(1.0)),
+            px(4.0)
+        );
+        // clamp to zero
+        assert_eq!(
+            inner_corner_radius(px(5.0), px(2.0), px(2.0), px(2.0)),
+            px(0.0)
+        );
     }
 
     #[test]
