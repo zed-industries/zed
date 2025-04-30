@@ -303,7 +303,8 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cache_state: &mut CacheState,
+        // todo!
+        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -315,7 +316,8 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion_with_usage(
         &self,
         request: LanguageModelRequest,
-        cache_state: &mut CacheState,
+        // todo!
+        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -324,7 +326,7 @@ pub trait LanguageModel: Send + Sync {
             Option<RequestUsage>,
         )>,
     > {
-        self.stream_completion(request, cache_state, cx)
+        self.stream_completion(request, cx)
             .map(|result| result.map(|stream| (stream, None)))
             .boxed()
     }
@@ -332,10 +334,11 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
-        cache_state: &mut CacheState,
+        // todo!
+        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
-        self.stream_completion_text_with_usage(request, cache_state, cx)
+        self.stream_completion_text_with_usage(request, cx)
             .map(|result| result.map(|(stream, _usage)| stream))
             .boxed()
     }
@@ -343,10 +346,11 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion_text_with_usage(
         &self,
         request: LanguageModelRequest,
-        cache_state: &mut CacheState,
+        // todo!
+        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<(LanguageModelTextStream, Option<RequestUsage>)>> {
-        let future = self.stream_completion_with_usage(request, cache_state, cx);
+        let future = self.stream_completion_with_usage(request, cx);
 
         async move {
             let (events, usage) = future.await?;
