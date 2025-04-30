@@ -37,6 +37,8 @@ Rules for editing:
 - When reporting multiple edits, each edit assumes the previous one has already been applied! Therefore, you must ensure `old_text` doesn't reference text that has already been modified by a previous edit.
 - Don't explain the edits, just report them.
 - Only edit the file specified in `<file_to_edit>` and NEVER include edits to other files!
+- If you open an <old_text> tag, you MUST close it using </old_text>
+- If you open an <new_text> tag, you MUST close it using </new_text>
 
 <file_to_edit>
 {{path}}
