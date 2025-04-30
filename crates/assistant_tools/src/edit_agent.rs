@@ -89,7 +89,7 @@ impl EditAgent {
                 if let Some(range) = Self::resolve_location(&snapshot, &old_text_query) {
                     let buffer_start_indent =
                         snapshot.line_indent_for_row(snapshot.offset_to_point(range.start).row);
-                    let query_start_indent = old_text_query
+                    let old_text_start_index = old_text_query
                         .lines()
                         .next()
                         .map_or(buffer_start_indent, |line| {
@@ -97,12 +97,12 @@ impl EditAgent {
                         });
                     let indent_delta = if buffer_start_indent.tabs > 0 {
                         IndentDelta::Tabs(
-                            buffer_start_indent.tabs as isize - query_start_indent.tabs as isize,
+                            buffer_start_indent.tabs as isize - old_text_start_index.tabs as isize,
                         )
                     } else {
                         IndentDelta::Spaces(
                             buffer_start_indent.spaces as isize
-                                - query_start_indent.spaces as isize,
+                                - old_text_start_index.spaces as isize,
                         )
                     };
 
