@@ -465,7 +465,7 @@ impl ProjectDiagnosticsEditor {
                                                                         version: None,
                                                                     },
                                                                     &[],
-                                                                    |diagnostic| {
+                                                                    |diagnostic, _| {
                                                                         !is_outdated_cargo_fetch_diagnostic(diagnostic)
                                                                     },
                                                                     cx,
@@ -473,7 +473,6 @@ impl ProjectDiagnosticsEditor {
                                                                 }
                                                                 anyhow::Ok(())
                                                             })?;
-                                                        // TODO kb old cargo diagnostics are removed
                                                         editor.update_all_excerpts(window, cx);
                                                         anyhow::Ok(())
                                                     })

@@ -12,7 +12,10 @@ use collections::HashMap;
 use gpui::{AppContext, Entity, Task};
 use itertools::Itertools as _;
 use language::Diagnostic;
-use project::{Worktree, project_settings::ProjectSettings};
+use project::{
+    Worktree, lsp_store::rust_analyzer_ext::ZED_CARGO_DIAGNOSTICS_SOURCE_NAME,
+    project_settings::ProjectSettings,
+};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::{
@@ -166,11 +169,10 @@ pub fn is_outdated_cargo_fetch_diagnostic(diagnostic: &Diagnostic) -> bool {
         .flatten()
     {
         let current_generation = CARGO_DIAGNOSTICS_FETCH_GENERATION.load(atomic::Ordering::Acquire);
-        data.generation < dbg!(current_generation)
+        data.generation < current_generation
     } else {
         false
     }
-    //
 }
 
 /// Converts a Rust root diagnostic to LSP form
@@ -200,7 +202,7 @@ pub(crate) fn map_rust_diagnostic_to_lsp(
 
     let severity = diagnostic_severity(cargo_diagnostic.level);
 
-    let mut source = String::from("rustc");
+    let mut source = String::from(ZED_CARGO_DIAGNOSTICS_SOURCE_NAME);
     let mut code = cargo_diagnostic.code.as_ref().map(|c| c.code.clone());
 
     if let Some(code_val) = &code {

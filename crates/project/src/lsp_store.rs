@@ -467,10 +467,11 @@ impl LocalLspStore {
                                 adapter.process_diagnostics(&mut params, server_id, buffer);
                             }
 
-                            this.update_diagnostics(
+                            this.merge_diagnostics(
                                 server_id,
                                 params,
                                 &adapter.disk_based_diagnostic_sources,
+                                |diagnostic, cx| adapter.retain_old_diagnostic(diagnostic, cx),
                                 cx,
                             )
                             .log_err();
@@ -6387,10 +6388,10 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_| false, cx)
+        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_, _| false, cx)
     }
 
-    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic) -> bool + Clone>(
+    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
@@ -6423,7 +6424,7 @@ impl LspStore {
                     .get_diagnostics(server_id)
                     .into_iter()
                     .flat_map(|diag| {
-                        diag.iter().filter(|v| filter(&v.diagnostic)).map(|v| {
+                        diag.iter().filter(|v| filter(&v.diagnostic, cx)).map(|v| {
                             let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                             let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
                             DiagnosticEntry {
@@ -8568,12 +8569,12 @@ impl LspStore {
             language_server_id,
             params,
             disk_based_sources,
-            |_| false,
+            |_, _| false,
             cx,
         )
     }
 
-    pub fn merge_diagnostics<F: Fn(&Diagnostic) -> bool + Clone>(
+    pub fn merge_diagnostics<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
