@@ -246,6 +246,7 @@
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-o": "agent::ToggleNavigationMenu",
+      "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
       "ctrl-e": "agent::ChatMode",
       "ctrl-alt-e": "agent::RemoveAllContext"
