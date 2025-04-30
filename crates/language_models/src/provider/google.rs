@@ -296,6 +296,10 @@ impl LanguageModel for GoogleLanguageModel {
         self.id.clone()
     }
 
+    fn matches_id(&self, other_id: &LanguageModelId) -> bool {
+        self.model.matches_id(&other_id.0)
+    }
+
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
     }

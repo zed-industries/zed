@@ -142,6 +142,10 @@ impl Model {
         }
     }
 
+    pub fn matches_id(&self, other_id: &str) -> bool {
+        self.id() == other_id
+    }
+
     pub fn display_name(&self) -> &str {
         match self {
             Self::ThreePointFiveTurbo => "gpt-3.5-turbo",

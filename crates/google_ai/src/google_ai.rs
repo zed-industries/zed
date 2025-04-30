@@ -744,8 +744,8 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Gemini15Pro => "gemini-1.5-pro",
-            Model::Gemini15Flash => "gemini-1.5-flash",
+            Model::Gemini15Pro => "gemini-1.5-pro-002",
+            Model::Gemini15Flash => "gemini-1.5-flash-002",
             Model::Gemini20Pro => "gemini-2.0-pro-exp",
             Model::Gemini20Flash => "gemini-2.0-flash",
             Model::Gemini20FlashThinking => "gemini-2.0-flash-thinking-exp",
@@ -754,6 +754,19 @@ impl Model {
             Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
             Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
             Model::Custom { name, .. } => name,
+        }
+    }
+
+    pub fn matches_id(&self, other_id: &str) -> bool {
+        if self.id() == other_id {
+            return true;
+        }
+        // These IDs are present in user settings. The `-002` stable model version is added in the
+        // ID used for the model so that caching works.
+        match self {
+            Model::Gemini15Pro => other_id == "gemini-1.5-pro",
+            Model::Gemini15Flash => other_id == "gemini-1.5-flash",
+            _ => false,
         }
     }
 

@@ -540,7 +540,7 @@ impl SummaryIndex {
         );
         let Some(model) = LanguageModelRegistry::read_global(cx)
             .available_models(cx)
-            .find(|model| &model.id() == &summary_model_id)
+            .find(|model| model.matches_id(&summary_model_id))
         else {
             return cx.background_spawn(async move {
                 Err(anyhow!("Couldn't find the preferred summarization model ({:?}) in the language registry's available models", summary_model_id))

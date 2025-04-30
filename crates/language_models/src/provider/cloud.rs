@@ -627,6 +627,14 @@ impl LanguageModel for CloudLanguageModel {
         self.id.clone()
     }
 
+    fn matches_id(&self, other_id: &LanguageModelId) -> bool {
+        match &self.model {
+            CloudModel::Anthropic(model) => model.matches_id(&other_id.0),
+            CloudModel::Google(model) => model.matches_id(&other_id.0),
+            CloudModel::OpenAi(model) => model.matches_id(&other_id.0),
+        }
+    }
+
     fn name(&self) -> LanguageModelName {
         LanguageModelName::from(self.model.display_name().to_string())
     }

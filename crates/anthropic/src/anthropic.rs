@@ -107,6 +107,10 @@ impl Model {
         }
     }
 
+    pub fn matches_id(&self, other_id: &str) -> bool {
+        self.id() == other_id
+    }
+
     /// The id of the model that should be used for making API requests
     pub fn request_id(&self) -> &str {
         match self {

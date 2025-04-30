@@ -247,11 +247,26 @@ struct CacheName(String);
 */
 
 pub trait LanguageModel: Send + Sync {
+    /// The ID used for the model when making requests. If checking for match of a user-provided
+    /// string, use `matches_id` instead.
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
+
+    /// Use this to check whether this model should be used for the given user-provided model ID, to support multiple IDs.
+    /// Multiple IDs are used for:
+    ///
+    /// * Preferring a particular ID in requests (Gemini only supports caching for stable IDs).
+    ///
+    /// * When one model has been replaced by another. This allows the display name to update to
+    /// reflect which model is actually being used.
+    ///
+    /// TODO: In the future consider replacing this mechanism with a settings migration.
+    fn matches_id(&self, other_id: &LanguageModelId) -> bool {
+        &self.id() == other_id
+    }
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None

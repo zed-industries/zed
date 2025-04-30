@@ -197,7 +197,7 @@ impl LanguageModelRegistry {
         let model = provider
             .provided_models(cx)
             .iter()
-            .find(|model| model.id() == selected_model.model)?
+            .find(|model| model.matches_id(&selected_model.model))?
             .clone();
         Some(ConfiguredModel { provider, model })
     }
