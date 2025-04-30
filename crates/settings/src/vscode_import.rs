@@ -108,3 +108,77 @@ impl VsCodeSettings {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct VsCodeShortcuts {
+    content: Vec<Map<String, Value>>,
+}
+
+impl VsCodeShortcuts {
+    pub fn from_str(content: &str) -> Result<Self> {
+        Ok(Self {
+            content: serde_json_lenient::from_str(content)?,
+        })
+    }
+
+    pub async fn load_user_shortcuts(fs: Arc<dyn Fs>) -> Result<Self> {
+        let content = fs.load(paths::vscode_shortcuts_file()).await?;
+        println!("Loaded shortcuts: {}", content);
+        let ret = serde_json_lenient::from_str(&content);
+        println!("Parsed shortcuts: {:?}", ret);
+        Ok(Self { content: ret? })
+    }
+
+    pub fn to_json(self) -> String {
+        let mut bindings = Map::new();
+        for content in self.content.into_iter() {
+            let Some(key) = content.get("key").and_then(|key| key.as_str()) else {
+                continue;
+            };
+            let Some(command) = content.get("command") else {
+                continue;
+            };
+            bindings.insert(key.to_string(), command.clone());
+        }
+        let mut first = Map::new();
+        first.insert("bindings".to_string(), serde_json::Value::Object(bindings));
+        let result = vec![first];
+        serde_json::to_string_pretty(&result).unwrap_or_default()
+    }
+}
+
+fn vscode_shortcut_command_to_zed_action(
+    command: &str,
+    when: Option<&str>,
+) -> Option<(String, Option<String>)> {
+    let mut context = None;
+    let keystroke = match command {
+        "list.focusFirst" | "list.focusAnyFirst" => {
+            context = Some("menu".to_string());
+            "menu::SelectFirst"
+        }
+        "list.focusLast" | "list.focusAnyLast" => {
+            context = Some("menu".to_string());
+            "menu::SelectLast"
+        }
+        "list.focusUp" | "list.focusAnyUp" => {
+            context = Some("menu".to_string());
+            "menu::SelectPrevious"
+        }
+        "list.focusDown" | "list.focusAnyDown" => {
+            context = Some("menu".to_string());
+            "menu::SelectNext"
+        }
+        "list.select" => {
+            context = Some("menu".to_string());
+            "menu::Confirm"
+        }
+        "list.clear" => {
+            context = Some("menu".to_string());
+            "menu::Cancel"
+        }
+        // menu::SecondaryConfirm, Restart
+        _ => return None,
+    };
+    Some((keystroke.to_string(), context))
+}
