@@ -6,7 +6,7 @@ use core_graphics::event::CGKeyCode;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
 use crate::{
-    PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, is_alphabetic_key,
     platform::mac::{LMGetKbdType, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData},
 };
 
