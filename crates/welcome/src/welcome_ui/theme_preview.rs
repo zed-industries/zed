@@ -1,3 +1,4 @@
+#![allow(unused, dead_code)]
 use gpui::{Hsla, Length};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
@@ -32,8 +33,6 @@ impl ThemePreviewTile {
 impl RenderOnce for ThemePreviewTile {
     fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
         let color = self.theme.colors();
-        let syntax = self.theme.syntax();
-        let syntax_colors = [syntax.get("foo.bar")];
 
         let root_radius = px(8.0);
         let root_border = px(2.0);
@@ -44,29 +43,25 @@ impl RenderOnce for ThemePreviewTile {
 
         let item_skeleton = |w: Length, h: Pixels, bg: Hsla| div().w(w).h(h).rounded_full().bg(bg);
 
+        let skeleton_height = px(4.);
+
         let sidebar_seeded_width = |seed: f32, index: usize| {
             let value = (seed * 1000.0 + index as f32 * 10.0).sin() * 0.5 + 0.5;
-            0.5 + value * 0.35
+            0.5 + value * 0.45
         };
 
-        let sidebar_skeleton_items = 11;
+        let sidebar_skeleton_items = 8;
 
         let sidebar_skeleton = (0..sidebar_skeleton_items)
             .map(|i| {
                 let width = sidebar_seeded_width(self.seed, i);
                 item_skeleton(
                     relative(width).into(),
-                    px(3.),
-                    color.text.alpha(width - 0.25),
+                    skeleton_height,
+                    color.text.alpha(0.45),
                 )
             })
             .collect::<Vec<_>>();
-
-        // This should be rows of horizontal item skeletons
-        // using colors from the syntax_colors vec.
-        // It will create something that looks like syntax highlighting.
-        //
-        // let pseudo_code_skeleton = todo!("Implement pseudo code skeleton");
 
         let sidebar = div()
             .h_full()
@@ -84,12 +79,10 @@ impl RenderOnce for ThemePreviewTile {
                     .children(sidebar_skeleton),
             );
 
-        // Generate abstract code blocks using syntax theme colors
         let pseudo_code_skeleton = |theme: Arc<Theme>, seed: f32| -> AnyElement {
             let colors = theme.colors();
             let syntax = theme.syntax();
 
-            // Get syntax colors for different code elements
             let keyword_color = syntax.get("keyword").color;
             let function_color = syntax.get("function").color;
             let string_color = syntax.get("string").color;
@@ -98,7 +91,6 @@ impl RenderOnce for ThemePreviewTile {
             let type_color = syntax.get("type").color;
             let punctuation_color = syntax.get("punctuation").color;
 
-            // Array of colors to pick from for code elements
             let syntax_colors = [
                 keyword_color,
                 function_color,
@@ -109,21 +101,22 @@ impl RenderOnce for ThemePreviewTile {
                 comment_color,
             ];
 
-            // Generate random line configuration based on seed
             let line_width = |line_idx: usize, block_idx: usize| -> f32 {
                 let val = (seed * 100.0 + line_idx as f32 * 20.0 + block_idx as f32 * 5.0).sin()
                     * 0.5
                     + 0.5;
-                0.05 + val * 0.25 // Width between 5% and 30%
+                0.05 + val * 0.2
             };
 
-            // Generate indentation based on seed and line index
             let indentation = |line_idx: usize| -> f32 {
-                let val = (seed * 200.0 + line_idx as f32 * 15.0).cos() * 0.5 + 0.5;
-                val * 0.3 // Indent between 0% and 30%
+                let step = line_idx % 6;
+                if step < 3 {
+                    step as f32 * 0.1
+                } else {
+                    (5 - step) as f32 * 0.1
+                }
             };
 
-            // Pick a color based on seed, line and block index
             let pick_color = |line_idx: usize, block_idx: usize| -> Hsla {
                 let idx = ((seed * 10.0 + line_idx as f32 * 7.0 + block_idx as f32 * 3.0).sin()
                     * 3.5)
@@ -132,38 +125,33 @@ impl RenderOnce for ThemePreviewTile {
                 syntax_colors[idx].unwrap_or(colors.text)
             };
 
-            // Number of code lines
-            let line_count = 7;
+            let line_count = 13;
 
-            // Create the lines
             let lines = (0..line_count)
                 .map(|line_idx| {
-                    // Each line has 1-4 blocks based on seed and line index
                     let block_count = (((seed * 30.0 + line_idx as f32 * 12.0).sin() * 0.5 + 0.5)
                         * 3.0)
                         .round() as usize
-                        + 1;
+                        + 2;
 
                     let indent = indentation(line_idx);
 
-                    // Create the blocks for this line
                     let blocks = (0..block_count)
                         .map(|block_idx| {
                             let width = line_width(line_idx, block_idx);
                             let color = pick_color(line_idx, block_idx);
-                            item_skeleton(relative(width).into(), px(6.), color)
+                            item_skeleton(relative(width).into(), skeleton_height, color)
                         })
                         .collect::<Vec<_>>();
 
-                    // Create a flex container for this line
-                    h_flex().gap_2().ml(relative(indent)).children(blocks)
+                    h_flex().gap(px(2.)).ml(relative(indent)).children(blocks)
                 })
                 .collect::<Vec<_>>();
 
             v_flex()
                 .size_full()
                 .p_1()
-                .gap_2()
+                .gap(px(6.))
                 .children(lines)
                 .into_any_element()
         };
@@ -173,18 +161,18 @@ impl RenderOnce for ThemePreviewTile {
             .flex_grow()
             .flex()
             .flex_col()
+            // .child(
+            //     div()
+            //         .w_full()
+            //         .border_color(color.border)
+            //         .border_b(px(1.))
+            //         .h(relative(0.1))
+            //         .bg(color.tab_bar_background),
+            // )
             .child(
                 div()
-                    .w_full()
-                    .border_color(color.border)
-                    .border_b(px(1.))
-                    .h(relative(0.1))
-                    .bg(color.tab_bar_background),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .w_full()
+                    .size_full()
+                    .overflow_hidden()
                     .bg(color.editor_background)
                     .p_2()
                     .child(pseudo_code_skeleton(self.theme.clone(), self.seed)),
@@ -277,7 +265,7 @@ impl Component for ThemePreviewTile {
                                         div().w(px(200.)).h(px(140.)).child(ThemePreviewTile::new(
                                             theme.clone(),
                                             false,
-                                            0.1 * i as f32 + 0.5,
+                                            0.42,
                                         ))
                                     })
                                     .collect::<Vec<_>>(),
