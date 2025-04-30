@@ -183,7 +183,6 @@ impl HistoryStore {
             cx.background_spawn(async move {
                 let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
                 let content = serde_json::to_string(&serialized_entries)?;
-                &content;
                 std::fs::write(path, content)?;
                 anyhow::Ok(())
             })
