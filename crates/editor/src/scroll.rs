@@ -188,9 +188,6 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if self.forbid_vertical_scroll {
-            return;
-        }
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
@@ -262,10 +259,16 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if self.forbid_vertical_scroll {
-            return;
-        }
-        self.anchor = anchor;
+        let adjusted_anchor = if self.forbid_vertical_scroll {
+            ScrollAnchor {
+                offset: gpui::Point::new(anchor.offset.x, self.anchor.offset.y),
+                anchor: self.anchor.anchor,
+            }
+        } else {
+            anchor
+        };
+
+        self.anchor = adjusted_anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
         self.show_scrollbars(window, cx);
         self.autoscroll_request.take();
@@ -435,11 +438,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut delta = scroll_delta;
         if self.scroll_manager.forbid_vertical_scroll {
-            return;
+            delta.y = 0.0;
         }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let position = self.scroll_manager.anchor.scroll_position(&display_map) + scroll_delta;
+        let position = self.scroll_manager.anchor.scroll_position(&display_map) + delta;
         self.set_scroll_position_taking_display_map(position, true, false, display_map, window, cx);
     }
 
@@ -449,10 +453,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut position = scroll_position;
         if self.scroll_manager.forbid_vertical_scroll {
-            return;
+            let current_position = self.scroll_position(cx);
+            position.y = current_position.y;
         }
-        self.set_scroll_position_internal(scroll_position, true, false, window, cx);
+        self.set_scroll_position_internal(position, true, false, window, cx);
     }
 
     /// Scrolls so that `row` is at the top of the editor view.
@@ -511,8 +517,15 @@ impl Editor {
         self.edit_prediction_preview
             .set_previous_scroll_position(None);
 
+        let adjusted_position = if self.scroll_manager.forbid_vertical_scroll {
+            let current_position = self.scroll_manager.anchor.scroll_position(&display_map);
+            gpui::Point::new(scroll_position.x, current_position.y)
+        } else {
+            scroll_position
+        };
+
         self.scroll_manager.set_scroll_position(
-            scroll_position,
+            adjusted_position,
             &display_map,
             local,
             autoscroll,

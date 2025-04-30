@@ -169,7 +169,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(render_file_context_entry(
-                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    ElementId::named_usize("file-ctx-picker", ix),
                     WorktreeId::from_usize(mat.worktree_id),
                     &mat.path,
                     &mat.path_prefix,

@@ -522,6 +522,37 @@ impl ImageSource {
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
         }
     }
+
+    pub(crate) fn get_data(
+        &self,
+        cache: Option<AnyImageCache>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        match self {
+            ImageSource::Resource(resource) => {
+                if let Some(cache) = cache {
+                    cache.load(resource, window, cx)
+                } else {
+                    window.get_asset::<ImgResourceLoader>(resource, cx)
+                }
+            }
+            ImageSource::Custom(loading_fn) => loading_fn(window, cx),
+            ImageSource::Render(data) => Some(Ok(data.to_owned())),
+            ImageSource::Image(data) => window.get_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    /// Remove this image source from the asset system
+    pub fn remove_asset(&self, cx: &mut App) {
+        match self {
+            ImageSource::Resource(resource) => {
+                cx.remove_asset::<ImgResourceLoader>(resource);
+            }
+            ImageSource::Custom(_) | ImageSource::Render(_) => {}
+            ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
+        }
+    }
 }
 
 #[derive(Clone)]

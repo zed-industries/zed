@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
+use assistant_tool::outline;
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use collections::IndexMap;
 use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Task};
-use language::{OutlineItem, ParseStatus, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, Symbol};
 use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeSymbolsInput {
@@ -102,7 +102,7 @@ impl Tool for CodeSymbolsTool {
 
                 match &input.path {
                     Some(path) => {
-                        let path = MarkdownString::inline_code(path);
+                        let path = MarkdownInlineCode(path);
                         if page > 1 {
                             format!("List page {page} of code symbols for {path}")
                         } else {
@@ -148,57 +148,11 @@ impl Tool for CodeSymbolsTool {
         };
 
         cx.spawn(async move |cx| match input.path {
-            Some(path) => file_outline(project, path, action_log, regex, cx).await,
+            Some(path) => outline::file_outline(project, path, action_log, regex, cx).await,
             None => project_symbols(project, regex, input.offset, cx).await,
         })
         .into()
     }
-}
-
-pub async fn file_outline(
-    project: Entity<Project>,
-    path: String,
-    action_log: Entity<ActionLog>,
-    regex: Option<Regex>,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<String> {
-    let buffer = {
-        let project_path = project.read_with(cx, |project, cx| {
-            project
-                .find_project_path(&path, cx)
-                .ok_or_else(|| anyhow!("Path {path} not found in project"))
-        })??;
-
-        project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-            .await?
-    };
-
-    action_log.update(cx, |action_log, cx| {
-        action_log.track_buffer(buffer.clone(), cx);
-    })?;
-
-    // Wait until the buffer has been fully parsed, so that we can read its outline.
-    let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
-    while *parse_status.borrow() != ParseStatus::Idle {
-        parse_status.changed().await?;
-    }
-
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let Some(outline) = snapshot.outline(None) else {
-        return Err(anyhow!("No outline information available for this file."));
-    };
-
-    render_outline(
-        outline
-            .items
-            .into_iter()
-            .map(|item| item.to_point(&snapshot)),
-        regex,
-        0,
-        usize::MAX,
-    )
-    .await
 }
 
 async fn project_symbols(
@@ -290,78 +244,4 @@ async fn project_symbols(
     } else {
         output
     })
-}
-
-async fn render_outline(
-    items: impl IntoIterator<Item = OutlineItem<Point>>,
-    regex: Option<Regex>,
-    offset: usize,
-    results_per_page: usize,
-) -> Result<String> {
-    let mut items = items.into_iter().skip(offset);
-
-    let entries = items
-        .by_ref()
-        .filter(|item| {
-            regex
-                .as_ref()
-                .is_none_or(|regex| regex.is_match(&item.text))
-        })
-        .take(results_per_page)
-        .collect::<Vec<_>>();
-    let has_more = items.next().is_some();
-
-    let mut output = String::new();
-    let entries_rendered = render_entries(&mut output, entries);
-
-    // Calculate pagination information
-    let page_start = offset + 1;
-    let page_end = offset + entries_rendered;
-    let total_symbols = if has_more {
-        format!("more than {}", page_end)
-    } else {
-        page_end.to_string()
-    };
-
-    // Add pagination information
-    if has_more {
-        writeln!(&mut output, "\nShowing symbols {page_start}-{page_end} (there were more symbols found; use offset: {page_end} to see next page)",
-        )
-    } else {
-        writeln!(
-            &mut output,
-            "\nShowing symbols {page_start}-{page_end} (total symbols: {total_symbols})",
-        )
-    }
-    .ok();
-
-    Ok(output)
-}
-
-fn render_entries(
-    output: &mut String,
-    items: impl IntoIterator<Item = OutlineItem<Point>>,
-) -> usize {
-    let mut entries_rendered = 0;
-
-    for item in items {
-        // Indent based on depth ("" for level 0, "  " for level 1, etc.)
-        for _ in 0..item.depth {
-            output.push(' ');
-        }
-        output.push_str(&item.text);
-
-        // Add position information - convert to 1-based line numbers for display
-        let start_line = item.range.start.row + 1;
-        let end_line = item.range.end.row + 1;
-
-        if start_line == end_line {
-            writeln!(output, " [L{}]", start_line).ok();
-        } else {
-            writeln!(output, " [L{}-{}]", start_line, end_line).ok();
-        }
-        entries_rendered += 1;
-    }
-
-    entries_rendered
 }

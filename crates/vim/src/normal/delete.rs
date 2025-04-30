@@ -352,6 +352,29 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_delete_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "d }",
+            indoc! {"
+            ˇhello world.
+
+            hello world."},
+        )
+        .await
+        .assert_matches();
+
+        cx.simulate(
+            "d }",
+            indoc! {"
+            ˇhello world.
+            hello world."},
+        )
+        .await
+        .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_delete_0(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate(

@@ -1,4 +1,5 @@
 mod action_log;
+pub mod outline;
 mod tool_registry;
 mod tool_schema;
 mod tool_working_set;
@@ -49,6 +50,13 @@ impl ToolUseStatus {
             ToolUseStatus::Running => "".into(),
             ToolUseStatus::Finished(out) => out.clone(),
             ToolUseStatus::Error(out) => out.clone(),
+        }
+    }
+
+    pub fn error(&self) -> Option<SharedString> {
+        match self {
+            ToolUseStatus::Error(out) => Some(out.clone()),
+            _ => None,
         }
     }
 }

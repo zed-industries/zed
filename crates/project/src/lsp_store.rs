@@ -1187,6 +1187,11 @@ impl LocalLspStore {
         let mut project_transaction = ProjectTransaction::default();
 
         for buffer in &buffers {
+            zlog::debug!(
+                logger =>
+                "formatting buffer '{:?}'",
+                buffer.abs_path.as_ref().unwrap_or(&PathBuf::from("unknown")).display()
+            );
             // Create an empty transaction to hold all of the formatting edits.
             let formatting_transaction_id = buffer.handle.update(cx, |buffer, cx| {
                 // ensure no transactions created while formatting are
@@ -1224,6 +1229,7 @@ impl LocalLspStore {
                     return;
                 };
                 if formatting_transaction.edit_ids.is_empty() {
+                    zlog::debug!(logger => "no changes made while formatting");
                     buffer.forget_transaction(formatting_transaction_id);
                     return;
                 }
@@ -1265,8 +1271,8 @@ impl LocalLspStore {
             })
         })?;
 
-        // Apply edits to the buffer that will become part of the formatting transaction.
-        // Fails if the buffer has been edited since the start of that transaction.
+        /// Apply edits to the buffer that will become part of the formatting transaction.
+        /// Fails if the buffer has been edited since the start of that transaction.
         fn extend_formatting_transaction(
             buffer: &FormattableBuffer,
             formatting_transaction_id: text::TransactionId,
@@ -1426,7 +1432,7 @@ impl LocalLspStore {
                     };
 
                     let Some(language_server) = language_server else {
-                        log::warn!(
+                        log::debug!(
                             "No language server found to format buffer '{:?}'. Skipping",
                             buffer_path_abs.as_path().to_string_lossy()
                         );
@@ -1930,8 +1936,7 @@ impl LocalLspStore {
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let _timer = zlog::time!(logger => "format-full")
-                .warn_if_gt(std::time::Duration::from_millis(0));
+            let _timer = zlog::time!(logger => "format-full");
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
@@ -1940,8 +1945,7 @@ impl LocalLspStore {
                 })
                 .await?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let _timer = zlog::time!(logger => "format-range")
-                .warn_if_gt(std::time::Duration::from_millis(0));
+            let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
             language_server
@@ -8571,6 +8575,8 @@ impl LspStore {
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostics = HashMap::default();
 
+        let adapter = self.language_server_adapter_for_id(language_server_id);
+
         // Ensure that primary diagnostics are always the most severe
         params.diagnostics.sort_by_key(|item| item.severity);
 
@@ -8618,6 +8624,9 @@ impl LspStore {
                             .as_ref()
                             .map(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                        markdown: adapter.as_ref().and_then(|adapter| {
+                            adapter.diagnostic_message_to_markdown(&diagnostic.message)
+                        }),
                         message: diagnostic.message.trim().to_string(),
                         group_id,
                         is_primary: true,
@@ -8640,6 +8649,9 @@ impl LspStore {
                                         .as_ref()
                                         .map(|c| c.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
+                                    markdown: adapter.as_ref().and_then(|adapter| {
+                                        adapter.diagnostic_message_to_markdown(&info.message)
+                                    }),
                                     message: info.message.trim().to_string(),
                                     group_id,
                                     is_primary: false,

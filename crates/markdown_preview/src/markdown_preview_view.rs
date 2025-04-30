@@ -7,8 +7,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
-    list,
+    IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
+    WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -30,13 +30,13 @@ const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
+    image_cache: Entity<RetainAllImageCache>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     contents: Option<ParsedMarkdown>,
     selected_block: usize,
     list_state: ListState,
-    tab_description: Option<String>,
-    fallback_tab_description: SharedString,
+    tab_content_text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
 }
@@ -130,7 +130,7 @@ impl MarkdownPreviewView {
             editor,
             workspace_handle,
             language_registry,
-            None,
+            "Markdown Preview".into(),
             window,
             cx,
         )
@@ -141,7 +141,7 @@ impl MarkdownPreviewView {
         active_editor: Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
-        fallback_description: Option<SharedString>,
+        tab_content_text: SharedString,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -262,11 +262,10 @@ impl MarkdownPreviewView {
                 workspace: workspace.clone(),
                 contents: None,
                 list_state,
-                tab_description: None,
+                tab_content_text,
                 language_registry,
-                fallback_tab_description: fallback_description
-                    .unwrap_or_else(|| "Markdown Preview".into()),
                 parsing_markdown_task: None,
+                image_cache: RetainAllImageCache::new(cx),
             };
 
             this.set_editor(active_editor, window, cx);
@@ -343,10 +342,8 @@ impl MarkdownPreviewView {
             },
         );
 
-        self.tab_description = editor
-            .read(cx)
-            .tab_description(0, cx)
-            .map(|tab_description| format!("Preview {}", tab_description));
+        let tab_content = editor.read(cx).tab_content_text(0, cx);
+        self.tab_content_text = format!("Preview {}", tab_content).into();
 
         self.active_editor = Some(EditorState {
             editor,
@@ -496,12 +493,8 @@ impl Item for MarkdownPreviewView {
         Some(Icon::new(IconName::FileDoc))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(if let Some(description) = &self.tab_description {
-            description.clone().into()
-        } else {
-            self.fallback_tab_description.clone()
-        })
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        self.tab_content_text.clone()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -515,7 +508,9 @@ impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
+
         v_flex()
+            .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))

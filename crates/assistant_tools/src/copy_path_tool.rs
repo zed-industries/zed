@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
@@ -63,8 +63,8 @@ impl Tool for CopyPathTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CopyPathToolInput>(input.clone()) {
             Ok(input) => {
-                let src = MarkdownString::inline_code(&input.source_path);
-                let dest = MarkdownString::inline_code(&input.destination_path);
+                let src = MarkdownInlineCode(&input.source_path);
+                let dest = MarkdownInlineCode(&input.destination_path);
                 format!("Copy {src} to {dest}")
             }
             Err(_) => "Copy path".to_string(),

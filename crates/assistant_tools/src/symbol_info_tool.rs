@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, ops::Range, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 use crate::schema::json_schema_for;
 
@@ -91,7 +91,7 @@ impl Tool for SymbolInfoTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<SymbolInfoToolInput>(input.clone()) {
             Ok(input) => {
-                let symbol = MarkdownString::inline_code(&input.symbol);
+                let symbol = MarkdownInlineCode(&input.symbol);
 
                 match input.command {
                     Info::Definition => {

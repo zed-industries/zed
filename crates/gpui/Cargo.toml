@@ -188,7 +188,6 @@ wayland-protocols-plasma = { version = "0.2.0", features = [
     "client",
 ], optional = true }
 
-
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }
 x11rb = { version = "0.13.1", features = [
@@ -210,7 +209,7 @@ xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf
 ], optional = true }
 x11-clipboard = { version = "0.9.3", optional = true }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 blade-util.workspace = true
 bytemuck = "1"
 blade-graphics.workspace = true

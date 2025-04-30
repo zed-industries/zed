@@ -1133,7 +1133,7 @@ async fn wait_for_terminals_tasks(
             })
             .ok()
     });
-    let _: Vec<_> = join_all(pending_tasks).await;
+    join_all(pending_tasks).await;
 }
 
 fn add_paths_to_terminal(

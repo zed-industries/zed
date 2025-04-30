@@ -7,6 +7,7 @@ use project::{FakeFs, Project};
 use serde_json::json;
 use task::{AttachRequest, TcpArgumentsTemplate};
 use tests::{init_test, init_test_workspace};
+use util::path;
 
 #[gpui::test]
 async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -15,14 +16,14 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -41,7 +42,9 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         },
         |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
-                assert_eq!(json!({"request": "attach", "process_id": 10}), args.raw);
+                let raw = &args.raw;
+                assert_eq!(raw["request"], "attach");
+                assert_eq!(raw["process_id"], 10);
 
                 Ok(())
             });
@@ -77,21 +80,23 @@ async fn test_show_attach_modal_and_select_process(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     // Set up handlers for sessions spawned via modal.
     let _initialize_subscription =
         project::debugger::test::intercept_debug_sessions(cx, |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
-                assert_eq!(json!({"request": "attach", "process_id": 1}), args.raw);
+                let raw = &args.raw;
+                assert_eq!(raw["request"], "attach");
+                assert_eq!(raw["process_id"], 1);
 
                 Ok(())
             });

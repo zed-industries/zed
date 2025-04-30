@@ -11,6 +11,7 @@ use gpui::{
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
+    language_settings::SoftWrap,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -23,6 +24,8 @@ use std::{
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
+
+pub struct EditFileTool;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
@@ -74,8 +77,6 @@ struct PartialInput {
     #[serde(default)]
     new_string: String,
 }
-
-pub struct EditFileTool;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -274,7 +275,9 @@ pub struct EditFileToolCard {
     project: Entity<Project>,
     diff_task: Option<Task<Result<()>>>,
     preview_expanded: bool,
+    error_expanded: bool,
     full_height_expanded: bool,
+    total_lines: Option<u32>,
     editor_unique_id: EntityId,
 }
 
@@ -293,11 +296,13 @@ impl EditFileToolCard {
                 window,
                 cx,
             );
-            editor.disable_scrollbars_and_minimap(cx);
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
-            editor.disable_scrolling(cx);
             editor.disable_expand_excerpt_buttons(cx);
+            editor.set_soft_wrap_mode(SoftWrap::None, cx);
+            editor.scroll_manager.set_forbid_vertical_scroll(true);
+            editor.disable_scrollbars_and_minimap(cx);
+            editor.set_read_only(true);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
@@ -312,7 +317,9 @@ impl EditFileToolCard {
             multibuffer,
             diff_task: None,
             preview_expanded: true,
+            error_expanded: false,
             full_height_expanded: false,
+            total_lines: None,
         }
     }
 
@@ -329,7 +336,7 @@ impl EditFileToolCard {
             let buffer_diff = build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
 
             this.update(cx, |this, cx| {
-                this.multibuffer.update(cx, |multibuffer, cx| {
+                this.total_lines = this.multibuffer.update(cx, |multibuffer, cx| {
                     let snapshot = buffer.read(cx).snapshot();
                     let diff = buffer_diff.read(cx);
                     let diff_hunk_ranges = diff
@@ -345,7 +352,10 @@ impl EditFileToolCard {
                     );
                     debug_assert!(is_newly_added);
                     multibuffer.add_diff(buffer_diff, cx);
+                    let end = multibuffer.len(cx);
+                    Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
                 });
+
                 cx.notify();
             })
         }));
@@ -360,7 +370,10 @@ impl ToolCard for EditFileToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let failed = matches!(status, ToolUseStatus::Error(_));
+        let (failed, error_message) = match status {
+            ToolUseStatus::Error(err) => (true, Some(err.to_string())),
+            _ => (false, None),
+        };
 
         let path_label_button = h_flex()
             .id(("edit-tool-path-label-button", self.editor_unique_id))
@@ -452,9 +465,26 @@ impl ToolCard for EditFileToolCard {
             .map(|container| {
                 if failed {
                     container.child(
-                        Icon::new(IconName::Close)
-                            .size(IconSize::Small)
-                            .color(Color::Error),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Close)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .child(
+                                Disclosure::new(
+                                    ("edit-file-error-disclosure", self.editor_unique_id),
+                                    self.error_expanded,
+                                )
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .on_click(cx.listener(
+                                    move |this, _event, _window, _cx| {
+                                        this.error_expanded = !this.error_expanded;
+                                    },
+                                )),
+                            ),
                     )
                 } else {
                     container.child(
@@ -473,8 +503,14 @@ impl ToolCard for EditFileToolCard {
                 }
             });
 
-        let editor = self.editor.update(cx, |editor, cx| {
-            editor.render(window, cx).into_any_element()
+        let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
+            let line_height = editor
+                .style()
+                .map(|style| style.text.line_height_in_pixels(window.rem_size()))
+                .unwrap_or_default();
+
+            let element = editor.render(window, cx);
+            (element.into_any_element(), line_height)
         });
 
         let (full_height_icon, full_height_tooltip_label) = if self.full_height_expanded {
@@ -498,6 +534,9 @@ impl ToolCard for EditFileToolCard {
 
         let border_color = cx.theme().colors().border.opacity(0.6);
 
+        const DEFAULT_COLLAPSED_LINES: u32 = 10;
+        let is_collapsible = self.total_lines.unwrap_or(0) > DEFAULT_COLLAPSED_LINES;
+
         v_flex()
             .mb_2()
             .border_1()
@@ -506,50 +545,79 @@ impl ToolCard for EditFileToolCard {
             .rounded_lg()
             .overflow_hidden()
             .child(codeblock_header)
-            .when(!failed && self.preview_expanded, |card| {
+            .when(failed && self.error_expanded, |card| {
                 card.child(
                     v_flex()
-                        .relative()
-                        .overflow_hidden()
+                        .p_2()
+                        .gap_1()
                         .border_t_1()
+                        .border_dashed()
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
-                        .map(|editor_container| {
-                            if self.full_height_expanded {
-                                editor_container.h_full()
-                            } else {
-                                editor_container.max_h_64()
-                            }
-                        })
-                        .child(div().pl_1().child(editor))
-                        .when(!self.full_height_expanded, |editor_container| {
-                            editor_container.child(gradient_overlay)
-                        }),
+                        .rounded_b_md()
+                        .child(
+                            Label::new("Error")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Error),
+                        )
+                        .child(
+                            div()
+                                .rounded_md()
+                                .text_ui_sm(cx)
+                                .bg(cx.theme().colors().editor_background)
+                                .children(
+                                    error_message
+                                        .map(|error| div().child(error).into_any_element()),
+                                ),
+                        ),
                 )
             })
             .when(!failed && self.preview_expanded, |card| {
                 card.child(
-                    h_flex()
-                        .id(("edit-tool-card-inner-hflex", self.editor_unique_id))
-                        .flex_none()
-                        .cursor_pointer()
-                        .h_5()
-                        .justify_center()
-                        .rounded_b_md()
+                    v_flex()
+                        .relative()
+                        .map(|editor_container| {
+                            if self.full_height_expanded {
+                                editor_container.h_full()
+                            } else {
+                                editor_container
+                                    .h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
+                            }
+                        })
+                        .overflow_hidden()
                         .border_t_1()
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
-                        .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
-                        .child(
-                            Icon::new(full_height_icon)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .tooltip(Tooltip::text(full_height_tooltip_label))
-                        .on_click(cx.listener(move |this, _event, _window, _cx| {
-                            this.full_height_expanded = !this.full_height_expanded;
-                        })),
+                        .child(div().pl_1().child(editor))
+                        .when(
+                            !self.full_height_expanded && is_collapsible,
+                            |editor_container| editor_container.child(gradient_overlay),
+                        ),
                 )
+                .when(is_collapsible, |editor_container| {
+                    editor_container.child(
+                        h_flex()
+                            .id(("expand-button", self.editor_unique_id))
+                            .flex_none()
+                            .cursor_pointer()
+                            .h_5()
+                            .justify_center()
+                            .rounded_b_md()
+                            .border_t_1()
+                            .border_color(border_color)
+                            .bg(cx.theme().colors().editor_background)
+                            .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
+                            .child(
+                                Icon::new(full_height_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .tooltip(Tooltip::text(full_height_tooltip_label))
+                            .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                this.full_height_expanded = !this.full_height_expanded;
+                            })),
+                    )
+                })
             })
     }
 }
@@ -627,7 +695,6 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_with_path() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "src/main.rs",
             "display_description": "",
@@ -635,12 +702,11 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "src/main.rs");
+        assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
     }
 
     #[test]
     fn still_streaming_ui_text_with_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "",
             "display_description": "Fix error handling",
@@ -648,12 +714,14 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_with_path_and_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "src/main.rs",
             "display_description": "Fix error handling",
@@ -661,12 +729,14 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_no_path_or_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "",
             "display_description": "",
@@ -674,14 +744,19 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_with_null() {
-        let tool = EditFileTool;
         let input = serde_json::Value::Null;
 
-        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 }

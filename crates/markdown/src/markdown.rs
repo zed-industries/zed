@@ -1,6 +1,8 @@
 pub mod parser;
 mod path_range;
 
+pub use path_range::{LineCol, PathWithRange};
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
@@ -1167,7 +1169,7 @@ fn render_copy_code_block_button(
     markdown: Entity<Markdown>,
     cx: &App,
 ) -> impl IntoElement {
-    let id = ElementId::NamedInteger("copy-markdown-code".into(), id);
+    let id = ElementId::named_usize("copy-markdown-code", id);
     let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
     IconButton::new(
         id.clone(),
