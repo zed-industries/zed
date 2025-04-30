@@ -1069,13 +1069,8 @@ mod tests {
         init_test_settings(cx);
 
         // Create a large file that exceeds AUTO_OUTLINE_SIZE
-        let large_content = {
-            const LINE: &str = "Line with some text\n";
-            std::iter::repeat(LINE)
-                .take(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()))
-                .collect::<String>()
-        };
-
+        const LINE: &str = "Line with some text\n";
+        let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
         let content_len = large_content.len();
 
         assert!(content_len > outline::AUTO_OUTLINE_SIZE);
