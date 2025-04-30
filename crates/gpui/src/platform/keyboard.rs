@@ -125,3 +125,46 @@ pub(crate) fn is_alphabetic_key(key: &str) -> bool {
             | "z"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PlatformKeyboardMapper, TestKeyboardMapper};
+
+    #[test]
+    fn test_get_shifted_key() {
+        let mapper = TestKeyboardMapper::new();
+
+        for ch in 'a'..'z' {
+            let key = ch.to_string();
+            let shifted_key = key.to_uppercase();
+            assert_eq!(mapper.get_shifted_key(&key).unwrap(), shifted_key);
+        }
+
+        let shift_pairs = [
+            ("1", "!"),
+            ("2", "@"),
+            ("3", "#"),
+            ("4", "$"),
+            ("5", "%"),
+            ("6", "^"),
+            ("7", "&"),
+            ("8", "*"),
+            ("9", "("),
+            ("0", ")"),
+            ("`", "~"),
+            ("-", "_"),
+            ("=", "+"),
+            ("[", "{"),
+            ("]", "}"),
+            ("\\", "|"),
+            (";", ":"),
+            ("'", "\""),
+            (",", "<"),
+            (".", ">"),
+            ("/", "?"),
+        ];
+        for (key, shifted_key) in shift_pairs {
+            assert_eq!(mapper.get_shifted_key(key).unwrap(), shifted_key);
+        }
+    }
+}
