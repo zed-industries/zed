@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fs::Fs;
+use gpui::{AsyncWindowContext, Keystroke, PlatformKeyboardMapper};
 use serde_json::{Map, Value};
 
 use std::sync::Arc;
@@ -124,9 +125,39 @@ impl VsCodeShortcuts {
     pub async fn load_user_shortcuts(fs: Arc<dyn Fs>) -> Result<Self> {
         let content = fs.load(paths::vscode_shortcuts_file()).await?;
         println!("Loaded shortcuts: {}", content);
-        let ret = serde_json_lenient::from_str(&content);
-        println!("Parsed shortcuts: {:?}", ret);
-        Ok(Self { content: ret? })
+
+        Ok(Self {
+            content: serde_json_lenient::from_str(&content)?,
+        })
+    }
+
+    pub fn parse_shortcuts(&self, keyboard_mapper: &dyn PlatformKeyboardMapper) {
+        for content in self.content.iter() {
+            let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
+                continue;
+            };
+            let Some(keystroke) = Keystroke::parse(shortcut).ok() else {
+                continue;
+            };
+            if keystroke.key.starts_with('[') && keystroke.key.ends_with(']') {
+                println!(
+                    "Unable to parse keystroke that using Scan Code: {}",
+                    shortcut
+                );
+                continue;
+            }
+            let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
+                continue;
+            };
+            let when = content.get("when").and_then(|when| when.as_str());
+            // TODO: vscode_shortcut_command_to_zed_action
+            let action = command.to_string();
+            let keystroke = keyboard_mapper.vscode_keystroke_to_gpui_keystroke(keystroke);
+            println!(
+                "Parsed shortcut: {} -> {:#?}, {}",
+                shortcut, keystroke, action
+            );
+        }
     }
 
     pub fn to_json(self) -> String {
@@ -152,7 +183,7 @@ fn vscode_shortcut_command_to_zed_action(
     when: Option<&str>,
 ) -> Option<(String, Option<String>)> {
     let mut context = None;
-    let keystroke = match command {
+    let action = match command {
         "list.focusFirst" | "list.focusAnyFirst" => {
             context = Some("menu".to_string());
             "menu::SelectFirst"
@@ -180,11 +211,28 @@ fn vscode_shortcut_command_to_zed_action(
         // menu::SecondaryConfirm, Restart
         _ => return None,
     };
-    Some((keystroke.to_string(), context))
+    Some((action.to_string(), context))
 }
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestKeyboardMapper;
+
+    use super::VsCodeShortcuts;
+
     #[test]
-    fn test_load_vscode_shortcuts() {}
+    fn test_load_vscode_shortcuts_with_scan_code() {
+        let content = r#"
+        [
+            {
+                "key": "shift+[BracketRight]",
+                "command": "list.focusFirst",
+            }
+        ]
+        "#;
+        let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
+        assert_eq!(shortcuts.content.len(), 1);
+        let keyboard_mapper = TestKeyboardMapper::new();
+        shortcuts.parse_shortcuts(&keyboard_mapper);
+    }
 }

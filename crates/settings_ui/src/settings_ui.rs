@@ -179,8 +179,12 @@ pub fn init(cx: &mut App) {
                             }
                         };
                     println!("vscode shortcuts: {:#?}", vscode);
-                    let x = vscode.to_json();
-                    println!("x: {:#?}", x);
+                    let x = cx
+                        .update(move |_, cx| {
+                            let keyboard_mapper = cx.keyboard_mapper();
+                            vscode.parse_shortcuts(keyboard_mapper);
+                        })
+                        .unwrap();
 
                     // let prompt = {
                     //     let prompt = cx.prompt(
