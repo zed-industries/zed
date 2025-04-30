@@ -61,11 +61,23 @@ pub fn cargo_diagnostics_sources(
         .collect()
 }
 
-// TODO kb send back some progress
+#[derive(Debug)]
+pub enum FetchUpdate {
+    Diagnostic(CargoDiagnostic),
+    Progress(String),
+}
+
+#[derive(Debug)]
+pub enum FetchStatus {
+    Started,
+    Progress { message: String },
+    Finished,
+}
+
 pub fn fetch_worktree_diagnostics(
     worktree_root: &Path,
     cx: &App,
-) -> Option<(Task<()>, Receiver<CargoDiagnostic>)> {
+) -> Option<(Task<()>, Receiver<FetchUpdate>)> {
     let diagnostics_settings = ProjectSettings::get_global(cx)
         .diagnostics
         .cargo
@@ -104,25 +116,19 @@ pub fn fetch_worktree_diagnostics(
                     errors = 0;
                     let mut deserializer = serde_json::Deserializer::from_str(&line);
                     deserializer.disable_recursion_limit();
-                    match CargoMessage::deserialize(&mut deserializer).map(|cargo_message| {
-                        match cargo_message {
-                            CargoMessage::Cargo(message) => match message {
-                                Message::CompilerMessage(msg) => {
-                                    Some(msg.message)
-                                }
-                                _ => None,
-                            },
-                            CargoMessage::Rustc(message) => Some(message),
-                        }
-                    }) {
-                        Ok(Some(message)) => {
-                            if tx.send(message).await.is_err() {
-                                return;
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(_) => log::debug!("Failed to parse cargo diagnostics from line '{line}'"),
+                    let send_result = match CargoMessage::deserialize(&mut deserializer) {
+                        Ok(CargoMessage::Cargo(Message::CompilerMessage(message))) => tx.send(FetchUpdate::Diagnostic(message.message)).await,
+                        Ok(CargoMessage::Cargo(Message::CompilerArtifact(artifact))) => tx.send(FetchUpdate::Progress(format!("Compiled {:?}", artifact.manifest_path.parent().unwrap_or(&artifact.manifest_path)))).await,
+                        Ok(CargoMessage::Cargo(_)) => Ok(()),
+                        Ok(CargoMessage::Rustc(rustc_message)) =>  tx.send(FetchUpdate::Diagnostic(rustc_message)).await,
+                        Err(_) => {
+                            log::debug!("Failed to parse cargo diagnostics from line '{line}'");
+                            Ok(())
+                        },
                     };
+                    if send_result.is_err() {
+                        return;
+                    }
                 },
                 Err(e) => {
                     log::error!("Failed to read line from {command_string} command output when fetching cargo diagnostics: {e}");

@@ -3395,7 +3395,7 @@ pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    progress_tokens: HashSet<String>,
+    pub progress_tokens: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -7535,7 +7535,7 @@ impl LspStore {
         }
     }
 
-    fn on_lsp_progress(
+    pub fn on_lsp_progress(
         &mut self,
         progress: lsp::ProgressParams,
         language_server_id: LanguageServerId,
