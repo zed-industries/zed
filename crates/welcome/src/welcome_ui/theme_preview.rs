@@ -1,3 +1,4 @@
+use gpui::{Hsla, Length};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
 use ui::{
@@ -10,11 +11,16 @@ use ui::{
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,
     selected: bool,
+    seed: f32,
 }
 
 impl ThemePreviewTile {
-    pub fn new(theme: Arc<Theme>, selected: bool) -> Self {
-        Self { theme, selected }
+    pub fn new(theme: Arc<Theme>, selected: bool, seed: f32) -> Self {
+        Self {
+            theme,
+            selected,
+            seed,
+        }
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
@@ -33,6 +39,55 @@ impl RenderOnce for ThemePreviewTile {
         let inner_radius =
             inner_corner_radius(root_radius, root_border, root_padding, child_border);
 
+        let item_skeleton = |w: Length, h: Pixels, bg: Hsla| div().w(w).h(h).rounded_full().bg(bg);
+
+        let sidebar_seeded_width = |seed: f32, index: usize| {
+            let value = (seed * 1000.0 + index as f32 * 10.0).sin() * 0.5 + 0.5;
+            0.5 + value * 0.35
+        };
+
+        let sidebar_skeleton_items = 11;
+
+        let sidebar_skeleton = (0..sidebar_skeleton_items)
+            .map(|i| {
+                let width = sidebar_seeded_width(self.seed, i);
+                item_skeleton(relative(width).into(), px(3.), color.text_muted)
+            })
+            .collect::<Vec<_>>();
+
+        let sidebar = div()
+            .h_full()
+            .w(relative(0.25))
+            .border_r(px(1.))
+            .border_color(color.border_transparent)
+            .bg(color.panel_background)
+            .child(
+                div()
+                    .p_2()
+                    .flex()
+                    .flex_col()
+                    .size_full()
+                    .gap(px(4.))
+                    .children(sidebar_skeleton),
+            );
+
+        let pane = div()
+            .h_full()
+            .flex_grow()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .w_full()
+                    .border_color(color.border)
+                    .border_b(px(1.))
+                    .h(relative(0.1))
+                    .bg(color.tab_bar_background),
+            )
+            .child(div().flex_1().w_full().bg(color.editor_background));
+
+        let content = div().size_full().flex().child(sidebar).child(pane);
+
         div()
             .size_full()
             .rounded(root_radius)
@@ -48,7 +103,8 @@ impl RenderOnce for ThemePreviewTile {
                     .rounded(inner_radius)
                     .border(child_border)
                     .border_color(color.border)
-                    .bg(color.background),
+                    .bg(color.background)
+                    .child(content),
             )
     }
 }
@@ -88,7 +144,7 @@ impl Component for ThemePreviewTile {
                                 div()
                                     .w(px(240.))
                                     .h(px(180.))
-                                    .child(ThemePreviewTile::new(one_dark.clone(), false))
+                                    .child(ThemePreviewTile::new(one_dark.clone(), false, 0.42))
                                     .into_any_element(),
                             ),
                             single_example(
@@ -96,7 +152,7 @@ impl Component for ThemePreviewTile {
                                 div()
                                     .w(px(240.))
                                     .h(px(180.))
-                                    .child(ThemePreviewTile::new(one_dark, true))
+                                    .child(ThemePreviewTile::new(one_dark, true, 0.42))
                                     .into_any_element(),
                             ),
                         ])]
@@ -112,11 +168,13 @@ impl Component for ThemePreviewTile {
                             .children(
                                 themes_to_preview
                                     .iter()
-                                    .map(|theme| {
-                                        div()
-                                            .w(px(200.))
-                                            .h(px(140.))
-                                            .child(ThemePreviewTile::new(theme.clone(), false))
+                                    .enumerate()
+                                    .map(|(i, theme)| {
+                                        div().w(px(200.)).h(px(140.)).child(ThemePreviewTile::new(
+                                            theme.clone(),
+                                            false,
+                                            0.1 * i as f32 + 0.5,
+                                        ))
                                     })
                                     .collect::<Vec<_>>(),
                             )
