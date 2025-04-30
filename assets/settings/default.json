@@ -777,18 +777,19 @@
     //
     // Default: small
     "modal_max_width": "small",
-    // Determines the initial selection behavior when opening the file finder.
+    // Determines whether the file finder should skip focus for the active file in search results.
     // There are 2 possible values:
     //
-    // 1. Skip Active: Automatically selects the first file in the results list that is not
-    //    the currently active file.
-    //    "auto_select": "skip_active"
-    // 2. First: Always selects the first file in the results list, regardless of whether
-    //    it's the currently active file or not.
-    //    "auto_select": "first"
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
     //
-    // Default: skip_active
-    "auto_select": "skip_active"
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

@@ -1038,7 +1038,7 @@ impl FileFinderDelegate {
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
     fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
-        if FileFinderSettings::get_global(cx).auto_select == FileFinderAutoSelect::SkipActive {
+        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search {
             if let Some(Match::History { path, .. }) = self.matches.get(0) {
                 if Some(path) == self.currently_opened_path.as_ref() {
                     let elements_after_first = self.matches.len() - 1;

@@ -1368,7 +1368,7 @@ async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppC
 
         FileFinderSettings::override_global(
             FileFinderSettings {
-                auto_select: FileFinderAutoSelect::First,
+                skip_focus_for_active_in_search: false,
                 ..settings
             },
             cx,

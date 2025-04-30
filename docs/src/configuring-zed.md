@@ -1925,11 +1925,11 @@ Or to set a `socks5` proxy:
 - Setting: `modal_max_width`
 - Default: `small`
 
-### Auto Select
+### Skip Focus For Active In Search
 
-- Description: Determines the initial selection behavior when opening the file finder. It can take one of two values: `skip_active` and`first`.
-- Setting: `auto_select`
-- Default: `skip_active`
+- Description: Determines whether the file finder should skip focus for the active file in search results.
+- Setting: `skip_focus_for_active_in_search`
+- Default: `true`
 
 ## Preferred Line Length
 

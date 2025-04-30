@@ -7,7 +7,7 @@ use settings::{Settings, SettingsSources};
 pub struct FileFinderSettings {
     pub file_icons: bool,
     pub modal_max_width: Option<FileFinderWidth>,
-    pub auto_select: FileFinderAutoSelect,
+    pub skip_focus_for_active_in_search: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -20,10 +20,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: small
     pub modal_max_width: Option<FileFinderWidth>,
-    /// Determines the initial selection behavior when opening the file finder.
+    /// Determines whether the file finder should skip focus for the active file in search results.
     ///
-    /// Default: skip_active
-    pub auto_select: Option<FileFinderAutoSelect>,
+    /// Default: true
+    pub skip_focus_for_active_in_search: Option<bool>,
 }
 
 impl Settings for FileFinderSettings {
