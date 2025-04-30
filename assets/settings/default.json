@@ -226,7 +226,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 3,
+  "expand_excerpt_lines": 5,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -601,6 +601,13 @@
     //
     // Default: main
     "fallback_branch_name": "main",
+
+    // Whether to sort entries in the panel by path
+    // or by status (the default).
+    //
+    // Default: false
+    "sort_by_path": false,
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -695,6 +702,11 @@
           "thinking": true,
           "web_search": true
         }
+      },
+      "manual": {
+        "name": "Manual",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
     // Where to show notifications when an agent has either completed

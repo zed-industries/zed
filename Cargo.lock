@@ -94,6 +94,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "postage",
  "project",
  "prompt_store",
  "proto",
@@ -729,6 +730,9 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "task",
+ "terminal",
+ "terminal_view",
  "tree-sitter-rust",
  "ui",
  "unindent",
@@ -4989,6 +4993,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "markdown",
  "node_runtime",
  "pathdiff",
  "paths",
@@ -10103,7 +10108,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.4.0",
+ "zed_extension_api 0.5.0",
 ]
 
 [[package]]
@@ -11114,6 +11119,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_json",
  "text",
  "util",
  "uuid",
@@ -18628,7 +18634,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -18688,7 +18694,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.4.0",
+ "zed_extension_api 0.5.0",
 ]
 
 [[package]]

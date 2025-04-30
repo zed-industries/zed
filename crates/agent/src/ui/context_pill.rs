@@ -491,7 +491,7 @@ impl AddedContext {
                 let thread = handle.thread.clone();
                 Some(Rc::new(move |_, cx| {
                     let text = thread.read(cx).latest_detailed_summary_or_text();
-                    text_hover_view(text.clone(), cx).into()
+                    ContextPillHover::new_text(text.clone(), cx).into()
                 }))
             },
             handle: AgentContextHandle::Thread(handle),
@@ -509,7 +509,7 @@ impl AddedContext {
             render_hover: {
                 let text = context.text.clone();
                 Some(Rc::new(move |_, cx| {
-                    text_hover_view(text.clone(), cx).into()
+                    ContextPillHover::new_text(text.clone(), cx).into()
                 }))
             },
             handle: AgentContextHandle::Thread(context.handle.clone()),
@@ -554,7 +554,7 @@ impl AddedContext {
             render_hover: {
                 let text = context.text.clone();
                 Some(Rc::new(move |_, cx| {
-                    text_hover_view(text.clone(), cx).into()
+                    ContextPillHover::new_text(text.clone(), cx).into()
                 }))
             },
             handle: AgentContextHandle::Rules(context.handle.clone()),
@@ -670,18 +670,6 @@ impl ContextFileExcerpt {
     }
 }
 
-fn text_hover_view(content: SharedString, cx: &mut App) -> Entity<ContextPillHover> {
-    ContextPillHover::new(cx, move |_, _| {
-        div()
-            .id("context-pill-hover-contents")
-            .overflow_scroll()
-            .max_w_128()
-            .max_h_96()
-            .child(content.clone())
-            .into_any_element()
-    })
-}
-
 struct ContextPillHover {
     render_hover: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
 }
@@ -693,6 +681,18 @@ impl ContextPillHover {
     ) -> Entity<Self> {
         cx.new(|_| Self {
             render_hover: Box::new(render_hover),
+        })
+    }
+
+    fn new_text(content: SharedString, cx: &mut App) -> Entity<Self> {
+        Self::new(cx, move |_, _| {
+            div()
+                .id("context-pill-hover-contents")
+                .overflow_scroll()
+                .max_w_128()
+                .max_h_96()
+                .child(content.clone())
+                .into_any_element()
         })
     }
 }
@@ -723,6 +723,7 @@ impl Component for AddedContext {
             "Ready",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
             }),
@@ -732,6 +733,7 @@ impl Component for AddedContext {
             "Loading",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: cx
                     .background_spawn(async move {
@@ -746,6 +748,7 @@ impl Component for AddedContext {
             "Error",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: Task::ready(None).shared(),
             }),

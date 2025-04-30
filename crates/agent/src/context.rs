@@ -542,12 +542,21 @@ impl ThreadContextHandle {
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
-        let context = AgentContext::Thread(ThreadContext {
-            title: self.title(cx),
-            text: self.thread.read(cx).latest_detailed_summary_or_text(),
-            handle: self,
-        });
-        Task::ready(Some((context, vec![])))
+        cx.spawn(async move |cx| {
+            let text = Thread::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
+            let title = self
+                .thread
+                .read_with(cx, |thread, _cx| {
+                    thread.summary().unwrap_or_else(|| "New thread".into())
+                })
+                .ok()?;
+            let context = AgentContext::Thread(ThreadContext {
+                title,
+                text,
+                handle: self,
+            });
+            Some((context, vec![]))
+        })
     }
 }
 
@@ -630,6 +639,7 @@ impl Display for RulesContext {
 
 #[derive(Debug, Clone)]
 pub struct ImageContext {
+    pub project_path: Option<ProjectPath>,
     pub original_image: Arc<gpui::Image>,
     // TODO: handle this elsewhere and remove `ignore-interior-mutability` opt-out in clippy.toml
     // needed due to a false positive of `clippy::mutable_key_type`.

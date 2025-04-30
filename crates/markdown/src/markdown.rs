@@ -1,6 +1,8 @@
 pub mod parser;
 mod path_range;
 
+pub use path_range::{LineCol, PathWithRange};
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
