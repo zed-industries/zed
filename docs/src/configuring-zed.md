@@ -1913,11 +1913,23 @@ Or to set a `socks5` proxy:
 
 ## File Finder
 
+### File Icons
+
+- Description: Whether to show file icons in the file finder.
+- Setting: `file_icons`
+- Default: `true`
+
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
 - Setting: `modal_max_width`
 - Default: `small`
+
+### Auto Select
+
+- Description: Determines the initial selection behavior when opening the file finder. It can take one of two values: `skip_active` and`first`.
+- Setting: `auto_select`
+- Default: `skip_active`
 
 ## Preferred Line Length
 

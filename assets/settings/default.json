@@ -777,10 +777,17 @@
     //
     // Default: small
     "modal_max_width": "small",
-    /// Determines which found file will be automatically selected
-    /// skip_active will select the second file if the first is the active buffer
-    ///
-    /// Default: skip_active
+    // Determines the initial selection behavior when opening the file finder.
+    // There are 2 possible values:
+    //
+    // 1. Skip Active: Automatically selects the first file in the results list that is not
+    //    the currently active file.
+    //    "auto_select": "skip_active"
+    // 2. First: Always selects the first file in the results list, regardless of whether
+    //    it's the currently active file or not.
+    //    "auto_select": "first"
+    //
+    // Default: skip_active
     "auto_select": "skip_active"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer

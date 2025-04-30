@@ -768,7 +768,6 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
-
         cx: &mut Context<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
@@ -794,15 +793,8 @@ impl FileFinderDelegate {
                 extend_old_matches,
             );
 
-            let file_finder_settings = FileFinderSettings::get_global(cx);
-
             self.selected_index = selected_match.map_or_else(
-                || {
-                    if file_finder_settings.auto_select == FileFinderAutoSelect::SkipActive {
-                        return self.calculate_selected_index();
-                    }
-                    0
-                },
+                || self.calculate_selected_index(cx),
                 |m| {
                     self.matches
                         .position(&m, self.currently_opened_path.as_ref())
@@ -1045,12 +1037,14 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self) -> usize {
-        if let Some(Match::History { path, .. }) = self.matches.get(0) {
-            if Some(path) == self.currently_opened_path.as_ref() {
-                let elements_after_first = self.matches.len() - 1;
-                if elements_after_first > 0 {
-                    return 1;
+    fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
+        if FileFinderSettings::get_global(cx).auto_select == FileFinderAutoSelect::SkipActive {
+            if let Some(Match::History { path, .. }) = self.matches.get(0) {
+                if Some(path) == self.currently_opened_path.as_ref() {
+                    let elements_after_first = self.matches.len() - 1;
+                    if elements_after_first > 0 {
+                        return 1;
+                    }
                 }
             }
         }

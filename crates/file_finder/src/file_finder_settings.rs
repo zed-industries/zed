@@ -20,8 +20,7 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: small
     pub modal_max_width: Option<FileFinderWidth>,
-    /// Determines which found file will be automatically selected
-    /// skip_active will select the second file if the first is the active buffer
+    /// Determines the initial selection behavior when opening the file finder.
     ///
     /// Default: skip_active
     pub auto_select: Option<FileFinderAutoSelect>,
