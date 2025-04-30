@@ -238,6 +238,32 @@ mod tests {
         );
     }
 
+    #[gpui::test(iterations = 1000)]
+    fn test_unmatched_tags(mut rng: StdRng) {
+        assert_eq!(
+            parse(
+                // Reduced from an actual Sonnet 3.7 output
+                indoc! {"
+                    <old_text>
+                    a
+                    b
+                    c
+                    </new_text>
+                    <new_text>
+                    a
+                    B
+                    c
+                    </old_text>
+                "},
+                &mut rng
+            ),
+            vec![Edit {
+                old_text: "a\nb\nc".to_string(),
+                new_text: "a\nB\nc".to_string(),
+            }]
+        );
+    }
+
     #[derive(Default, Debug, PartialEq, Eq)]
     struct Edit {
         old_text: String,
@@ -256,12 +282,17 @@ mod tests {
         let mut last_ix = 0;
         for chunk_ix in chunk_indices {
             for event in parser.push(&input[last_ix..chunk_ix]) {
-                match dbg!(event) {
+                match event {
                     EditParserEvent::OldText(old_text) => {
+                        assert!(!old_text.contains("old_text"));
+                        assert!(!old_text.contains("new_text"));
                         pending_edit.old_text = old_text;
                     }
                     EditParserEvent::NewTextChunk { chunk, done } => {
                         pending_edit.new_text.push_str(&chunk);
+                        assert!(!pending_edit.new_text.contains("old_text"));
+                        assert!(!pending_edit.new_text.contains("new_text"));
+
                         if done {
                             edits.push(pending_edit);
                             pending_edit = Edit::default();
