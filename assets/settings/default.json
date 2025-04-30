@@ -834,7 +834,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
