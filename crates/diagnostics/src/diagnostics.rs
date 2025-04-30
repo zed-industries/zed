@@ -402,12 +402,10 @@ impl ProjectDiagnosticsEditor {
                                     let file_changed = file_diagnostics.len() > 1;
                                     if file_changed {
                                         if editor
-                                            .update(cx, |editor, cx| {
-                                                editor
-                                                    .project
-                                                    .read(cx)
-                                                    .lsp_store()
-                                                    .update(cx, |lsp_store, cx| {
+                                            .update_in(cx, |editor, window, cx| {
+                                                editor.project.read(cx).lsp_store().update(
+                                                    cx,
+                                                    |lsp_store, cx| {
                                                         for (uri, diagnostics) in
                                                             file_diagnostics.drain()
                                                         {
@@ -425,9 +423,14 @@ impl ProjectDiagnosticsEditor {
                                                             )?;
                                                         }
                                                         anyhow::Ok(())
-                                                    })
-                                                    .ok()
+                                                    },
+                                                )?;
+                                                // TODO kb old cargo diagnostics are removed
+                                                editor.update_all_excerpts(window, cx);
+                                                anyhow::Ok(())
                                             })
+                                            .ok()
+                                            .transpose()
                                             .ok()
                                             .flatten()
                                             .is_none()
@@ -447,9 +450,8 @@ impl ProjectDiagnosticsEditor {
                 let _: Vec<()> = futures::future::join_all(worktree_diagnostics_tasks).await;
 
                 project_diagnostics_editor
-                    .update_in(cx, |editor, window, cx| {
+                    .update(cx, |editor, cx| {
                         editor.cargo_diagnostics_task = None;
-                        editor.update_all_excerpts(window, cx);
                         cx.notify();
                     })
                     .ok();
