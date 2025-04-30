@@ -407,7 +407,6 @@ impl DebugPanel {
     pub fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-
         task_context: TaskContext,
         buffer: Option<Entity<Buffer>>,
         window: &Window,
@@ -428,7 +427,7 @@ impl DebugPanel {
                 stop_on_entry,
             } = scenario;
             let request = if let Some(mut request) = request {
-                // Resolve task variables within the request.
+                // Resolve task variables within the request. todo!(this needs to be fixed for task env variables to work in debug tasks)
                 if let DebugRequest::Launch(_) = &mut request {}
 
                 request
