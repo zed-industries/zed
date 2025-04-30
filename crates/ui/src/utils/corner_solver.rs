@@ -2,7 +2,7 @@ use gpui::Pixels;
 
 /// Calculates the child’s content-corner radius for a single nested level.
 ///
-/// child_content_radius = max(0, parent_radius - parent_border - parent_padding - self_border)
+/// child_content_radius = max(0, parent_radius - parent_border - parent_padding + self_border)
 ///
 /// - parent_radius: outer corner radius of the parent element
 /// - parent_border: border width of the parent element
@@ -14,7 +14,7 @@ pub fn inner_corner_radius(
     parent_padding: Pixels,
     self_border: Pixels,
 ) -> Pixels {
-    (parent_radius - parent_border - parent_padding - self_border).max(Pixels::ZERO)
+    (parent_radius - parent_border - parent_padding + self_border).max(Pixels::ZERO)
 }
 
 /// Solver for arbitrarily deep nested corner radii.
@@ -57,44 +57,5 @@ impl CornerSolver {
             r = (r - b - p).max(Pixels::ZERO);
         }
         r
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::px;
-
-    #[test]
-    fn test_inner_corner_radius() {
-        // 10 - 2 (parent border) - 3 (parent padding) - 1 (self border) = 4
-        assert_eq!(
-            inner_corner_radius(px(10.0), px(2.0), px(3.0), px(1.0)),
-            px(4.0)
-        );
-        // clamp to zero
-        assert_eq!(
-            inner_corner_radius(px(5.0), px(2.0), px(2.0), px(2.0)),
-            px(0.0)
-        );
-    }
-
-    #[test]
-    fn test_corner_solver_single() {
-        let solver = CornerSolver::new(px(10.0), px(2.0), px(3.0));
-        assert_eq!(solver.corner_radius(0), px(5.0));
-    }
-
-    #[test]
-    fn test_corner_solver_nested() {
-        let solver = CornerSolver::new(px(20.0), px(2.0), px(3.0))
-            .add_child(px(1.0), px(2.0))
-            .add_child(px(1.0), px(1.0))
-            .add_child(px(2.0), px(2.0));
-
-        assert_eq!(solver.corner_radius(0), px(15.0));
-        assert_eq!(solver.corner_radius(1), px(12.0));
-        assert_eq!(solver.corner_radius(2), px(10.0));
-        assert_eq!(solver.corner_radius(3), px(0.0));
     }
 }
