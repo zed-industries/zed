@@ -488,6 +488,7 @@ pub fn into_google(
             }]
         }),
         tool_config: None,
+        cached_content: None,
     }
 }
 
