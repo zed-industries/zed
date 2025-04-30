@@ -3288,6 +3288,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(Vec<BlockLayout>, HashMap<DisplayRow, bool>), HashMap<CustomBlockId, u32>> {
+        if snapshot.mode.is_minimap() {
+            return Ok((Vec::new(), HashMap::default()));
+        }
+
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
