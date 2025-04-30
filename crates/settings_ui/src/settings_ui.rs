@@ -39,6 +39,7 @@ pub struct ImportCursorSettings {
 }
 
 impl_actions!(zed, [ImportVsCodeSettings, ImportCursorSettings]);
+actions!(zed, [ImportVsCodeShortcuts]);
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
@@ -92,6 +93,119 @@ pub fn init(cx: &mut App) {
                         cx,
                     )
                     .await
+                })
+                .detach();
+        });
+
+        workspace.register_action(|_, _: &ImportVsCodeShortcuts, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    let vscode =
+                        match settings::VsCodeShortcuts::load_user_shortcuts(fs.clone()).await {
+                            Ok(vscode) => vscode,
+                            Err(err) => {
+                                println!(
+                                    "Failed to load VsCode shortcuts: {}",
+                                    err.context(format!(
+                                        "Loading VsCode shortcuts from path: {:?}",
+                                        paths::vscode_shortcuts_file()
+                                    ))
+                                );
+
+                                let _ = cx.prompt(
+                                    gpui::PromptLevel::Info,
+                                    "Could not find or load a VsCode shortcuts file",
+                                    None,
+                                    &["Ok"],
+                                );
+                                return;
+                            }
+                        };
+                    println!("vscode shortcuts: {:#?}", vscode);
+                    let x = vscode.to_json();
+                    println!("x: {:#?}", x);
+                    // let prompt = {
+                    //     let prompt = cx.prompt(
+                    //         gpui::PromptLevel::Warning,
+                    //         "Importing settings may overwrite your existing settings",
+                    //         None,
+                    //         &["Ok", "Cancel"],
+                    //     );
+                    //     cx.spawn(async move |_| prompt.await.ok())
+                    // };
+                    // if prompt.await != Some(0) {
+                    //     return;
+                    // }
+
+                    // TODO:
+                    // let x = cx.update(|_, cx| {
+                    //     cx.clear_key_bindings();
+                    //     cx.bind_keys(bindings);
+                    // });
+                    // cx.update(|_, cx| {
+                    //     cx.global::<SettingsStore>()
+                    //         .import_vscode_settings(fs, vscode);
+                    //     log::info!("Imported settings from VsCode");
+                    // })
+                    // .ok();
+                })
+                .detach();
+        });
+
+        workspace.register_action(|_, _: &ImportVsCodeShortcuts, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    let vscode =
+                        match settings::VsCodeShortcuts::load_user_shortcuts(fs.clone()).await {
+                            Ok(vscode) => vscode,
+                            Err(err) => {
+                                println!(
+                                    "Failed to load VsCode shortcuts: {}",
+                                    err.context(format!(
+                                        "Loading VsCode shortcuts from path: {:?}",
+                                        paths::vscode_shortcuts_file()
+                                    ))
+                                );
+
+                                let _ = cx.prompt(
+                                    gpui::PromptLevel::Info,
+                                    "Could not find or load a VsCode shortcuts file",
+                                    None,
+                                    &["Ok"],
+                                );
+                                return;
+                            }
+                        };
+                    println!("vscode shortcuts: {:#?}", vscode);
+                    let x = vscode.to_json();
+                    println!("x: {:#?}", x);
+
+                    // let prompt = {
+                    //     let prompt = cx.prompt(
+                    //         gpui::PromptLevel::Warning,
+                    //         "Importing settings may overwrite your existing settings",
+                    //         None,
+                    //         &["Ok", "Cancel"],
+                    //     );
+                    //     cx.spawn(async move |_| prompt.await.ok())
+                    // };
+                    // if prompt.await != Some(0) {
+                    //     return;
+                    // }
+
+                    // TODO:
+                    // let x = cx.update(|_, cx| {
+                    //     cx.clear_key_bindings();
+                    //     cx.bind_keys(bindings);
+                    // });
+                    // cx.update(|_, cx| {
+                    //     cx.global::<SettingsStore>()
+                    //         .import_vscode_settings(fs, vscode);
+                    //     log::info!("Imported settings from VsCode");
+                    // })
+                    // .ok();
                 })
                 .detach();
         });
