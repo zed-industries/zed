@@ -1,17 +1,10 @@
 use anyhow::{Context, Result, anyhow};
 use futures::join;
-use futures::{
-    AsyncBufReadExt, AsyncReadExt, StreamExt,
-    io::BufReader,
-    stream::{self, BoxStream},
-};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    convert::TryFrom,
-    future::{self},
-};
+use std::convert::TryFrom;
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
@@ -364,56 +357,12 @@ pub async fn complete(
     }
 }
 
-fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
-    ResponseStreamEvent {
-        id: Some(response.id),
-        created: response.created as u32,
-        model: response.model,
-        choices: response
-            .choices
-            .into_iter()
-            .map(|choice| ChoiceDelta {
-                index: choice.index,
-                delta: ResponseMessageDelta {
-                    role: Some(match choice.message {
-                        RequestMessage::Assistant { .. } => Role::Assistant,
-                        RequestMessage::User { .. } => Role::User,
-                        RequestMessage::System { .. } => Role::System,
-                        RequestMessage::Tool { .. } => Role::Tool,
-                    }),
-                    content: match choice.message {
-                        RequestMessage::Assistant { content, .. } => content,
-                        RequestMessage::User { content } => Some(content),
-                        RequestMessage::System { content } => Some(content),
-                        RequestMessage::Tool { content, .. } => Some(content),
-                    },
-                    tool_calls: None,
-                },
-                finish_reason: choice.finish_reason,
-            })
-            .collect(),
-        usage: Some(response.usage),
-    }
-}
-
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    // Some models don't support streaming
-    let model_id = &request.model;
-    let non_streaming_models = ["meta-llama/", "google/"];
-    if non_streaming_models
-        .iter()
-        .any(|prefix| model_id.starts_with(prefix))
-    {
-        let response = complete(client, api_url, api_key, request).await;
-        let response_stream_event = response.map(adapt_response_to_stream);
-        return Ok(stream::once(future::ready(response_stream_event)).boxed());
-    }
-
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
