@@ -132,7 +132,7 @@ jobs:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     if: github.repository_owner == 'the-code-editor-company'
-    runs-on:ubuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -219,7 +219,7 @@ jobs:
   bundle-mac:
     timeout-minutes: 60
     name: Create a macOS bundle
-    runs-on:macos-latest
+    runs-on: macos-latest
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [macos_tests]
     env:
@@ -355,7 +355,7 @@ jobs:
   bundle-linux-aarch64: # this runs on ubuntu22.04
     timeout-minutes: 60
     name: Create arm64 Linux bundle
-    runs-on:ubuntu-24.04-arm
+    runs-on: ubuntu-24.04-arm
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
     needs: [linux_tests]
     env:
