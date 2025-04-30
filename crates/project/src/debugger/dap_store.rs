@@ -455,12 +455,10 @@ impl DapStore {
                         this.get_debug_adapter_binary(definition.clone(), cx)
                     })?
                     .await?;
-                dbg!(&definition);
 
                 if let Some(args) = definition.initialize_args {
                     merge_json_value_into(args, &mut binary.request_args.configuration);
                 }
-                dbg!(&binary);
 
                 session
                     .update(cx, |session, cx| {

@@ -6,9 +6,8 @@ use crate::{
     persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
-use dap::DebugRequest;
 use dap::adapters::DebugAdapterName;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
@@ -222,33 +221,51 @@ impl DebugPanel {
                 cx,
             )
         });
-        cx.spawn_in(window, async move |this, cx| {
-            Self::register_session(this.clone(), session.clone(), cx).await?;
-            let definition = this
-                .update_in(cx, |this, window, cx| {
-                    this.resolve_scenario(scenario, task_context, active_buffer, window, cx)
-                })?
-                .await?;
-
-            let task = dap_store.update(cx, |dap_store, cx| {
-                dap_store.boot_session(session.clone(), definition, cx)
-            })?;
-
-            if let Err(e) = task.await {
-                this.update(cx, |this, cx| {
-                    this.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_error(&e, cx);
+        let task = cx.spawn_in(window, {
+            let session = session.clone();
+            async move |this, cx| {
+                let debug_session =
+                    Self::register_session(this.clone(), session.clone(), cx).await?;
+                let definition = debug_session
+                    .update_in(cx, |debug_session, window, cx| {
+                        debug_session.running_state().update(cx, |running, cx| {
+                            running.resolve_scenario(
+                                scenario,
+                                task_context,
+                                active_buffer,
+                                window,
+                                cx,
+                            )
                         })
-                        .ok();
-                })
-                .ok();
+                    })?
+                    .await?;
 
+                let task = dap_store.update(cx, |dap_store, cx| {
+                    dap_store.boot_session(session.clone(), definition, cx)
+                })?;
+
+                if let Err(e) = task.await {
+                    this.update(cx, |this, cx| {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(&e, cx);
+                            })
+                            .ok();
+                    })
+                    .ok();
+                }
+
+                anyhow::Ok(())
+            }
+        });
+
+        cx.spawn(async move |_, cx| {
+            if let Err(error) = task.await {
+                log::error!("{:?}", error);
                 session
                     .update(cx, |session, cx| session.shutdown(cx))?
                     .await;
             }
-
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -258,7 +275,7 @@ impl DebugPanel {
         this: WeakEntity<Self>,
         session: Entity<Session>,
         cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
+    ) -> Result<Entity<DebugSession>> {
         let adapter_name = session.update(cx, |session, _| session.adapter())?;
         this.update_in(cx, |_, window, cx| {
             cx.subscribe_in(
@@ -280,7 +297,7 @@ impl DebugPanel {
 
         let serialized_layout = persistence::get_serialized_pane_layout(adapter_name).await;
 
-        let workspace = this.update_in(cx, |this, window, cx| {
+        let (debug_session, workspace) = this.update_in(cx, |this, window, cx| {
             this.sessions.retain(|session| {
                 session
                     .read(cx)
@@ -291,7 +308,7 @@ impl DebugPanel {
                     })
             });
 
-            let session_item = DebugSession::running(
+            let debug_session = DebugSession::running(
                 this.project.clone(),
                 this.workspace.clone(),
                 session,
@@ -301,21 +318,23 @@ impl DebugPanel {
                 cx,
             );
 
-            if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
+            if let Some(running) = debug_session.read(cx).mode().as_running().cloned() {
                 // We might want to make this an event subscription and only notify when a new thread is selected
                 // This is used to filter the command menu correctly
                 cx.observe(&running, |_, _, cx| cx.notify()).detach();
             }
 
-            this.sessions.push(session_item.clone());
-            this.activate_session(session_item, window, cx);
-            this.workspace.clone()
+            this.sessions.push(debug_session.clone());
+            this.activate_session(debug_session.clone(), window, cx);
+
+            (debug_session, this.workspace.clone())
         })?;
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.focus_panel::<Self>(window, cx);
         })?;
-        Ok(())
+
+        Ok(debug_session)
     }
 
     fn handle_restart_request(
@@ -409,75 +428,6 @@ impl DebugPanel {
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
     }
-
-    pub fn resolve_scenario(
-        &self,
-        scenario: DebugScenario,
-        task_context: TaskContext,
-        buffer: Option<Entity<Buffer>>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<DebugTaskDefinition>> {
-        let project = self.project.read(cx);
-        let dap_store = project.dap_store().downgrade();
-        let task_store = project.task_store().downgrade();
-        let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            let DebugScenario {
-                adapter,
-                label,
-                build,
-                request,
-                initialize_args,
-                tcp_connection,
-                stop_on_entry,
-            } = scenario;
-            let request = if let Some(mut request) = request {
-                // Resolve task variables within the request.
-                if let DebugRequest::Launch(_) = &mut request {}
-
-                request
-            } else if let Some(build) = build {
-                let Some(task) = task_store.update(cx, |this, cx| {
-                    this.task_inventory().and_then(|inventory| {
-                        inventory
-                            .read(cx)
-                            .task_template_by_label(buffer, &build, cx)
-                    })
-                })?
-                else {
-                    anyhow::bail!("Couldn't find task template for {:?}", build)
-                };
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
-                    anyhow::bail!("Could not resolve task variables within a debug scenario");
-                };
-
-                let run_build = workspace.update_in(cx, |workspace, window, cx| {
-                    workspace.spawn_in_terminal(task.resolved.clone(), window, cx)
-                })?;
-
-                let exit_status = run_build.await?;
-                if !exit_status.success() {
-                    anyhow::bail!("Build failed");
-                }
-
-                dap_store
-                    .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
-                    .await?
-            } else {
-                return Err(anyhow!("No request or build provided"));
-            };
-            Ok(dbg!(DebugTaskDefinition {
-                label,
-                adapter: DebugAdapterName(adapter),
-                request,
-                initialize_args,
-                stop_on_entry,
-                tcp_connection,
-            }))
-        })
-    }
-
     fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions

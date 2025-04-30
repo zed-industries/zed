@@ -15,7 +15,9 @@ use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{
-    Capabilities, RunInTerminalRequestArguments, Thread, client::SessionId,
+    Capabilities, RunInTerminalRequestArguments, Thread,
+    adapters::{DebugAdapterName, DebugTaskDefinition},
+    client::SessionId,
     debugger_settings::DebuggerSettings,
 };
 use futures::{SinkExt, channel::mpsc};
@@ -23,6 +25,7 @@ use gpui::{
     Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
+use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
@@ -34,6 +37,7 @@ use rpc::proto::ViewId;
 use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
+use task::{DebugScenario, TaskContext};
 use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
@@ -665,6 +669,105 @@ impl RunningState {
 
     pub(crate) fn has_pane_at_position(&self, position: Point<Pixels>) -> bool {
         self.panes.pane_at_pixel_position(position).is_some()
+    }
+
+    pub(crate) fn resolve_scenario(
+        &self,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        buffer: Option<Entity<Buffer>>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<DebugTaskDefinition>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("no workspace")));
+        };
+        let project = workspace.read(cx).project().clone();
+        let dap_store = project.read(cx).dap_store().downgrade();
+        let task_store = project.read(cx).task_store().downgrade();
+        let weak_project = project.downgrade();
+        let weak_workspace = workspace.downgrade();
+        cx.spawn_in(window, async move |this, cx| {
+            let DebugScenario {
+                adapter,
+                label,
+                build,
+                request,
+                initialize_args,
+                tcp_connection,
+                stop_on_entry,
+            } = scenario;
+            let request = if let Some(request) = request {
+                // TODO(@piotr) need to resolve task variables
+                request
+            } else if let Some(build) = build {
+                let Some(task) = task_store.update(cx, |this, cx| {
+                    this.task_inventory().and_then(|inventory| {
+                        inventory
+                            .read(cx)
+                            .task_template_by_label(buffer, &build, cx)
+                    })
+                })?
+                else {
+                    anyhow::bail!("Couldn't find task template for {:?}", build)
+                };
+                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                    anyhow::bail!("Could not resolve task variables within a debug scenario");
+                };
+
+                let terminal = project
+                    .update_in(cx, |project, window, cx| {
+                        project.create_terminal(
+                            TerminalKind::Task(task.resolved.clone()),
+                            window.window_handle(),
+                            cx,
+                        )
+                    })?
+                    .await?;
+
+                let terminal_view = cx.new_window_entity(|window, cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        weak_workspace,
+                        None,
+                        weak_project,
+                        window,
+                        cx,
+                    )
+                })?;
+
+                this.update_in(cx, |this, window, cx| {
+                    this.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
+                    this.debug_terminal.update(cx, |debug_terminal, cx| {
+                        debug_terminal.terminal = Some(terminal_view);
+                        cx.notify();
+                    });
+                })?;
+
+                let exit_status = terminal
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .await
+                    .ok_or_else(|| anyhow!("Failed to wait for completed task"))?;
+
+                if !exit_status.success() {
+                    anyhow::bail!("Build failed");
+                }
+
+                dap_store
+                    .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
+                    .await?
+            } else {
+                return Err(anyhow!("No request or build provided"));
+            };
+            Ok(DebugTaskDefinition {
+                label,
+                adapter: DebugAdapterName(adapter),
+                request,
+                initialize_args,
+                stop_on_entry,
+                tcp_connection,
+            })
+        })
     }
 
     fn handle_run_in_terminal(
