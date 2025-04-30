@@ -3,11 +3,12 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 
+use assistant_tool::outline;
 use collections::HashSet;
 use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
-use language::Buffer;
+use language::{Buffer, ParseStatus};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
@@ -19,6 +20,10 @@ use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
 use crate::thread::Thread;
+
+/// If the context from a file exceeds this size, then
+/// the context will include an outline instead of the full file content.
+const MAX_FILE_SIZE: usize = 16384;
 
 pub const RULES_ICON: IconName = IconName::Context;
 
@@ -152,6 +157,7 @@ pub struct FileContext {
     pub handle: FileContextHandle,
     pub full_path: Arc<Path>,
     pub text: SharedString,
+    pub is_outline: bool,
 }
 
 impl FileContextHandle {
@@ -180,14 +186,78 @@ impl FileContextHandle {
         let full_path = file.full_path(cx);
         let rope = buffer_ref.as_rope().clone();
         let buffer = self.buffer.clone();
-        cx.background_spawn(async move {
-            let context = AgentContext::File(FileContext {
-                handle: self,
-                full_path: full_path.into(),
-                text: rope.to_string().into(),
-            });
-            Some((context, vec![buffer]))
-        })
+
+        // Check if the file exceeds MAX_FILE_SIZE
+        let file_size = rope.len();
+
+        // For large files, use outline instead of full content
+        // For large files, use outline instead of full content
+        if file_size > MAX_FILE_SIZE {
+            let buffer = buffer.clone();
+
+            cx.spawn(async move |cx| {
+                // Wait until the buffer has been fully parsed, so we can read its outline
+                let mut parse_status = buffer
+                    .read_with(cx, |buffer, _| buffer.parse_status())
+                    .ok()?;
+                while *parse_status.borrow() != ParseStatus::Idle {
+                    parse_status.changed().await.ok()?;
+                }
+
+                // Get the outline
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
+                let outline = snapshot.outline(None);
+
+                if let Some(outline) = outline {
+                    // Render the outline
+                    let items = outline
+                        .items
+                        .into_iter()
+                        .map(|item| item.to_point(&snapshot));
+                    match outline::render_outline(items, None, 0, usize::MAX).await {
+                        Ok(outline_text) => {
+                            let context = AgentContext::File(FileContext {
+                                handle: self,
+                                full_path: full_path.into(),
+                                text: outline_text.into(),
+                                is_outline: true,
+                            });
+                            Some((context, vec![buffer]))
+                        }
+                        Err(_) => {
+                            // Fallback to full content if outline rendering fails
+                            let context = AgentContext::File(FileContext {
+                                handle: self,
+                                full_path: full_path.into(),
+                                text: rope.to_string().into(),
+                                is_outline: false,
+                            });
+                            Some((context, vec![buffer]))
+                        }
+                    }
+                } else {
+                    // Fallback to full content if no outline is available
+                    let context = AgentContext::File(FileContext {
+                        handle: self,
+                        full_path: full_path.into(),
+                        text: rope.to_string().into(),
+                        is_outline: false,
+                    });
+                    Some((context, vec![buffer]))
+                }
+            })
+        } else {
+            // For smaller files, use the full content
+            cx.background_spawn(async move {
+                let context = AgentContext::File(FileContext {
+                    handle: self,
+                    full_path: full_path.into(),
+                    text: rope.to_string().into(),
+                    is_outline: false,
+                });
+                Some((context, vec![buffer]))
+            })
+        }
     }
 }
 
