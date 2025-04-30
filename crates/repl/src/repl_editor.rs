@@ -97,7 +97,7 @@ pub fn run(
     };
 
     let (runnable_ranges, next_cell_point) =
-        runnable_ranges(&buffer.read(cx).snapshot(), selected_range);
+        runnable_ranges(&buffer.read(cx).snapshot(), selected_range, cx);
 
     for runnable_range in runnable_ranges {
         let Some(language) = multibuffer.read(cx).language_at(runnable_range.start, cx) else {
@@ -216,7 +216,8 @@ pub fn session(editor: WeakEntity<Editor>, cx: &mut App) -> SessionSupport {
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(kernelspec),
         None => {
-            if language_supported(&language.clone()) {
+            // For language_supported, need to check available kernels for language
+            if language_supported(&language.clone(), cx) {
                 SessionSupport::RequiresSetup(language.name())
             } else {
                 SessionSupport::Unsupported
@@ -415,10 +416,11 @@ fn jupytext_cells(
 fn runnable_ranges(
     buffer: &BufferSnapshot,
     range: Range<Point>,
+    cx: &mut App,
 ) -> (Vec<Range<Point>>, Option<Point>) {
     if let Some(language) = buffer.language() {
         if language.name() == "Markdown".into() {
-            return (markdown_code_blocks(buffer, range.clone()), None);
+            return (markdown_code_blocks(buffer, range.clone(), cx), None);
         }
     }
 
@@ -443,21 +445,30 @@ fn runnable_ranges(
 
 // We allow markdown code blocks to end in a trailing newline in order to render the output
 // below the final code fence. This is different than our behavior for selections and Jupytext cells.
-fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Range<Point>> {
+fn markdown_code_blocks(
+    buffer: &BufferSnapshot,
+    range: Range<Point>,
+    cx: &mut App,
+) -> Vec<Range<Point>> {
     buffer
         .injections_intersecting_range(range)
-        .filter(|(_, language)| language_supported(language))
+        .filter(|(_, language)| language_supported(language, cx))
         .map(|(content_range, _)| {
             buffer.offset_to_point(content_range.start)..buffer.offset_to_point(content_range.end)
         })
         .collect()
 }
 
-fn language_supported(language: &Arc<Language>) -> bool {
-    match language.name().as_ref() {
-        "TypeScript" | "Python" => true,
-        _ => false,
-    }
+fn language_supported(language: &Arc<Language>, cx: &mut App) -> bool {
+    let store = ReplStore::global(cx);
+    let store_read = store.read(cx);
+
+    // Since we're just checking for general language support, we only need to look at
+    // the pure Jupyter kernels - these are all the globally available ones
+    store_read.pure_jupyter_kernel_specifications().any(|spec| {
+        // Convert to lowercase for case-insensitive comparison since kernels might report "python" while our language is "Python"
+        spec.language().as_ref().to_lowercase() == language.name().as_ref().to_lowercase()
+    })
 }
 
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {
@@ -507,7 +518,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Single-point selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 4)..Point::new(0, 4), cx);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -515,7 +526,7 @@ mod tests {
         assert_eq!(snippets, vec!["print(1 + 1)"]);
 
         // Multi-line selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(2, 0), cx);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -528,7 +539,7 @@ mod tests {
         );
 
         // Trimming multiple trailing blank lines
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(0, 5)..Point::new(5, 0), cx);
 
         let snippets = snippets
             .into_iter()
@@ -581,7 +592,7 @@ mod tests {
         let snapshot = buffer.read(cx).snapshot();
 
         // Jupytext snippet surrounding an empty selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(2, 5), cx);
 
         let snippets = snippets
             .into_iter()
@@ -597,7 +608,7 @@ mod tests {
         );
 
         // Jupytext snippets intersecting a non-empty selection
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(2, 5)..Point::new(6, 2), cx);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -659,7 +670,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(8, 5), cx);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -704,7 +715,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(3, 5)..Point::new(12, 5), cx);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
@@ -743,7 +754,7 @@ mod tests {
         });
         let snapshot = buffer.read(cx).snapshot();
 
-        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5));
+        let (snippets, _) = runnable_ranges(&snapshot, Point::new(4, 5)..Point::new(5, 5), cx);
         let snippets = snippets
             .into_iter()
             .map(|range| snapshot.text_for_range(range).collect::<String>())
