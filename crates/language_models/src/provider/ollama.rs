@@ -4,6 +4,7 @@ use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRequestTool,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -11,8 +12,8 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, KeepAlive, get_models, preload_model, show_model,
-    stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, KeepAlive, OllamaFunctionTool, get_models,
+    preload_model, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -520,5 +521,16 @@ impl Render for ConfigurationView {
                 )
                 .into_any()
         }
+    }
+}
+
+#[allow(dead_code)]
+fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
+    ollama::OllamaTool::Function {
+        function: OllamaFunctionTool {
+            name: tool.name,
+            description: Some(tool.description),
+            parameters: Some(tool.input_schema),
+        },
     }
 }
