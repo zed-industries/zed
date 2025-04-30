@@ -1,5 +1,5 @@
 use super::*;
-use crate::{EditFileToolInput, ReadFileToolInput};
+use crate::{ReadFileToolInput, streaming_edit_file_tool::StreamingEditFileToolInput};
 use Role::*;
 use anyhow::{Context, anyhow};
 use client::{Client, UserStore};
@@ -59,7 +59,7 @@ fn eval_extract_handle_command_output() {
                     [tool_use(
                         "tool_2",
                         "edit_file",
-                        EditFileToolInput {
+                        StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                         },
@@ -116,7 +116,7 @@ fn eval_delete_run_git_blame() {
                     [tool_use(
                         "tool_2",
                         "edit_file",
-                        EditFileToolInput {
+                        StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                         },
@@ -234,7 +234,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     [tool_use(
                         "tool_4",
                         "edit_file",
-                        EditFileToolInput {
+                        StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                         },

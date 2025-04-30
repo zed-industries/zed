@@ -705,6 +705,7 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "buffer_diff",
  "chrono",
@@ -713,6 +714,7 @@ dependencies = [
  "collections",
  "component",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",

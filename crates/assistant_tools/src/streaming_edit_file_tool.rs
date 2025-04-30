@@ -1,8 +1,5 @@
-use crate::{
-    replace::{replace_exact, replace_with_flexible_indent},
-    schema::json_schema_for,
-};
-use anyhow::{Context as _, Result, anyhow};
+use crate::{Templates, edit_agent::EditAgent, schema::json_schema_for};
+use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
@@ -12,7 +9,9 @@ use gpui::{
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
 };
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{
+    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolSchemaFormat,
+};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,11 +23,11 @@ use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
-pub struct EditFileTool;
+pub struct StreamingEditFileTool;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct EditFileToolInput {
-    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
+pub struct StreamingEditFileToolInput {
+    /// A user-friendly markdown description of the edit. This will be shown in the UI.
     ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
@@ -57,12 +56,6 @@ pub struct EditFileToolInput {
     /// `frontend/db.js`
     /// </example>
     pub path: PathBuf,
-
-    /// The text to replace.
-    pub old_string: String,
-
-    /// The text to replace it with.
-    pub new_string: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -71,15 +64,11 @@ struct PartialInput {
     path: String,
     #[serde(default)]
     display_description: String,
-    #[serde(default)]
-    old_string: String,
-    #[serde(default)]
-    new_string: String,
 }
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
-impl Tool for EditFileTool {
+impl Tool for StreamingEditFileTool {
     fn name(&self) -> String {
         "edit_file".into()
     }
@@ -89,7 +78,7 @@ impl Tool for EditFileTool {
     }
 
     fn description(&self) -> String {
-        include_str!("edit_file_tool/description.md").to_string()
+        include_str!("streaming_edit_file_tool/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {
@@ -97,11 +86,11 @@ impl Tool for EditFileTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        json_schema_for::<EditFileToolInput>(format)
+        json_schema_for::<StreamingEditFileToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<EditFileToolInput>(input.clone()) {
+        match serde_json::from_value::<StreamingEditFileToolInput>(input.clone()) {
             Ok(input) => input.display_description,
             Err(_) => "Editing file".to_string(),
         }
@@ -126,34 +115,67 @@ impl Tool for EditFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let input = match serde_json::from_value::<EditFileToolInput>(input) {
+        let input = match serde_json::from_value::<StreamingEditFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
+
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                input.path.display()
+            )))
+            .into();
+        };
+        let Some(worktree) = project
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        else {
+            return Task::ready(Err(anyhow!("Worktree not found for project path"))).into();
+        };
+        let exists = worktree.update(cx, |worktree, cx| {
+            worktree.file_exists(&project_path.path, cx)
+        });
 
         let card = window.and_then(|window| {
             window
                 .update(cx, |_, window, cx| {
                     cx.new(|cx| {
-                        EditFileToolCard::new(input.path.clone(), project.clone(), window, cx)
+                        StreamingEditFileToolCard::new(
+                            input.path.clone(),
+                            project.clone(),
+                            window,
+                            cx,
+                        )
                     })
                 })
                 .ok()
         });
 
         let card_clone = card.clone();
+        // todo!("read model from settings...")
+        let models = LanguageModelRegistry::read_global(cx);
+        let model = models
+            .available_models(cx)
+            .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
+            .unwrap();
+        let provider = models.provider(&model.provider_id()).unwrap();
+        let authenticated = provider.authenticate(cx);
+        let messages = messages.to_vec();
+
+        // todo!("reuse templates")
+        let edit_agent = EditAgent::new(model, action_log, Templates::new());
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let project_path = project.read_with(cx, |project, cx| {
-                project
-                    .find_project_path(&input.path, cx)
-                    .context("Path not found in project")
-            })??;
+            authenticated.await?;
+            if !exists.await? {
+                return Err(anyhow!("{} not found", input.path.display()));
+            }
 
             let buffer = project
                 .update(cx, |project, cx| {
@@ -161,90 +183,32 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
-            if input.old_string.is_empty() {
-                return Err(anyhow!(
-                    "`old_string` can't be empty, use another tool if you want to create a file."
-                ));
-            }
-
-            if input.old_string == input.new_string {
-                return Err(anyhow!(
-                    "The `old_string` and `new_string` are identical, so no changes would be made."
-                ));
-            }
-
-            let result = cx
-                .background_spawn(async move {
-                    // Try to match exactly
-                    let diff = replace_exact(&input.old_string, &input.new_string, &snapshot)
-                        .await
-                        // If that fails, try being flexible about indentation
-                        .or_else(|| {
-                            replace_with_flexible_indent(
-                                &input.old_string,
-                                &input.new_string,
-                                &snapshot,
-                            )
-                        })?;
-
-                    if diff.edits.is_empty() {
-                        return None;
-                    }
-
-                    let old_text = snapshot.text();
-
-                    Some((old_text, diff))
-                })
-                .await;
-
-            let Some((old_text, diff)) = result else {
-                let err = buffer.read_with(cx, |buffer, _cx| {
-                    let file_exists = buffer
-                        .file()
-                        .map_or(false, |file| file.disk_state().exists());
-
-                    if !file_exists {
-                        anyhow!("{} does not exist", input.path.display())
-                    } else if buffer.is_empty() {
-                        anyhow!(
-                            "{} is empty, so the provided `old_string` wasn't found.",
-                            input.path.display()
-                        )
-                    } else {
-                        anyhow!("Failed to match the provided `old_string`")
-                    }
-                })?;
-
-                return Err(err);
-            };
-
-            let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
-
-                let snapshot = buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, cx);
-                    buffer.finalize_last_transaction();
-                    buffer.snapshot()
-                });
-                action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                snapshot
-            })?;
-
+            let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            edit_agent
+                .edit(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    messages,
+                    cx,
+                )
+                .await?;
+            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             project
                 .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await?;
 
-            let new_text = snapshot.text();
-            let diff_str = cx
-                .background_spawn({
-                    let old_text = old_text.clone();
-                    let new_text = new_text.clone();
-                    async move { language::unified_diff(&old_text, &new_text) }
-                })
-                .await;
+            let old_text = cx.background_spawn({
+                let old_snapshot = old_snapshot.clone();
+                async move { old_snapshot.text() }
+            });
+            let new_text = cx.background_spawn({
+                let new_snapshot = new_snapshot.clone();
+                async move { new_snapshot.text() }
+            });
+            let diff = cx.background_spawn(async move {
+                language::unified_diff(&old_snapshot.text(), &new_snapshot.text())
+            });
+            let (old_text, new_text, diff) = futures::join!(old_text, new_text, diff);
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
@@ -256,7 +220,7 @@ impl Tool for EditFileTool {
             Ok(format!(
                 "Edited {}:\n\n```diff\n{}\n```",
                 input.path.display(),
-                diff_str
+                diff
             ))
         });
 
@@ -267,7 +231,7 @@ impl Tool for EditFileTool {
     }
 }
 
-pub struct EditFileToolCard {
+pub struct StreamingEditFileToolCard {
     path: PathBuf,
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
@@ -278,7 +242,7 @@ pub struct EditFileToolCard {
     editor_unique_id: EntityId,
 }
 
-impl EditFileToolCard {
+impl StreamingEditFileToolCard {
     fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
@@ -352,7 +316,7 @@ impl EditFileToolCard {
     }
 }
 
-impl ToolCard for EditFileToolCard {
+impl ToolCard for StreamingEditFileToolCard {
     fn render(
         &mut self,
         status: &ToolUseStatus,
@@ -620,6 +584,7 @@ async fn build_buffer_diff(
     })
 }
 
+// todo!("add unit tests for failure modes of edit, like file not found, etc.")
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,7 +599,10 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
+        assert_eq!(
+            StreamingEditFileTool.still_streaming_ui_text(&input),
+            "src/main.rs"
+        );
     }
 
     #[test]
@@ -647,7 +615,7 @@ mod tests {
         });
 
         assert_eq!(
-            EditFileTool.still_streaming_ui_text(&input),
+            StreamingEditFileTool.still_streaming_ui_text(&input),
             "Fix error handling",
         );
     }
@@ -662,7 +630,7 @@ mod tests {
         });
 
         assert_eq!(
-            EditFileTool.still_streaming_ui_text(&input),
+            StreamingEditFileTool.still_streaming_ui_text(&input),
             "Fix error handling",
         );
     }
@@ -677,7 +645,7 @@ mod tests {
         });
 
         assert_eq!(
-            EditFileTool.still_streaming_ui_text(&input),
+            StreamingEditFileTool.still_streaming_ui_text(&input),
             DEFAULT_UI_TEXT,
         );
     }
@@ -687,7 +655,7 @@ mod tests {
         let input = serde_json::Value::Null;
 
         assert_eq!(
-            EditFileTool.still_streaming_ui_text(&input),
+            StreamingEditFileTool.still_streaming_ui_text(&input),
             DEFAULT_UI_TEXT,
         );
     }

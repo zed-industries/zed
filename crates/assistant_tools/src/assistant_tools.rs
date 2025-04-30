@@ -18,7 +18,9 @@ mod now_tool;
 mod open_tool;
 mod read_file_tool;
 mod rename_tool;
+mod replace;
 mod schema;
+mod streaming_edit_file_tool;
 mod symbol_info_tool;
 mod templates;
 mod terminal_tool;
@@ -28,12 +30,15 @@ mod web_search_tool;
 
 use std::sync::Arc;
 
+use assistant_settings::AssistantSettings;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
+use feature_flags::{AgentStreamEditsFeatureFlag, FeatureFlagAppExt};
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
+use settings::{Settings, SettingsStore};
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
@@ -55,6 +60,7 @@ use crate::now_tool::NowTool;
 use crate::open_tool::OpenTool;
 use crate::read_file_tool::ReadFileTool;
 use crate::rename_tool::RenameTool;
+use crate::streaming_edit_file_tool::StreamingEditFileTool;
 use crate::symbol_info_tool::SymbolInfoTool;
 use crate::terminal_tool::TerminalTool;
 use crate::thinking_tool::ThinkingTool;
@@ -74,7 +80,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(CreateFileTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
-    registry.register_tool(EditFileTool);
     registry.register_tool(SymbolInfoTool);
     registry.register_tool(CodeActionTool);
     registry.register_tool(MovePathTool);
@@ -90,6 +95,12 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(RenameTool);
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
+
+    register_edit_file(cx);
+    cx.observe_flag::<AgentStreamEditsFeatureFlag, _>(|_, cx| register_edit_file(cx))
+        .detach();
+    cx.observe_global::<SettingsStore>(|cx| register_edit_file(cx))
+        .detach();
 
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
@@ -109,6 +120,19 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
         },
     )
     .detach();
+}
+
+fn register_edit_file(cx: &mut App) {
+    let registry = ToolRegistry::global(cx);
+
+    registry.unregister_tool(EditFileTool);
+    registry.unregister_tool(StreamingEditFileTool);
+
+    if AssistantSettings::get_global(cx).stream_edits(cx) {
+        registry.register_tool(StreamingEditFileTool);
+    } else {
+        registry.register_tool(EditFileTool);
+    }
 }
 
 #[cfg(test)]
