@@ -76,12 +76,10 @@ pub async fn count_tokens(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    model_id: &str,
     request: CountTokensRequest,
 ) -> Result<CountTokensResponse> {
-    let uri = format!(
-        "{}/v1beta/models/gemini-pro:countTokens?key={}",
-        api_url, api_key
-    );
+    let uri = format!("{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",);
     let request = serde_json::to_string(&request)?;
 
     let request_builder = HttpRequest::builder()
