@@ -581,7 +581,6 @@ fn position(
 
 /// Checks whether a file name is from macro invocation and does not refer to an actual file.
 fn is_dummy_macro_file(file_name: &str) -> bool {
-    // FIXME: current rustc does not seem to emit `<macro file>` files anymore?
     file_name.starts_with('<') && file_name.ends_with('>')
 }
 

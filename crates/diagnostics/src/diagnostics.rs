@@ -358,6 +358,7 @@ impl ProjectDiagnosticsEditor {
                 self.update_all_diagnostics(window, cx);
             }
         }
+        cx.notify();
     }
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
