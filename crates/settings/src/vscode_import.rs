@@ -182,3 +182,9 @@ fn vscode_shortcut_command_to_zed_action(
     };
     Some((keystroke.to_string(), context))
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_load_vscode_shortcuts() {}
+}
