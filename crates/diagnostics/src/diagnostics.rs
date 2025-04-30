@@ -422,6 +422,7 @@ impl ProjectDiagnosticsEditor {
                         if let Some(((_task, worktree_diagnostics), worktree_root)) = cx
                             .update(|_, cx| {
                                 let worktree_root = worktree.read(cx).abs_path();
+                                log::info!("Fetching cargo diagnostics for {worktree_root:?}");
                                 fetch_worktree_diagnostics(&worktree_root, cx)
                                     .zip(Some(worktree_root))
                             })
@@ -432,9 +433,11 @@ impl ProjectDiagnosticsEditor {
                             worktree_diagnostics_tasks.push(cx.spawn(async move |cx| {
                                 let _task = _task;
                                 let mut file_diagnostics = HashMap::default();
+                                let mut diagnostics_total = 0;
                                 while let Ok(fetch_update) = worktree_diagnostics.recv().await {
                                     match fetch_update {
                                         FetchUpdate::Diagnostic(diagnostic) => {
+                                            diagnostics_total += 1;
                                             for (url, diagnostic) in map_rust_diagnostic_to_lsp(
                                                 &worktree_root,
                                                 &diagnostic,
@@ -501,6 +504,7 @@ impl ProjectDiagnosticsEditor {
                                         }
                                     }
                                 }
+                                log::info!("Fetched {diagnostics_total} for worktree {worktree_root:?}");
                             }));
                         }
                     }
@@ -560,6 +564,7 @@ impl ProjectDiagnosticsEditor {
     fn stop_cargo_diagnostics_fetch(&mut self, cx: &mut App) {
         self.update_cargo_fetch_status(FetchStatus::Finished, cx);
         self.cargo_diagnostics_fetch.task = None;
+        log::info!("Finished fetching cargo diagnostics");
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
