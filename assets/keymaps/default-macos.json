@@ -959,7 +959,8 @@
       "escape": "menu::Cancel",
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
-      "tab": "picker::ConfirmCompletion",
+      "tab": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrevious",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
     }
