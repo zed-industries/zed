@@ -1,9 +1,14 @@
 use std::ffi::{CStr, c_void};
 
 use collections::HashMap;
+use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
+use core_graphics::event::CGKeyCode;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use crate::{Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper};
+use crate::{
+    Keystroke, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    platform::mac::{LMGetKbdType, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData},
+};
 
 use super::{
     TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, kTISPropertyInputSourceID,
@@ -54,8 +59,8 @@ fn get_keyboard_layout_id() -> (*mut Object, String) {
 }
 
 pub(crate) struct MacKeyboardMapper {
-    key_to_code: HashMap<char, u32>,
-    code_to_shifted_key: HashMap<u32, char>,
+    key_to_code: HashMap<String, u16>,
+    code_to_shifted_key: HashMap<u16, String>,
 }
 
 impl MacKeyboardMapper {
@@ -64,8 +69,6 @@ impl MacKeyboardMapper {
         let mut code_to_shifted_key = HashMap::default();
 
         // Populate the mappings here
-        key_to_code.insert('a', 0);
-        code_to_shifted_key.insert(0, 'A');
 
         Self {
             key_to_code,
@@ -78,6 +81,75 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
     fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke {
         keystroke
     }
+}
+
+pub(crate) const NO_MOD: u32 = 0;
+pub(crate) const CMD_MOD: u32 = 1;
+pub(crate) const SHIFT_MOD: u32 = 2;
+pub(crate) const OPTION_MOD: u32 = 8;
+
+pub(crate) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
+    // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
+    // shifted >> 8 for UCKeyTranslate
+    const CG_SPACE_KEY: u16 = 49;
+    // https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/UnicodeUtilities.h#L278
+    #[allow(non_upper_case_globals)]
+    const kUCKeyActionDown: u16 = 0;
+    #[allow(non_upper_case_globals)]
+    const kUCKeyTranslateNoDeadKeysMask: u32 = 0;
+
+    let keyboard_type = unsafe { LMGetKbdType() as u32 };
+    const BUFFER_SIZE: usize = 4;
+    let mut dead_key_state = 0;
+    let mut buffer: [u16; BUFFER_SIZE] = [0; BUFFER_SIZE];
+    let mut buffer_size: usize = 0;
+
+    let keyboard = unsafe { TISCopyCurrentKeyboardLayoutInputSource() };
+    if keyboard.is_null() {
+        return "".to_string();
+    }
+    let layout_data = unsafe {
+        TISGetInputSourceProperty(keyboard, kTISPropertyUnicodeKeyLayoutData as *const c_void)
+            as CFDataRef
+    };
+    if layout_data.is_null() {
+        unsafe {
+            let _: () = msg_send![keyboard, release];
+        }
+        return "".to_string();
+    }
+    let keyboard_layout = unsafe { CFDataGetBytePtr(layout_data) };
+
+    unsafe {
+        UCKeyTranslate(
+            keyboard_layout as *const c_void,
+            code,
+            kUCKeyActionDown,
+            modifiers,
+            keyboard_type,
+            kUCKeyTranslateNoDeadKeysMask,
+            &mut dead_key_state,
+            BUFFER_SIZE,
+            &mut buffer_size as *mut usize,
+            &mut buffer as *mut u16,
+        );
+        if dead_key_state != 0 {
+            UCKeyTranslate(
+                keyboard_layout as *const c_void,
+                CG_SPACE_KEY,
+                kUCKeyActionDown,
+                modifiers,
+                keyboard_type,
+                kUCKeyTranslateNoDeadKeysMask,
+                &mut dead_key_state,
+                BUFFER_SIZE,
+                &mut buffer_size as *mut usize,
+                &mut buffer as *mut u16,
+            );
+        }
+        let _: () = msg_send![keyboard, release];
+    }
+    String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }
 
 // All typeable scan codes for the standard US keyboard layout, ANSI104
