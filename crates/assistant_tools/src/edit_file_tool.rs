@@ -24,6 +24,8 @@ use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
+pub struct EditFileTool;
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
@@ -74,8 +76,6 @@ struct PartialInput {
     #[serde(default)]
     new_string: String,
 }
-
-pub struct EditFileTool;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -174,6 +174,7 @@ impl Tool for EditFileTool {
                     "The `old_string` and `new_string` are identical, so no changes would be made."
                 ));
             }
+            let old_string = input.old_string.clone();
 
             let result = cx
                 .background_spawn(async move {
@@ -213,6 +214,21 @@ impl Tool for EditFileTool {
                             input.path.display()
                         )
                     } else {
+                        let old_string_with_buffer = format!(
+                            "old_string:\n\n{}\n\n-------file-------\n\n{}",
+                            &old_string,
+                            buffer.text()
+                        );
+                        let path = {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+
+                            let mut hasher = DefaultHasher::new();
+                            old_string_with_buffer.hash(&mut hasher);
+
+                            PathBuf::from(format!("failed_tool_{}.txt", hasher.finish()))
+                        };
+                        std::fs::write(path, old_string_with_buffer).unwrap();
                         anyhow!("Failed to match the provided `old_string`")
                     }
                 })?;
@@ -627,7 +643,6 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_with_path() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "src/main.rs",
             "display_description": "",
@@ -635,12 +650,11 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "src/main.rs");
+        assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
     }
 
     #[test]
     fn still_streaming_ui_text_with_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "",
             "display_description": "Fix error handling",
@@ -648,12 +662,14 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_with_path_and_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "src/main.rs",
             "display_description": "Fix error handling",
@@ -661,12 +677,14 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_no_path_or_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "",
             "display_description": "",
@@ -674,14 +692,19 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_with_null() {
-        let tool = EditFileTool;
         let input = serde_json::Value::Null;
 
-        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 }

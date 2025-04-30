@@ -7,7 +7,6 @@ use crate::{
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
-use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::DebugRequest;
 use dap::{
@@ -15,7 +14,6 @@ use dap::{
     client::SessionId, debugger_settings::DebuggerSettings,
 };
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
@@ -24,21 +22,11 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{
-    Project,
-    debugger::{
-        dap_store::{self, DapStore},
-        session::ThreadStatus,
-    },
-    terminals::TerminalKind,
-};
+use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::any::TypeId;
-use std::path::Path;
-use std::sync::Arc;
-use task::{DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContext, TaskId};
-use terminal_view::TerminalView;
+use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::SplitDirection;
 use workspace::{
@@ -74,27 +62,21 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
-            let dap_store = project.read(cx).dap_store();
-
-            let _subscriptions =
-                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
 
             let debug_panel = Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                _subscriptions,
                 past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
                 project,
@@ -288,7 +270,7 @@ impl DebugPanel {
             cx.subscribe_in(
                 &session,
                 window,
-                move |_, session, event: &SessionStateEvent, window, cx| match event {
+                move |this, session, event: &SessionStateEvent, window, cx| match event {
                     SessionStateEvent::Restart => {
                         let mut curr_session = session.clone();
                         while let Some(parent_session) = curr_session
@@ -309,6 +291,9 @@ impl DebugPanel {
                             .await
                         })
                         .detach_and_log_err(cx);
+                    }
+                    SessionStateEvent::SpawnChildSession { request } => {
+                        this.handle_start_debugging_request(request, session.clone(), window, cx);
                     }
                     _ => {}
                 },
@@ -357,7 +342,7 @@ impl DebugPanel {
         Ok(())
     }
 
-    pub fn start_child_session(
+    pub fn handle_start_debugging_request(
         &mut self,
         request: &StartDebuggingRequestArguments,
         parent_session: Entity<Session>,
@@ -417,47 +402,6 @@ impl DebugPanel {
 
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
-    }
-
-    fn handle_dap_store_event(
-        &mut self,
-        _dap_store: &Entity<DapStore>,
-        event: &dap_store::DapStoreEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            dap_store::DapStoreEvent::RunInTerminal {
-                session_id,
-                title,
-                cwd,
-                command,
-                args,
-                envs,
-                sender,
-                ..
-            } => {
-                self.handle_run_in_terminal_request(
-                    *session_id,
-                    title.clone(),
-                    cwd.clone(),
-                    command.clone(),
-                    args.clone(),
-                    envs.clone(),
-                    sender.clone(),
-                    window,
-                    cx,
-                )
-                .detach_and_log_err(cx);
-            }
-            dap_store::DapStoreEvent::SpawnChildSession {
-                request,
-                parent_session,
-            } => {
-                self.start_child_session(request, parent_session.clone(), window, cx);
-            }
-            _ => {}
-        }
     }
 
     pub fn resolve_scenario(
@@ -526,101 +470,6 @@ impl DebugPanel {
                 stop_on_entry,
                 tcp_connection,
             })
-        })
-    }
-
-    fn handle_run_in_terminal_request(
-        &self,
-        session_id: SessionId,
-        title: Option<String>,
-        cwd: Option<Arc<Path>>,
-        command: Option<String>,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-        mut sender: mpsc::Sender<Result<u32>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(session) = self
-            .sessions
-            .iter()
-            .find(|s| s.read(cx).session_id(cx) == session_id)
-        else {
-            return Task::ready(Err(anyhow!("no session {:?} found", session_id)));
-        };
-        let running = session.read(cx).running_state();
-        let cwd = cwd.map(|p| p.to_path_buf());
-        let shell = self
-            .project
-            .read(cx)
-            .terminal_settings(&cwd, cx)
-            .shell
-            .clone();
-        let kind = if let Some(command) = command {
-            let title = title.clone().unwrap_or(command.clone());
-            TerminalKind::Task(task::SpawnInTerminal {
-                id: TaskId("debug".to_string()),
-                full_label: title.clone(),
-                label: title.clone(),
-                command: command.clone(),
-                args,
-                command_label: title.clone(),
-                cwd,
-                env: envs,
-                use_new_terminal: true,
-                allow_concurrent_runs: true,
-                reveal: RevealStrategy::NoFocus,
-                reveal_target: RevealTarget::Dock,
-                hide: HideStrategy::Never,
-                shell,
-                show_summary: false,
-                show_command: false,
-                show_rerun: false,
-            })
-        } else {
-            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
-        };
-
-        let workspace = self.workspace.clone();
-        let project = self.project.downgrade();
-
-        let terminal_task = self.project.update(cx, |project, cx| {
-            project.create_terminal(kind, window.window_handle(), cx)
-        });
-        let terminal_task = cx.spawn_in(window, async move |_, cx| {
-            let terminal = terminal_task.await?;
-
-            let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(terminal.clone(), workspace, None, project, window, cx)
-            })?;
-
-            running.update_in(cx, |running, window, cx| {
-                running.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
-                running.debug_terminal.update(cx, |debug_terminal, cx| {
-                    debug_terminal.terminal = Some(terminal_view);
-                    cx.notify();
-                });
-            })?;
-
-            anyhow::Ok(terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())?)
-        });
-
-        cx.background_spawn(async move {
-            match terminal_task.await {
-                Ok(pid_task) => match pid_task {
-                    Some(pid) => sender.send(Ok(pid.as_u32())).await?,
-                    None => {
-                        sender
-                            .send(Err(anyhow!(
-                                "Terminal was spawned but PID was not available"
-                            )))
-                            .await?
-                    }
-                },
-                Err(error) => sender.send(Err(anyhow!(error))).await?,
-            };
-
-            Ok(())
         })
     }
 
