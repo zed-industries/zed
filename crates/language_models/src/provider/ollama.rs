@@ -376,7 +376,6 @@ impl LanguageModel for OllamaLanguageModel {
                             match tool_call {
                                 OllamaToolCall::Function(function) => {
                                     LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                                        // TODO: id's should be unique to that tool call
                                         id: LanguageModelToolUseId::from(format!(
                                             "{}-{}",
                                             id,
