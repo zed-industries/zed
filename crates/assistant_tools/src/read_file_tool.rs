@@ -125,7 +125,8 @@ impl Tool for ReadFileTool {
             if input.start_line.is_some() || input.end_line.is_some() {
                 let result = buffer.read_with(cx, |buffer, _cx| {
                     let text = buffer.text();
-                    let start = input.start_line.unwrap_or(1);
+                    // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
+                    let start = input.start_line.unwrap_or(1).max(1);
                     let lines = text.split('\n').skip(start - 1);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
