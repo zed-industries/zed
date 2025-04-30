@@ -175,37 +175,6 @@ pub(crate) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String 
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }
 
-fn is_alphabetic_key(key: &str) -> bool {
-    matches!(
-        key,
-        "a" | "b"
-            | "c"
-            | "d"
-            | "e"
-            | "f"
-            | "g"
-            | "h"
-            | "i"
-            | "j"
-            | "k"
-            | "l"
-            | "m"
-            | "n"
-            | "o"
-            | "p"
-            | "q"
-            | "r"
-            | "s"
-            | "t"
-            | "u"
-            | "v"
-            | "w"
-            | "x"
-            | "y"
-            | "z"
-    )
-}
-
 // All typeable scan codes for the standard US keyboard layout, ANSI104
 const TYPEABLE_CODES: &[u16] = &[
     0x0000, // a
