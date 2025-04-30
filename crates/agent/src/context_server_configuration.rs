@@ -12,6 +12,7 @@ use gpui::{
     TextStyle, Transformation, WeakEntity, percentage,
 };
 use language::{Language, LanguageRegistry};
+use notifications::status_toast::{StatusToast, ToastIcon};
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
@@ -215,26 +216,49 @@ impl ConfigureContextServerModal {
         configuration.waiting_for_context_server = true;
 
         let task = wait_for_context_server(&self.context_server_manager, id.clone(), cx);
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| match result {
-                Ok(_) => {
-                    this.context_servers_to_setup.remove(0);
-                    if this.context_servers_to_setup.is_empty() {
-                        this.dismiss(cx);
+        cx.spawn({
+            let id = id.clone();
+            async move |this, cx| {
+                let result = task.await;
+                this.update(cx, |this, cx| match result {
+                    Ok(_) => {
+                        this.context_servers_to_setup.remove(0);
+                        if this.context_servers_to_setup.is_empty() {
+                            this.workspace
+                                .update(cx, {
+                                    |workspace, cx| {
+                                        let status_toast = StatusToast::new(
+                                            format!("{} MCP configured successfully", id.clone()),
+                                            cx,
+                                            |this, _cx| {
+                                                this.icon(
+                                                    ToastIcon::new(IconName::DatabaseZap)
+                                                        .color(Color::Muted),
+                                                )
+                                                .action("Dismiss", |_, _| {})
+                                            },
+                                        );
+
+                                        workspace.toggle_status_toast(status_toast, cx);
+                                    }
+                                })
+                                .log_err();
+
+                            this.dismiss(cx);
+                        }
+                        cx.notify();
                     }
-                    cx.notify();
-                }
-                Err(err) => {
-                    if let Some(configuration) = this.context_servers_to_setup.get_mut(0) {
-                        configuration.last_error = Some(err.into());
-                        configuration.waiting_for_context_server = false;
-                    } else {
-                        this.dismiss(cx);
+                    Err(err) => {
+                        if let Some(configuration) = this.context_servers_to_setup.get_mut(0) {
+                            configuration.last_error = Some(err.into());
+                            configuration.waiting_for_context_server = false;
+                        } else {
+                            this.dismiss(cx);
+                        }
+                        cx.notify();
                     }
-                    cx.notify();
-                }
-            })
+                })
+            }
         })
         .detach();
 
