@@ -138,43 +138,33 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
 
     // trigger to load threads
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state
-                    .session()
-                    .update(cx, |session, cx| session.threads(cx));
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
     });
 
     cx.run_until_parked();
 
     // select first thread
     active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state.select_current_thread(
-                    &running_state
-                        .session()
-                        .update(cx, |session, cx| session.threads(cx)),
-                    window,
-                    cx,
-                );
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
     });
 
     cx.run_until_parked();
 
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
         let stack_frame_list = session
-            .mode()
-            .as_running()
-            .unwrap()
+            .running_state()
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
@@ -309,34 +299,26 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
 
     // trigger threads to load
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state
-                    .session()
-                    .update(cx, |session, cx| session.threads(cx));
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
     });
 
     cx.run_until_parked();
 
     // select first thread
     active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state.select_current_thread(
-                    &running_state
-                        .session()
-                        .update(cx, |session, cx| session.threads(cx)),
-                    window,
-                    cx,
-                );
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
     });
 
     cx.run_until_parked();
@@ -383,9 +365,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
 
             active_debug_panel_item
                 .read(cx)
-                .mode()
-                .as_running()
-                .unwrap()
+                .running_state()
                 .read(cx)
                 .stack_frame_list()
                 .clone()
@@ -676,34 +656,26 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
 
     // trigger threads to load
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state
-                    .session()
-                    .update(cx, |session, cx| session.threads(cx));
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
     });
 
     cx.run_until_parked();
 
     // select first thread
     active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state.select_current_thread(
-                    &running_state
-                        .session()
-                        .update(cx, |session, cx| session.threads(cx)),
-                    window,
-                    cx,
-                );
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
     });
 
     cx.run_until_parked();
@@ -711,9 +683,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     // trigger stack frames to loaded
     active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let stack_frame_list = debug_panel_item
-            .mode()
-            .as_running()
-            .unwrap()
+            .running_state()
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
@@ -725,9 +695,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
 
     active_debug_session_panel(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
         let stack_frame_list = debug_panel_item
-            .mode()
-            .as_running()
-            .unwrap()
+            .running_state()
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {

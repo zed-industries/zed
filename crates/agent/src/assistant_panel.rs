@@ -50,7 +50,7 @@ use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
     NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu,
+    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 pub fn init(cx: &mut App) {
@@ -111,6 +111,14 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_navigation_menu(&ToggleNavigationMenu, window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ToggleOptionsMenu, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
                     }
                 });
@@ -914,6 +922,15 @@ impl AssistantPanel {
         self.assistant_navigation_menu_handle.toggle(window, cx);
     }
 
+    pub fn toggle_options_menu(
+        &mut self,
+        _: &ToggleOptionsMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.assistant_dropdown_menu_handle.toggle(window, cx);
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -1356,12 +1373,22 @@ impl AssistantPanel {
                 }),
         );
 
-        let agent_extra_menu = PopoverMenu::new("assistant-menu")
+        let agent_extra_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
-                IconButton::new("new", IconName::Ellipsis)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Subtle),
-                Tooltip::text("Toggle Agent Menu"),
+                IconButton::new("agent-options-menu", IconName::Ellipsis)
+                    .icon_size(IconSize::Small),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Agent Menu",
+                            &ToggleOptionsMenu,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                },
             )
             .anchor(Corner::TopRight)
             .with_handle(self.assistant_dropdown_menu_handle.clone())
@@ -2150,6 +2177,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
+            .on_action(cx.listener(Self::toggle_options_menu))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent

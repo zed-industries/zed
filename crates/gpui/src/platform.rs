@@ -1,7 +1,5 @@
-// todo(windows): remove
-#![cfg_attr(windows, allow(dead_code))]
-
 mod app_menu;
+mod keyboard;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -66,6 +64,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use keyboard::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -802,6 +801,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
@@ -809,7 +809,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -852,6 +855,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
@@ -1069,7 +1073,10 @@ pub(crate) struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     pub focus: bool,
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1673,12 +1680,4 @@ impl From<String> for ClipboardString {
             metadata: None,
         }
     }
-}
-
-/// A trait for platform-specific keyboard layouts
-pub trait PlatformKeyboardLayout {
-    /// Get the keyboard layout ID, which should be unique to the layout
-    fn id(&self) -> &str;
-    /// Get the keyboard layout display name
-    fn name(&self) -> &str;
 }

@@ -92,20 +92,14 @@ impl DebugPanel {
         let (has_active_session, supports_restart, support_step_back, status) = self
             .active_session()
             .map(|item| {
-                let running = item.read(cx).mode().as_running().cloned();
-
-                match running {
-                    Some(running) => {
-                        let caps = running.read(cx).capabilities(cx);
-                        (
-                            !running.read(cx).session().read(cx).is_terminated(),
-                            caps.supports_restart_request.unwrap_or_default(),
-                            caps.supports_step_back.unwrap_or_default(),
-                            running.read(cx).thread_status(cx),
-                        )
-                    }
-                    None => (false, false, false, None),
-                }
+                let running = item.read(cx).running_state().clone();
+                let caps = running.read(cx).capabilities(cx);
+                (
+                    !running.read(cx).session().read(cx).is_terminated(),
+                    caps.supports_restart_request.unwrap_or_default(),
+                    caps.supports_step_back.unwrap_or_default(),
+                    running.read(cx).thread_status(cx),
+                )
             })
             .unwrap_or((false, false, false, None));
 
@@ -308,11 +302,11 @@ impl DebugPanel {
             this.sessions.retain(|session| {
                 session
                     .read(cx)
-                    .mode()
-                    .as_running()
-                    .map_or(false, |running_state| {
-                        !running_state.read(cx).session().read(cx).is_terminated()
-                    })
+                    .running_state()
+                    .read(cx)
+                    .session()
+                    .read(cx)
+                    .is_terminated()
             });
 
             let session_item = DebugSession::running(
@@ -325,11 +319,13 @@ impl DebugPanel {
                 cx,
             );
 
-            if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                // We might want to make this an event subscription and only notify when a new thread is selected
-                // This is used to filter the command menu correctly
-                cx.observe(&running, |_, _, cx| cx.notify()).detach();
-            }
+            // We might want to make this an event subscription and only notify when a new thread is selected
+            // This is used to filter the command menu correctly
+            cx.observe(
+                &session_item.read(cx).running_state().clone(),
+                |_, _, cx| cx.notify(),
+            )
+            .detach();
 
             this.sessions.push(session_item.clone());
             this.activate_session(session_item, window, cx);
@@ -483,11 +479,9 @@ impl DebugPanel {
             return;
         };
         session.update(cx, |this, cx| {
-            if let Some(running) = this.mode().as_running() {
-                running.update(cx, |this, cx| {
-                    this.serialize_layout(window, cx);
-                });
-            }
+            this.running_state().update(cx, |this, cx| {
+                this.serialize_layout(window, cx);
+            });
         });
         let session_id = session.update(cx, |this, cx| this.session_id(cx));
         let should_prompt = self
@@ -624,7 +618,7 @@ impl DebugPanel {
         if let Some(running_state) = self
             .active_session
             .as_ref()
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|session| session.read(cx).running_state().clone())
         {
             let pane_items_status = running_state.read(cx).pane_items_status(cx);
             let this = cx.weak_entity();
@@ -635,10 +629,10 @@ impl DebugPanel {
                         let this = this.clone();
                         move |window, cx| {
                             this.update(cx, |this, cx| {
-                                if let Some(running_state) =
-                                    this.active_session.as_ref().and_then(|session| {
-                                        session.read(cx).mode().as_running().cloned()
-                                    })
+                                if let Some(running_state) = this
+                                    .active_session
+                                    .as_ref()
+                                    .map(|session| session.read(cx).running_state().clone())
                                 {
                                     running_state.update(cx, |state, cx| {
                                         if is_visible {
@@ -681,7 +675,7 @@ impl DebugPanel {
                     h_flex().gap_2().w_full().when_some(
                         active_session
                             .as_ref()
-                            .and_then(|session| session.read(cx).mode().as_running()),
+                            .map(|session| session.read(cx).running_state()),
                         |this, running_session| {
                             let thread_status = running_session
                                 .read(cx)
@@ -919,7 +913,7 @@ impl DebugPanel {
                         .when_some(
                             active_session
                                 .as_ref()
-                                .and_then(|session| session.read(cx).mode().as_running())
+                                .map(|session| session.read(cx).running_state())
                                 .cloned(),
                             |this, session| {
                                 this.child(
@@ -982,12 +976,10 @@ impl DebugPanel {
     ) {
         if let Some(session) = self.active_session() {
             session.update(cx, |session, cx| {
-                if let Some(running) = session.mode().as_running() {
-                    running.update(cx, |running, cx| {
-                        running.activate_pane_in_direction(direction, window, cx);
-                    })
-                }
-            })
+                session.running_state().update(cx, |running, cx| {
+                    running.activate_pane_in_direction(direction, window, cx);
+                })
+            });
         }
     }
 
@@ -999,12 +991,10 @@ impl DebugPanel {
     ) {
         if let Some(session) = self.active_session() {
             session.update(cx, |session, cx| {
-                if let Some(running) = session.mode().as_running() {
-                    running.update(cx, |running, cx| {
-                        running.activate_item(item, window, cx);
-                    })
-                }
-            })
+                session.running_state().update(cx, |running, cx| {
+                    running.activate_item(item, window, cx);
+                });
+            });
         }
     }
 
@@ -1017,11 +1007,9 @@ impl DebugPanel {
         debug_assert!(self.sessions.contains(&session_item));
         session_item.focus_handle(cx).focus(window);
         session_item.update(cx, |this, cx| {
-            if let Some(running) = this.mode().as_running() {
-                running.update(cx, |this, cx| {
-                    this.go_to_selected_stack_frame(window, cx);
-                });
-            }
+            this.running_state().update(cx, |this, cx| {
+                this.go_to_selected_stack_frame(window, cx);
+            });
         });
         self.active_session = Some(session_item);
         cx.notify();
@@ -1106,7 +1094,7 @@ impl Render for DebugPanel {
         if self
             .active_session
             .as_ref()
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|session| session.read(cx).running_state())
             .map(|state| state.read(cx).has_open_context_menu(cx))
             .unwrap_or(false)
         {
@@ -1224,10 +1212,9 @@ impl Render for DebugPanel {
                         if this
                             .active_session
                             .as_ref()
-                            .and_then(|session| {
-                                session.read(cx).mode().as_running().map(|state| {
-                                    state.read(cx).has_pane_at_position(event.position)
-                                })
+                            .map(|session| {
+                                let state = session.read(cx).running_state();
+                                state.read(cx).has_pane_at_position(event.position)
                             })
                             .unwrap_or(false)
                         {

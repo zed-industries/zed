@@ -6,10 +6,19 @@ pub struct PathWithRange {
     pub range: Option<Range<LineCol>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct LineCol {
     pub line: u32,
     pub col: Option<u32>,
+}
+
+impl std::fmt::Debug for LineCol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.col {
+            Some(col) => write!(f, "L{}:{}", self.line, col),
+            None => write!(f, "L{}", self.line),
+        }
+    }
 }
 
 impl LineCol {
