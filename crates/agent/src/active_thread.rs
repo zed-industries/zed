@@ -77,6 +77,7 @@ pub struct ActiveThread {
     _subscriptions: Vec<Subscription>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     open_feedback_editors: HashMap<MessageId, Entity<Editor>>,
+    _load_edited_message_context_task: Option<Task<()>>,
 }
 
 struct RenderedMessage {
@@ -788,6 +789,7 @@ impl ActiveThread {
             _subscriptions: subscriptions,
             notification_subscriptions: HashMap::default(),
             open_feedback_editors: HashMap::default(),
+            _load_edited_message_context_task: None,
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -1448,21 +1450,11 @@ impl ActiveThread {
         let Some((message_id, state)) = self.editing_message.take() else {
             return;
         };
-        let edited_text = state.editor.read(cx).text(cx);
-        let thread_model = self.thread.update(cx, |thread, cx| {
-            thread.edit_message(
-                message_id,
-                Role::User,
-                vec![MessageSegment::Text(edited_text)],
-                cx,
-            );
-            for message_id in self.messages_after(message_id) {
-                thread.delete_message(*message_id, cx);
-            }
-            thread.get_or_init_configured_model(cx)
-        });
 
-        let Some(model) = thread_model else {
+        let Some(model) = self
+            .thread
+            .update(cx, |thread, cx| thread.get_or_init_configured_model(cx))
+        else {
             return;
         };
 
@@ -1471,11 +1463,45 @@ impl ActiveThread {
             return;
         }
 
-        self.thread.update(cx, |thread, cx| {
-            thread.advance_prompt_id();
-            thread.send_to_model(model.model, Some(window.window_handle()), cx);
-        });
-        cx.notify();
+        let edited_text = state.editor.read(cx).text(cx);
+
+        let new_context = self
+            .context_store
+            .read(cx)
+            .new_context_for_thread(self.thread.read(cx), Some(message_id));
+
+        let project = self.thread.read(cx).project().clone();
+        let prompt_store = self.thread_store.read(cx).prompt_store().clone();
+
+        let load_context_task =
+            crate::context::load_context(new_context, &project, &prompt_store, cx);
+        self._load_edited_message_context_task =
+            Some(cx.spawn_in(window, async move |this, cx| {
+                let context = load_context_task.await;
+                let _ = this
+                    .update_in(cx, |this, window, cx| {
+                        this.thread.update(cx, |thread, cx| {
+                            thread.edit_message(
+                                message_id,
+                                Role::User,
+                                vec![MessageSegment::Text(edited_text)],
+                                Some(context.loaded_context),
+                                cx,
+                            );
+                            for message_id in this.messages_after(message_id) {
+                                thread.delete_message(*message_id, cx);
+                            }
+                        });
+
+                        this.thread.update(cx, |thread, cx| {
+                            thread.advance_prompt_id();
+                            thread.send_to_model(model.model, Some(window.window_handle()), cx);
+                        });
+                        this._load_edited_message_context_task = None;
+                        cx.notify();
+                    })
+                    .log_err();
+            }));
     }
 
     fn messages_after(&self, message_id: MessageId) -> &[MessageId] {
@@ -1813,45 +1839,43 @@ impl ActiveThread {
         let has_content = !message_is_empty || !added_context.is_empty();
 
         let message_content = has_content.then(|| {
-            v_flex()
-                .w_full()
-                .gap_1()
-                .when(!message_is_empty, |parent| {
-                    parent.child(if let Some(state) = editing_message_state.as_ref() {
-                        self.render_edit_message_editor(state, window, cx)
-                            .into_any_element()
-                    } else {
-                        div()
-                            .min_h_6()
-                            .child(self.render_message_content(
-                                message_id,
-                                rendered_message,
-                                has_tool_uses,
-                                workspace.clone(),
-                                window,
-                                cx,
-                            ))
-                            .into_any_element()
+            if let Some(state) = editing_message_state.as_ref() {
+                self.render_edit_message_editor(state, window, cx)
+                    .into_any_element()
+            } else {
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .when(!message_is_empty, |parent| {
+                        parent.child(div().min_h_6().child(self.render_message_content(
+                            message_id,
+                            rendered_message,
+                            has_tool_uses,
+                            workspace.clone(),
+                            window,
+                            cx,
+                        )))
                     })
-                })
-                .when(!added_context.is_empty(), |parent| {
-                    parent.child(h_flex().flex_wrap().gap_1().children(
-                        added_context.into_iter().map(|added_context| {
-                            let context = added_context.handle.clone();
-                            ContextPill::added(added_context, false, false, None).on_click(Rc::new(
-                                cx.listener({
-                                    let workspace = workspace.clone();
-                                    move |_, _, window, cx| {
-                                        if let Some(workspace) = workspace.upgrade() {
-                                            open_context(&context, workspace, window, cx);
-                                            cx.notify();
+                    .when(!added_context.is_empty(), |parent| {
+                        parent.child(h_flex().flex_wrap().gap_1().children(
+                            added_context.into_iter().map(|added_context| {
+                                let context = added_context.handle.clone();
+                                ContextPill::added(added_context, false, false, None).on_click(
+                                    Rc::new(cx.listener({
+                                        let workspace = workspace.clone();
+                                        move |_, _, window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                open_context(&context, workspace, window, cx);
+                                                cx.notify();
+                                            }
                                         }
-                                    }
-                                }),
-                            ))
-                        }),
-                    ))
-                })
+                                    })),
+                                )
+                            }),
+                        ))
+                    })
+                    .into_any_element()
+            }
         });
 
         let styled_message = match message.role {

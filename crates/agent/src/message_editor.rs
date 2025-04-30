@@ -1058,7 +1058,7 @@ impl MessageEditor {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
                 let new_context = this.context_store.read_with(cx, |context_store, cx| {
-                    context_store.new_context_for_thread(this.thread.read(cx))
+                    context_store.new_context_for_thread(this.thread.read(cx), None)
                 });
                 load_context(new_context, &this.project, &this.prompt_store, cx)
             }) else {
