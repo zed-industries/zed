@@ -251,6 +251,12 @@
     }
   },
   {
+    "context": "AgentPanel > NavigationMenu",
+    "bindings": {
+      "ctrl-backspace": "agent::DeleteRecentlyOpenThread"
+    }
+  },
+  {
     "context": "AgentPanel > Markdown",
     "bindings": {
       "copy": "markdown::CopyAsMarkdown",

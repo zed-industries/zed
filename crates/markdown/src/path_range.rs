@@ -32,6 +32,20 @@ impl LineCol {
 }
 
 impl PathWithRange {
+    // Note: We could try out this as an alternative, and see how it does on evals.
+    //
+    // The closest to a standard way of including a filename is this:
+    // ```rust filename="path/to/file.rs#42:43"
+    // ```
+    //
+    // or, alternatively,
+    // ```rust filename="path/to/file.rs" lines="42:43"
+    // ```
+    //
+    // Examples where it's used this way:
+    // - https://mdxjs.com/guides/syntax-highlighting/#syntax-highlighting-with-the-meta-field
+    // - https://docusaurus.io/docs/markdown-features/code-blocks
+    // - https://spec.commonmark.org/0.31.2/#example-143
     pub fn new(str: impl AsRef<str>) -> Self {
         let str = str.as_ref();
         // Sometimes the model will include a language at the start,

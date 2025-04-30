@@ -4993,6 +4993,7 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "markdown",
  "node_runtime",
  "pathdiff",
  "paths",
