@@ -130,7 +130,6 @@ struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     context_servers_to_setup: Vec<ConfigureContextServer>,
     context_server_manager: Entity<ContextServerManager>,
-    completed: bool,
 }
 
 impl ConfigureContextServerModal {
@@ -174,7 +173,6 @@ impl ConfigureContextServerModal {
             workspace,
             context_servers_to_setup,
             context_server_manager,
-            completed: false,
         })
     }
 }
@@ -222,20 +220,19 @@ impl ConfigureContextServerModal {
             this.update(cx, |this, cx| match result {
                 Ok(_) => {
                     this.context_servers_to_setup.remove(0);
-                    this.completed = this.context_servers_to_setup.is_empty();
-                    cx.notify();
-                    if this.completed {
-                        cx.emit(DismissEvent);
+                    if this.context_servers_to_setup.is_empty() {
+                        this.dismiss(cx);
                     }
+                    cx.notify();
                 }
                 Err(err) => {
                     if let Some(configuration) = this.context_servers_to_setup.get_mut(0) {
                         configuration.last_error = Some(err.into());
                         configuration.waiting_for_context_server = false;
                     } else {
-                        this.completed = true;
-                        cx.emit(DismissEvent);
+                        this.dismiss(cx);
                     }
+                    cx.notify();
                 }
             })
         })
@@ -262,6 +259,10 @@ impl ConfigureContextServerModal {
                 }
             },
         );
+    }
+
+    fn dismiss(&self, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
     }
 }
 
@@ -311,7 +312,7 @@ impl Render for ConfigureContextServerModal {
             .w(rems(34.))
             .key_context("ConfigureContextServerModal")
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
-            .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| cx.emit(DismissEvent)))
+            .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.dismiss(cx)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window);
             }))
@@ -418,8 +419,7 @@ impl Render for ConfigureContextServerModal {
                                             .map(|kb| kb.size(rems_from_px(12.))),
                                         )
                                         .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.completed = true;
-                                            cx.emit(DismissEvent);
+                                            this.dismiss(cx)
                                         })),
                                 )
                                 .child(
@@ -444,15 +444,7 @@ impl Render for ConfigureContextServerModal {
     }
 }
 
-impl ModalView for ConfigureContextServerModal {
-    fn on_before_dismiss(
-        &mut self,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> workspace::DismissDecision {
-        workspace::DismissDecision::Dismiss(self.completed)
-    }
-}
+impl ModalView for ConfigureContextServerModal {}
 
 impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
 impl Focusable for ConfigureContextServerModal {
