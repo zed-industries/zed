@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
                     stop_sequences: None,
                 }),
                 safety_settings: None,
-                tools: vec![],
+                tools: None,
                 tool_config: None,
             };
 
@@ -394,7 +394,7 @@ async fn main() -> Result<()> {
                         stop_sequences: None,
                     }),
                     safety_settings: None,
-                    tools: vec![],
+                    tools: None,
                     tool_config: None,
                 };
 
