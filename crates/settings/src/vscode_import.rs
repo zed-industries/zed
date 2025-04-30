@@ -1,9 +1,13 @@
 use anyhow::Result;
+use collections::IndexMap;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Keystroke, PlatformKeyboardMapper};
+use gpui::{AsyncWindowContext, Keystroke, PlatformKeyboardMapper, is_alphabetic_key};
 use serde_json::{Map, Value};
+use util::ResultExt;
 
 use std::sync::Arc;
+
+use crate::{KeymapFile, keymap_file::KeymapSection};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -123,7 +127,19 @@ impl VsCodeShortcuts {
     }
 
     pub async fn load_user_shortcuts(fs: Arc<dyn Fs>) -> Result<Self> {
-        let content = fs.load(paths::vscode_shortcuts_file()).await?;
+        let content = r#"
+        [
+            {
+                "key": "ctrl+shift+a",
+                "command": "list.focusFirst",
+            },
+            {
+                "key": "ctrl+shift+=",
+                "command": "menu::SelectFirst",
+            }
+        ]
+        "#;
+        // let content = fs.load(paths::vscode_shortcuts_file()).await?;
         println!("Loaded shortcuts: {}", content);
 
         Ok(Self {
@@ -135,12 +151,13 @@ impl VsCodeShortcuts {
         &self,
         keyboard_mapper: &dyn PlatformKeyboardMapper,
     ) -> Vec<(String, String)> {
+        let mut result = KeymapFile::default();
         let mut skipped = Vec::new();
         for content in self.content.iter() {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
-            let Some(keystroke) = Keystroke::parse_with_separator(shortcut, '+').ok() else {
+            let Some(mut keystroke) = Keystroke::parse_with_separator(shortcut, '+').ok() else {
                 continue;
             };
             if (keystroke.key.starts_with('[') && keystroke.key.ends_with(']'))
@@ -155,15 +172,40 @@ impl VsCodeShortcuts {
             let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
                 continue;
             };
-            let when = content.get("when").and_then(|when| when.as_str());
+            let context = content
+                .get("when")
+                .and_then(|when| when.as_str())
+                .unwrap_or_default()
+                .to_string();
             // TODO: vscode_shortcut_command_to_zed_action
-            let action = command.to_string();
-            let keystroke = keyboard_mapper.get_shifted_key(keystroke);
-            println!(
-                "Parsed shortcut: {} -> {:#?}, {}",
-                shortcut, keystroke, action
-            );
+            let Ok(action) = serde_json_lenient::from_str(command) else {
+                skipped.push((
+                    shortcut.to_string(),
+                    format!("Unable to parse command: {}", command),
+                ));
+                continue;
+            };
+            if is_alphabetic_key(keystroke.key.as_str()) || !keystroke.modifiers.shift {
+                result.insert_keystroke(context, keystroke, action);
+                continue;
+            }
+            match keyboard_mapper.get_shifted_key(&keystroke.key) {
+                Ok(key) => {
+                    keystroke.modifiers.shift = false;
+                    keystroke.key = key;
+                    result.insert_keystroke(context, keystroke, action);
+                }
+                Err(err) => {
+                    skipped.push((
+                        shortcut.to_string(),
+                        format!("Unable to parse keystroke: {}", err),
+                    ));
+                    continue;
+                }
+            }
         }
+        println!("=> result: {:#?}", result);
+        println!("=> skipped: {:#?}", skipped);
         skipped
     }
 
@@ -229,6 +271,7 @@ mod tests {
 
     #[test]
     fn test_load_vscode_shortcuts() {
+        let keyboard_mapper = TestKeyboardMapper::new();
         let content = r#"
         [
             {
@@ -243,7 +286,6 @@ mod tests {
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 2);
-        let keyboard_mapper = TestKeyboardMapper::new();
         let result = shortcuts.parse_shortcuts(&keyboard_mapper);
         assert_eq!(result.len(), 2);
         assert_eq!(
@@ -260,5 +302,25 @@ mod tests {
                 "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
             )
         );
+
+        // TODO:
+        // register actions
+        let content = r#"
+        [
+            {
+                "key": "ctrl+shift+a",
+                "command": "list.focusFirst",
+            },
+            {
+                "key": "ctrl+shift+=",
+                "command": "menu::SelectFirst",
+            }
+        ]
+        "#;
+        let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
+        assert_eq!(shortcuts.content.len(), 2);
+        let result = shortcuts.parse_shortcuts(&keyboard_mapper);
+        assert_eq!(result.len(), 2);
+        println!("result: {:#?}", result);
     }
 }
