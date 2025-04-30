@@ -827,7 +827,7 @@
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
-      "cmd-shift-f": "project_panel::NewSearchInDirectory",
+      "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"
