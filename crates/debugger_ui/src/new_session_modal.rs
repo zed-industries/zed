@@ -15,6 +15,7 @@ use gpui::{
 };
 use settings::Settings;
 use task::{DebugScenario, LaunchRequest, TaskContext};
+use tasks_ui::task_contexts;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -114,10 +115,22 @@ impl NewSessionModal {
         };
         let config = self.debug_config(cx, debugger);
         let debug_panel = self.debug_panel.clone();
-
+        let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |this, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |this, window, cx| task_contexts(this, window, cx))?
+                .await;
+            let task_context = task_contexts
+                .active_item_context
+                .map(|(_, _, context)| context)
+                .or_else(|| {
+                    task_contexts
+                        .active_worktree_context
+                        .map(|(_, context)| context)
+                })
+                .unwrap_or_default();
             debug_panel.update_in(cx, |debug_panel, window, cx| {
-                debug_panel.start_session(config, TaskContext::default(), None, window, cx)
+                debug_panel.start_session(config, task_context, None, window, cx)
             })?;
             this.update(cx, |_, cx| {
                 cx.emit(DismissEvent);
