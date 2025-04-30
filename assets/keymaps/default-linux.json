@@ -969,5 +969,12 @@
     "bindings": {
       "escape": "menu::Cancel"
     }
+  },
+  {
+    "context": "ConfigureContextServerModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "menu::Confirm"
+    }
   }
 ]

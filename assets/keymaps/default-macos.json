@@ -1076,5 +1076,12 @@
     "bindings": {
       "escape": "menu::Cancel"
     }
+  },
+  {
+    "context": "ConfigureContextServerModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "menu::Confirm"
+    }
   }
 ]
