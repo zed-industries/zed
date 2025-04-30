@@ -267,7 +267,7 @@ impl ContextPicker {
                         context_picker.update(cx, |this, cx| this.select_entry(entry, window, cx))
                     })
             }))
-            .keep_open_on_confirm()
+            .keep_open_on_confirm(true)
         });
 
         cx.subscribe(&menu, move |_, _, _: &DismissEvent, cx| {

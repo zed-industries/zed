@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
+use crate::ui::AnimatedLabel;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -62,7 +63,7 @@ pub struct MessageEditor {
     edits_expanded: bool,
     editor_is_expanded: bool,
     last_estimated_token_count: Option<usize>,
-    update_token_count_task: Option<Task<anyhow::Result<()>>>,
+    update_token_count_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -374,7 +375,7 @@ impl MessageEditor {
 
         self.context_store.update(cx, |store, cx| {
             for image in images {
-                store.add_image(Arc::new(image), cx);
+                store.add_image_instance(Arc::new(image), cx);
             }
         });
     }
@@ -412,7 +413,7 @@ impl MessageEditor {
         let active_completion_mode = thread.completion_mode();
 
         Some(
-            IconButton::new("max-mode", IconName::SquarePlus)
+            IconButton::new("max-mode", IconName::ZedMaxMode)
                 .icon_size(IconSize::Small)
                 .toggle_state(active_completion_mode == Some(CompletionMode::Max))
                 .on_click(cx.listener(move |this, _event, _window, cx| {
@@ -423,7 +424,7 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(Tooltip::text("Max Mode"))
+                .tooltip(Tooltip::text("Toggle Max Mode"))
                 .into_any_element(),
         )
     }
@@ -494,32 +495,34 @@ impl MessageEditor {
                     .items_start()
                     .justify_between()
                     .child(self.context_strip.clone())
-                    .child(
-                        IconButton::new("toggle-height", expand_icon)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    let expand_label = if is_editor_expanded {
-                                        "Minimize Message Editor".to_string()
-                                    } else {
-                                        "Expand Message Editor".to_string()
-                                    };
+                    .when(focus_handle.is_focused(window), |this| {
+                        this.child(
+                            IconButton::new("toggle-height", expand_icon)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        let expand_label = if is_editor_expanded {
+                                            "Minimize Message Editor".to_string()
+                                        } else {
+                                            "Expand Message Editor".to_string()
+                                        };
 
-                                    Tooltip::for_action_in(
-                                        expand_label,
-                                        &ExpandMessageEditor,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(cx.listener(|_, _, window, cx| {
-                                window.dispatch_action(Box::new(ExpandMessageEditor), cx);
-                            })),
-                    ),
+                                        Tooltip::for_action_in(
+                                            expand_label,
+                                            &ExpandMessageEditor,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(cx.listener(|_, _, window, cx| {
+                                    window.dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                })),
+                        )
+                    }),
             )
             .child(
                 v_flex()
@@ -721,9 +724,12 @@ impl MessageEditor {
         let border_color = cx.theme().colors().border;
         let active_color = cx.theme().colors().element_selected;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+
         let is_edit_changes_expanded = self.edits_expanded;
+        let is_generating = self.thread.read(cx).is_generating();
 
         v_flex()
+            .mt_1()
             .mx_2()
             .bg(bg_edit_files_disclosure)
             .border_1()
@@ -758,25 +764,44 @@ impl MessageEditor {
                                         cx.notify();
                                     })),
                             )
-                            .child(
-                                Label::new("Edits")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
-                            .child(
-                                Label::new(format!(
-                                    "{} {}",
-                                    changed_buffers.len(),
-                                    if changed_buffers.len() == 1 {
-                                        "file"
-                                    } else {
-                                        "files"
-                                    }
-                                ))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
+                            .map(|this| {
+                                if is_generating {
+                                    this.child(
+                                        AnimatedLabel::new(format!(
+                                            "Editing {} {}",
+                                            changed_buffers.len(),
+                                            if changed_buffers.len() == 1 {
+                                                "file"
+                                            } else {
+                                                "files"
+                                            }
+                                        ))
+                                        .size(LabelSize::Small),
+                                    )
+                                } else {
+                                    this.child(
+                                        Label::new("Edits")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new("•").size(LabelSize::XSmall).color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(format!(
+                                            "{} {}",
+                                            changed_buffers.len(),
+                                            if changed_buffers.len() == 1 {
+                                                "file"
+                                            } else {
+                                                "files"
+                                            }
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                }
+                            }),
                     )
                     .child(
                         Button::new("review", "Review Changes")
@@ -866,7 +891,7 @@ impl MessageEditor {
                                 .justify_between()
                                 .bg(cx.theme().colors().editor_background)
                                 .hover(|style| style.bg(hover_color))
-                                .when(index + 1 < changed_buffers.len(), |parent| {
+                                .when(index < changed_buffers.len() - 1, |parent| {
                                     parent.border_color(border_color).border_b_1()
                                 })
                                 .child(
@@ -882,9 +907,9 @@ impl MessageEditor {
                                                 .gap_0p5()
                                                 .children(name_label)
                                                 .children(parent_label),
-                                        ) // TODO: show lines changed
-                                        .child(Label::new("+").color(Color::Created))
-                                        .child(Label::new("-").color(Color::Deleted)),
+                                        ), // TODO: Implement line diff
+                                           // .child(Label::new("+").color(Color::Created))
+                                           // .child(Label::new("-").color(Color::Deleted)),
                                 )
                                 .child(
                                     div().visible_on_hover("edited-code").child(
@@ -1063,57 +1088,64 @@ impl MessageEditor {
                     .await;
             }
 
-            let token_count = if let Some(task) = this.update(cx, |this, cx| {
-                let loaded_context = this
-                    .last_loaded_context
-                    .as_ref()
-                    .map(|context_load_result| &context_load_result.loaded_context);
-                let message_text = editor.read(cx).text(cx);
+            let token_count = if let Some(task) = this
+                .update(cx, |this, cx| {
+                    let loaded_context = this
+                        .last_loaded_context
+                        .as_ref()
+                        .map(|context_load_result| &context_load_result.loaded_context);
+                    let message_text = editor.read(cx).text(cx);
 
-                if message_text.is_empty()
-                    && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
-                {
-                    return None;
-                }
+                    if message_text.is_empty()
+                        && loaded_context.map_or(true, |loaded_context| loaded_context.is_empty())
+                    {
+                        return None;
+                    }
 
-                let mut request_message = LanguageModelRequestMessage {
-                    role: language_model::Role::User,
-                    content: Vec::new(),
-                    cache: false,
-                };
+                    let mut request_message = LanguageModelRequestMessage {
+                        role: language_model::Role::User,
+                        content: Vec::new(),
+                        cache: false,
+                    };
 
-                if let Some(loaded_context) = loaded_context {
-                    loaded_context.add_to_request_message(&mut request_message);
-                }
+                    if let Some(loaded_context) = loaded_context {
+                        loaded_context.add_to_request_message(&mut request_message);
+                    }
 
-                if !message_text.is_empty() {
-                    request_message
-                        .content
-                        .push(MessageContent::Text(message_text));
-                }
+                    if !message_text.is_empty() {
+                        request_message
+                            .content
+                            .push(MessageContent::Text(message_text));
+                    }
 
-                let request = language_model::LanguageModelRequest {
-                    thread_id: None,
-                    prompt_id: None,
-                    mode: None,
-                    messages: vec![request_message],
-                    tools: vec![],
-                    stop: vec![],
-                    temperature: None,
-                };
+                    let request = language_model::LanguageModelRequest {
+                        thread_id: None,
+                        prompt_id: None,
+                        mode: None,
+                        messages: vec![request_message],
+                        tools: vec![],
+                        stop: vec![],
+                        temperature: None,
+                    };
 
-                Some(model.model.count_tokens(request, cx))
-            })? {
-                task.await?
+                    Some(model.model.count_tokens(request, cx))
+                })
+                .ok()
+                .flatten()
+            {
+                task.await.log_err()
             } else {
-                0
+                Some(0)
             };
 
             this.update(cx, |this, cx| {
-                this.last_estimated_token_count = Some(token_count);
-                cx.emit(MessageEditorEvent::EstimatedTokenCount);
+                if let Some(token_count) = token_count {
+                    this.last_estimated_token_count = Some(token_count);
+                    cx.emit(MessageEditorEvent::EstimatedTokenCount);
+                }
                 this.update_token_count_task.take();
             })
+            .ok();
         }));
     }
 }

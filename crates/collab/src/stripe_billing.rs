@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crate::{Cents, Result, llm};
+use crate::llm::{self, AGENT_EXTENDED_TRIAL_FEATURE_FLAG};
+use crate::{Cents, Result};
 use anyhow::{Context as _, anyhow};
 use chrono::{Datelike, Utc};
 use collections::HashMap;
@@ -489,16 +490,36 @@ impl StripeBilling {
         zed_pro_price_id: PriceId,
         customer_id: stripe::CustomerId,
         github_login: &str,
+        feature_flags: Vec<String>,
         success_url: &str,
     ) -> Result<String> {
+        let eligible_for_extended_trial = feature_flags
+            .iter()
+            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+
+        let trial_period_days = if eligible_for_extended_trial { 60 } else { 14 };
+
+        let mut subscription_metadata = std::collections::HashMap::new();
+        if eligible_for_extended_trial {
+            subscription_metadata.insert(
+                "promo_feature_flag".to_string(),
+                AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string(),
+            );
+        }
+
         let mut params = stripe::CreateCheckoutSession::new();
         params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
-            trial_period_days: Some(14),
+            trial_period_days: Some(trial_period_days),
             trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
                 end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
                     missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
                 }
             }),
+            metadata: if !subscription_metadata.is_empty() {
+                Some(subscription_metadata)
+            } else {
+                None
+            },
             ..Default::default()
         });
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);

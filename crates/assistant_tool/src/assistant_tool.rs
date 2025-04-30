@@ -51,6 +51,13 @@ impl ToolUseStatus {
             ToolUseStatus::Error(out) => out.clone(),
         }
     }
+
+    pub fn error(&self) -> Option<SharedString> {
+        match self {
+            ToolUseStatus::Error(out) => Some(out.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// The result of running a tool, containing both the asynchronous output

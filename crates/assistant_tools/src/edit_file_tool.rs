@@ -24,6 +24,8 @@ use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
+pub struct EditFileTool;
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
@@ -74,8 +76,6 @@ struct PartialInput {
     #[serde(default)]
     new_string: String,
 }
-
-pub struct EditFileTool;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -627,7 +627,6 @@ mod tests {
 
     #[test]
     fn still_streaming_ui_text_with_path() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "src/main.rs",
             "display_description": "",
@@ -635,12 +634,11 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "src/main.rs");
+        assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
     }
 
     #[test]
     fn still_streaming_ui_text_with_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "",
             "display_description": "Fix error handling",
@@ -648,12 +646,14 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_with_path_and_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "src/main.rs",
             "display_description": "Fix error handling",
@@ -661,12 +661,14 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), "Fix error handling");
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_no_path_or_description() {
-        let tool = EditFileTool;
         let input = json!({
             "path": "",
             "display_description": "",
@@ -674,14 +676,19 @@ mod tests {
             "new_string": "new code"
         });
 
-        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 
     #[test]
     fn still_streaming_ui_text_with_null() {
-        let tool = EditFileTool;
         let input = serde_json::Value::Null;
 
-        assert_eq!(tool.still_streaming_ui_text(&input), DEFAULT_UI_TEXT);
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 }

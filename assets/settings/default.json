@@ -702,6 +702,11 @@
           "thinking": true,
           "web_search": true
         }
+      },
+      "manual": {
+        "name": "Manual",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
     // Where to show notifications when an agent has either completed
