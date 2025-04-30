@@ -64,7 +64,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window, prelude::FluentBuilder,
+    SharedString, Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -3504,10 +3504,9 @@ impl Project {
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let Some(inline_value_provider) = session
-            .read(cx)
-            .adapter_name()
-            .map(|adapter_name| DapRegistry::global(cx).adapter(&adapter_name))
+        let adapter = session.read(cx).adapter();
+        let Some(inline_value_provider) = DapRegistry::global(cx)
+            .adapter(&adapter)
             .and_then(|adapter| adapter.inline_value_provider())
         else {
             return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));

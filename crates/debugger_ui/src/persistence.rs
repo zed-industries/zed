@@ -1,5 +1,5 @@
 use collections::HashMap;
-use dap::Capabilities;
+use dap::{Capabilities, adapters::DebugAdapterName};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{Axis, Context, Entity, EntityId, Focusable, Subscription, WeakEntity, Window};
 use project::Project;
@@ -90,7 +90,7 @@ pub(crate) struct SerializedPane {
 const DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
 
 pub(crate) async fn serialize_pane_layout(
-    adapter_name: SharedString,
+    adapter_name: DebugAdapterName,
     pane_group: SerializedPaneLayout,
 ) -> anyhow::Result<()> {
     if let Ok(serialized_pane_group) = serde_json::to_string(&pane_group) {

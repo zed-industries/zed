@@ -4,7 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
+use dap::{
+    DapRegistry, DebugRequest,
+    adapters::{DebugAdapterName, DebugTaskDefinition},
+};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
@@ -30,7 +33,7 @@ pub(super) struct NewSessionModal {
     mode: NewSessionMode,
     stop_on_entry: ToggleState,
     initialize_args: Option<serde_json::Value>,
-    debugger: Option<SharedString>,
+    debugger: Option<DebugAdapterName>,
     last_selected_profile_name: Option<SharedString>,
 }
 
@@ -127,18 +130,17 @@ impl NewSessionModal {
 
     fn update_attach_picker(
         attach: &Entity<AttachMode>,
-        selected_debugger: &str,
+        adapter: &DebugAdapterName,
         window: &mut Window,
         cx: &mut App,
     ) {
         attach.update(cx, |this, cx| {
-            if selected_debugger != this.definition.adapter.as_ref() {
-                let adapter: SharedString = selected_debugger.to_owned().into();
+            if adapter != &this.definition.adapter {
                 this.definition.adapter = adapter.clone();
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.definition.adapter = adapter;
+                        this.delegate.definition.adapter = adapter.clone();
                         this.focus(window, cx);
                     })
                 });
@@ -154,15 +156,16 @@ impl NewSessionModal {
     ) -> ui::DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
-        let debugger = self.debugger.clone();
+        let label = self
+            .debugger
+            .as_ref()
+            .map(|d| d.0.clone())
+            .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
         DropdownMenu::new(
             "dap-adapter-picker",
-            debugger
-                .as_ref()
-                .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
-                .clone(),
+            label,
             ContextMenu::build(window, cx, move |mut menu, _, cx| {
-                let setter_for_name = |name: SharedString| {
+                let setter_for_name = |name: DebugAdapterName| {
                     let weak = weak.clone();
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
@@ -182,7 +185,7 @@ impl NewSessionModal {
                     .unwrap_or_default();
 
                 for adapter in available_adapters {
-                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.0.clone()));
+                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
                 }
                 menu
             }),
@@ -211,7 +214,7 @@ impl NewSessionModal {
                     move |window: &mut Window, cx: &mut App| {
                         weak.update(cx, |this, cx| {
                             this.last_selected_profile_name = Some(SharedString::from(&task.label));
-                            this.debugger = Some(task.adapter.clone());
+                            this.debugger = Some(DebugAdapterName(task.adapter.clone()));
                             this.initialize_args = task.initialize_args.clone();
                             match &task.request {
                                 Some(DebugRequest::Launch(launch_config)) => {
@@ -330,13 +333,13 @@ struct AttachMode {
 
 impl AttachMode {
     fn new(
-        debugger: Option<SharedString>,
+        debugger: Option<DebugAdapterName>,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
         let definition = DebugTaskDefinition {
-            adapter: debugger.clone().unwrap_or_default(),
+            adapter: debugger.clone().unwrap_or(DebugAdapterName("".into())),
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
             initialize_args: None,
@@ -443,7 +446,7 @@ impl RenderOnce for NewSessionMode {
 
 impl NewSessionMode {
     fn attach(
-        debugger: Option<SharedString>,
+        debugger: Option<DebugAdapterName>,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,

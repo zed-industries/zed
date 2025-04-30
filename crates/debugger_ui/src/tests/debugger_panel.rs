@@ -468,11 +468,13 @@ async fn test_handle_start_debugging_request(
                 .read(cx)
                 .session(cx);
             let parent_session = active_session.read(cx).parent_session().unwrap();
+            let mut original_binary = parent_session.read(cx).binary().clone();
+            original_binary.request_args = StartDebuggingRequestArguments {
+                request: StartDebuggingRequestArgumentsRequest::Launch,
+                configuration: fake_config.clone(),
+            };
 
-            assert_eq!(
-                active_session.read(cx).definition(),
-                parent_session.read(cx).definition()
-            );
+            assert_eq!(active_session.read(cx).binary(), &original_binary);
         })
         .unwrap();
 

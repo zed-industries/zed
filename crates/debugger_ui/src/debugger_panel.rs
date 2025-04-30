@@ -9,6 +9,7 @@ use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::DebugRequest;
+use dap::adapters::DebugAdapterName;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
@@ -28,7 +29,6 @@ use settings::Settings;
 use std::any::TypeId;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
-use util::ResultExt;
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -214,9 +214,17 @@ impl DebugPanel {
         cx.spawn_in(window, async move |this, cx| {
             let dap_store = this.update(cx, |this, cx| this.project.read(cx).dap_store())?;
             let (session, task) = dap_store.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(definition, None, cx);
+                let session = dap_store.new_session(
+                    definition.label.clone(),
+                    definition.adapter.clone(),
+                    None,
+                    cx,
+                );
 
-                (session.clone(), dap_store.boot_session(session, cx))
+                (
+                    session.clone(),
+                    dap_store.boot_session(session, definition, cx),
+                )
             })?;
             Self::register_session(this.clone(), session.clone(), cx).await?;
 
@@ -266,7 +274,7 @@ impl DebugPanel {
         session: Entity<Session>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let adapter_name = session.update(cx, |session, _| session.adapter_name())?;
+        let adapter_name = session.update(cx, |session, _| session.adapter())?;
         this.update_in(cx, |_, window, cx| {
             cx.subscribe_in(
                 &session,
@@ -344,7 +352,8 @@ impl DebugPanel {
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let breakpoint_store = self.project.read(cx).breakpoint_store();
-        let definition = curr_session.read(cx).definition().clone();
+        let label = curr_session.read(cx).label().clone();
+        let adapter = curr_session.read(cx).adapter().clone();
         let binary = curr_session.read(cx).binary().clone();
         let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
 
@@ -352,7 +361,7 @@ impl DebugPanel {
             task.await;
 
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(definition.clone(), None, cx);
+                let session = dap_store.new_session(label, adapter, None, cx);
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(
@@ -385,14 +394,15 @@ impl DebugPanel {
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
         let breakpoint_store = self.project.read(cx).breakpoint_store();
-        let definition = parent_session.read(cx).definition().clone();
+        let label = parent_session.read(cx).label().clone();
+        let adapter = parent_session.read(cx).adapter().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
                 let session =
-                    dap_store.new_session(definition.clone(), Some(parent_session.clone()), cx);
+                    dap_store.new_session(label, adapter, Some(parent_session.clone()), cx);
 
                 let task = session.update(cx, |session, cx| {
                     session.boot(
@@ -473,14 +483,14 @@ impl DebugPanel {
             } else {
                 return Err(anyhow!("No request or build provided"));
             };
-            Ok(DebugTaskDefinition {
+            Ok(dbg!(DebugTaskDefinition {
                 label,
-                adapter,
+                adapter: DebugAdapterName(adapter),
                 request,
                 initialize_args,
                 stop_on_entry,
                 tcp_connection,
-            })
+            }))
         })
     }
 

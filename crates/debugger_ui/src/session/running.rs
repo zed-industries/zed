@@ -906,7 +906,7 @@ impl RunningState {
 
                 let Some((adapter_name, pane_group)) = this
                     .update(cx, |this, cx| {
-                        let adapter_name = this.session.read(cx).adapter_name();
+                        let adapter_name = this.session.read(cx).adapter();
                         (
                             adapter_name,
                             persistence::build_serialized_pane_layout(&this.panes.root, cx),
