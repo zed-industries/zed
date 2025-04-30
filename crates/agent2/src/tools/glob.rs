@@ -12,8 +12,10 @@ use crate::{
     AgentTool,
 };
 
+// Description is dynamic, see `fn description` below
 #[derive(Deserialize, JsonSchema)]
 struct GlobInput {
+    /// A POSIX glob pattern
     glob: SharedString,
 }
 
