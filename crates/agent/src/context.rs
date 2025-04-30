@@ -1035,3 +1035,120 @@ impl Hash for AgentContextKey {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    // Helper to create a test project with test files
+    async fn create_test_project(
+        cx: &mut TestAppContext,
+        files: serde_json::Value,
+    ) -> Entity<Project> {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/test"), files).await;
+        Project::test(fs, [path!("/test").as_ref()], cx).await
+    }
+
+    #[gpui::test]
+    async fn test_large_file_uses_outline(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        // Create a large file that exceeds AUTO_OUTLINE_SIZE
+        let large_content = {
+            const LINE: &str = "Line with some text\n";
+            std::iter::repeat(LINE)
+                .take(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()))
+                .collect::<String>()
+        };
+
+        let content_len = large_content.len();
+
+        assert!(content_len > outline::AUTO_OUTLINE_SIZE);
+
+        let file_context = file_context_for(large_content, cx).await;
+
+        assert!(
+            file_context.is_outline,
+            "Large file should use outline format"
+        );
+
+        assert!(
+            file_context.text.len() < content_len,
+            "Outline should be smaller than original content"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_small_file_uses_full_content(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let small_content = "This is a small file.\n";
+        let content_len = small_content.len();
+
+        assert!(content_len < outline::AUTO_OUTLINE_SIZE);
+
+        let file_context = file_context_for(small_content.to_string(), cx).await;
+
+        assert!(
+            !file_context.is_outline,
+            "Small files should not get an outline"
+        );
+
+        assert_eq!(file_context.text, small_content);
+    }
+
+    async fn file_context_for(content: String, cx: &mut TestAppContext) -> FileContext {
+        // Create a test project with the file
+        let project = create_test_project(
+            cx,
+            json!({
+                "file.txt": content,
+            }),
+        )
+        .await;
+
+        // Open the buffer
+        let buffer_path = project
+            .read_with(cx, |project, cx| project.find_project_path("file.txt", cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+
+        let context_handle = AgentContextHandle::File(FileContextHandle {
+            buffer: buffer.clone(),
+            context_id: ContextId::zero(),
+        });
+
+        cx.update(|cx| load_context(vec![context_handle], &project, &None, cx))
+            .await
+            .loaded_context
+            .contexts
+            .into_iter()
+            .find_map(|ctx| {
+                if let AgentContext::File(file_ctx) = ctx {
+                    Some(file_ctx)
+                } else {
+                    None
+                }
+            })
+            .expect("Should have found a file context")
+    }
+}
