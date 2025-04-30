@@ -101,8 +101,13 @@ impl Example for CodeBlockCitations {
                                 let content =
                                     &text[(citation.len() + 1)..content_len - (citation.len() + 1)];
 
+                                // deindent (trim the start of each line) because sometimes the model
+                                // chooses to deindent its code snippets for the sake of readability,
+                                // which in markdown is not only reasonable but usually desirable.
                                 cx.assert(
-                                    buffer_text.contains(&content),
+                                    deindent(&buffer_text)
+                                        .trim()
+                                        .contains(deindent(&content).trim()),
                                     "Code block content was found in file",
                                 )
                                 .ok();
@@ -129,10 +134,16 @@ impl Example for CodeBlockCitations {
                                             .to_string();
                                     }
 
+                                    // deindent (trim the start of each line) because sometimes the model
+                                    // chooses to deindent its code snippets for the sake of readability,
+                                    // which in markdown is not only reasonable but usually desirable.
                                     cx.assert_eq(
-                                        snippet.as_str(),
-                                        content,
-                                        "Code block snippet was at specified line/col",
+                                        deindent(snippet.as_str()).trim(),
+                                        deindent(content).trim(),
+                                        format!(
+                                            "Code block was at {:?}-{:?}",
+                                            range.start, range.end
+                                        ),
                                     )
                                     .ok();
                                 }
@@ -188,4 +199,13 @@ impl Example for CodeBlockCitations {
             }
         ]
     }
+}
+
+fn deindent(as_str: impl AsRef<str>) -> String {
+    as_str
+        .as_ref()
+        .lines()
+        .map(|line| line.trim_start())
+        .collect::<Vec<&str>>()
+        .join("\n")
 }

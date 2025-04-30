@@ -283,6 +283,12 @@ impl LspAdapter for RustLspAdapter {
         }
     }
 
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?m)\n *").expect("Failed to create REGEX"));
+        Some(REGEX.replace_all(message, "\n\n").to_string())
+    }
+
     async fn label_for_completion(
         &self,
         completion: &lsp::CompletionItem,

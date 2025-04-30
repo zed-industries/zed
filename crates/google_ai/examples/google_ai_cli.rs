@@ -234,8 +234,14 @@ async fn main() -> Result<()> {
                 }],
             };
 
-            let response =
-                count_tokens(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
+            let response = count_tokens(
+                http_client.as_ref(),
+                &cli.api_url,
+                &cli.api_key,
+                &cli.model,
+                request,
+            )
+            .await?;
             println!("Total tokens: {}", response.total_tokens);
         }
 

@@ -280,7 +280,7 @@ impl ExtensionsPage {
                     window,
                     move |this, _, event, window, cx| match event {
                         extension_host::Event::ExtensionsUpdated => {
-                            this.fetch_extensions_debounced(cx)
+                            this.fetch_extensions_debounced(None, cx)
                         }
                         extension_host::Event::ExtensionInstalled(extension_id) => this
                             .on_extension_installed(
@@ -319,7 +319,12 @@ impl ExtensionsPage {
                 upsells: BTreeSet::default(),
                 scrollbar_state: ScrollbarState::new(scroll_handle),
             };
-            this.fetch_extensions(None, Some(BTreeSet::from_iter(this.provides_filter)), cx);
+            this.fetch_extensions(
+                None,
+                Some(BTreeSet::from_iter(this.provides_filter)),
+                None,
+                cx,
+            );
             this
         })
     }
@@ -413,6 +418,10 @@ impl ExtensionsPage {
                 })
                 .map(|(ix, _)| ix),
         );
+        cx.notify();
+    }
+
+    fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
         self.list.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
@@ -421,6 +430,7 @@ impl ExtensionsPage {
         &mut self,
         search: Option<String>,
         provides_filter: Option<BTreeSet<ExtensionProvides>>,
+        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
         cx: &mut Context<Self>,
     ) {
         self.is_fetching_extensions = true;
@@ -468,6 +478,9 @@ impl ExtensionsPage {
                 this.is_fetching_extensions = false;
                 this.remote_extension_entries = fetch_result?;
                 this.filter_extension_entries(cx);
+                if let Some(callback) = on_complete {
+                    callback(this, cx);
+                }
                 anyhow::Ok(())
             })?
         })
@@ -1010,7 +1023,12 @@ impl ExtensionsPage {
     }
 
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
-        self.fetch_extensions_debounced(cx);
+        self.fetch_extensions_debounced(
+            Some(Box::new(|this, cx| {
+                this.scroll_to_top(cx);
+            })),
+            cx,
+        );
         self.refresh_feature_upsells(cx);
     }
 
@@ -1023,7 +1041,11 @@ impl ExtensionsPage {
         self.refresh_search(cx);
     }
 
-    fn fetch_extensions_debounced(&mut self, cx: &mut Context<ExtensionsPage>) {
+    fn fetch_extensions_debounced(
+        &mut self,
+        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
+        cx: &mut Context<ExtensionsPage>,
+    ) {
         self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
             let search = this
                 .update(cx, |this, cx| this.search_query(cx))
@@ -1043,7 +1065,12 @@ impl ExtensionsPage {
             };
 
             this.update(cx, |this, cx| {
-                this.fetch_extensions(search, Some(BTreeSet::from_iter(this.provides_filter)), cx);
+                this.fetch_extensions(
+                    search,
+                    Some(BTreeSet::from_iter(this.provides_filter)),
+                    on_complete,
+                    cx,
+                );
             })
             .ok();
         }));
@@ -1237,6 +1264,7 @@ impl Render for ExtensionsPage {
                                             .on_click(cx.listener(|this, _event, _, cx| {
                                                 this.filter = ExtensionFilter::All;
                                                 this.filter_extension_entries(cx);
+                                                this.scroll_to_top(cx);
                                             }))
                                             .tooltip(move |_, cx| {
                                                 Tooltip::simple("Show all extensions", cx)
@@ -1251,6 +1279,7 @@ impl Render for ExtensionsPage {
                                             .on_click(cx.listener(|this, _event, _, cx| {
                                                 this.filter = ExtensionFilter::Installed;
                                                 this.filter_extension_entries(cx);
+                                                this.scroll_to_top(cx);
                                             }))
                                             .tooltip(move |_, cx| {
                                                 Tooltip::simple("Show installed extensions", cx)
@@ -1267,6 +1296,7 @@ impl Render for ExtensionsPage {
                                             .on_click(cx.listener(|this, _event, _, cx| {
                                                 this.filter = ExtensionFilter::NotInstalled;
                                                 this.filter_extension_entries(cx);
+                                                this.scroll_to_top(cx);
                                             }))
                                             .tooltip(move |_, cx| {
                                                 Tooltip::simple("Show not installed extensions", cx)
