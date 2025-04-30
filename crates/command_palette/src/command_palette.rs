@@ -236,11 +236,7 @@ impl CommandPaletteDelegate {
         new_matches.append(&mut matches);
         self.commands = commands;
         self.matches = new_matches;
-        if self.matches.is_empty() {
-            self.selected_ix = 0;
-        } else {
-            self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
-        }
+        self.selected_ix = 0;
     }
     ///
     /// Hit count for each command in the palette.
