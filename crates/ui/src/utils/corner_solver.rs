@@ -111,10 +111,35 @@ pub fn corner_solver(
     CornerSolver::new(root_radius, root_border_width, root_padding)
 }
 
+/// Calculate the corner radius for a single level of nesting
+///
+/// This is a convenience function for the common case where you just need
+/// to calculate a single inner corner radius based on an outer radius, border width, and padding.
+///
+/// For more complex nested hierarchies, use the `corner_solver` function instead.
+pub fn inner_corner_radius(outer_radius: Pixels, border_width: Pixels, padding: Pixels) -> Pixels {
+    // For rounded corners, the radius is reduced by the border width in both
+    // horizontal and vertical directions (which is why we multiply by 2)
+    let border_reduction = border_width * 2.0;
+    Pixels::max(outer_radius - border_reduction, Pixels::ZERO)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::px;
+
+    #[test]
+    fn test_inner_corner_radius() {
+        // Test case 1: 10px radius with 2px border should give 6px inner radius
+        assert_eq!(inner_corner_radius(px(10.0), px(2.0), px(5.0)), px(6.0));
+
+        // Test case 2: 10px radius with 1px border should give 8px inner radius
+        assert_eq!(inner_corner_radius(px(10.0), px(1.0), px(3.0)), px(8.0));
+
+        // Test case 3: 5px radius with 3px border should give 0px inner radius (clamped)
+        assert_eq!(inner_corner_radius(px(5.0), px(3.0), px(2.0)), px(0.0));
+    }
 
     #[test]
     fn test_single_child_corner_radius() {
