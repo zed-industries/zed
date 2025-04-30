@@ -6,8 +6,8 @@ use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use google_ai::{
     CacheName, Content, CountTokensRequest, CreateCacheRequest, GenerateContentRequest,
-    GenerationConfig, Part, Role, SystemInstruction, TextPart, UpdateCacheRequest, count_tokens,
-    create_cache, stream_generate_content, update_cache,
+    GenerationConfig, ModelName, Part, Role, SystemInstruction, TextPart, UpdateCacheRequest,
+    count_tokens, create_cache, stream_generate_content, update_cache,
 };
 use reqwest_client::ReqwestClient;
 use std::io::Write;
@@ -28,7 +28,7 @@ struct Cli {
     api_url: String,
 
     /// The model to use
-    #[arg(long, global = true, default_value = "gemini-2.5-pro-exp-03-25")]
+    #[arg(long, global = true, default_value = "gemini-1.5-flash-002")]
     model: String,
 
     #[command(subcommand)]
@@ -66,6 +66,10 @@ enum Commands {
         /// Top-k sampling parameter
         #[arg(long)]
         top_k: Option<usize>,
+
+        /// Use cached content by specifying the cache name
+        #[arg(long)]
+        cached_content: Option<String>,
     },
 
     /// Count tokens in a prompt
@@ -80,7 +84,7 @@ enum Commands {
     },
 
     /// Cache content for faster repeated access
-    CacheContents {
+    CreateCache {
         /// The prompt text
         #[arg(long, conflicts_with = "prompt_file")]
         prompt: Option<String>,
@@ -102,7 +106,7 @@ enum Commands {
     UpdateCache {
         /// The cache name to update
         #[arg(long)]
-        name: String,
+        cache_id: String,
 
         /// New time-to-live for the cache in seconds
         #[arg(long)]
@@ -157,6 +161,7 @@ async fn main() -> Result<()> {
             temperature,
             top_p,
             top_k,
+            cached_content,
         } => {
             let prompt_text = get_prompt_text(prompt, prompt_file)?;
 
@@ -166,7 +171,9 @@ async fn main() -> Result<()> {
             };
 
             let request = GenerateContentRequest {
-                model: google_ai::ModelName { model_id: cli.model.clone() },
+                model: ModelName {
+                    model_id: cli.model.clone(),
+                },
                 contents: vec![user_content],
                 system_instruction: system_instruction.as_ref().map(|instruction| {
                     SystemInstruction {
@@ -186,6 +193,17 @@ async fn main() -> Result<()> {
                 safety_settings: None,
                 tools: None,
                 tool_config: None,
+                cached_content: cached_content.as_ref().map(|cache_id| {
+                    if let Some(cache_id) = cache_id.strip_prefix("cachedContents/") {
+                        CacheName {
+                            cache_id: cache_id.to_string(),
+                        }
+                    } else {
+                        CacheName {
+                            cache_id: cache_id.clone(),
+                        }
+                    }
+                }),
             };
 
             println!("Generating content with model: {}", cli.model);
@@ -233,30 +251,28 @@ async fn main() -> Result<()> {
             };
 
             let generate_content_request = GenerateContentRequest {
-                model: google_ai::ModelName { model_id: cli.model.clone() },
+                model: ModelName {
+                    model_id: cli.model.clone(),
+                },
                 contents: vec![user_content],
                 system_instruction: None,
                 generation_config: None,
                 safety_settings: None,
                 tools: None,
                 tool_config: None,
+                cached_content: None,
             };
 
             let request = CountTokensRequest {
                 generate_content_request,
             };
 
-            let response = count_tokens(
-                http_client.as_ref(),
-                &cli.api_url,
-                &cli.api_key,
-                request,
-            )
-            .await?;
+            let response =
+                count_tokens(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
             println!("Total tokens: {}", response.total_tokens);
         }
 
-        Commands::CacheContents {
+        Commands::CreateCache {
             prompt,
             prompt_file,
             system_instruction,
@@ -266,7 +282,9 @@ async fn main() -> Result<()> {
 
             let request = CreateCacheRequest {
                 ttl: Duration::from_secs(*ttl),
-                model: cli.model.clone(),
+                model: ModelName {
+                    model_id: cli.model.clone(),
+                },
                 contents: vec![Content {
                     role: Role::User,
                     parts: vec![Part::TextPart(TextPart { text: prompt_text })],
@@ -284,24 +302,23 @@ async fn main() -> Result<()> {
             let response =
                 create_cache(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
             println!("Cache created:");
-            println!("  Name: {:?}", response.name);
+            println!("  ID: {:?}", response.name.cache_id);
             println!("  Expires: {}", response.expire_time);
             if let Some(token_count) = response.usage_metadata.total_token_count {
                 println!("  Total tokens: {}", token_count);
             }
         }
 
-        Commands::UpdateCache { name, ttl } => {
-            // We need to parse the cache name correctly with the prefix
-            let cache_name_str = if name.starts_with("cachedContents/") {
-                name.clone()
+        Commands::UpdateCache { cache_id, ttl } => {
+            let cache_name = if let Some(cache_id) = cache_id.strip_prefix("cachedContents/") {
+                CacheName {
+                    cache_id: cache_id.to_string(),
+                }
             } else {
-                format!("cachedContents/{}", name)
+                CacheName {
+                    cache_id: cache_id.clone(),
+                }
             };
-
-            // Create the cache name through the normal deserialization path
-            let cache_name: CacheName =
-                serde_json::from_value(serde_json::Value::String(cache_name_str))?;
 
             let request = UpdateCacheRequest {
                 ttl: Duration::from_secs(*ttl),
@@ -316,7 +333,7 @@ async fn main() -> Result<()> {
             )
             .await?;
             println!("Cache updated:");
-            println!("  Name: {}", name);
+            println!("  ID: {}", cache_name.cache_id);
             println!("  New expiration: {}", response.expire_time);
         }
 
@@ -367,7 +384,9 @@ async fn main() -> Result<()> {
 
                 // Create request with history
                 let request = GenerateContentRequest {
-                    model: google_ai::ModelName { model_id: cli.model.clone() },
+                    model: ModelName {
+                        model_id: cli.model.clone(),
+                    },
                     contents: history
                         .iter()
                         .map(|content| Content {
@@ -402,6 +421,7 @@ async fn main() -> Result<()> {
                     safety_settings: None,
                     tools: None,
                     tool_config: None,
+                    cached_content: None,
                 };
 
                 // Get response

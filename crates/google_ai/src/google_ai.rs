@@ -1,5 +1,5 @@
-use std::time::Duration;
 use std::mem;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
@@ -28,7 +28,7 @@ pub async fn stream_generate_content(
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder.body(AsyncBody::from(dbg!(serde_json::to_string(&request)?)))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -142,8 +142,8 @@ pub async fn update_cache(
     request: UpdateCacheRequest,
 ) -> Result<UpdateCacheResponse> {
     let uri = format!(
-        "{api_url}/v1beta/cachedContents/{}?key={api_key}",
-        &cache_name.0
+        "{api_url}/v1beta/cachedContents/{cache_id}?key={api_key}",
+        cache_id = &cache_name.cache_id
     );
     let request_builder = HttpRequest::builder()
         .method(Method::PATCH)
@@ -217,6 +217,8 @@ pub struct GenerateContentRequest {
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config: Option<ToolConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_content: Option<CacheName>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -499,7 +501,7 @@ pub struct CreateCacheRequest {
         deserialize_with = "deserialize_duration"
     )]
     pub ttl: Duration,
-    pub model: String,
+    pub model: ModelName,
     pub contents: Vec<Content>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<Content>,
@@ -549,41 +551,18 @@ pub struct UpdateCacheResponse {
     )]
     pub expire_time: OffsetDateTime,
 }
+
+const MODEL_NAME_PREFIX: &str = "models/";
+const CACHE_NAME_PREFIX: &str = "cachedContents/";
+
 #[derive(Debug, Default)]
 pub struct ModelName {
     pub model_id: String,
 }
 
 #[derive(Debug)]
-pub struct CacheName(String);
-
-const MODEL_NAME_PREFIX: &str = "models/";
-const CACHE_NAME_PREFIX: &str = "cachedContents/";
-
-impl Serialize for CacheName {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&format!("{CACHE_NAME_PREFIX}{}", &self.0))
-    }
-}
-
-impl<'de> Deserialize<'de> for CacheName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let string = String::deserialize(deserializer)?;
-        if let Some(name) = string.strip_prefix(CACHE_NAME_PREFIX) {
-            Ok(CacheName(name.to_string()))
-        } else {
-            return Err(serde::de::Error::custom(format!(
-                "Expected cache name to begin with {}, got: {}",
-                CACHE_NAME_PREFIX, string
-            )));
-        }
-    }
+pub struct CacheName {
+    pub cache_id: String,
 }
 
 impl ModelName {
@@ -615,6 +594,34 @@ impl<'de> Deserialize<'de> for ModelName {
             return Err(serde::de::Error::custom(format!(
                 "Expected model name to begin with {}, got: {}",
                 MODEL_NAME_PREFIX, string
+            )));
+        }
+    }
+}
+
+impl Serialize for CacheName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{CACHE_NAME_PREFIX}{}", &self.cache_id))
+    }
+}
+
+impl<'de> Deserialize<'de> for CacheName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+        if let Some(id) = string.strip_prefix(CACHE_NAME_PREFIX) {
+            Ok(CacheName {
+                cache_id: id.to_string(),
+            })
+        } else {
+            return Err(serde::de::Error::custom(format!(
+                "Expected cache name to begin with {}, got: {}",
+                CACHE_NAME_PREFIX, string
             )));
         }
     }
