@@ -475,13 +475,13 @@ impl ToolCard for EditFileToolCard {
                             .child(
                                 Disclosure::new(
                                     ("edit-file-error-disclosure", self.editor_unique_id),
-                                    self.preview_expanded,
+                                    self.error_expanded,
                                 )
                                 .opened_icon(IconName::ChevronUp)
                                 .closed_icon(IconName::ChevronDown)
                                 .on_click(cx.listener(
                                     move |this, _event, _window, _cx| {
-                                        this.preview_expanded = !this.preview_expanded;
+                                        this.error_expanded = !this.error_expanded;
                                     },
                                 )),
                             ),
