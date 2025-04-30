@@ -1,6 +1,6 @@
 use crate::{
-    Icon, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
-    h_flex, prelude::*, utils::WithRemSize, v_flex,
+    Icon, IconButtonShape, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator,
+    ListSubHeader, h_flex, prelude::*, utils::WithRemSize, v_flex,
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -10,6 +10,8 @@ use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use settings::Settings;
 use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
+
+use super::Tooltip;
 
 pub enum ContextMenuItem {
     Separator,
@@ -47,6 +49,9 @@ pub struct ContextMenuEntry {
     action: Option<Box<dyn Action>>,
     disabled: bool,
     documentation_aside: Option<Rc<dyn Fn(&mut App) -> AnyElement>>,
+    end_slot_icon: Option<IconName>,
+    end_slot_title: Option<SharedString>,
+    end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
 }
 
 impl ContextMenuEntry {
@@ -62,6 +67,9 @@ impl ContextMenuEntry {
             action: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }
     }
 
@@ -133,10 +141,13 @@ pub struct ContextMenu {
     selected_index: Option<usize>,
     delayed: bool,
     clicked: bool,
+    end_slot_action: Option<Box<dyn Action>>,
+    key_context: SharedString,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
     eager: bool,
     documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
+    fixed_width: Option<DefiniteLength>,
 }
 
 impl Focusable for ContextMenu {
@@ -172,10 +183,13 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
                     eager: false,
                     documentation_aside: None,
+                    fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -212,10 +226,13 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
                     eager: false,
                     documentation_aside: None,
+                    fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -245,10 +262,13 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
                     eager: true,
                     documentation_aside: None,
+                    fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -263,7 +283,7 @@ impl ContextMenu {
     ///
     /// This only works if the [`ContextMenu`] was constructed using [`ContextMenu::build_persistent`]. Otherwise it is
     /// a no-op.
-    fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(builder) = self.builder.clone() else {
             return;
         };
@@ -279,6 +299,7 @@ impl ContextMenu {
                 selected_index: None,
                 delayed: false,
                 clicked: false,
+                key_context: "menu".into(),
                 _on_blur_subscription: cx.on_blur(
                     &focus_handle,
                     window,
@@ -287,6 +308,8 @@ impl ContextMenu {
                 keep_open_on_confirm: false,
                 eager: false,
                 documentation_aside: None,
+                fixed_width: None,
+                end_slot_action: None,
             },
             window,
             cx,
@@ -339,6 +362,36 @@ impl ContextMenu {
             action,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+        }));
+        self
+    }
+
+    pub fn entry_with_end_slot(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: None,
+            icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
         }));
         self
     }
@@ -362,6 +415,9 @@ impl ContextMenu {
             action,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -413,6 +469,9 @@ impl ContextMenu {
             icon_color: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -438,6 +497,9 @@ impl ContextMenu {
             icon_color: None,
             disabled: true,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
@@ -454,12 +516,43 @@ impl ContextMenu {
             icon_color: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
         }));
         self
     }
 
-    pub fn keep_open_on_confirm(mut self) -> Self {
-        self.keep_open_on_confirm = true;
+    pub fn keep_open_on_confirm(mut self, keep_open: bool) -> Self {
+        self.keep_open_on_confirm = keep_open;
+        self
+    }
+
+    pub fn trigger_end_slot_handler(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
+            return;
+        };
+        let ContextMenuItem::Entry(entry) = entry else {
+            return;
+        };
+        let Some(handler) = entry.end_slot_handler.as_ref() else {
+            return;
+        };
+        handler(None, window, cx);
+    }
+
+    pub fn fixed_width(mut self, width: DefiniteLength) -> Self {
+        self.fixed_width = Some(width);
+        self
+    }
+
+    pub fn end_slot_action(mut self, action: Box<dyn Action>) -> Self {
+        self.end_slot_action = Some(action);
+        self
+    }
+
+    pub fn key_context(mut self, context: impl Into<SharedString>) -> Self {
+        self.key_context = context.into();
         self
     }
 
@@ -490,6 +583,25 @@ impl ContextMenu {
     pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
         cx.emit(DismissEvent);
+    }
+
+    pub fn end_slot(&mut self, _: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
+            return;
+        };
+        let ContextMenuItem::Entry(entry) = item else {
+            return;
+        };
+        let Some(handler) = entry.end_slot_handler.as_ref() else {
+            return;
+        };
+        handler(None, window, cx);
+        self.rebuild(window, cx);
+        cx.notify();
+    }
+
+    pub fn clear_selected(&mut self) {
+        self.selected_index = None;
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
@@ -707,7 +819,11 @@ impl ContextMenu {
             action,
             disabled,
             documentation_aside,
+            end_slot_icon,
+            end_slot_title,
+            end_slot_handler,
         } = entry;
+        let this = cx.weak_entity();
 
         let handler = handler.clone();
         let menu = cx.entity().downgrade();
@@ -733,7 +849,7 @@ impl ContextMenu {
                     *icon_position == IconPosition::Start && toggle.is_none(),
                     |flex| flex.child(Icon::new(*icon_name).size(*icon_size).color(icon_color)),
                 )
-                .child(Label::new(label.clone()).color(label_color))
+                .child(Label::new(label.clone()).color(label_color).truncate())
                 .when(*icon_position == IconPosition::End, |flex| {
                     flex.child(Icon::new(*icon_name).size(*icon_size).color(icon_color))
                 })
@@ -741,6 +857,7 @@ impl ContextMenu {
         } else {
             Label::new(label.clone())
                 .color(label_color)
+                .truncate()
                 .into_any_element()
         };
 
@@ -818,6 +935,56 @@ impl ContextMenu {
                                 },
                             ),
                     )
+                    .when_some(
+                        end_slot_icon
+                            .as_ref()
+                            .zip(self.end_slot_action.as_ref())
+                            .zip(end_slot_title.as_ref())
+                            .zip(end_slot_handler.as_ref()),
+                        |el, (((icon, action), title), handler)| {
+                            el.end_slot(
+                                IconButton::new("end-slot-icon", *icon)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip({
+                                        let action_context = self.action_context.clone();
+                                        let title = title.clone();
+                                        let action = action.boxed_clone();
+                                        move |window, cx| {
+                                            action_context
+                                                .as_ref()
+                                                .map(|focus| {
+                                                    Tooltip::for_action_in(
+                                                        title.clone(),
+                                                        &*action,
+                                                        focus,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    Tooltip::for_action(
+                                                        title.clone(),
+                                                        &*action,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                        }
+                                    })
+                                    .on_click({
+                                        let handler = handler.clone();
+                                        move |_, window, cx| {
+                                            handler(None, window, cx);
+                                            this.update(cx, |this, cx| {
+                                                this.rebuild(window, cx);
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                        }
+                                    }),
+                            )
+                        },
+                    )
                     .on_click({
                         let context = self.action_context.clone();
                         let keep_open_on_confirm = self.keep_open_on_confirm;
@@ -888,21 +1055,28 @@ impl Render for ContextMenu {
                     .child(
                         v_flex()
                             .id("context-menu")
-                            .min_w(px(200.))
                             .max_h(vh(0.75, window))
-                            .flex_1()
+                            .when_some(self.fixed_width, |this, width| {
+                                this.w(width).overflow_x_hidden()
+                            })
+                            .when(self.fixed_width.is_none(), |this| {
+                                this.min_w(px(200.)).flex_1()
+                            })
                             .overflow_y_scroll()
                             .track_focus(&self.focus_handle(cx))
                             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                                 this.cancel(&menu::Cancel, window, cx)
                             }))
-                            .key_context("menu")
+                            .key_context(self.key_context.as_ref())
                             .on_action(cx.listener(ContextMenu::select_first))
                             .on_action(cx.listener(ContextMenu::handle_select_last))
                             .on_action(cx.listener(ContextMenu::select_next))
                             .on_action(cx.listener(ContextMenu::select_previous))
                             .on_action(cx.listener(ContextMenu::confirm))
                             .on_action(cx.listener(ContextMenu::cancel))
+                            .when_some(self.end_slot_action.as_ref(), |el, action| {
+                                el.on_boxed_action(&**action, cx.listener(ContextMenu::end_slot))
+                            })
                             .when(!self.delayed, |mut el| {
                                 for item in self.items.iter() {
                                     if let ContextMenuItem::Entry(ContextMenuEntry {

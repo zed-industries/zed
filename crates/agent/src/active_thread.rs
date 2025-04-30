@@ -709,7 +709,7 @@ fn open_markdown_link(
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel
-                        .open_thread(&thread_id, window, cx)
+                        .open_thread_by_id(&thread_id, window, cx)
                         .detach_and_log_err(cx)
                 });
             }
@@ -3275,7 +3275,7 @@ pub(crate) fn open_context(
                 panel.update(cx, |panel, cx| {
                     let thread_id = thread_context.thread.read(cx).id().clone();
                     panel
-                        .open_thread(&thread_id, window, cx)
+                        .open_thread_by_id(&thread_id, window, cx)
                         .detach_and_log_err(cx)
                 });
             }
