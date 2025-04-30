@@ -416,7 +416,6 @@ impl ProjectDiagnosticsEditor {
                         group,
                         buffer_snapshot.remote_id(),
                         Some(this.clone()),
-                        true,
                         cx,
                     )
                 })?;
