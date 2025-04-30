@@ -68,7 +68,16 @@ impl MacKeyboardMapper {
         let mut key_to_code = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
 
-        // Populate the mappings here
+        for &scan_code in TYPEABLE_CODES.iter() {
+            let key = chars_for_modified_key(scan_code, NO_MOD);
+            if !key.is_empty() {
+                key_to_code.insert(key, scan_code);
+            }
+            let shifted_key = chars_for_modified_key(scan_code, SHIFT_MOD);
+            if !shifted_key.is_empty() {
+                code_to_shifted_key.insert(scan_code, shifted_key);
+            }
+        }
 
         Self {
             key_to_code,
@@ -78,7 +87,16 @@ impl MacKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for MacKeyboardMapper {
-    fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke {
+    fn vscode_keystroke_to_gpui_keystroke(&self, mut keystroke: Keystroke) -> Keystroke {
+        if !keystroke.modifiers.shift || is_alphabetic_key(&keystroke.key) {
+            return keystroke;
+        }
+        if let Some(scan_code) = self.key_to_code.get(&keystroke.key) {
+            if let Some(shifted_key) = self.code_to_shifted_key.get(scan_code) {
+                keystroke.key = shifted_key.clone();
+                keystroke.modifiers.shift = false;
+            }
+        }
         keystroke
     }
 }
@@ -152,29 +170,39 @@ pub(crate) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String 
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
 }
 
+fn is_alphabetic_key(key: &str) -> bool {
+    matches!(
+        key,
+        "a" | "b"
+            | "c"
+            | "d"
+            | "e"
+            | "f"
+            | "g"
+            | "h"
+            | "i"
+            | "j"
+            | "k"
+            | "l"
+            | "m"
+            | "n"
+            | "o"
+            | "p"
+            | "q"
+            | "r"
+            | "s"
+            | "t"
+            | "u"
+            | "v"
+            | "w"
+            | "x"
+            | "y"
+            | "z"
+    )
+}
+
 // All typeable scan codes for the standard US keyboard layout, ANSI104
-const TY_CODES: &[u16] = &[
-    0x001d, // Digit 0
-    0x0012, // Digit 1
-    0x0013, // Digit 2
-    0x0014, // Digit 3
-    0x0015, // Digit 4
-    0x0017, // Digit 5
-    0x0016, // Digit 6
-    0x001a, // Digit 7
-    0x001c, // Digit 8
-    0x0019, // Digit 9
-    0x0032, // ` Tilde
-    0x001b, // - Minus
-    0x0018, // = Equal
-    0x0021, // [ Left bracket
-    0x001e, // ] Right bracket
-    0x002a, // \ Backslash
-    0x0029, // ; Semicolon
-    0x0027, // ' Quote
-    0x002b, // , Comma
-    0x002f, // . Period
-    0x002c, // / Slash
+const TYPEABLE_CODES: &[u16] = &[
     0x0000, // a
     0x000b, // b
     0x0008, // c
@@ -201,4 +229,25 @@ const TY_CODES: &[u16] = &[
     0x0007, // x
     0x0010, // y
     0x0006, // z
+    0x001d, // Digit 0
+    0x0012, // Digit 1
+    0x0013, // Digit 2
+    0x0014, // Digit 3
+    0x0015, // Digit 4
+    0x0017, // Digit 5
+    0x0016, // Digit 6
+    0x001a, // Digit 7
+    0x001c, // Digit 8
+    0x0019, // Digit 9
+    0x0032, // ` Tilde
+    0x001b, // - Minus
+    0x0018, // = Equal
+    0x0021, // [ Left bracket
+    0x001e, // ] Right bracket
+    0x002a, // \ Backslash
+    0x0029, // ; Semicolon
+    0x0027, // ' Quote
+    0x002b, // , Comma
+    0x002f, // . Period
+    0x002c, // / Slash
 ];
