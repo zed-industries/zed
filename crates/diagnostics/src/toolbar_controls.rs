@@ -21,19 +21,23 @@ impl Render for ToolbarControls {
                 .map(|editor| cargo_diagnostics_sources(editor.read(cx), cx))
                 .unwrap_or_default(),
         );
+        let fetch_cargo_diagnostics = !cargo_diagnostics_sources.is_empty();
 
         if let Some(editor) = self.diagnostics() {
             let diagnostics = editor.read(cx);
             include_warnings = diagnostics.include_warnings;
             has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
-            is_updating = diagnostics.update_excerpts_task.is_some()
-                || diagnostics.cargo_diagnostics_fetch.task.is_some()
-                || diagnostics
-                    .project
-                    .read(cx)
-                    .language_servers_running_disk_based_diagnostics(cx)
-                    .next()
-                    .is_some();
+            is_updating = if fetch_cargo_diagnostics {
+                diagnostics.cargo_diagnostics_fetch.task.is_some()
+            } else {
+                diagnostics.update_excerpts_task.is_some()
+                    || diagnostics
+                        .project
+                        .read(cx)
+                        .language_servers_running_disk_based_diagnostics(cx)
+                        .next()
+                        .is_some()
+            };
         }
 
         let tooltip = if include_warnings {
@@ -75,7 +79,7 @@ impl Render for ToolbarControls {
                         IconButton::new("refresh-diagnostics", IconName::Update)
                             .icon_color(Color::Info)
                             .shape(IconButtonShape::Square)
-                            .disabled(!has_stale_excerpts && cargo_diagnostics_sources.is_empty())
+                            .disabled(!has_stale_excerpts && !fetch_cargo_diagnostics)
                             .tooltip(Tooltip::for_action_title(
                                 "Refresh diagnostics",
                                 &ToggleDiagnosticsRefresh,
@@ -86,14 +90,14 @@ impl Render for ToolbarControls {
                                         let cargo_diagnostics_sources =
                                             Arc::clone(&cargo_diagnostics_sources);
                                         diagnostics.update(cx, move |diagnostics, cx| {
-                                            if cargo_diagnostics_sources.is_empty() {
-                                                diagnostics.update_all_excerpts(window, cx);
-                                            } else {
+                                            if fetch_cargo_diagnostics {
                                                 diagnostics.fetch_cargo_diagnostics(
                                                     cargo_diagnostics_sources,
                                                     window,
                                                     cx,
                                                 );
+                                            } else {
+                                                diagnostics.update_all_excerpts(window, cx);
                                             }
                                         });
                                     }
