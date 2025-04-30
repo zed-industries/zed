@@ -7,6 +7,7 @@
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 
@@ -61,13 +62,14 @@ pub async fn get_vscode_projects(fs: Arc<dyn Fs>) -> Option<Vec<RecentProject>> 
     let path = paths::vscode_data_dir().join("User/globalStorage/storage.json");
     let content = fs.load(paths::vscode_settings_file()).await.ok()?;
     let storage = serde_json::from_str::<Value>(&content).ok()?;
-    util::json_get_path(storage, "backupWorkspaces.folders")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| {
-            arr.iter()
-                .map(|v| v.as_object()?.get("folderUri")?.strip_prefix("file://"))
-        })
-        .collect()
+    // util::json_get_path(storage, "backupWorkspaces.folders")
+    //     .and_then(|v| v.as_array())
+    //     .and_then(|arr| {
+    //         arr.iter()
+    //             .map(|v| v.as_object()?.get("folderUri")?.strip_prefix("file://"))
+    //     })
+    //     .collect()
+    None
 }
 
 pub async fn get_neovim_projects(fs: Arc<dyn Fs>) -> Option<Vec<RecentProject>> {
@@ -77,12 +79,12 @@ pub async fn get_neovim_projects(fs: Arc<dyn Fs>) -> Option<Vec<RecentProject>> 
         .output()
         .ok()?
         .stderr;
-    let files: Vec<PathBuf> = String::from_utf8(output)
+    let files = String::from_utf8(output)
         .ok()?
         .lines()
         .take(MAX_OLDFILES)
-        .map(|s| s.split(": ").last().into())
-        .collect()?;
+        .map(|s| s.split(": ").last().and_then(|s| PathBuf::from_str(s).ok()))
+        .collect::<Option<Vec<PathBuf>>>()?;
     Some(
         projects_for_paths(&files, fs)
             .await

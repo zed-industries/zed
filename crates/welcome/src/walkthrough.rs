@@ -16,6 +16,7 @@ use workspace::{
     item::{Item, ItemEvent},
     register_serializable_item,
 };
+use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
@@ -114,16 +115,16 @@ impl Render for Walkthrough {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
-            .bg(cx.theme().colors().editor_background)
             .key_context("Walkthrough")
+            .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus_handle(cx))
-            .w_full()
             .p_5()
             .child(
                 v_flex()
+                    .size_full()
                     .items_center()
+                    .justify_center()
                     .relative()
-                    .top(vh(0.15, window))
                     .child(
                         v_flex()
                             .child(
@@ -228,7 +229,7 @@ impl WalkthroughStep for ThemeStep {
         // let registry = ThemeRegistry::global(cx);
         // let mut themes = registry.list();
 
-        let make_button = |name: &'static str, fs: Arc<dyn Fs>| {
+        let make_button = |name: &'static str, _image_path: &str, fs: Arc<dyn Fs>| {
             Button::new(name, name)
                 .when(current == name, |this| this.toggle_state(true))
                 .on_click(move |_event, window, cx| {
@@ -242,8 +243,55 @@ impl WalkthroughStep for ThemeStep {
                     });
                 })
         };
-        div()
-            .children(["One Light", "One Dark"].map(|name| make_button(name, fs.clone())))
+        v_flex()
+            .child(
+                h_flex().m_32().flex_wrap().justify_center().children(
+                    [
+                        ("One Light", "path/to/image"),
+                        ("One Dark", "path/to/image"),
+                        ("Ayu Light", "path/to/image"),
+                        ("Ayu Dark", "path/to/image"),
+                        ("Gruvbox Light", "path/to/image"),
+                        ("Gruvbox Dark", "path/to/image"),
+                    ]
+                    .map(|(name, path)| make_button(name, path, fs.clone())),
+                ),
+            )
+            .child(
+                h_flex().justify_between().children([
+                    Button::new("install-theme", "Browse More Themes")
+                        .icon(IconName::SwatchBook)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            telemetry::event!("Welcome Theme Changed");
+                            this.workspace
+                                .update(cx, |_workspace, cx| {
+                                    window.dispatch_action(
+                                        Box::new(Extensions {
+                                            category_filter: Some(ExtensionCategoryFilter::Themes),
+                                        }),
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        })),
+                    // Button::new("theme-docs", "Open Theme Docs")
+                    //     .icon(IconName::SwatchBook)
+                    //     .icon_size(IconSize::XSmall)
+                    //     .icon_color(Color::Muted)
+                    //     .icon_position(IconPosition::Start)
+                    //     .on_click(cx.listener(|this, _, window, cx| {
+                    //         telemetry::event!("Welcome Theme Changed");
+                    //         this.workspace
+                    //             .update(cx, |_workspace, cx| {
+                    //                 cx.open_url("https://zed.dev/docs/themes");
+                    //             })
+                    //             .ok();
+                    //     })),
+                ]),
+            )
             .into_any()
     }
 }
@@ -257,7 +305,12 @@ impl WalkthroughStep for SettingsStep {
         window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        walkthrough.checkbox_section(ix, "Configure Zed", "Set initial settings and/or import from other editors", cx)
+        walkthrough.checkbox_section(
+            ix,
+            "Configure Zed",
+            "Set initial settings and/or import from other editors",
+            cx,
+        )
     }
 
     fn render_subpane(
@@ -267,14 +320,42 @@ impl WalkthroughStep for SettingsStep {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        // keymap picker dropdown
-        // vim mode checkbox
-        // buttons for
-        //   - open keymap
-        //   - open settings
-        //   - extensions
-        //   - open https://zed.dev/docs/configuring-zed in browser
-        div().size_20().bg(gpui::red()).into_any()
+        v_flex()
+            .items_center()
+            .justify_center()
+            .child(h_flex().children([
+                "VS Code",
+                "Atom",
+                "Sublime",
+                "Jetbrains",
+                "Text Mate",
+                "Emacs (beta)",
+            ]))
+            .child("vim mode checkbox")
+            .child("browse extensions")
+            .when(cfg!(macos), |this| {
+                this.child(
+                    h_flex()
+                        .child(Button::new("install-cli", "Install cli"))
+                        .child("Install a `zed` binary that\ncan be run from the command line"),
+                )
+            })
+            .when(
+                true,
+                // todo!("when this path exists: {}", paths::vscode_settings_file()),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .child(Button::new("import-vscode", "Import VsCode settings"))
+                            .child(format!(
+                                "settings file last modified {}",
+                                "TODO ago",
+                            )),
+                    )
+                },
+            )
+            .child(h_flex().children(["open settings", "open keymap", "open config docs"]))
+            .into_any()
     }
 }
 
@@ -332,11 +413,18 @@ impl WalkthroughStep for DataSharing {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        // checkboxes:
-        // Send Crash Reports
-        // Send Telemetry
-        // Share Training Data (disabled)
-        div().size_20().bg(gpui::yellow()).into_any()
+        v_flex()
+            .items_center()
+            .justify_center()
+            .children([
+                "Send Crash Reports",
+                "Send Telemetry",
+                "---",
+                "Help Improve completions",
+                "Rate agentic edits",
+                // TODO: add note about how zed never shares your code/data by default
+            ])
+            .into_any()
     }
 }
 
@@ -364,8 +452,8 @@ impl WalkthroughStep for OpenProject {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        // spinner "searching for recent projects" while running:
-
+        // spinner "searching for recent projects" while running? or just have them pop-in
+        // single list sorted by mtime (with source editor icons) or separate into separate lists by source?
         div().size_20().bg(gpui::rgba(0x87ceeb)).into_any()
     }
 }
