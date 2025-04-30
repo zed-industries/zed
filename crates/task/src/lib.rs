@@ -19,7 +19,7 @@ pub use debug_format::{
     AttachRequest, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate,
 };
 pub use task_template::{
-    DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates,
+    DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
 };
 pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;

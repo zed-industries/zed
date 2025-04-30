@@ -83,15 +83,6 @@ pub enum DebugArgsRequest {
     Attach(AttachRequest),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// The type of task modal to spawn
-pub enum TaskModal {
-    /// Show regular tasks
-    ScriptModal,
-    /// Show debug tasks
-    DebugModal,
-}
-
 /// What to do with the terminal pane and tab, after the command was started.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
