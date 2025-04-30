@@ -13,3 +13,25 @@ pub trait PlatformKeyboardMapper {
     /// TODO:
     fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke;
 }
+
+/// TODO:
+pub struct TestKeyboardMapper {
+    #[cfg(target_os = "windows")]
+    mapper: super::WindowsKeyboardMapper,
+}
+
+impl PlatformKeyboardMapper for TestKeyboardMapper {
+    fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke {
+        self.mapper.vscode_keystroke_to_gpui_keystroke(keystroke)
+    }
+}
+
+impl TestKeyboardMapper {
+    /// TODO:
+    pub fn new() -> Self {
+        Self {
+            #[cfg(target_os = "windows")]
+            mapper: super::WindowsKeyboardMapper::new(),
+        }
+    }
+}

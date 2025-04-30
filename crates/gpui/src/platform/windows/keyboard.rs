@@ -10,7 +10,7 @@ use windows::Win32::UI::{
 };
 use windows_core::HSTRING;
 
-use crate::{Modifiers, PlatformKeyboardLayout};
+use crate::{Modifiers, {Keystroke, PlatformKeyboardLayout}, PlatformKeyboardMapper};
 
 pub(crate) struct WindowsKeyboardLayout {
     id: String,
@@ -45,6 +45,20 @@ impl WindowsKeyboardLayout {
             id: "unknown".to_string(),
             name: "unknown".to_string(),
         }
+    }
+}
+
+pub(crate) struct WindowsKeyboardMapper;
+
+impl PlatformKeyboardMapper for WindowsKeyboardMapper {
+    fn vscode_keystroke_to_gpui_keystroke(&self, keystroke: Keystroke) -> Keystroke {
+        todo!()
+    }
+}
+
+impl WindowsKeyboardMapper {
+    pub(crate) fn new() -> Self {
+        Self
     }
 }
 
