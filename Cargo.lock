@@ -1087,9 +1087,11 @@ dependencies = [
  "futures-task",
  "futures-util",
  "log",
+ "native-tls",
  "pin-project-lite",
  "rustls-pki-types",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls 0.26.2",
  "tungstenite 0.26.2",
 ]
@@ -7585,7 +7587,8 @@ dependencies = [
 [[package]]
 name = "jupyter-protocol"
 version = "0.6.0"
-source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9ae6296f9476658b3550293c113996daf75fa542cd8d078abb4c60207bded14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7599,8 +7602,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "0.9.0"
-source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cb3e59671c4bd518f65e360c7828f050243a329f7a07504fe1fe354eea5f890"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7609,6 +7613,7 @@ dependencies = [
  "jupyter-protocol",
  "serde",
  "serde_json",
+ "tokio",
  "url",
  "uuid",
 ]
@@ -8933,7 +8938,8 @@ dependencies = [
 [[package]]
 name = "nbformat"
 version = "0.10.0"
-source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "244c1673f02b4d5f3c51b6f8ed28d57182cb166a50a6dbf651a3d53e23dc81c0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -12313,11 +12319,10 @@ dependencies = [
 [[package]]
 name = "runtimelib"
 version = "0.25.0"
-source = "git+https://github.com/ConradIrwin/runtimed?rev=7130c804216b6914355d15d0b91ea91f6babd734#7130c804216b6914355d15d0b91ea91f6babd734"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9af6ed9fd10d7ee940676945510c197c2a472806bb652096a713985c44ffd643"
 dependencies = [
  "anyhow",
- "async-dispatcher",
- "async-std",
  "base64 0.22.1",
  "bytes 1.10.1",
  "chrono",
@@ -12330,7 +12335,6 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand 3.1.1",
- "smol",
  "uuid",
  "zeromq",
 ]
@@ -15597,6 +15601,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
+ "native-tls",
  "rand 0.9.1",
  "rustls 0.23.26",
  "rustls-pki-types",
@@ -18800,8 +18805,6 @@ version = "0.5.0-pre"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1fe92954d37e77bed5e2775cb0fed7dba5f6bc4be6f7f76172a4eb371dc6a9b"
 dependencies = [
- "async-dispatcher",
- "async-std",
  "async-trait",
  "asynchronous-codec",
  "bytes 1.10.1",
