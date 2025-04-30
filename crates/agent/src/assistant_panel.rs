@@ -40,6 +40,7 @@ use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
+use crate::agent_diff::AgentDiffSingletonEditors;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -1056,6 +1057,10 @@ impl AssistantPanel {
 
     pub(crate) fn active_thread(&self, cx: &App) -> Entity<Thread> {
         self.thread.read(cx).thread().clone()
+    }
+
+    pub(crate) fn agent_diff(&self, cx: &App) -> Entity<AgentDiffSingletonEditors> {
+        self.thread.read(cx).agent_diff().clone()
     }
 
     pub(crate) fn delete_thread(

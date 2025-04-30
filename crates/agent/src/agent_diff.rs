@@ -1,4 +1,6 @@
-use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel};
+use crate::{
+    AssistantPanel, Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel,
+};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
@@ -20,7 +22,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*};
+use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
@@ -827,23 +829,30 @@ impl editor::Addon for AgentDiffAddon {
     }
 }
 
-pub struct AgentDiffToolbar {
-    agent_diff: Option<WeakEntity<AgentDiffPane>>,
+pub enum AgentDiffToolbar {
+    NotApplicable,
+    Pane(WeakEntity<AgentDiffPane>),
+    Editor,
 }
 
 impl AgentDiffToolbar {
     pub fn new() -> Self {
-        Self { agent_diff: None }
-    }
-
-    fn agent_diff(&self, _: &App) -> Option<Entity<AgentDiffPane>> {
-        self.agent_diff.as_ref()?.upgrade()
+        Self::NotApplicable
     }
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(agent_diff) = self.agent_diff(cx) {
-            agent_diff.focus_handle(cx).focus(window);
+        match self {
+            Self::Pane(agent_diff) => {
+                if let Some(agent_diff) = agent_diff.upgrade() {
+                    agent_diff.focus_handle(cx).focus(window);
+                }
+            }
+            Self::Editor => {
+                // todo!
+            }
+            Self::NotApplicable => {}
         }
+
         let action = action.boxed_clone();
         cx.defer(move |cx| {
             cx.dispatch_action(action.as_ref());
@@ -860,14 +869,36 @@ impl ToolbarItemView for AgentDiffToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.agent_diff = active_pane_item
-            .and_then(|item| item.act_as::<AgentDiffPane>(cx))
-            .map(|entity| entity.downgrade());
-        if self.agent_diff.is_some() {
-            ToolbarItemLocation::PrimaryRight
-        } else {
-            ToolbarItemLocation::Hidden
+        if let Some(item) = active_pane_item {
+            if let Some(pane) = item.act_as::<AgentDiffPane>(cx) {
+                *self = Self::Pane(pane.downgrade());
+                return ToolbarItemLocation::PrimaryRight;
+            }
+
+            if let Some(editor_handle) = item.act_as::<Editor>(cx) {
+                let editor = editor_handle.read(cx);
+                if editor.mode().is_full() {
+                    // todo! can we simplify this?
+                    if let Some(workspace) = editor.workspace() {
+                        // if let Some(panel) = workspace.read(cx).panel::<AssistantPanel>(cx) {
+                        //     let diff = panel.read(cx).agent_diff(cx);
+                        //     let weak_editor = editor_handle.downgrade();
+
+                        //     if diff.read(cx).reviewing_editors.contains(&weak_editor)
+                        //         // todo! remove me
+                        //         || std::env::var("ZED_SHOW_AGENT_DIFF_BAR").is_ok()
+                        //     {
+                        *self = Self::Editor;
+                        return ToolbarItemLocation::PrimaryLeft;
+                        //     }
+                        // }
+                    }
+                }
+            }
         }
+
+        *self = Self::NotApplicable;
+        ToolbarItemLocation::Hidden
     }
 
     fn pane_focus_update(
@@ -881,54 +912,90 @@ impl ToolbarItemView for AgentDiffToolbar {
 
 impl Render for AgentDiffToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_diff = match self.agent_diff(cx) {
-            Some(ad) => ad,
-            None => return div(),
-        };
+        match self {
+            Self::NotApplicable => Empty.into_any_element(),
+            Self::Editor => h_flex()
+                .bg(cx.theme().colors().surface_background)
+                .rounded_md()
+                .p_1()
+                .mx_2()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .child(IconButton::new("hunk-up", IconName::ArrowUp))
+                        .child(IconButton::new("hunk-down", IconName::ArrowDown)),
+                )
+                .child(vertical_divider())
+                .child(
+                    h_flex()
+                        .child(Button::new("reject-all", "Reject All"))
+                        .child(Button::new("keep-all", "Keep All")),
+                )
+                .child(vertical_divider())
+                .child(IconButton::new("review", IconName::ListTree))
+                .into_any(),
+            Self::Pane(agent_diff) => {
+                let Some(agent_diff) = agent_diff.upgrade() else {
+                    return Empty.into_any();
+                };
 
-        let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
-        if is_generating {
-            return div()
-                .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
-                .child(AnimatedLabel::new("Generating"));
-        }
+                let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
+                if is_generating {
+                    return div()
+                        .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
+                        .child(AnimatedLabel::new("Generating"))
+                        .into_any();
+                }
 
-        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
-        if is_empty {
-            return div();
-        }
+                let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
+                if is_empty {
+                    return Empty.into_any();
+                }
 
-        let focus_handle = agent_diff.focus_handle(cx);
+                let focus_handle = agent_diff.focus_handle(cx);
 
-        h_group_xl()
-            .my_neg_1()
-            .items_center()
-            .p_1()
-            .flex_wrap()
-            .justify_between()
-            .child(
-                h_group_sm()
+                h_group_xl()
+                    .my_neg_1()
+                    .items_center()
+                    .p_1()
+                    .flex_wrap()
+                    .justify_between()
                     .child(
-                        Button::new("reject-all", "Reject All")
-                            .key_binding({
-                                KeyBinding::for_action_in(&RejectAll, &focus_handle, window, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.)))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&RejectAll, window, cx)
-                            })),
+                        h_group_sm()
+                            .child(
+                                Button::new("reject-all", "Reject All")
+                                    .key_binding({
+                                        KeyBinding::for_action_in(
+                                            &RejectAll,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&RejectAll, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("keep-all", "Keep All")
+                                    .key_binding({
+                                        KeyBinding::for_action_in(
+                                            &KeepAll,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&KeepAll, window, cx)
+                                    })),
+                            ),
                     )
-                    .child(
-                        Button::new("keep-all", "Keep All")
-                            .key_binding({
-                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.)))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&KeepAll, window, cx)
-                            })),
-                    ),
-            )
+                    .into_any()
+            }
+        }
     }
 }
 

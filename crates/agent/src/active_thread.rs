@@ -54,7 +54,7 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
-    _agent_diff: Entity<AgentDiffSingletonEditors>,
+    agent_diff: Entity<AgentDiffSingletonEditors>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -761,7 +761,7 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
-            _agent_diff: cx
+            agent_diff: cx
                 .new(|cx| AgentDiffSingletonEditors::new(thread.clone(), workspace.clone(), cx)),
             workspace,
             save_thread_task: None,
@@ -804,6 +804,10 @@ impl ActiveThread {
 
     pub fn thread(&self) -> &Entity<Thread> {
         &self.thread
+    }
+
+    pub fn agent_diff(&self) -> &Entity<AgentDiffSingletonEditors> {
+        &self.agent_diff
     }
 
     pub fn is_empty(&self) -> bool {
