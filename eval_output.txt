@@ -1,0 +1,2190 @@
+   Compiling assistant_tools v0.1.0 (/Users/as-cii/dev/zed/crates/assistant_tools)
+warning: unused import: `HashSet`
+ --> crates/assistant_tools/src/edit_agent/evals.rs:9:28
+  |
+9 | use collections::{HashMap, HashSet};
+  |                            ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: `assistant_tools` (lib test) generated 1 warning (run `cargo fix --lib -p assistant_tools --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.59s
+     Running unittests src/assistant_tools.rs (/Users/as-cii/dev/zed/target/debug/deps/assistant_tools-112a46f1cff5fd65)
+
+running 1 test
+Evaluated 8/100test edit_agent::evals::eval_disable_cursor_blinking has been running for over 60 seconds
+Evaluated 100/100Actual pass ratio: 0.24
+
+Eval failed 36 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out all the lines that interact with the BlinkManager, keeping the outer update blocks but commenting everything inside.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    blink_manager.enable(cx);
+                });
+</old_text>
+<new_text>
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    // blink_manager.enable(cx);
+                });
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+</new_text>
+
+</edits>
+```
+Eval failed 10 times
+Diff:
+@@ -1779,13 +1779,13 @@
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
++            self.blink_manager.update(cx, |blink_manager, cx| {
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
++            });
+                 }),
+             ],
+             tasks_update_task: None,
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+            });
+</new_text>
+
+</edits>
+```
+Eval failed 2 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                        // if active {
++                        //     blink_manager.enable(cx);
++                        // } else {
++                        //     blink_manager.disable(cx);
++                        // }
+                     });
+                 }),
+             ],
+@@ -18456,14 +18456,14 @@
+             .take()
+             .and_then(|descendant| descendant.upgrade())
+         {
+-            window.focus(&descendant);
++                window.focus(&descendant);
+         } else {
+             if let Some(blame) = self.blame.as_ref() {
+                 blame.update(cx, GitBlame::focus)
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                window.focus(&descendant);
+        } else {
+            if let Some(blame) = self.blame.as_ref() {
+                blame.update(cx, GitBlame::focus)
+            }
+
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+                window.focus(&descendant);
+        } else {
+            if let Some(blame) = self.blame.as_ref() {
+                blame.update(cx, GitBlame::focus)
+            }
+
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                cx.observe_window_activation(window, |editor, window, cx| {
+                    let active = window.is_window_active();
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.disable(cx);
+                        }
+                    });
+                }),
+</old_text>
+<new_text>
+                cx.observe_window_activation(window, |editor, window, cx| {
+                    let active = window.is_window_active();
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        // if active {
+                        //     blink_manager.enable(cx);
+                        // } else {
+                        //     blink_manager.disable(cx);
+                        // }
+                    });
+                }),
+</new_text>
+
+</edits>
+```
+Eval failed 2 times
+Diff:
+@@ -1780,9 +1780,8 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
++                        // blink_manager.enable(cx);
++                    });
+                             blink_manager.disable(cx);
+                         }
+                     });
+@@ -18463,7 +18462,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll find all places where `BlinkManager::enable` is called and comment them out, while preserving the outer update blocks.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        blink_manager.enable(cx);
+                    });
+</old_text>
+<new_text>
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        // blink_manager.enable(cx);
+                    });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+            });
+</new_text>
+
+</edits>
+```
+Eval failed 2 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                if active {
++                    // blink_manager.enable(cx);
++                } else {
++                    // blink_manager.disable(cx);
++                }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Looking for all places where `blink_manager.enable(cx)` is called, and commenting them out.
+
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                if active {
+                    // blink_manager.enable(cx);
+                } else {
+                    // blink_manager.disable(cx);
+                }
+</new_text>
+
+</edits>
+```
+Eval failed 2 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                // if active {
++                // blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out the lines that interact with the BlinkManager, keeping the outer update blocks but commenting all the contents.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+</new_text>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,9 +1781,9 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
++                // blink_manager.enable(cx);
++            } else {
++                // blink_manager.disable(cx);
+                         }
+                     });
+                 }),
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Looking at the grep results, I need to find and comment out all lines that interact with `BlinkManager::enable`. I'll search through the code to find those instances and comment them out.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                blink_manager.enable(cx);
+            } else {
+                blink_manager.disable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+            } else {
+                // blink_manager.disable(cx);
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,9 +1781,9 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
++                            // blink_manager.enable(cx);
+                         } else {
+-                            blink_manager.disable(cx);
++                            // blink_manager.disable(cx);
+                         }
+                     });
+                 }),
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Looking at the grep output, I'll find all instances where BlinkManager::enable is called and comment them out.
+
+```
+<edits>
+
+<old_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    blink_manager.enable(cx);
+                });
+</old_text>
+<new_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    // blink_manager.enable(cx);
+                });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.disable(cx);
+                        }
+</old_text>
+<new_text>
+                        if active {
+                            // blink_manager.enable(cx);
+                        } else {
+                            // blink_manager.disable(cx);
+                        }
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1777,14 +1777,14 @@
+                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+-                cx.observe_window_activation(window, |editor, window, cx| {
++                cx.on_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                        // if active {
++                        //     blink_manager.enable(cx);
++                        // } else {
++                        //     blink_manager.disable(cx);
++                        // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Based on the search results, I need to comment out lines that interact with the BlinkManager, specifically the `enable` method calls, while keeping the outer update blocks.
+
+```edits
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                cx.on_window_activation(window, |editor, window, cx| {
+                    let active = window.is_window_active();
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.disable(cx);
+                        }
+                    });
+                }),
+</old_text>
+<new_text>
+                cx.on_window_activation(window, |editor, window, cx| {
+                    let active = window.is_window_active();
+                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                        // if active {
+                        //     blink_manager.enable(cx);
+                        // } else {
+                        //     blink_manager.disable(cx);
+                        // }
+                    });
+                }),
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</new_text>
+
+</edits>
+Eval failed 1 times
+Diff:
+@@ -1777,16 +1777,16 @@
+                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+-                cx.observe_window_activation(window, |editor, window, cx| {
+-                    let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
+-                }),
++        cx.observe_window_activation(window, |editor, window, cx| {
++            let active = window.is_window_active();
++            editor.blink_manager.update(cx, |blink_manager, cx| {
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
++            });
++        }),
+             ],
+             tasks_update_task: None,
+             linked_edit_ranges: Default::default(),
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.disable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out all lines that interact with the BlinkManager, keeping the outer update blocks intact.
+
+```
+<edits>
+
+<old_text>
+        cx.observe_window_activation(window, |editor, window, cx| {
+            let active = window.is_window_active();
+            editor.blink_manager.update(cx, |blink_manager, cx| {
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+            });
+        }),
+</old_text>
+<new_text>
+        cx.observe_window_activation(window, |editor, window, cx| {
+            let active = window.is_window_active();
+            editor.blink_manager.update(cx, |blink_manager, cx| {
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+            });
+        }),
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.disable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.disable(cx);
+            });
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,7 +1781,7 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+                         } else {
+                             blink_manager.disable(cx);
+                         }
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Looking at the code, I need to find and comment out all calls to `BlinkManager::enable` while keeping the outer update blocks intact.
+
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                        blink_manager.enable(cx);
+</old_text>
+<new_text>
+                        // blink_manager.enable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++            // if active {
++            //     blink_manager.enable(cx);
++            // } else {
++            //     blink_manager.disable(cx);
++            // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+            if active {
+                blink_manager.enable(cx);
+            } else {
+                blink_manager.disable(cx);
+            }
+</old_text>
+<new_text>
+            // if active {
+            //     blink_manager.enable(cx);
+            // } else {
+            //     blink_manager.disable(cx);
+            // }
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                // blink_manager.disable(cx);
++                // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out any lines that interact with the BlinkManager, while keeping the outer update blocks.
+
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+</new_text>
+
+<old_text>
+                blink_manager.disable(cx);
+</old_text>
+<new_text>
+                // blink_manager.disable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                // if active {
++                // blink_manager.enable(cx);
++                // } else {
++                // blink_manager.disable(cx);
++                // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Based on the code snippet provided, I need to comment out all interactions with the BlinkManager. Here are the edits:
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+</new_text>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+                blink_manager.disable(cx);
+</old_text>
+<new_text>
+                // blink_manager.disable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1777,16 +1777,16 @@
+                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+-                cx.observe_window_activation(window, |editor, window, cx| {
+-                    let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
+-                }),
++        cx.on_window_activation(window, |editor, window, cx| {
++            let active = window.is_window_active();
++            editor.blink_manager.update(cx, |blink_manager, cx| {
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
++            });
++        }),
+             ],
+             tasks_update_task: None,
+             linked_edit_ranges: Default::default(),
+@@ -18462,9 +18462,9 @@
+                 blame.update(cx, GitBlame::focus)
+             }
+
+-            self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
+-            });
++        self.blink_manager.update(cx, |blink_manager, cx| {
++            // blink_manager.disable(cx);
++        });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+                 buffer.finalize_last_transaction(cx);
+
+Raw Edits:
+I'll comment out all lines that interact with the `BlinkManager`.
+
+```
+<edits>
+
+<old_text>
+        cx.on_window_activation(window, |editor, window, cx| {
+            let active = window.is_window_active();
+            editor.blink_manager.update(cx, |blink_manager, cx| {
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+            });
+        }),
+</old_text>
+<new_text>
+        cx.on_window_activation(window, |editor, window, cx| {
+            let active = window.is_window_active();
+            editor.blink_manager.update(cx, |blink_manager, cx| {
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+            });
+        }),
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.disable(cx);
+        });
+</old_text>
+<new_text>
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            // blink_manager.disable(cx);
+        });
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1780,8 +1780,8 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
++                if active {
++                            // blink_manager.enable(cx);
+                         } else {
+                             blink_manager.disable(cx);
+                         }
+@@ -18456,14 +18456,14 @@
+             .take()
+             .and_then(|descendant| descendant.upgrade())
+         {
+-            window.focus(&descendant);
++                window.focus(&descendant);
+         } else {
+             if let Some(blame) = self.blame.as_ref() {
+                 blame.update(cx, GitBlame::focus)
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out any calls to `BlinkManager::enable` in the file:
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                window.focus(&descendant);
+        } else {
+            if let Some(blame) = self.blame.as_ref() {
+                blame.update(cx, GitBlame::focus)
+            }
+
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+                window.focus(&descendant);
+        } else {
+            if let Some(blame) = self.blame.as_ref() {
+                blame.update(cx, GitBlame::focus)
+            }
+
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                if active {
+                            blink_manager.enable(cx);
+                        } else {
+                            blink_manager.disable(cx);
+                        }
+</old_text>
+<new_text>
+                if active {
+                            // blink_manager.enable(cx);
+                        } else {
+                            blink_manager.disable(cx);
+                        }
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,7 +1781,7 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
++                        // blink_manager.enable(cx);
+                         } else {
+                             blink_manager.disable(cx);
+                         }
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out all calls to BlinkManager::enable while keeping the outer update blocks intact.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                        blink_manager.enable(cx);
+</old_text>
+<new_text>
+                        // blink_manager.enable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                    // if active {
++                    //     blink_manager.enable(cx);
++                    // } else {
++                // blink_manager.disable(cx);
++                    // }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out the lines that interact with the BlinkManager while preserving the outer update blocks.
+
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                    if active {
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+</old_text>
+<new_text>
+                    // if active {
+                    //     blink_manager.enable(cx);
+                    // } else {
+                    //     blink_manager.disable(cx);
+                    // }
+</new_text>
+
+<old_text>
+                blink_manager.disable(cx);
+</old_text>
+<new_text>
+                // blink_manager.disable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1780,11 +1780,11 @@
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
+                     });
+                 }),
+             ],
+@@ -18462,9 +18462,9 @@
+                 blame.update(cx, GitBlame::focus)
+             }
+
+-            self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
+-            });
++        self.blink_manager.update(cx, |blink_manager, cx| {
++            // blink_manager.enable(cx);
++        });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+                 buffer.finalize_last_transaction(cx);
+
+Raw Edits:
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.enable(cx);
+        });
+</old_text>
+<new_text>
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            // blink_manager.enable(cx);
+        });
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,10 +1781,10 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
++                        // blink_manager.enable(cx);
++                    } else {
++                        // blink_manager.disable(cx);
++                    }
+                     });
+                 }),
+             ],
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Looking at the provided grep output, I'll locate all instances where BlinkManager's enable method is called and comment them out while preserving the update blocks.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+</old_text>
+<new_text>
+                        // blink_manager.enable(cx);
+                    } else {
+                        // blink_manager.disable(cx);
+                    }
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,7 +1781,7 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+                         } else {
+                             blink_manager.disable(cx);
+                         }
+@@ -18462,9 +18462,9 @@
+                 blame.update(cx, GitBlame::focus)
+             }
+
+-            self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
+-            });
++        self.blink_manager.update(cx, |blink_manager, cx| {
++            // blink_manager.enable(cx);
++        });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+                 buffer.finalize_last_transaction(cx);
+
+Raw Edits:
+```
+<edits>
+
+<old_text>
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.enable(cx);
+        });
+</old_text>
+<new_text>
+        self.blink_manager.update(cx, |blink_manager, cx| {
+            // blink_manager.enable(cx);
+        });
+</new_text>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1779,13 +1779,13 @@
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
++            self.blink_manager.update(cx, |blink_manager, cx| {
++                // if window.is_window_active() {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
++            });
+                 }),
+             ],
+             tasks_update_task: None,
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out the lines that interact with the BlinkManager, keeping the outer update blocks.
+
+```
+<edits>
+
+<old_text>
+                blink_manager.enable(cx);
+</old_text>
+<new_text>
+                // blink_manager.enable(cx);
+</new_text>
+
+<old_text>
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+</old_text>
+<new_text>
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                if window.is_window_active() {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // if window.is_window_active() {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+            });
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1777,16 +1777,16 @@
+                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+-                cx.observe_window_activation(window, |editor, window, cx| {
+-                    let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
+-                }),
++            cx.observe_window_activation(window, |editor, window, cx| {
++                let active = window.is_window_active();
++                editor.blink_manager.update(cx, |blink_manager, cx| {
++                    // if active {
++                    //     blink_manager.enable(cx);
++                    // } else {
++                    //     blink_manager.disable(cx);
++                    // }
++                });
++            }),
+             ],
+             tasks_update_task: None,
+             linked_edit_ranges: Default::default(),
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out the lines that interact with the BlinkManager, keeping the outer update blocks but commenting everything inside.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+            cx.observe_window_activation(window, |editor, window, cx| {
+                let active = window.is_window_active();
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    if active {
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+                });
+            }),
+</old_text>
+<new_text>
+            cx.observe_window_activation(window, |editor, window, cx| {
+                let active = window.is_window_active();
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    // if active {
+                    //     blink_manager.enable(cx);
+                    // } else {
+                    //     blink_manager.disable(cx);
+                    // }
+                });
+            }),
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1779,13 +1779,13 @@
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
++                blink_manager.update(cx, |blink_manager, cx| {
++                    // if active {
++                    //     blink_manager.enable(cx);
++                    // } else {
++                    //     blink_manager.disable(cx);
++                    // }
++                });
+                 }),
+             ],
+             tasks_update_task: None,
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+Based on the grep results and your request, I'll comment out all code that interacts with BlinkManager, specifically focusing on calls to enable/disable.
+
+```edits
+
+<old_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    blink_manager.enable(cx);
+                });
+</old_text>
+<new_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    // blink_manager.enable(cx);
+                });
+</new_text>
+
+<old_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    if active {
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+                });
+</old_text>
+<new_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    // if active {
+                    //     blink_manager.enable(cx);
+                    // } else {
+                    //     blink_manager.disable(cx);
+                    // }
+                });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1781,9 +1781,9 @@
+                     let active = window.is_window_active();
+                     editor.blink_manager.update(cx, |blink_manager, cx| {
+                         if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
++                        // blink_manager.enable(cx);
++                    } else {
++                        // blink_manager.disable(cx);
+                         }
+                     });
+                 }),
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out all lines that interact with the BlinkManager while keeping the outer `update` blocks. Here are the edits:
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    blink_manager.enable(cx);
+                });
+</old_text>
+<new_text>
+                editor.blink_manager.update(cx, |blink_manager, cx| {
+                    // blink_manager.enable(cx);
+                });
+</new_text>
+
+<old_text>
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+</old_text>
+<new_text>
+                        // blink_manager.enable(cx);
+                    } else {
+                        // blink_manager.disable(cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1779,13 +1779,13 @@
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
++                blink_manager.update(cx, |blink_manager, cx| {
++                    // if active {
++                    //     blink_manager.enable(cx);
++                    // } else {
++                    //     blink_manager.disable(cx);
++                    // }
++                }),
+                 }),
+             ],
+             tasks_update_task: None,
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out all the calls to `BlinkManager::enable` while keeping the outer update blocks.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    if active {
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+                }),
+</old_text>
+<new_text>
+                blink_manager.update(cx, |blink_manager, cx| {
+                    // if active {
+                    //     blink_manager.enable(cx);
+                    // } else {
+                    //     blink_manager.disable(cx);
+                    // }
+                }),
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1779,13 +1779,13 @@
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                 cx.observe_window_activation(window, |editor, window, cx| {
+                     let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
++                self.blink_manager.update(cx, |blink_manager, cx| {
++                    // if active {
++                    //     blink_manager.enable(cx);
++                    // } else {
++                    //     blink_manager.disable(cx);
++                    // }
++                });
+                 }),
+             ],
+             tasks_update_task: None,
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out the calls to `BlinkManager::enable` while keeping the outer update blocks intact.
+
+```
+<edits>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+<old_text>
+                self.blink_manager.update(cx, |blink_manager, cx| {
+                    if active {
+                        blink_manager.enable(cx);
+                    } else {
+                        blink_manager.disable(cx);
+                    }
+                });
+</old_text>
+<new_text>
+                self.blink_manager.update(cx, |blink_manager, cx| {
+                    // if active {
+                    //     blink_manager.enable(cx);
+                    // } else {
+                    //     blink_manager.disable(cx);
+                    // }
+                });
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+            self.show_cursor_names(window, cx);
+</new_text>
+
+</edits>
+```
+Eval failed 1 times
+Diff:
+@@ -1777,16 +1777,16 @@
+                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                 observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+-                cx.observe_window_activation(window, |editor, window, cx| {
+-                    let active = window.is_window_active();
+-                    editor.blink_manager.update(cx, |blink_manager, cx| {
+-                        if active {
+-                            blink_manager.enable(cx);
+-                        } else {
+-                            blink_manager.disable(cx);
+-                        }
+-                    });
+-                }),
++        cx.on_window_activation(window, |editor, window, cx| {
++            let active = window.is_window_active();
++            editor.blink_manager.update(cx, |blink_manager, cx| {
++                // if active {
++                //     blink_manager.enable(cx);
++                // } else {
++                //     blink_manager.disable(cx);
++                // }
++            });
++        }),
+             ],
+             tasks_update_task: None,
+             linked_edit_ranges: Default::default(),
+@@ -18463,7 +18463,7 @@
+             }
+
+             self.blink_manager.update(cx, |blink_manager, cx| {
+-                blink_manager.enable(cx);
++                // blink_manager.enable(cx);
+             });
+             self.show_cursor_names(window, cx);
+             self.buffer.update(cx, |buffer, cx| {
+
+Raw Edits:
+I'll comment out the lines that interact with the BlinkManager, keeping the outer update blocks but commenting everything inside them, including if statements.
+
+```
+<edits>
+
+<old_text>
+        cx.on_window_activation(window, |editor, window, cx| {
+            let active = window.is_window_active();
+            editor.blink_manager.update(cx, |blink_manager, cx| {
+                if active {
+                    blink_manager.enable(cx);
+                } else {
+                    blink_manager.disable(cx);
+                }
+            });
+        }),
+</old_text>
+<new_text>
+        cx.on_window_activation(window, |editor, window, cx| {
+            let active = window.is_window_active();
+            editor.blink_manager.update(cx, |blink_manager, cx| {
+                // if active {
+                //     blink_manager.enable(cx);
+                // } else {
+                //     blink_manager.disable(cx);
+                // }
+            });
+        }),
+</new_text>
+
+<old_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                blink_manager.enable(cx);
+            });
+</old_text>
+<new_text>
+            self.blink_manager.update(cx, |blink_manager, cx| {
+                // blink_manager.enable(cx);
+            });
+</new_text>
+
+</edits>
+```
+
+thread 'edit_agent::evals::eval_disable_cursor_blinking' panicked at crates/assistant_tools/src/edit_agent/evals.rs:469:9:
+Actual pass ratio: 0.24
+Expected pass ratio: 0.95
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/05f9846f893b09a1be1fc8560e33fc3c815cfecb/library/std/src/panicking.rs:695:5
+   1: core::panicking::panic_fmt
+             at /rustc/05f9846f893b09a1be1fc8560e33fc3c815cfecb/library/core/src/panicking.rs:75:14
+   2: assistant_tools::edit_agent::evals::eval
+             at ./src/edit_agent/evals.rs:469:9
+   3: assistant_tools::edit_agent::evals::eval_disable_cursor_blinking
+             at ./src/edit_agent/evals.rs:264:5
+   4: assistant_tools::edit_agent::evals::eval_disable_cursor_blinking::{{closure}}
+             at ./src/edit_agent/evals.rs:259:34
+   5: core::ops::function::FnOnce::call_once
+             at /Users/as-cii/.rustup/toolchains/1.86-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5
+   6: core::ops::function::FnOnce::call_once
+             at /rustc/05f9846f893b09a1be1fc8560e33fc3c815cfecb/library/core/src/ops/function.rs:250:5
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+test edit_agent::evals::eval_disable_cursor_blinking ... FAILED
+
+failures:
+
+failures:
+    edit_agent::evals::eval_disable_cursor_blinking
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 74 filtered out; finished in 193.03s
+
+error: test failed, to rerun pass `-p assistant_tools --lib`
