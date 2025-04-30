@@ -8,9 +8,7 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
-use project::lsp_store::rust_analyzer_ext::{
-    CARGO_DIAGNOSTICS_SOURCE_NAME, ZED_CARGO_DIAGNOSTICS_SOURCE_NAME,
-};
+use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
@@ -268,7 +266,7 @@ impl LspAdapter for RustLspAdapter {
             .fetch_cargo_diagnostics();
         // Zed manages the lifecycle of cargo diagnostics when configured so.
         zed_provides_cargo_diagnostics
-            && previous_diagnostic.source.as_deref() == Some(ZED_CARGO_DIAGNOSTICS_SOURCE_NAME)
+            && previous_diagnostic.source.as_deref() == Some(CARGO_DIAGNOSTICS_SOURCE_NAME)
     }
 
     fn process_diagnostics(

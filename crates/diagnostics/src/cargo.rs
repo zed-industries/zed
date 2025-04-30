@@ -13,7 +13,7 @@ use gpui::{AppContext, Entity, Task};
 use itertools::Itertools as _;
 use language::Diagnostic;
 use project::{
-    Worktree, lsp_store::rust_analyzer_ext::ZED_CARGO_DIAGNOSTICS_SOURCE_NAME,
+    Worktree, lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME,
     project_settings::ProjectSettings,
 };
 use serde::{Deserialize, Serialize};
@@ -165,8 +165,7 @@ pub fn is_outdated_cargo_fetch_diagnostic(diagnostic: &Diagnostic) -> bool {
     if let Some(data) = diagnostic
         .data
         .clone()
-        .map(|data| serde_json::from_value::<CargoFetchDiagnosticData>(data).ok())
-        .flatten()
+        .and_then(|data| serde_json::from_value::<CargoFetchDiagnosticData>(data).ok())
     {
         let current_generation = CARGO_DIAGNOSTICS_FETCH_GENERATION.load(atomic::Ordering::Acquire);
         data.generation < current_generation
@@ -202,7 +201,7 @@ pub(crate) fn map_rust_diagnostic_to_lsp(
 
     let severity = diagnostic_severity(cargo_diagnostic.level);
 
-    let mut source = String::from(ZED_CARGO_DIAGNOSTICS_SOURCE_NAME);
+    let mut source = String::from(CARGO_DIAGNOSTICS_SOURCE_NAME);
     let mut code = cargo_diagnostic.code.as_ref().map(|c| c.code.clone());
 
     if let Some(code_val) = &code {
