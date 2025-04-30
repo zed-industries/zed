@@ -1,10 +1,11 @@
 use anyhow::{Result, anyhow};
+use futures::TryFutureExt;
 use futures::{FutureExt, StreamExt, TryStreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRequestTool,
+    LanguageModelRequestTool, LanguageModelToolUse, LanguageModelToolUseId,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -12,8 +13,8 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, KeepAlive, OllamaFunctionTool, get_models,
-    preload_model, show_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, KeepAlive, OllamaFunctionTool, OllamaToolCall,
+    get_models, preload_model, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -358,25 +359,38 @@ impl LanguageModel for OllamaLanguageModel {
             let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
             let stream = response
                 .map_ok(|delta| match delta.message {
-                    ChatMessage::User { content } => content,
-                    ChatMessage::Assistant { content, .. } => content,
-                    ChatMessage::System { content } => content,
+                    ChatMessage::User { content } => LanguageModelCompletionEvent::Text(content),
+                    ChatMessage::Assistant {
+                        content,
+                        tool_calls,
+                    } => {
+                        // TODO: Support multiple tool calls simultaneously
+                        if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
+                            match tool_call {
+                                OllamaToolCall::Function(function) => {
+                                    LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                                        // TODO: id's should be unique to that tool call
+                                        id: LanguageModelToolUseId::from("test"),
+                                        name: Arc::from(function.name),
+                                        raw_input: serde_json::to_string(&function.arguments)
+                                            .unwrap(),
+                                        input: function.arguments,
+                                        is_input_complete: true,
+                                    })
+                                }
+                            }
+                        } else {
+                            LanguageModelCompletionEvent::Text(content)
+                        }
+                    }
+                    ChatMessage::System { content } => LanguageModelCompletionEvent::Text(content),
                 })
+                .map_err(LanguageModelCompletionError::Other)
                 .boxed();
             Ok(stream)
         });
 
-        async move {
-            Ok(future
-                .await?
-                .map(|result| {
-                    result
-                        .map(LanguageModelCompletionEvent::Text)
-                        .map_err(LanguageModelCompletionError::Other)
-                })
-                .boxed())
-        }
-        .boxed()
+        future.map_ok(|f| f.boxed()).boxed()
     }
 }
 
