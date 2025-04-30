@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, TryStreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
@@ -357,18 +357,10 @@ impl LanguageModel for OllamaLanguageModel {
         let future = self.request_limiter.stream(async move {
             let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
             let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(delta) => {
-                            let content = match delta.message {
-                                ChatMessage::User { content } => content,
-                                ChatMessage::Assistant { content, .. } => content,
-                                ChatMessage::System { content } => content,
-                            };
-                            Some(Ok(content))
-                        }
-                        Err(error) => Some(Err(error)),
-                    }
+                .map_ok(|delta| match delta.message {
+                    ChatMessage::User { content } => content,
+                    ChatMessage::Assistant { content, .. } => content,
+                    ChatMessage::System { content } => content,
                 })
                 .boxed();
             Ok(stream)
