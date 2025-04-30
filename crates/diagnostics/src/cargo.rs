@@ -87,7 +87,7 @@ pub fn fetch_worktree_diagnostics(
         .diagnostics
         .cargo
         .as_ref()
-        .filter(|settings| settings.fetch_cargo_diagnostics)?;
+        .filter(|cargo_diagnostics| cargo_diagnostics.fetch_cargo_diagnostics)?;
     let command_string = diagnostics_settings
         .diagnostics_fetch_command
         .iter()

@@ -116,9 +116,9 @@ pub struct DiagnosticsSettings {
 
 impl DiagnosticsSettings {
     pub fn fetch_cargo_diagnostics(&self) -> bool {
-        self.cargo
-            .as_ref()
-            .map_or(false, |rust| rust.fetch_cargo_diagnostics)
+        self.cargo.as_ref().map_or(false, |cargo_diagnostics| {
+            cargo_diagnostics.fetch_cargo_diagnostics
+        })
     }
 }
 
