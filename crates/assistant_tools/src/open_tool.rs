@@ -6,7 +6,10 @@ use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat}
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use ui::IconName;
 use util::markdown::MarkdownEscaped;
 
@@ -50,7 +53,7 @@ impl Tool for OpenTool {
         self: Arc<Self>,
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
-        _project: Entity<Project>,
+        project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
@@ -60,11 +63,29 @@ impl Tool for OpenTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
+        // If path_or_url turns out to be a path in the project, make it absolute.
+        let abs_path = to_absolute_path(&input.path_or_url, project, cx);
+
         cx.background_spawn(async move {
-            open::that(&input.path_or_url).context("Failed to open URL or file path")?;
+            match abs_path {
+                Some(path) => open::that(path),
+                None => open::that(&input.path_or_url),
+            }
+            .context("Failed to open URL or file path")?;
 
             Ok(format!("Successfully opened {}", input.path_or_url))
         })
         .into()
     }
+}
+
+fn to_absolute_path(
+    potential_path: &str,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Option<PathBuf> {
+    let project = project.read(cx);
+    project
+        .find_project_path(PathBuf::from(potential_path), cx)
+        .and_then(|project_path| project.absolute_path(&project_path, cx))
 }
