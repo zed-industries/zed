@@ -411,13 +411,13 @@ impl GitRepository for RealGitRepository {
                         "--no-optional-locks",
                         "show",
                         "--no-patch",
-                        "--format=%H%x00%B%x00%at%x00%ae%x00%an",
+                        "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
                         &commit,
                     ])
                     .output()?;
                 let output = std::str::from_utf8(&output.stdout)?;
                 let fields = output.split('\0').collect::<Vec<_>>();
-                if fields.len() != 5 {
+                if fields.len() != 6 {
                     bail!("unexpected git-show output for {commit:?}: {output:?}")
                 }
                 let sha = fields[0].to_string().into();
