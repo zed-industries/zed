@@ -13,7 +13,7 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{AppContext, AsyncApp, Entity, Task};
-use language::{Bias, Buffer, BufferSnapshot};
+use language::{Bias, Buffer, BufferSnapshot, Point};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role,
@@ -243,91 +243,87 @@ impl EditAgent {
     fn resolve_location_fuzzy(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {
         const INSERTION_COST: u32 = 3;
         const DELETION_COST: u32 = 10;
-        const WHITESPACE_INSERTION_COST: u32 = 1;
-        const WHITESPACE_DELETION_COST: u32 = 1;
 
-        let buffer_len = buffer.len();
-        let query_len = search_query.len();
-        let mut matrix = SearchMatrix::new(query_len + 1, buffer_len + 1);
+        let buffer_line_count = buffer.max_point().row as usize + 1;
+        let query_line_count = search_query.lines().count();
+        let mut matrix = SearchMatrix::new(query_line_count + 1, buffer_line_count + 1);
         let mut leading_deletion_cost = 0_u32;
-        for (row, query_byte) in search_query.bytes().enumerate() {
-            let deletion_cost = if query_byte.is_ascii_whitespace() {
-                WHITESPACE_DELETION_COST
-            } else {
-                DELETION_COST
-            };
-
-            leading_deletion_cost = leading_deletion_cost.saturating_add(deletion_cost);
+        for (row, query_line) in search_query.lines().enumerate() {
+            let query_line = query_line.trim();
+            leading_deletion_cost = leading_deletion_cost.saturating_add(DELETION_COST);
             matrix.set(
                 row + 1,
                 0,
                 SearchState::new(leading_deletion_cost, SearchDirection::Diagonal),
             );
 
-            for (col, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
-                let insertion_cost = if buffer_byte.is_ascii_whitespace() {
-                    WHITESPACE_INSERTION_COST
-                } else {
-                    INSERTION_COST
-                };
-
+            let mut buffer_lines = buffer.as_rope().chunks().lines();
+            let mut col = 0;
+            while let Some(buffer_line) = buffer_lines.next() {
+                let buffer_line = buffer_line.trim();
                 let up = SearchState::new(
-                    matrix.get(row, col + 1).cost.saturating_add(deletion_cost),
+                    matrix.get(row, col + 1).cost.saturating_add(DELETION_COST),
                     SearchDirection::Up,
                 );
                 let left = SearchState::new(
-                    matrix.get(row + 1, col).cost.saturating_add(insertion_cost),
+                    matrix.get(row + 1, col).cost.saturating_add(INSERTION_COST),
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if query_byte == *buffer_byte {
+                    if strsim::normalized_damerau_levenshtein(query_line, buffer_line) >= 0.8 {
                         matrix.get(row, col).cost
                     } else {
                         matrix
                             .get(row, col)
                             .cost
-                            .saturating_add(deletion_cost + insertion_cost)
+                            .saturating_add(DELETION_COST + INSERTION_COST)
                     },
                     SearchDirection::Diagonal,
                 );
                 matrix.set(row + 1, col + 1, up.min(left).min(diagonal));
+                col += 1;
             }
         }
 
         // Traceback to find the best match
-        let mut best_buffer_end = buffer_len;
+        let mut buffer_row_end = buffer_line_count as u32;
         let mut best_cost = u32::MAX;
-        for col in 1..=buffer_len {
-            let cost = matrix.get(query_len, col).cost;
+        for col in 1..=buffer_line_count {
+            let cost = matrix.get(query_line_count, col).cost;
             if cost < best_cost {
                 best_cost = cost;
-                best_buffer_end = col;
+                buffer_row_end = col as u32;
             }
         }
 
-        let mut equal_bytes = 0;
-        let mut query_ix = query_len;
-        let mut buffer_ix = best_buffer_end;
-        while query_ix > 0 && buffer_ix > 0 {
-            let current = matrix.get(query_ix, buffer_ix);
+        let mut matched_lines = 0;
+        let mut query_row = query_line_count;
+        let mut buffer_row_start = buffer_row_end;
+        while query_row > 0 && buffer_row_start > 0 {
+            let current = matrix.get(query_row, buffer_row_start as usize);
             match current.direction {
                 SearchDirection::Diagonal => {
-                    query_ix -= 1;
-                    buffer_ix -= 1;
-                    equal_bytes += 1;
+                    query_row -= 1;
+                    buffer_row_start -= 1;
+                    matched_lines += 1;
                 }
                 SearchDirection::Up => {
-                    query_ix -= 1;
+                    query_row -= 1;
                 }
                 SearchDirection::Left => {
-                    buffer_ix -= 1;
+                    buffer_row_start -= 1;
                 }
             }
         }
 
-        let matched_query_ratio = equal_bytes as f32 / query_len as f32;
-        if matched_query_ratio >= 0.9 {
-            Some(buffer_ix..best_buffer_end)
+        let matched_buffer_row_count = buffer_row_end - buffer_row_start;
+        if (matched_lines as f32 / matched_buffer_row_count as f32) >= 0.8 {
+            let buffer_start_ix = buffer.point_to_offset(Point::new(buffer_row_start, 0));
+            let buffer_end_ix = buffer.point_to_offset(Point::new(
+                buffer_row_end - 1,
+                buffer.line_len(buffer_row_end - 1),
+            ));
+            Some(buffer_start_ix..buffer_end_ix)
         } else {
             None
         }
@@ -474,7 +470,7 @@ mod tests {
                 "    dolor sit amet»\n",
                 "    consecteur",
             ),
-            "ipsum\ndolor",
+            "ipsum\ndolor sit amet",
             cx,
         );
 
@@ -489,25 +485,7 @@ mod tests {
             }
             "
             .unindent(),
-            "fn foo1(b: usize) {\n40\n}",
-            cx,
-        );
-
-        assert_location_resolution(
-            &"
-            fn main() {
-            «    Foo
-                    .bar()
-                    .baz()
-                    .qux()»
-            }
-
-            fn foo2(b: usize) -> usize {
-                42
-            }
-            "
-            .unindent(),
-            "Foo.bar.baz.qux()",
+            "fn foo1(a: usize) -> u32 {\n40\n}",
             cx,
         );
 
@@ -519,8 +497,8 @@ mod tests {
                 three() { return 333; }
                 four() { return 4444; }
                 five() { return 5555; }
-                six() { return 6666; }
-            »    seven() { return 7; }
+                six() { return 6666; }»
+                seven() { return 7; }
                 eight() { return 8; }
             }
             "
@@ -565,6 +543,35 @@ mod tests {
                 use std::sync::Arc;
             "
             .unindent(),
+            cx,
+        );
+
+        assert_location_resolution(
+            indoc! {"
+                impl Foo {
+                    fn new() -> Self {
+                        Self {
+                            subscriptions: vec![
+                                cx.observe_window_activation(window, |editor, window, cx| {
+                                    let active = window.is_window_active();
+                                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                                        if active {
+                                            blink_manager.enable(cx);
+                                        } else {
+                                            blink_manager.disable(cx);
+                                        }
+                                    });
+                                }),
+                            ];
+                        }
+                    }
+                }
+            "},
+            concat!(
+                "                    editor.blink_manager.update(cx, |blink_manager, cx| {\n",
+                "                        blink_manager.enable(cx);\n",
+                "                    });",
+            ),
             cx,
         );
     }

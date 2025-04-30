@@ -741,6 +741,7 @@ dependencies = [
  "settings",
  "smallvec",
  "streaming_diff",
+ "strsim",
  "task",
  "terminal",
  "terminal_view",

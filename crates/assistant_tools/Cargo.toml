@@ -42,6 +42,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 streaming_diff.workspace = true
+strsim.workspace = true
 task.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
