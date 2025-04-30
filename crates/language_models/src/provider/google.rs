@@ -341,9 +341,8 @@ impl LanguageModel for GoogleLanguageModel {
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
-                &model_id,
                 google_ai::CountTokensRequest {
-                    contents: request.contents,
+                    generate_content_request: request,
                 },
             )
             .await?;
@@ -379,7 +378,7 @@ impl LanguageModel for GoogleLanguageModel {
 
 pub fn into_google(
     mut request: LanguageModelRequest,
-    model: String,
+    model_id: String,
 ) -> google_ai::GenerateContentRequest {
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
@@ -439,7 +438,7 @@ pub fn into_google(
     };
 
     google_ai::GenerateContentRequest {
-        model,
+        model: google_ai::ModelName { model_id },
         system_instruction: system_instructions,
         contents: request
             .messages
