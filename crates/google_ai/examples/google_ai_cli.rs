@@ -166,7 +166,7 @@ async fn main() -> Result<()> {
             };
 
             let request = GenerateContentRequest {
-                model: cli.model.clone(),
+                model: google_ai::ModelName { model_id: cli.model.clone() },
                 contents: vec![user_content],
                 system_instruction: system_instruction.as_ref().map(|instruction| {
                     SystemInstruction {
@@ -227,18 +227,29 @@ async fn main() -> Result<()> {
         } => {
             let prompt_text = get_prompt_text(prompt, prompt_file)?;
 
+            let user_content = Content {
+                role: Role::User,
+                parts: vec![Part::TextPart(TextPart { text: prompt_text })],
+            };
+
+            let generate_content_request = GenerateContentRequest {
+                model: google_ai::ModelName { model_id: cli.model.clone() },
+                contents: vec![user_content],
+                system_instruction: None,
+                generation_config: None,
+                safety_settings: None,
+                tools: None,
+                tool_config: None,
+            };
+
             let request = CountTokensRequest {
-                contents: vec![Content {
-                    role: Role::User,
-                    parts: vec![Part::TextPart(TextPart { text: prompt_text })],
-                }],
+                generate_content_request,
             };
 
             let response = count_tokens(
                 http_client.as_ref(),
                 &cli.api_url,
                 &cli.api_key,
-                &cli.model,
                 request,
             )
             .await?;
@@ -356,7 +367,7 @@ async fn main() -> Result<()> {
 
                 // Create request with history
                 let request = GenerateContentRequest {
-                    model: cli.model.clone(),
+                    model: google_ai::ModelName { model_id: cli.model.clone() },
                     contents: history
                         .iter()
                         .map(|content| Content {
