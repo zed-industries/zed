@@ -98,54 +98,64 @@ impl Example for CodeBlockCitations {
 
                             if let Some(content_len) = content_len {
                                 // + 1 because there's a newline character after the citation.
-                                let content =
-                                    &text[(citation.len() + 1)..content_len - (citation.len() + 1)];
+                                let start_index = citation.len() + 1;
+                                let end_index = content_len.saturating_sub(start_index);
 
-                                // deindent (trim the start of each line) because sometimes the model
-                                // chooses to deindent its code snippets for the sake of readability,
-                                // which in markdown is not only reasonable but usually desirable.
-                                cx.assert(
-                                    deindent(&buffer_text)
-                                        .trim()
-                                        .contains(deindent(&content).trim()),
-                                    "Code block content was found in file",
-                                )
-                                .ok();
-
-                                if let Some(range) = path_range.range {
-                                    let start_line_index = range.start.line.saturating_sub(1);
-                                    let line_count =
-                                        range.end.line.saturating_sub(start_line_index);
-                                    let mut snippet = buffer_text
-                                        .lines()
-                                        .skip(start_line_index as usize)
-                                        .take(line_count as usize)
-                                        .collect::<Vec<&str>>()
-                                        .join("\n");
-
-                                    if let Some(start_col) = range.start.col {
-                                        snippet = snippet[start_col as usize..].to_string();
-                                    }
-
-                                    if let Some(end_col) = range.end.col {
-                                        let last_line = snippet.lines().last().unwrap();
-                                        snippet = snippet
-                                            [..snippet.len() - last_line.len() + end_col as usize]
-                                            .to_string();
-                                    }
+                                if cx
+                                    .assert(
+                                        start_index <= end_index,
+                                        "Code block had a valid citation",
+                                    )
+                                    .is_ok()
+                                {
+                                    let content = &text[start_index..end_index];
 
                                     // deindent (trim the start of each line) because sometimes the model
                                     // chooses to deindent its code snippets for the sake of readability,
                                     // which in markdown is not only reasonable but usually desirable.
-                                    cx.assert_eq(
-                                        deindent(snippet.as_str()).trim(),
-                                        deindent(content).trim(),
-                                        format!(
-                                            "Code block was at {:?}-{:?}",
-                                            range.start, range.end
-                                        ),
+                                    cx.assert(
+                                        deindent(&buffer_text)
+                                            .trim()
+                                            .contains(deindent(&content).trim()),
+                                        "Code block content was found in file",
                                     )
                                     .ok();
+
+                                    if let Some(range) = path_range.range {
+                                        let start_line_index = range.start.line.saturating_sub(1);
+                                        let line_count =
+                                            range.end.line.saturating_sub(start_line_index);
+                                        let mut snippet = buffer_text
+                                            .lines()
+                                            .skip(start_line_index as usize)
+                                            .take(line_count as usize)
+                                            .collect::<Vec<&str>>()
+                                            .join("\n");
+
+                                        if let Some(start_col) = range.start.col {
+                                            snippet = snippet[start_col as usize..].to_string();
+                                        }
+
+                                        if let Some(end_col) = range.end.col {
+                                            let last_line = snippet.lines().last().unwrap();
+                                            snippet = snippet[..snippet.len() - last_line.len()
+                                                + end_col as usize]
+                                                .to_string();
+                                        }
+
+                                        // deindent (trim the start of each line) because sometimes the model
+                                        // chooses to deindent its code snippets for the sake of readability,
+                                        // which in markdown is not only reasonable but usually desirable.
+                                        cx.assert_eq(
+                                            deindent(snippet.as_str()).trim(),
+                                            deindent(content).trim(),
+                                            format!(
+                                                "Code block was at {:?}-{:?}",
+                                                range.start, range.end
+                                            ),
+                                        )
+                                        .ok();
+                                    }
                                 }
                             }
                         }
