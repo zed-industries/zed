@@ -261,7 +261,7 @@ impl WalkthroughStep for ThemeStep {
                             fs.clone(),
                             cx,
                             move |settings, _| {
-                                settings.set_theme(name, appearance);
+                                settings.set_static_theme(name);
                             },
                         );
                     })
