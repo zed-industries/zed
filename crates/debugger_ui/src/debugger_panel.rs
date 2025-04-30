@@ -205,28 +205,34 @@ impl DebugPanel {
         })
     }
 
-    fn start_from_definition(
+    pub fn start_session(
         &mut self,
-        definition: DebugTaskDefinition,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) {
+        let dap_store = self.project.read(cx).dap_store();
+        let session = dap_store.update(cx, |dap_store, cx| {
+            dap_store.new_session(
+                scenario.label.clone(),
+                DebugAdapterName(scenario.adapter.clone()),
+                None,
+                cx,
+            )
+        });
         cx.spawn_in(window, async move |this, cx| {
-            let dap_store = this.update(cx, |this, cx| this.project.read(cx).dap_store())?;
-            let (session, task) = dap_store.update(cx, |dap_store, cx| {
-                let session = dap_store.new_session(
-                    definition.label.clone(),
-                    definition.adapter.clone(),
-                    None,
-                    cx,
-                );
-
-                (
-                    session.clone(),
-                    dap_store.boot_session(session, definition, cx),
-                )
-            })?;
             Self::register_session(this.clone(), session.clone(), cx).await?;
+            let definition = this
+                .update_in(cx, |this, window, cx| {
+                    this.resolve_scenario(scenario, task_context, active_buffer, window, cx)
+                })?
+                .await?;
+
+            let task = dap_store.update(cx, |dap_store, cx| {
+                dap_store.boot_session(session.clone(), definition, cx)
+            })?;
 
             if let Err(e) = task.await {
                 this.update(cx, |this, cx| {
@@ -244,27 +250,6 @@ impl DebugPanel {
             }
 
             anyhow::Ok(())
-        })
-    }
-
-    pub fn start_session(
-        &mut self,
-        scenario: DebugScenario,
-        task_context: TaskContext,
-        active_buffer: Option<Entity<Buffer>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn_in(window, async move |this, cx| {
-            let definition = this
-                .update_in(cx, |this, window, cx| {
-                    this.resolve_scenario(scenario, task_context, active_buffer, window, cx)
-                })?
-                .await?;
-            this.update_in(cx, |this, window, cx| {
-                this.start_from_definition(definition, window, cx)
-            })?
-            .await
         })
         .detach_and_log_err(cx);
     }
@@ -428,7 +413,6 @@ impl DebugPanel {
     pub fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-
         task_context: TaskContext,
         buffer: Option<Entity<Buffer>>,
         window: &Window,
