@@ -21,10 +21,6 @@ use util::{ResultExt as _, post_inc};
 
 use crate::thread::Thread;
 
-/// If the context from a file exceeds this size, then
-/// the context will include an outline instead of the full file content.
-const MAX_FILE_SIZE: usize = 16384;
-
 pub const RULES_ICON: IconName = IconName::Context;
 
 pub enum ContextKind {
@@ -192,7 +188,7 @@ impl FileContextHandle {
 
         // For large files, use outline instead of full content
         // For large files, use outline instead of full content
-        if file_size > MAX_FILE_SIZE {
+        if file_size > outline::AUTO_OUTLINE_SIZE {
             let buffer = buffer.clone();
 
             cx.spawn(async move |cx| {

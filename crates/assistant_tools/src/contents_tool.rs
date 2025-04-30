@@ -14,10 +14,6 @@ use ui::IconName;
 use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
-/// the tool will return the file's symbol outline instead of its contents,
-/// and suggest trying again using line ranges from the outline.
-const MAX_FILE_SIZE_TO_READ: usize = 16384;
-
 /// If the model requests to list the entries in a directory with more
 /// entries than this, then the tool will return a subset of the entries
 /// and suggest trying again.
@@ -218,7 +214,7 @@ impl Tool for ContentsTool {
                     // No line ranges specified, so check file size to see if it's too big.
                     let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
 
-                    if file_size <= MAX_FILE_SIZE_TO_READ {
+                    if file_size <= outline::AUTO_OUTLINE_SIZE {
                         let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                         action_log.update(cx, |log, cx| {

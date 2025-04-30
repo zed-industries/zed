@@ -15,10 +15,6 @@ use ui::IconName;
 use util::markdown::MarkdownInlineCode;
 
 /// If the model requests to read a file whose size exceeds this, then
-/// the tool will return an error along with the model's symbol outline,
-/// and suggest trying again using line ranges from the outline.
-const MAX_FILE_SIZE_TO_READ: usize = 16384;
-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
@@ -145,7 +141,7 @@ impl Tool for ReadFileTool {
                 // No line ranges specified, so check file size to see if it's too big.
                 let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
 
-                if file_size <= MAX_FILE_SIZE_TO_READ {
+                if file_size <= outline::AUTO_OUTLINE_SIZE {
                     // File is small enough, so return its contents.
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
