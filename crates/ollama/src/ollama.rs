@@ -261,14 +261,14 @@ pub async fn complete(
     let request = request_builder.body(AsyncBody::from(serialized_request))?;
 
     let mut response = client.send(request).await?;
+
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+
     if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
         let response_message: ChatResponseDelta = serde_json::from_slice(&body)?;
         Ok(response_message)
     } else {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
         Err(anyhow!(
             "Failed to connect to API: {} {}",
