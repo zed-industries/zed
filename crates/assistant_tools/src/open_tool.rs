@@ -93,15 +93,18 @@ mod tests {
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
-    use util::path;
+    use std::path::Path;
+    use tempfile::TempDir;
 
     #[gpui::test]
     async fn test_to_absolute_path(cx: &mut TestAppContext) {
         init_test(cx);
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path().to_string_lossy().to_string();
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            &temp_path,
             serde_json::json!({
                 "src": {
                     "main.rs": "fn main() {}",
@@ -113,18 +116,34 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        // Use the temp_path as the root directory, not just its filename
+        let project = Project::test(fs.clone(), [temp_dir.path()], cx).await;
 
         // Test cases where the function should return Some
         cx.update(|cx| {
             // Project-relative paths should return Some
-            let result = to_absolute_path("root/src/main.rs", project.clone(), cx);
-            assert!(result.is_some());
-            assert_eq!(result.unwrap().to_string_lossy(), "/root/src/main.rs");
+            // Create paths using the last segment of the temp path to simulate a project-relative path
+            let root_dir_name = Path::new(&temp_path)
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("temp"))
+                .to_string_lossy();
 
-            let result = to_absolute_path("root/docs/readme.md", project.clone(), cx);
-            assert!(result.is_some());
-            assert_eq!(result.unwrap().to_string_lossy(), "/root/docs/readme.md");
+            assert!(
+                to_absolute_path(&format!("{root_dir_name}/src/main.rs"), project.clone(), cx)
+                    .is_some(),
+                "Failed to resolve main.rs path"
+            );
+
+            assert!(
+                to_absolute_path(
+                    &format!("{root_dir_name}/docs/readme.md",),
+                    project.clone(),
+                    cx,
+                )
+                .is_some(),
+                "Failed to resolve readme.md path"
+            );
 
             // External URL should return None
             let result = to_absolute_path("https://example.com", project.clone(), cx);

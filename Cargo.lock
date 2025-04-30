@@ -732,6 +732,7 @@ dependencies = [
  "serde_json",
  "settings",
  "task",
+ "tempfile",
  "terminal",
  "terminal_view",
  "tree-sitter-rust",
