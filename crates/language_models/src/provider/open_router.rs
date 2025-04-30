@@ -394,8 +394,6 @@ pub fn into_open_router(
     model: &Model,
     max_output_tokens: Option<u32>,
 ) -> open_router::Request {
-    let stream = !model.id().starts_with("meta-llama/") && !model.id().starts_with("google/");
-
     let mut messages = Vec::new();
     for req_message in request.messages {
         for content in req_message.content {
