@@ -10,7 +10,7 @@ mod search_input;
 mod with_rem_size;
 
 pub use color_contrast::*;
-pub use corner_solver::{CornerSolver, corner_solver};
+pub use corner_solver::{CornerSolver, inner_corner_radius};
 pub use format_distance::*;
 pub use search_input::*;
 pub use with_rem_size::*;

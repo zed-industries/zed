@@ -1,127 +1,58 @@
 use gpui::Pixels;
-use smallvec::SmallVec;
 
-/// Calculate nested corner radii and paddings dynamically
-/// for nested UI elements
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Calculates the child’s outer border-box corner radius for a single nested level.
+///
+/// child_radius = max(0, parent_radius − parent_border − parent_padding)
+pub fn inner_corner_radius(
+    parent_radius: Pixels,
+    parent_border: Pixels,
+    parent_padding: Pixels,
+) -> Pixels {
+    (parent_radius - parent_border - parent_padding).max(Pixels::ZERO)
+}
+
+/// Solver for arbitrarily deep nested corner radii.
+///
+/// For each level i:
+///   Rᵢ = max(0, Rᵢ₋₁ − Bᵢ₋₁ − Pᵢ₋₁)
+/// where R₀ = root outer radius, B₀/P₀ = root border/padding,
+/// and children store (border, padding) for subsequent levels.
 pub struct CornerSolver {
     root_radius: Pixels,
-    root_border_width: Pixels,
+    root_border: Pixels,
     root_padding: Pixels,
-    /// Nested children with their border width + padding.
-    /// This assumes that each additional child is nested within the previous child.
-    children: SmallVec<[(Pixels, Pixels); 2]>, // (border_width, padding) pairs
+    children: Vec<(Pixels, Pixels)>,
 }
 
 impl CornerSolver {
-    /// Creates a new CornerSolver with the specified root radius, border width and padding
-    fn new(root_radius: Pixels, root_border_width: Pixels, root_padding: Pixels) -> Self {
-        CornerSolver {
+    pub fn new(root_radius: Pixels, root_border: Pixels, root_padding: Pixels) -> Self {
+        Self {
             root_radius,
-            root_border_width,
+            root_border,
             root_padding,
-            children: SmallVec::new(),
+            children: Vec::new(),
         }
     }
 
-    /// Adds a nested child element with the specified border width and padding
-    pub fn add_child(mut self, border_width: Pixels, padding: Pixels) -> Self {
-        self.children.push((border_width, padding));
+    pub fn add_child(mut self, border: Pixels, padding: Pixels) -> Self {
+        self.children.push((border, padding));
         self
     }
 
-    /// Returns the corner radius of the root element
-    pub fn root_corner_radius(&self) -> Pixels {
-        self.root_radius
-    }
-
-    /// Returns the border width of the root element
-    pub fn root_border_width(&self) -> Pixels {
-        self.root_border_width
-    }
-
-    /// Returns the padding of the root element
-    pub fn root_padding(&self) -> Pixels {
-        self.root_padding
-    }
-
-    /// Calculates the corner radius for a child at the specified index
-    ///
-    /// Ensures the radius never goes below zero
-    ///
-    /// Index 0 represents the first level of nesting inside the root element,
-    /// regardless of whether any children have been added yet.
-    pub fn corner_radius(&self, child_index: usize) -> Pixels {
-        let mut radius = self.root_radius;
-
-        // For rounded corners, the radius is reduced by the border width in both
-        // horizontal and vertical directions (which is why we multiply by 2)
-        let root_border_reduction = self.root_border_width * 2.0;
-        radius = Pixels::max(radius - root_border_reduction, Pixels::ZERO);
-
-        if child_index == 0 {
-            return radius;
+    pub fn corner_radius(&self, level: usize) -> Pixels {
+        let mut r = inner_corner_radius(self.root_radius, self.root_border, self.root_padding);
+        if level == 0 {
+            return r;
         }
-
-        if child_index > self.children.len() {
+        if level >= self.children.len() {
             return Pixels::ZERO;
         }
-
-        for i in 0..(child_index) {
-            if i >= self.children.len() {
-                break;
-            }
-
-            let (border_width, _) = self.children[i];
-            let border_reduction = border_width * 2.0;
-            radius = Pixels::max(radius - border_reduction, Pixels::ZERO);
+        for i in 0..level {
+            let (b, p) = self.children[i];
+            r = inner_corner_radius(r, b, p);
         }
-
-        radius
+        r
     }
-
-    /// Calculates the padding for a child at the specified index
-    ///
-    /// Returns zero if the index is out of bounds or the calculation would result in negative padding
-    pub fn padding(&self, child_index: usize) -> Pixels {
-        if child_index >= self.children.len() {
-            return Pixels::ZERO;
-        }
-
-        // Borders in GPUI work like "inner" borders, they subtract from the padding
-        if child_index == 0 {
-            let (_, child_padding) = self.children[0];
-            Pixels::max(self.root_padding - child_padding, Pixels::ZERO)
-        } else {
-            let previous_padding = self.padding(child_index - 1);
-            let (_, child_padding) = self.children[child_index];
-            Pixels::max(previous_padding - child_padding, Pixels::ZERO)
-        }
-    }
-}
-
-/// Calculate nested corner radii and paddings dynamically
-///
-/// Creates a new CornerSolver with the specified root radius, border width and padding
-pub fn corner_solver(
-    root_radius: Pixels,
-    root_border_width: Pixels,
-    root_padding: Pixels,
-) -> CornerSolver {
-    CornerSolver::new(root_radius, root_border_width, root_padding)
-}
-
-/// Calculate the corner radius for a single level of nesting
-///
-/// This is a convenience function for the common case where you just need
-/// to calculate a single inner corner radius based on an outer radius, border width, and padding.
-///
-/// For more complex nested hierarchies, use the `corner_solver` function instead.
-pub fn inner_corner_radius(outer_radius: Pixels, border_width: Pixels, padding: Pixels) -> Pixels {
-    // For rounded corners, the radius is reduced by the border width in both
-    // horizontal and vertical directions (which is why we multiply by 2)
-    let border_reduction = border_width * 2.0;
-    Pixels::max(outer_radius - border_reduction, Pixels::ZERO)
 }
 
 #[cfg(test)]
@@ -131,75 +62,26 @@ mod tests {
 
     #[test]
     fn test_inner_corner_radius() {
-        // Test case 1: 10px radius with 2px border should give 6px inner radius
-        assert_eq!(inner_corner_radius(px(10.0), px(2.0), px(5.0)), px(6.0));
-
-        // Test case 2: 10px radius with 1px border should give 8px inner radius
-        assert_eq!(inner_corner_radius(px(10.0), px(1.0), px(3.0)), px(8.0));
-
-        // Test case 3: 5px radius with 3px border should give 0px inner radius (clamped)
-        assert_eq!(inner_corner_radius(px(5.0), px(3.0), px(2.0)), px(0.0));
+        assert_eq!(inner_corner_radius(px(10.0), px(2.0), px(3.0)), px(5.0));
+        assert_eq!(inner_corner_radius(px(4.0), px(2.0), px(3.0)), px(0.0));
     }
 
     #[test]
-    fn test_single_child_corner_radius() {
-        // Test case 1
-        let solver = corner_solver(
-            px(10.0), // radius
-            px(2.0),  // border_width
-            px(5.0),  // padding
-        );
-
-        // Child radius should be 6 (10 - 2*2)
-        assert_eq!(solver.corner_radius(0), px(6.0));
-
-        // Test case 2
-        let solver = corner_solver(
-            px(10.0), // radius
-            px(1.0),  // border_width
-            px(3.0),  // padding
-        );
-
-        // Child radius should be 8 (10 - 1*2)
-        assert_eq!(solver.corner_radius(0), px(8.0));
-
-        // Test nested children
-        let solver = corner_solver(
-            px(10.0), // root radius
-            px(1.0),  // root border_width
-            px(4.0),  // root padding
-        )
-        .add_child(px(1.0), px(2.0)) // child 1: border_width=1, padding=2
-        .add_child(px(1.0), px(1.0)); // child 2: border_width=1, padding=1
-
-        // First child radius should be 8 (10 - 1*2)
-        assert_eq!(solver.corner_radius(0), px(8.0));
-
-        // Second child radius should be 6 (10 - 1*2 - 1*2)
-        assert_eq!(solver.corner_radius(1), px(6.0));
+    fn test_corner_solver_single() {
+        let solver = CornerSolver::new(px(10.0), px(2.0), px(3.0));
+        assert_eq!(solver.corner_radius(0), px(5.0));
     }
 
     #[test]
-    fn test_solve_four_level_nested_radius() {
-        let solver = corner_solver(
-            px(20.0), // root radius
-            px(2.0),  // root border_width
-            px(8.0),  // root padding
-        )
-        .add_child(px(1.0), px(2.0)) // child 1: border_width=1, padding=2
-        .add_child(px(1.0), px(2.0)) // child 2: border_width=1, padding=2
-        .add_child(px(1.0), px(1.0)) // child 3: border_width=1, padding=1
-        .add_child(px(1.0), px(1.0)); // child 4: border_width=1, padding=1
+    fn test_corner_solver_nested() {
+        let solver = CornerSolver::new(px(20.0), px(2.0), px(3.0))
+            .add_child(px(1.0), px(2.0))
+            .add_child(px(1.0), px(1.0))
+            .add_child(px(2.0), px(2.0));
 
-        assert_eq!(solver.corner_radius(0), px(16.0)); // 20 - 2*2
-        assert_eq!(solver.corner_radius(1), px(14.0)); // 16 - 1*2
-        assert_eq!(solver.corner_radius(2), px(12.0)); // 14 - 1*2
-        assert_eq!(solver.corner_radius(3), px(10.0)); // 12 - 1*2
-        assert_eq!(solver.corner_radius(4), px(8.0)); // 10 - 1*2
-
-        assert_eq!(solver.padding(0), px(6.0)); // 8 - 2
-        assert_eq!(solver.padding(1), px(4.0)); // 6 - 2
-        assert_eq!(solver.padding(2), px(3.0)); // 4 - 1
-        assert_eq!(solver.padding(3), px(2.0)); // 3 - 1
+        assert_eq!(solver.corner_radius(0), px(15.0));
+        assert_eq!(solver.corner_radius(1), px(12.0));
+        assert_eq!(solver.corner_radius(2), px(10.0));
+        assert_eq!(solver.corner_radius(3), px(0.0));
     }
 }
