@@ -1091,8 +1091,16 @@ struct UsageCounts {
 }
 
 #[derive(Debug, Serialize)]
+struct ModelRequestUsage {
+    pub model: String,
+    pub mode: CompletionMode,
+    pub requests: i32,
+}
+
+#[derive(Debug, Serialize)]
 struct GetCurrentUsageResponse {
     pub model_requests: UsageCounts,
+    pub model_request_usage: Vec<ModelRequestUsage>,
     pub edit_predictions: UsageCounts,
 }
 
@@ -1119,6 +1127,7 @@ async fn get_current_usage(
             limit: Some(0),
             remaining: Some(0),
         },
+        model_request_usage: Vec::new(),
         edit_predictions: UsageCounts {
             used: 0,
             limit: Some(0),
@@ -1163,12 +1172,30 @@ async fn get_current_usage(
         zed_llm_client::UsageLimit::Unlimited => None,
     };
 
+    let subscription_usage_meters = llm_db
+        .get_current_subscription_usage_meters_for_user(user.id, Utc::now())
+        .await?;
+
+    let model_request_usage = subscription_usage_meters
+        .into_iter()
+        .filter_map(|(usage_meter, _usage)| {
+            let model = llm_db.model_by_id(usage_meter.model_id).ok()?;
+
+            Some(ModelRequestUsage {
+                model: model.name.clone(),
+                mode: usage_meter.mode,
+                requests: usage_meter.requests,
+            })
+        })
+        .collect::<Vec<_>>();
+
     Ok(Json(GetCurrentUsageResponse {
         model_requests: UsageCounts {
             used: usage.model_requests,
             limit: model_requests_limit,
             remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
         },
+        model_request_usage,
         edit_predictions: UsageCounts {
             used: usage.edit_predictions,
             limit: edit_prediction_limit,
