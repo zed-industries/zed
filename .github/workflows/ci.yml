@@ -90,7 +90,7 @@ jobs:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
     if: github.repository_owner == 'the-code-editor-company'
-    runs-on:macos-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
