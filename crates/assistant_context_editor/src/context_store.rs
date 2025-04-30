@@ -888,6 +888,7 @@ impl ContextStore {
                     slash_command_working_set.remove(&slash_command_ids);
                 }
             }
+            context_server::manager::Event::ServerFailedToStart { .. } => {}
         }
     }
 }

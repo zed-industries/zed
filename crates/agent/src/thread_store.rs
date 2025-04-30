@@ -613,6 +613,7 @@ impl ThreadStore {
                     self.load_default_profile(cx);
                 }
             }
+            context_server::manager::Event::ServerFailedToStart { .. } => {}
         }
     }
 }

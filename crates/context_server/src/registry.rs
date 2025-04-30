@@ -17,9 +17,9 @@ pub trait ContextServerDescriptor {
     ) -> Task<Result<Option<ContextServerConfiguration>>>;
 }
 
-struct GlobalContextServerFactoryRegistry(Entity<ContextServerDescriptorRegistry>);
+struct GlobalContextServerDescriptorRegistry(Entity<ContextServerDescriptorRegistry>);
 
-impl Global for GlobalContextServerFactoryRegistry {}
+impl Global for GlobalContextServerDescriptorRegistry {}
 
 #[derive(Default)]
 pub struct ContextServerDescriptorRegistry {
@@ -27,20 +27,22 @@ pub struct ContextServerDescriptorRegistry {
 }
 
 impl ContextServerDescriptorRegistry {
-    /// Returns the global [`ContextServerFactoryRegistry`].
+    /// Returns the global [`ContextServerDescriptorRegistry`].
     pub fn global(cx: &App) -> Entity<Self> {
-        GlobalContextServerFactoryRegistry::global(cx).0.clone()
+        GlobalContextServerDescriptorRegistry::global(cx).0.clone()
     }
 
-    /// Returns the global [`ContextServerFactoryRegistry`].
+    /// Returns the global [`ContextServerDescriptorRegistry`].
     ///
-    /// Inserts a default [`ContextServerFactoryRegistry`] if one does not yet exist.
+    /// Inserts a default [`ContextServerDescriptorRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut App) -> Entity<Self> {
-        if !cx.has_global::<GlobalContextServerFactoryRegistry>() {
+        if !cx.has_global::<GlobalContextServerDescriptorRegistry>() {
             let registry = cx.new(|_| Self::new());
-            cx.set_global(GlobalContextServerFactoryRegistry(registry));
+            cx.set_global(GlobalContextServerDescriptorRegistry(registry));
         }
-        cx.global::<GlobalContextServerFactoryRegistry>().0.clone()
+        cx.global::<GlobalContextServerDescriptorRegistry>()
+            .0
+            .clone()
     }
 
     pub fn new() -> Self {

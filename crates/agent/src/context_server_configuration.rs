@@ -1,11 +1,15 @@
-use std::sync::Arc;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Context as _;
-use context_server::ContextServerDescriptorRegistry;
+use context_server::{ContextServerDescriptorRegistry, manager::ContextServerManager};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ContextServerConfiguration;
+use extension::{ContextServerConfiguration, ExtensionManifest};
 use gpui::{
-    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity,
+    Animation, AnimationExt, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
+    TextStyle, Transformation, WeakEntity, percentage,
 };
 use language::{Language, LanguageRegistry};
 use settings::{Settings as _, update_settings_file};
@@ -13,6 +17,8 @@ use theme::ThemeSettings;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
+
+use crate::AssistantPanel;
 
 pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
     cx.observe_new(move |_: &mut Workspace, window, cx| {
@@ -25,51 +31,13 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
                 let language_registry = language_registry.clone();
                 move |workspace, _, event, window, cx| match event {
                     extension::Event::ExtensionInstalled(manifest) => {
-                        let registry = ContextServerDescriptorRegistry::global(cx).read(cx);
-                        let project = workspace.project().clone();
-                        let configuration_tasks =
-                            manifest
-                                .context_servers
-                                .keys()
-                                .cloned()
-                                .filter_map({
-                                    |key| {
-                                        let descriptor= registry.context_server_descriptor(&key)?;
-                                        Some(cx.spawn({
-                                            let project = project.clone();
-                                            async move |_, cx| {
-                                                descriptor.configuration(project, &cx)
-                                                    .await
-                                                    .context("Failed to resolve context server configuration")
-                                                    .log_err()
-                                                    .flatten()
-                                                    .map(|config| (key, config))
-                                            }
-                                        }))
-                                    }
-                                })
-                                .collect::<Vec<_>>();
-
-                        let jsonc_language = language_registry.language_for_name("jsonc");
-
-                        cx.spawn_in(window, async move |this, cx| {
-                            let descriptors = futures::future::join_all(configuration_tasks).await;
-                            let jsonc_language = jsonc_language.await.ok();
-
-                            this.update_in(cx, |this, window, cx| {
-                                let modal = ConfigureContextServerModal::from_configurations(
-                                    descriptors.into_iter().flatten(),
-                                    jsonc_language,
-                                    cx.entity().downgrade(),
-                                    window,
-                                    cx,
-                                );
-                                if let Some(modal) = modal {
-                                    this.toggle_modal(window, cx, |_, _| modal);
-                                }
-                            })
-                        })
-                        .detach();
+                        show_configure_mcp_modal(
+                            language_registry.clone(),
+                            manifest,
+                            workspace,
+                            window,
+                            cx,
+                        );
                     }
                     _ => {}
                 }
@@ -84,17 +52,84 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
     .detach();
 }
 
+fn show_configure_mcp_modal(
+    language_registry: Arc<LanguageRegistry>,
+    manifest: &Arc<ExtensionManifest>,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<'_, Workspace>,
+) {
+    let Some(context_server_manager) = workspace.panel::<AssistantPanel>(cx).map(|panel| {
+        panel
+            .read(cx)
+            .thread_store()
+            .read(cx)
+            .context_server_manager()
+    }) else {
+        return;
+    };
+
+    let registry = ContextServerDescriptorRegistry::global(cx).read(cx);
+    let project = workspace.project().clone();
+    let configuration_tasks = manifest
+        .context_servers
+        .keys()
+        .cloned()
+        .filter_map({
+            |key| {
+                let descriptor = registry.context_server_descriptor(&key)?;
+                Some(cx.spawn({
+                    let project = project.clone();
+                    async move |_, cx| {
+                        descriptor
+                            .configuration(project, &cx)
+                            .await
+                            .context("Failed to resolve context server configuration")
+                            .log_err()
+                            .flatten()
+                            .map(|config| (key, config))
+                    }
+                }))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let jsonc_language = language_registry.language_for_name("jsonc");
+
+    cx.spawn_in(window, async move |this, cx| {
+        let descriptors = futures::future::join_all(configuration_tasks).await;
+        let jsonc_language = jsonc_language.await.ok();
+
+        this.update_in(cx, |this, window, cx| {
+            let modal = ConfigureContextServerModal::from_configurations(
+                descriptors.into_iter().flatten(),
+                jsonc_language,
+                context_server_manager,
+                cx.entity().downgrade(),
+                window,
+                cx,
+            );
+            if let Some(modal) = modal {
+                this.toggle_modal(window, cx, |_, _| modal);
+            }
+        })
+    })
+    .detach();
+}
+
 struct ConfigureContextServer {
     id: Arc<str>,
     installation_instructions: SharedString,
     settings_validator: Option<jsonschema::Validator>,
     settings_editor: Entity<Editor>,
     last_error: Option<SharedString>,
+    waiting_for_context_server: bool,
 }
 
 struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     context_servers_to_setup: Vec<ConfigureContextServer>,
+    context_server_manager: Entity<ContextServerManager>,
     completed: bool,
 }
 
@@ -102,6 +137,7 @@ impl ConfigureContextServerModal {
     pub fn from_configurations(
         configurations: impl Iterator<Item = (Arc<str>, ContextServerConfiguration)>,
         jsonc_language: Option<Arc<Language>>,
+        context_server_manager: Entity<ContextServerManager>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -124,6 +160,7 @@ impl ConfigureContextServerModal {
                         }
                         editor
                     }),
+                    waiting_for_context_server: false,
                     last_error: None,
                 }
             })
@@ -136,6 +173,7 @@ impl ConfigureContextServerModal {
         Some(Self {
             workspace,
             context_servers_to_setup,
+            context_server_manager,
             completed: false,
         })
     }
@@ -152,6 +190,10 @@ impl ConfigureContextServerModal {
         };
 
         let configuration = &mut self.context_servers_to_setup[0];
+        if configuration.waiting_for_context_server {
+            return;
+        }
+
         let settings_value = match serde_json_lenient::from_str::<serde_json::Value>(
             &configuration.settings_editor.read(cx).text(cx),
         ) {
@@ -172,31 +214,88 @@ impl ConfigureContextServerModal {
         }
         let id = configuration.id.clone();
 
-        self.context_servers_to_setup.remove(0);
+        configuration.waiting_for_context_server = true;
 
+        let task = wait_for_context_server(&self.context_server_manager, id.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| match result {
+                Ok(_) => {
+                    this.context_servers_to_setup.remove(0);
+                    this.completed = this.context_servers_to_setup.is_empty();
+                    cx.notify();
+                    if this.completed {
+                        cx.emit(DismissEvent);
+                    }
+                }
+                Err(err) => {
+                    if let Some(configuration) = this.context_servers_to_setup.get_mut(0) {
+                        configuration.last_error = Some(err.into());
+                        configuration.waiting_for_context_server = false;
+                    } else {
+                        this.completed = true;
+                        cx.emit(DismissEvent);
+                    }
+                }
+            })
+        })
+        .detach();
+
+        // When we write the settings to the file, the context server will be restarted.
         update_settings_file::<context_server::ContextServerSettings>(
             workspace.read(cx).app_state().fs.clone(),
             cx,
-            |settings, _| {
-                if let Some(server_config) = settings.context_servers.get_mut(&id) {
-                    server_config.settings = Some(settings_value);
-                } else {
-                    settings.context_servers.insert(
-                        id,
-                        context_server::ServerConfig {
-                            settings: Some(settings_value),
-                            ..Default::default()
-                        },
-                    );
+            {
+                let id = id.clone();
+                |settings, _| {
+                    if let Some(server_config) = settings.context_servers.get_mut(&id) {
+                        server_config.settings = Some(settings_value);
+                    } else {
+                        settings.context_servers.insert(
+                            id,
+                            context_server::ServerConfig {
+                                settings: Some(settings_value),
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
             },
         );
-
-        self.completed = self.context_servers_to_setup.is_empty();
-        if self.completed {
-            cx.emit(DismissEvent);
-        }
     }
+}
+
+fn wait_for_context_server(
+    context_server_manager: &Entity<ContextServerManager>,
+    context_server_id: Arc<str>,
+    cx: &mut App,
+) -> Task<Result<(), Arc<str>>> {
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    let subscription = cx.subscribe(context_server_manager, move |_, event, _cx| match event {
+        context_server::manager::Event::ServerStarted { server_id } => {
+            if server_id == &context_server_id {
+                if let Some(tx) = tx.lock().unwrap().take() {
+                    let _ = tx.send(Ok(()));
+                }
+            }
+        }
+        context_server::manager::Event::ServerFailedToStart { server_id, error } => {
+            if server_id == &context_server_id {
+                if let Some(tx) = tx.lock().unwrap().take() {
+                    let _ = tx.send(Err(error.clone()));
+                }
+            }
+        }
+        _ => {}
+    });
+
+    cx.spawn(async move |_cx| {
+        let result = rx.await.unwrap();
+        drop(subscription);
+        result
+    })
 }
 
 impl Render for ConfigureContextServerModal {
@@ -279,35 +378,68 @@ impl Render for ConfigureContextServerModal {
                     )
                     .footer(
                         ModalFooter::new()
-                            .start_slot(
-                                Button::new("cancel", "Cancel")
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &menu::Cancel,
-                                            &focus_handle,
-                                            window,
-                                            cx,
+                            .when(configuration.waiting_for_context_server, |this| {
+                                this.start_slot(
+                                    h_flex()
+                                        .w_full()
+                                        .justify_start()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Info)
+                                                .with_animation(
+                                                    "arrow-circle",
+                                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                                    |icon, delta| {
+                                                        icon.transform(Transformation::rotate(
+                                                            percentage(delta),
+                                                        ))
+                                                    },
+                                                )
+                                                .into_any_element(),
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                    )
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.completed = true;
-                                        cx.emit(DismissEvent);
-                                    })),
-                            )
+                                        .child(
+                                            Label::new("Waiting for Context Server")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                            })
                             .end_slot(
-                                Button::new("configure-server", "Configure MCP")
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &menu::Confirm,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("cancel", "Cancel")
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Cancel,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.completed = true;
+                                                cx.emit(DismissEvent);
+                                            })),
                                     )
-                                    .on_click(
-                                        cx.listener(|this, _event, _window, cx| this.confirm(cx)),
+                                    .child(
+                                        Button::new("configure-server", "Configure MCP")
+                                            .disabled(configuration.waiting_for_context_server)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.confirm(cx)
+                                            })),
                                     ),
                             ),
                     ),

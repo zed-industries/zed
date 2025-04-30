@@ -113,8 +113,16 @@ pub struct ContextServerManager {
 }
 
 pub enum Event {
-    ServerStarted { server_id: Arc<str> },
-    ServerStopped { server_id: Arc<str> },
+    ServerStarted {
+        server_id: Arc<str>,
+    },
+    ServerFailedToStart {
+        server_id: Arc<str>,
+        error: Arc<str>,
+    },
+    ServerStopped {
+        server_id: Arc<str>,
+    },
 }
 
 impl EventEmitter<Event> for ContextServerManager {}
@@ -153,7 +161,9 @@ impl ContextServerManager {
                     this.needs_server_update = false;
                 })?;
 
-                Self::maintain_servers(this.clone(), cx).await?;
+                if let Err(err) = Self::maintain_servers(this.clone(), cx).await {
+                    log::error!("Error maintaining context servers: {}", err);
+                }
 
                 this.update(cx, |this, cx| {
                     let has_any_context_servers = !this.running_servers().is_empty();
@@ -186,12 +196,7 @@ impl ContextServerManager {
         server: Arc<ContextServer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        cx.spawn(async move |this, cx| {
-            let id = server.id.clone();
-            server.start(&cx).await?;
-            this.update(cx, |_, cx| cx.emit(Event::ServerStarted { server_id: id }))?;
-            Ok(())
-        })
+        cx.spawn(async move |this, cx| Self::start_server_impl(this, server, cx).await)
     }
 
     pub fn stop_server(
@@ -308,12 +313,35 @@ impl ContextServerManager {
             this.update(cx, |_, cx| cx.emit(Event::ServerStopped { server_id: id }))?;
         }
 
-        for (id, server) in servers_to_start {
-            if server.start(&cx).await.log_err().is_some() {
-                this.update(cx, |_, cx| cx.emit(Event::ServerStarted { server_id: id }))?;
-            }
+        for (_, server) in servers_to_start {
+            Self::start_server_impl(this.clone(), server, cx).await?;
         }
 
         Ok(())
+    }
+
+    async fn start_server_impl(
+        this: WeakEntity<Self>,
+        server: Arc<ContextServer>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let id = server.id();
+        println!("Starting server {id}");
+        match server.start(&cx).await {
+            Ok(_) => {
+                this.update(cx, |_, cx| cx.emit(Event::ServerStarted { server_id: id }))?;
+                Ok(())
+            }
+            Err(err) => {
+                this.update(cx, |_, cx| {
+                    cx.emit(Event::ServerFailedToStart {
+                        server_id: id.clone(),
+                        error: err.to_string().into(),
+                    })
+                })?;
+                log::error!("Context server {} failed to start\n{}", id, err);
+                Err(err)
+            }
+        }
     }
 }
