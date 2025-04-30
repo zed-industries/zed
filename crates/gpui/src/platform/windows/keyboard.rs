@@ -6,12 +6,12 @@ use windows_core::HSTRING;
 
 use crate::PlatformKeyboardLayout;
 
-pub(crate) struct KeyboardLayout {
+pub(crate) struct WindowsKeyboardLayout {
     id: String,
     name: String,
 }
 
-impl PlatformKeyboardLayout for KeyboardLayout {
+impl PlatformKeyboardLayout for WindowsKeyboardLayout {
     fn id(&self) -> &str {
         &self.id
     }
@@ -21,7 +21,7 @@ impl PlatformKeyboardLayout for KeyboardLayout {
     }
 }
 
-impl KeyboardLayout {
+impl WindowsKeyboardLayout {
     pub(crate) fn new() -> Result<Self> {
         let mut buffer = [0u16; KL_NAMELENGTH as usize];
         unsafe { GetKeyboardLayoutNameW(&mut buffer)? };

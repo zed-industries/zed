@@ -299,9 +299,9 @@ impl Platform for WindowsPlatform {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(
-            KeyboardLayout::new()
+            WindowsKeyboardLayout::new()
                 .log_err()
-                .unwrap_or(KeyboardLayout::unknown()),
+                .unwrap_or(WindowsKeyboardLayout::unknown()),
         )
     }
 
