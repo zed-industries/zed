@@ -949,6 +949,7 @@ impl DebugPanel {
                                                     past_debug_definition,
                                                     weak_panel,
                                                     workspace,
+                                                    None,
                                                     window,
                                                     cx,
                                                 )

@@ -62,6 +62,7 @@ impl NewSessionModal {
         past_debug_definition: Option<DebugTaskDefinition>,
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
+        task_store: Option<Entity<TaskStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -76,6 +77,25 @@ impl NewSessionModal {
         let launch_config = match past_debug_definition.map(|def| def.request) {
             Some(DebugRequest::Launch(launch_config)) => Some(launch_config),
             _ => None,
+        };
+
+        if let Some(task_store) = task_store {
+            cx.defer_in(window, |this, window, cx| {
+                let picker = cx.new(|cx| {
+                    Picker::uniform_list(
+                        DebugScenarioDelegate::new(
+                            this.debug_panel.clone(),
+                            this.workspace.clone(),
+                            task_store,
+                        ),
+                        window,
+                        cx,
+                    )
+                    .modal(false)
+                });
+
+                this.mode = NewSessionMode::Scenario(picker);
+            });
         };
 
         Self {
