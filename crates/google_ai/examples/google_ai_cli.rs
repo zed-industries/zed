@@ -5,9 +5,9 @@ use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use google_ai::{
-    CacheContentsRequest, CacheName, Content, CountTokensRequest, GenerateContentRequest,
-    GenerationConfig, Part, Role, SystemInstruction, TextPart, UpdateCacheRequest, cache_contents,
-    count_tokens, stream_generate_content, update_cache,
+    CacheName, Content, CountTokensRequest, CreateCacheRequest, GenerateContentRequest,
+    GenerationConfig, Part, Role, SystemInstruction, TextPart, UpdateCacheRequest, count_tokens,
+    create_cache, stream_generate_content, update_cache,
 };
 use reqwest_client::ReqwestClient;
 use std::io::Write;
@@ -19,13 +19,17 @@ use std::{fs, io, path::PathBuf, sync::Arc, time::Duration};
 #[command(version = "0.1.0")]
 #[command(about = "Interface with the Google Generative AI API", long_about = None)]
 struct Cli {
-    /// Google AI API key
-    #[arg(long, env = "GOOGLE_AI_KEY")]
+    /// Gemini API key
+    #[arg(long, env = "GEMINI_API_KEY")]
     api_key: String,
 
     /// API URL (defaults to https://generativelanguage.googleapis.com)
-    #[arg(long, default_value = google_ai::API_URL)]
+    #[arg(long, global = true, default_value = google_ai::API_URL)]
     api_url: String,
+
+    /// The model to use
+    #[arg(long, global = true, default_value = "gemini-2.5-pro-exp-03-25")]
+    model: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -35,10 +39,6 @@ struct Cli {
 enum Commands {
     /// Generate content from a prompt
     Generate {
-        /// The model to use (e.g., gemini-1.5-pro, gemini-1.5-flash)
-        #[arg(long, default_value = "gemini-1.5-pro")]
-        model: String,
-
         /// The prompt text
         #[arg(long, conflicts_with = "prompt_file")]
         prompt: Option<String>,
@@ -81,10 +81,6 @@ enum Commands {
 
     /// Cache content for faster repeated access
     CacheContents {
-        /// The model to use
-        #[arg(long)]
-        model: String,
-
         /// The prompt text
         #[arg(long, conflicts_with = "prompt_file")]
         prompt: Option<String>,
@@ -115,10 +111,6 @@ enum Commands {
 
     /// Interactive conversation with the model
     Chat {
-        /// The model to use (e.g., gemini-1.5-pro, gemini-1.5-flash)
-        #[arg(long, default_value = "gemini-1.5-pro")]
-        model: String,
-
         /// System instruction for the model
         #[arg(long)]
         system_instruction: Option<String>,
@@ -158,7 +150,6 @@ async fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Generate {
-            model,
             prompt,
             prompt_file,
             system_instruction,
@@ -175,7 +166,7 @@ async fn main() -> Result<()> {
             };
 
             let request = GenerateContentRequest {
-                model: model.clone(),
+                model: cli.model.clone(),
                 contents: vec![user_content],
                 system_instruction: system_instruction.as_ref().map(|instruction| {
                     SystemInstruction {
@@ -197,7 +188,7 @@ async fn main() -> Result<()> {
                 tool_config: None,
             };
 
-            println!("Generating content with model: {}", model);
+            println!("Generating content with model: {}", cli.model);
             let mut stream =
                 stream_generate_content(http_client.as_ref(), &cli.api_url, &cli.api_key, request)
                     .await?;
@@ -249,7 +240,6 @@ async fn main() -> Result<()> {
         }
 
         Commands::CacheContents {
-            model,
             prompt,
             prompt_file,
             system_instruction,
@@ -257,9 +247,9 @@ async fn main() -> Result<()> {
         } => {
             let prompt_text = get_prompt_text(prompt, prompt_file)?;
 
-            let request = CacheContentsRequest {
+            let request = CreateCacheRequest {
                 ttl: Duration::from_secs(*ttl),
-                model: model.clone(),
+                model: cli.model.clone(),
                 contents: vec![Content {
                     role: Role::User,
                     parts: vec![Part::TextPart(TextPart { text: prompt_text })],
@@ -275,7 +265,7 @@ async fn main() -> Result<()> {
             };
 
             let response =
-                cache_contents(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
+                create_cache(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
             println!("Cache created:");
             println!("  Name: {:?}", response.name);
             println!("  Expires: {}", response.expire_time);
@@ -314,7 +304,6 @@ async fn main() -> Result<()> {
         }
 
         Commands::Chat {
-            model,
             system_instruction,
             max_tokens,
             temperature,
@@ -361,7 +350,7 @@ async fn main() -> Result<()> {
 
                 // Create request with history
                 let request = GenerateContentRequest {
-                    model: model.clone(),
+                    model: cli.model.clone(),
                     contents: history
                         .iter()
                         .map(|content| Content {

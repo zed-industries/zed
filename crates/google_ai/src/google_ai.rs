@@ -68,7 +68,7 @@ pub async fn stream_generate_content(
         let mut text = String::new();
         response.body_mut().read_to_string(&mut text).await?;
         Err(anyhow!(
-            "error during streamGenerateContent, status code: {:?}, body: {}",
+            "error during Gemini content generation, status code: {:?}, body: {}",
             response.status(),
             text
         ))
@@ -100,19 +100,19 @@ pub async fn count_tokens(
         Ok(serde_json::from_str::<CountTokensResponse>(&text)?)
     } else {
         Err(anyhow!(
-            "error during countTokens, status code: {:?}, body: {}",
+            "error during Gemini token counting, status code: {:?}, body: {}",
             response.status(),
             text
         ))
     }
 }
 
-pub async fn cache_contents(
+pub async fn create_cache(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    request: CacheContentsRequest,
-) -> Result<CacheContentsResponse> {
+    request: CreateCacheRequest,
+) -> Result<CreateCacheResponse> {
     if let Some(user_content) = request
         .contents
         .iter()
@@ -122,7 +122,7 @@ pub async fn cache_contents(
             bail!("User content must contain at least one part");
         }
     }
-    let uri = format!("{api_url}/v1beta/cacheContents?key={api_key}");
+    let uri = format!("{api_url}/v1beta/cachedContents?key={api_key}");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
@@ -133,10 +133,10 @@ pub async fn cache_contents(
     let mut text = String::new();
     response.body_mut().read_to_string(&mut text).await?;
     if response.status().is_success() {
-        Ok(serde_json::from_str::<CacheContentsResponse>(&text)?)
+        Ok(serde_json::from_str::<CreateCacheResponse>(&text)?)
     } else {
         Err(anyhow!(
-            "error during cacheContents, status code: {:?}, body: {}",
+            "error during Gemini cache creation, status code: {:?}, body: {}",
             response.status(),
             text
         ))
@@ -151,7 +151,7 @@ pub async fn update_cache(
     request: UpdateCacheRequest,
 ) -> Result<UpdateCacheResponse> {
     let uri = format!(
-        "{api_url}/v1beta/cacheContents/{}?key={api_key}",
+        "{api_url}/v1beta/cachedContents/{}?key={api_key}",
         &cache_name.0
     );
     let request_builder = HttpRequest::builder()
@@ -167,7 +167,7 @@ pub async fn update_cache(
         Ok(serde_json::from_str::<UpdateCacheResponse>(&text)?)
     } else {
         Err(anyhow!(
-            "error during update of cacheContents, status code: {:?}, body: {}",
+            "error during Gemini cache update, status code: {:?}, body: {}",
             response.status(),
             text
         ))
@@ -480,7 +480,7 @@ pub struct FunctionDeclaration {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CacheContentsRequest {
+pub struct CreateCacheRequest {
     #[serde(
         serialize_with = "serialize_duration",
         deserialize_with = "deserialize_duration"
@@ -502,7 +502,7 @@ pub struct CacheContentsRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CacheContentsResponse {
+pub struct CreateCacheResponse {
     pub name: CacheName,
     #[serde(
         serialize_with = "time::serde::rfc3339::serialize",
