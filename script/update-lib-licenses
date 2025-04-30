@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+LICENSE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/licenses/other-licenses.toml"
+LIB_NAME=""
+
+# Clear all the library variables
+clear_lib_vars() {
+    LIB_NAME_VAR=""
+    LIB_REPO=""
+    LIB_SPDX=""
+    LIB_URL=""
+    LIB_FILE=""
+}
+clear_lib_vars
+
+handle_error() {
+    echo "ERROR: $1" >&2
+    exit 1
+}
+
+process_library() {
+    echo "Processing library: $LIB_NAME"
+    echo "  name: $LIB_NAME_VAR"
+    echo "  repo: $LIB_REPO"
+    echo "  spdx: $LIB_SPDX"
+    echo "  url: $LIB_URL"
+    echo "  file: $LIB_FILE"
+    echo ""
+}
+
+while IFS= read -r line; do
+    # Skip empty lines and comment lines that start with #
+    [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+    # Capture section headers [libname]
+    [[ "$line" =~ ^\[(.*)\]$ ]] && {
+        # if we found a new lib, process it
+        [[ -n "$LIB_NAME" ]] && process_library
+        LIB_NAME="${BASH_REMATCH[1]}"
+        clear_lib_vars
+        continue
+    }
+
+    # Capture key-value pairs
+    [[ "$line" =~ ^([a-zA-Z0-9_]+)[[:space:]]*=[[:space:]]*\"(.*)\"$ ]] && {
+        key="${BASH_REMATCH[1]}"   # first match
+        value="${BASH_REMATCH[2]}" # second match
+
+        case "$key" in
+        name) LIB_NAME_VAR="$value" ;;
+        repo) LIB_REPO="$value" ;;
+        spdx) LIB_SPDX="$value" ;;
+        url) LIB_URL="$value" ;;
+        file) LIB_FILE="$value" ;;
+        *) handle_error "Unknown key '$key' in library '$LIB_NAME'" ;;
+        esac
+        continue
+    }
+
+    [[ -n "$line" ]] && handle_error "Unexpected line format: $line"
+done <"$LICENSE_FILE"
+
+# Process the last library after EOF
+[[ -n "$LIB_NAME" ]] && process_library
