@@ -393,8 +393,14 @@ impl AssistantPanel {
                 }
             });
 
-        let history_store =
-            cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
+        let history_store = cx.new(|cx| {
+            HistoryStore::new(
+                thread_store.clone(),
+                context_store.clone(),
+                [RecentEntry::Thread(thread.clone())],
+                cx,
+            )
+        });
 
         cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
 
@@ -405,7 +411,7 @@ impl AssistantPanel {
                 cx.notify();
             }
         });
-        let thread = cx.new(|cx| {
+        let active_thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 thread_store.clone(),
@@ -416,11 +422,12 @@ impl AssistantPanel {
             )
         });
 
-        let active_thread_subscription = cx.subscribe(&thread, |_, _, event, cx| match &event {
-            ActiveThreadEvent::EditingMessageTokenCountChanged => {
-                cx.notify();
-            }
-        });
+        let active_thread_subscription =
+            cx.subscribe(&active_thread, |_, _, event, cx| match &event {
+                ActiveThreadEvent::EditingMessageTokenCountChanged => {
+                    cx.notify();
+                }
+            });
 
         let weak_panel = weak_self.clone();
 
@@ -544,7 +551,7 @@ impl AssistantPanel {
             fs: fs.clone(),
             language_registry,
             thread_store: thread_store.clone(),
-            thread,
+            thread: active_thread,
             message_editor,
             _active_thread_subscriptions: vec![
                 thread_subscription,
@@ -1070,6 +1077,17 @@ impl AssistantPanel {
     ) {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
+
+        match &self.active_view {
+            ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
+                if let Some(thread) = thread.upgrade() {
+                    if thread.read(cx).is_empty() {
+                        store.remove_recently_opened_entry(&RecentEntry::Thread(thread), cx);
+                    }
+                }
+            }),
+            _ => {}
+        }
 
         match &new_view {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {

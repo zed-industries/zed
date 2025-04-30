@@ -299,7 +299,7 @@
   {
     "context": "AgentPanel > NavigationMenu",
     "bindings": {
-      "cmd-backspace": "agent::DeleteRecentlyOpenThread"
+      "ctrl-backspace": "agent::DeleteRecentlyOpenThread"
     }
   },
   {

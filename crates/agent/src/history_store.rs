@@ -69,6 +69,7 @@ impl HistoryStore {
     pub fn new(
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
+        initial_recent_entries: impl IntoIterator<Item = RecentEntry>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
@@ -85,7 +86,7 @@ impl HistoryStore {
                     .background_spawn(async move { std::fs::read_to_string(path) })
                     .await
                     .context("reading persisted agent panel navigation history")?;
-                let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(&contents)
+                let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(dbg!(&contents))
                     .context("deserializing persisted agent panel navigation history")?
                     .into_iter()
                     .take(MAX_RECENTLY_OPENED_ENTRIES)
@@ -114,9 +115,9 @@ impl HistoryStore {
                     .collect::<VecDeque<_>>();
 
                 this.update(cx, |this, _| {
-                    if this.recently_opened_entries.is_empty() {
-                        this.recently_opened_entries = entries;
-                    }
+                    this.recently_opened_entries.extend(entries);
+                    this.recently_opened_entries
+                        .truncate(MAX_RECENTLY_OPENED_ENTRIES);
                 })
                 .ok();
 
@@ -128,7 +129,7 @@ impl HistoryStore {
         Self {
             thread_store,
             context_store,
-            recently_opened_entries: VecDeque::new(),
+            recently_opened_entries: initial_recent_entries.into_iter().collect(),
             _subscriptions: subscriptions,
             _save_recently_opened_entries_task: Task::ready(()),
         }
@@ -182,6 +183,7 @@ impl HistoryStore {
             cx.background_spawn(async move {
                 let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
                 let content = serde_json::to_string(&serialized_entries)?;
+                dbg!(&content);
                 std::fs::write(path, content)?;
                 anyhow::Ok(())
             })
