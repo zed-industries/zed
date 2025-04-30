@@ -39,12 +39,14 @@ serde.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 streaming_diff.workspace = true
+task.workspace = true
+terminal.workspace = true
+terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
 web_search.workspace = true
-workspace.workspace = true
 workspace-hack.workspace = true
-worktree.workspace = true
+workspace.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
@@ -62,6 +64,7 @@ rand.workspace = true
 pretty_assertions.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+task = { workspace = true, features = ["test-support"]}
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

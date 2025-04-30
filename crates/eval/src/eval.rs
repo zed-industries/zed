@@ -1,6 +1,7 @@
 mod assertions;
 mod example;
 mod examples;
+mod explorer;
 mod ids;
 mod instance;
 mod tool_metrics;
@@ -16,7 +17,7 @@ use client::{Client, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
-use gpui::http_client::{Uri, read_proxy_from_env};
+use gpui::http_client::read_proxy_from_env;
 use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -33,8 +34,11 @@ use std::collections::VecDeque;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use util::ResultExt as _;
+
+static CARGO_MANIFEST_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
 
 #[derive(Parser, Debug)]
 #[command(name = "eval", disable_version_flag = true)]
@@ -56,6 +60,8 @@ struct Args {
 }
 
 fn main() {
+    dotenv::from_filename(CARGO_MANIFEST_DIR.join(".env")).ok();
+
     env_logger::init();
 
     let system_id = ids::get_or_create_id(&ids::eval_system_id_path()).ok();
@@ -305,155 +311,11 @@ fn main() {
             }))
             .await;
 
-            print_h1("EVAL RESULTS");
-
-            let mut diff_scores = Vec::new();
-            let mut thread_scores = Vec::new();
-            let mut programmatic_scores = Vec::new();
-            let mut error_count = 0;
-
-            for (example_name, results) in results_by_example_name.borrow_mut().iter_mut() {
-                print_h2(&example_name);
-
-                results.sort_unstable_by_key(|(example, _)| example.repetition);
-                let mut example_cumulative_tool_metrics = ToolMetrics::default();
-
-                let mut table_rows = String::new();
-
-                for (example, result) in results.iter() {
-                    match result {
-                        Err(err) => {
-                            display_error_row(
-                                &mut table_rows,
-                                example.repetition,
-                                err.to_string(),
-                            )?;
-                            error_count += 1;
-                        }
-                        Ok((run_output, judge_output)) => {
-                            cumulative_tool_metrics.merge(&run_output.tool_metrics);
-                            example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
-
-                            if !run_output.programmatic_assertions.total_count() > 0 {
-                                for assertion in &run_output.programmatic_assertions.ran {
-                                    assertions::display_table_row(
-                                        &mut table_rows,
-                                        example.repetition,
-                                        assertion,
-                                    )?;
-                                }
-
-                                programmatic_scores
-                                    .push(run_output.programmatic_assertions.passed_percentage())
-                            }
-
-                            if !judge_output.diff.is_empty() {
-                                diff_scores.push(judge_output.diff.passed_percentage());
-
-                                for assertion in &judge_output.diff.ran {
-                                    assertions::display_table_row(
-                                        &mut table_rows,
-                                        example.repetition,
-                                        assertion,
-                                    )?;
-                                }
-                            }
-
-                            if !judge_output.thread.is_empty() {
-                                thread_scores.push(judge_output.thread.passed_percentage());
-
-                                for assertion in &judge_output.thread.ran {
-                                    assertions::display_table_row(
-                                        &mut table_rows,
-                                        example.repetition,
-                                        assertion,
-                                    )?;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !table_rows.is_empty() {
-                    assertions::print_table_header();
-                    print!("{}", table_rows);
-
-                    assertions::print_table_divider();
-
-                    for (example, result) in results.iter() {
-                        if let Ok((run_output, judge_output)) = result {
-                            assertions::print_table_round_summary(
-                                &example.repetition.to_string(),
-                                [
-                                    &run_output.programmatic_assertions,
-                                    &judge_output.diff,
-                                    &judge_output.thread,
-                                ]
-                                .into_iter(),
-                            )
-                        }
-                    }
-
-                    assertions::print_table_divider();
-
-                    assertions::print_table_round_summary(
-                        "avg",
-                        results.iter().flat_map(|(_, result)| {
-                            result.iter().flat_map(|(run_output, judge_output)| {
-                                [
-                                    &run_output.programmatic_assertions,
-                                    &judge_output.diff,
-                                    &judge_output.thread,
-                                ]
-                                .into_iter()
-                            })
-                        }),
-                    );
-
-                    assertions::print_table_footer();
-                }
-
-                if !example_cumulative_tool_metrics.is_empty() {
-                    println!("{}", &example_cumulative_tool_metrics);
-                }
-            }
-
-            if results_by_example_name.borrow().len() > 1 {
-                print_h1("AGGREGATE");
-
-                if error_count > 0 {
-                    println!("\n{error_count} examples failed to run!");
-                }
-
-                let programmatic_score_count = programmatic_scores.len();
-                if programmatic_score_count > 0 {
-                    let average_programmatic_score = (programmatic_scores.into_iter().sum::<f32>()
-                        / (programmatic_score_count as f32))
-                        .floor();
-                    println!("Average programmatic score: {average_programmatic_score}%");
-                }
-
-                let diff_score_count = diff_scores.len();
-                if diff_score_count > 0 {
-                    let average_diff_score =
-                        (diff_scores.into_iter().sum::<f32>() / (diff_score_count as f32)).floor();
-                    println!("Average diff score: {average_diff_score}%");
-                }
-
-                let thread_score_count = thread_scores.len();
-
-                if thread_score_count > 0 {
-                    let average_thread_score = (thread_scores.into_iter().sum::<f32>()
-                        / (thread_score_count as f32))
-                        .floor();
-                    println!("Average thread score: {average_thread_score}%");
-                }
-
-                println!("");
-
-                print_h2("CUMULATIVE TOOL METRICS");
-                println!("{}", cumulative_tool_metrics);
-            }
+            print_report(
+                &mut results_by_example_name.borrow_mut(),
+                &mut cumulative_tool_metrics,
+                &run_dir,
+            )?;
 
             app_state.client.telemetry().flush_events().await;
 
@@ -496,7 +358,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
-        .and_then(|input| input.parse::<Uri>().ok())
+        .and_then(|input| input.parse().ok())
         .or_else(read_proxy_from_env);
     let http = {
         let _guard = Tokio::handle(cx).enter();
@@ -509,7 +371,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     Project::init_settings(cx);
 
     let client = Client::production(cx);
-    cx.set_http_client(client.http_client().clone());
+    cx.set_http_client(client.http_client());
 
     let git_binary_path = None;
     let fs = Arc::new(RealFs::new(
@@ -549,7 +411,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         tx.send(Some(options)).log_err();
     })
     .detach();
-    let node_runtime = NodeRuntime::new(client.http_client().clone(), rx);
+    let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 
@@ -558,7 +420,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
-    assistant_tools::init(client.http_client().clone(), cx);
+    assistant_tools::init(client.http_client(), cx);
     context_server::init(cx);
     prompt_store::init(cx);
     let stdout_is_a_pty = false;
@@ -669,4 +531,176 @@ fn print_h2(header: &str) {
     println!("\n{:-^HEADER_WIDTH$}", "");
     println!("{:^HEADER_WIDTH$}", header);
     println!("{:-^HEADER_WIDTH$}\n", "");
+}
+
+fn print_report(
+    results_by_example_name: &mut HashMap<
+        String,
+        Vec<(ExampleInstance, anyhow::Result<(RunOutput, JudgeOutput)>)>,
+    >,
+    cumulative_tool_metrics: &mut ToolMetrics,
+    run_dir: &Path,
+) -> anyhow::Result<()> {
+    print_h1("EVAL RESULTS");
+
+    let mut diff_scores = Vec::new();
+    let mut thread_scores = Vec::new();
+    let mut programmatic_scores = Vec::new();
+    let mut error_count = 0;
+
+    for (example_name, results) in results_by_example_name.iter_mut() {
+        print_h2(example_name);
+
+        results.sort_unstable_by_key(|(example, _)| example.repetition);
+        let mut example_cumulative_tool_metrics = ToolMetrics::default();
+
+        let mut table_rows = String::new();
+
+        for (example, result) in results.iter() {
+            match result {
+                Err(err) => {
+                    display_error_row(&mut table_rows, example.repetition, err.to_string())?;
+                    error_count += 1;
+                }
+                Ok((run_output, judge_output)) => {
+                    cumulative_tool_metrics.merge(&run_output.tool_metrics);
+                    example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
+
+                    if !run_output.programmatic_assertions.total_count() > 0 {
+                        for assertion in &run_output.programmatic_assertions.ran {
+                            assertions::display_table_row(
+                                &mut table_rows,
+                                example.repetition,
+                                assertion,
+                            )?;
+                        }
+
+                        programmatic_scores
+                            .push(run_output.programmatic_assertions.passed_percentage())
+                    }
+
+                    if !judge_output.diff.is_empty() {
+                        diff_scores.push(judge_output.diff.passed_percentage());
+
+                        for assertion in &judge_output.diff.ran {
+                            assertions::display_table_row(
+                                &mut table_rows,
+                                example.repetition,
+                                assertion,
+                            )?;
+                        }
+                    }
+
+                    if !judge_output.thread.is_empty() {
+                        thread_scores.push(judge_output.thread.passed_percentage());
+
+                        for assertion in &judge_output.thread.ran {
+                            assertions::display_table_row(
+                                &mut table_rows,
+                                example.repetition,
+                                assertion,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !table_rows.is_empty() {
+            assertions::print_table_header();
+            print!("{}", table_rows);
+
+            assertions::print_table_divider();
+
+            for (example, result) in results.iter() {
+                if let Ok((run_output, judge_output)) = result {
+                    assertions::print_table_round_summary(
+                        &example.repetition.to_string(),
+                        [
+                            &run_output.programmatic_assertions,
+                            &judge_output.diff,
+                            &judge_output.thread,
+                        ]
+                        .into_iter(),
+                    )
+                }
+            }
+
+            assertions::print_table_divider();
+
+            assertions::print_table_round_summary(
+                "avg",
+                results.iter().flat_map(|(_, result)| {
+                    result.iter().flat_map(|(run_output, judge_output)| {
+                        [
+                            &run_output.programmatic_assertions,
+                            &judge_output.diff,
+                            &judge_output.thread,
+                        ]
+                        .into_iter()
+                    })
+                }),
+            );
+
+            assertions::print_table_footer();
+        }
+
+        if !example_cumulative_tool_metrics.is_empty() {
+            println!("{}", &example_cumulative_tool_metrics);
+        }
+    }
+
+    if results_by_example_name.len() > 1 {
+        print_h1("AGGREGATE");
+
+        if error_count > 0 {
+            println!("\n{error_count} examples failed to run!");
+        }
+
+        let programmatic_score_count = programmatic_scores.len();
+        if programmatic_score_count > 0 {
+            let average_programmatic_score = (programmatic_scores.into_iter().sum::<f32>()
+                / (programmatic_score_count as f32))
+                .floor();
+            println!("Average programmatic score: {average_programmatic_score}%");
+        }
+
+        let diff_score_count = diff_scores.len();
+        if diff_score_count > 0 {
+            let average_diff_score =
+                (diff_scores.into_iter().sum::<f32>() / (diff_score_count as f32)).floor();
+            println!("Average diff score: {average_diff_score}%");
+        }
+
+        let thread_score_count = thread_scores.len();
+
+        if thread_score_count > 0 {
+            let average_thread_score =
+                (thread_scores.into_iter().sum::<f32>() / (thread_score_count as f32)).floor();
+            println!("Average thread score: {average_thread_score}%");
+        }
+
+        println!("");
+
+        print_h2("CUMULATIVE TOOL METRICS");
+        println!("{}", cumulative_tool_metrics);
+    }
+
+    let explorer_output_path = run_dir.join("overview.html");
+    let mut json_paths: Vec<PathBuf> = results_by_example_name
+        .values()
+        .flat_map(|results| {
+            results.iter().map(|(example, _)| {
+                let absolute_path = example.run_directory.join("last.messages.json");
+                pathdiff::diff_paths(&absolute_path, run_dir)
+                    .unwrap_or_else(|| absolute_path.clone())
+            })
+        })
+        .collect::<Vec<_>>();
+    json_paths.sort();
+    if let Err(err) = explorer::generate_explorer_html(&json_paths, &explorer_output_path) {
+        eprintln!("Failed to generate explorer HTML: {}", err);
+    }
+
+    Ok(())
 }

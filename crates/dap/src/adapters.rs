@@ -14,10 +14,16 @@ use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
 use std::{
-    borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
-    path::PathBuf, sync::Arc,
+    borrow::Borrow,
+    collections::HashSet,
+    ffi::OsStr,
+    fmt::Debug,
+    net::Ipv4Addr,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
-use task::{DebugTaskDefinition, TcpArgumentsTemplate};
+use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +115,120 @@ impl TcpArguments {
     }
 }
 
+/// Represents a debuggable binary/process (what process is going to be debugged and with what arguments).
+///
+/// We start off with a [DebugScenario], a user-facing type that additionally defines how a debug target is built; once
+/// an optional build step is completed, we turn it's result into a DebugTaskDefinition by running a locator (or using a user-provided task) and resolving task variables.
+/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invocation ([DebugAdapterBinary]).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(
+    any(feature = "test-support", test),
+    derive(serde::Deserialize, serde::Serialize)
+)]
+pub struct DebugTaskDefinition {
+    pub label: SharedString,
+    pub adapter: SharedString,
+    pub request: DebugRequest,
+    /// Additional initialization arguments to be sent on DAP initialization
+    pub initialize_args: Option<serde_json::Value>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
+    /// Optional TCP connection information
+    ///
+    /// If provided, this will be used to connect to the debug adapter instead of
+    /// spawning a new debug adapter process. This is useful for connecting to a debug adapter
+    /// that is already running or is started by another process.
+    pub tcp_connection: Option<TcpArgumentsTemplate>,
+}
+
+impl DebugTaskDefinition {
+    pub fn cwd(&self) -> Option<&Path> {
+        if let DebugRequest::Launch(config) = &self.request {
+            config.cwd.as_ref().map(Path::new)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_scenario(&self) -> DebugScenario {
+        DebugScenario {
+            label: self.label.clone(),
+            adapter: self.adapter.clone(),
+            build: None,
+            request: Some(self.request.clone()),
+            stop_on_entry: self.stop_on_entry,
+            tcp_connection: self.tcp_connection.clone(),
+            initialize_args: self.initialize_args.clone(),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::DebugTaskDefinition {
+        proto::DebugTaskDefinition {
+            adapter: self.adapter.to_string(),
+            request: Some(match &self.request {
+                DebugRequest::Launch(config) => {
+                    proto::debug_task_definition::Request::DebugLaunchRequest(
+                        proto::DebugLaunchRequest {
+                            program: config.program.clone(),
+                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
+                            args: config.args.clone(),
+                            env: config
+                                .env
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                        },
+                    )
+                }
+                DebugRequest::Attach(attach_request) => {
+                    proto::debug_task_definition::Request::DebugAttachRequest(
+                        proto::DebugAttachRequest {
+                            process_id: attach_request.process_id.unwrap_or_default(),
+                        },
+                    )
+                }
+            }),
+            label: self.label.to_string(),
+            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
+            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
+            stop_on_entry: self.stop_on_entry,
+        }
+    }
+
+    pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
+        let request = proto
+            .request
+            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        Ok(Self {
+            label: proto.label.into(),
+            initialize_args: proto.initialize_args.map(|v| v.into()),
+            tcp_connection: proto
+                .tcp_connection
+                .map(TcpArgumentsTemplate::from_proto)
+                .transpose()?,
+            stop_on_entry: proto.stop_on_entry,
+            adapter: proto.adapter.into(),
+            request: match request {
+                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
+                    DebugRequest::Attach(AttachRequest {
+                        process_id: Some(config.process_id),
+                    })
+                }
+
+                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
+                    DebugRequest::Launch(LaunchRequest {
+                        program: config.program,
+                        cwd: config.cwd.map(|cwd| cwd.into()),
+                        args: config.args,
+                        env: Default::default(),
+                    })
+                }
+            },
+        })
+    }
+}
+
+/// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
 #[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
@@ -408,6 +528,7 @@ impl FakeAdapter {
             } else {
                 None
             },
+            "raw_request": serde_json::to_value(config).unwrap()
         });
         let request = match config.request {
             DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,

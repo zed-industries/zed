@@ -393,6 +393,23 @@ impl ChannelView {
             buffer.acknowledge_buffer_version(cx);
         });
     }
+
+    fn get_channel(&self, cx: &App) -> (SharedString, Option<SharedString>) {
+        if let Some(channel) = self.channel(cx) {
+            let status = match (
+                self.channel_buffer.read(cx).buffer().read(cx).read_only(),
+                self.channel_buffer.read(cx).is_connected(),
+            ) {
+                (false, true) => None,
+                (true, true) => Some("read-only"),
+                (_, false) => Some("disconnected"),
+            };
+
+            (channel.name.clone(), status.map(Into::into))
+        } else {
+            ("<unknown>".into(), Some("disconnected".into()))
+        }
+    }
 }
 
 impl EventEmitter<EditorEvent> for ChannelView {}
@@ -440,26 +457,21 @@ impl Item for ChannelView {
         Some(Icon::new(icon))
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> gpui::AnyElement {
-        let (channel_name, status) = if let Some(channel) = self.channel(cx) {
-            let status = match (
-                self.channel_buffer.read(cx).buffer().read(cx).read_only(),
-                self.channel_buffer.read(cx).is_connected(),
-            ) {
-                (false, true) => None,
-                (true, true) => Some("read-only"),
-                (_, false) => Some("disconnected"),
-            };
-
-            (channel.name.clone(), status)
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        let (name, status) = self.get_channel(cx);
+        if let Some(status) = status {
+            format!("{name} - {status}").into()
         } else {
-            ("<unknown>".into(), Some("disconnected"))
-        };
+            name
+        }
+    }
 
+    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> gpui::AnyElement {
+        let (name, status) = self.get_channel(cx);
         h_flex()
             .gap_2()
             .child(
-                Label::new(channel_name)
+                Label::new(name)
                     .color(params.text_color())
                     .when(params.preview, |this| this.italic()),
             )

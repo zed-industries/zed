@@ -23,6 +23,7 @@ use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
 use lsp::DiagnosticSeverity;
+
 use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
 use settings::Settings;
 use std::{
@@ -416,7 +417,6 @@ impl ProjectDiagnosticsEditor {
                         group,
                         buffer_snapshot.remote_id(),
                         Some(this.clone()),
-                        true,
                         cx,
                     )
                 })?;
@@ -522,7 +522,7 @@ impl ProjectDiagnosticsEditor {
                                 markdown::MarkdownElement::rendered_text(
                                     markdown.clone(),
                                     cx,
-                                    editor::hover_markdown_style,
+                                    editor::hover_popover::diagnostics_markdown_style,
                                 )
                             },
                         );
@@ -566,6 +566,10 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Project Diagnostics".into())
+    }
+
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
+        "Diagnostics".into()
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {

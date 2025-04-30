@@ -165,7 +165,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::Languages => "Languages",
         ExtensionProvides::Grammars => "Grammars",
         ExtensionProvides::LanguageServers => "Language Servers",
-        ExtensionProvides::ContextServers => "Context Servers",
+        ExtensionProvides::ContextServers => "MCP Servers",
         ExtensionProvides::SlashCommands => "Slash Commands",
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
@@ -280,7 +280,7 @@ impl ExtensionsPage {
                     window,
                     move |this, _, event, window, cx| match event {
                         extension_host::Event::ExtensionsUpdated => {
-                            this.fetch_extensions_debounced(cx)
+                            this.fetch_extensions_debounced(None, cx)
                         }
                         extension_host::Event::ExtensionInstalled(extension_id) => this
                             .on_extension_installed(
@@ -319,7 +319,12 @@ impl ExtensionsPage {
                 upsells: BTreeSet::default(),
                 scrollbar_state: ScrollbarState::new(scroll_handle),
             };
-            this.fetch_extensions(None, Some(BTreeSet::from_iter(this.provides_filter)), cx);
+            this.fetch_extensions(
+                None,
+                Some(BTreeSet::from_iter(this.provides_filter)),
+                None,
+                cx,
+            );
             this
         })
     }
@@ -413,6 +418,10 @@ impl ExtensionsPage {
                 })
                 .map(|(ix, _)| ix),
         );
+        cx.notify();
+    }
+
+    fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
         self.list.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
@@ -421,6 +430,7 @@ impl ExtensionsPage {
         &mut self,
         search: Option<String>,
         provides_filter: Option<BTreeSet<ExtensionProvides>>,
+        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
         cx: &mut Context<Self>,
     ) {
         self.is_fetching_extensions = true;
@@ -468,6 +478,9 @@ impl ExtensionsPage {
                 this.is_fetching_extensions = false;
                 this.remote_extension_entries = fetch_result?;
                 this.filter_extension_entries(cx);
+                if let Some(callback) = on_complete {
+                    callback(this, cx);
+                }
                 anyhow::Ok(())
             })?
         })
@@ -573,6 +586,7 @@ impl ExtensionsPage {
                             extension.authors.join(", ")
                         ))
                         .size(LabelSize::Small)
+                        .color(Color::Muted)
                         .truncate(),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
@@ -594,7 +608,6 @@ impl ExtensionsPage {
                         )
                         .icon_color(Color::Accent)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Filled)
                         .on_click(cx.listener({
                             let repository_url = repository_url.clone();
                             move |_, _, _, cx| {
@@ -701,6 +714,7 @@ impl ExtensionsPage {
                             extension.manifest.authors.join(", ")
                         ))
                         .size(LabelSize::Small)
+                        .color(Color::Muted)
                         .truncate(),
                     )
                     .child(
@@ -731,7 +745,6 @@ impl ExtensionsPage {
                                 )
                                 .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
-                                .style(ButtonStyle::Filled)
                                 .on_click(cx.listener({
                                     let repository_url = repository_url.clone();
                                     move |_, _, _, cx| {
@@ -751,8 +764,7 @@ impl ExtensionsPage {
                                         IconName::Ellipsis,
                                     )
                                     .icon_color(Color::Accent)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Filled),
+                                    .icon_size(IconSize::Small),
                                 )
                                 .menu(move |window, cx| {
                                     Some(Self::render_remote_extension_context_menu(
@@ -950,19 +962,20 @@ impl ExtensionsPage {
             cx.theme().colors().border
         };
 
-        h_flex().w_full().gap_2().key_context(key_context).child(
-            h_flex()
-                .flex_1()
-                .px_2()
-                .py_1()
-                .gap_2()
-                .border_1()
-                .border_color(editor_border)
-                .min_w(rems_from_px(384.))
-                .rounded_lg()
-                .child(Icon::new(IconName::MagnifyingGlass))
-                .child(self.render_text_input(&self.query_editor, cx)),
-        )
+        h_flex()
+            .key_context(key_context)
+            .h_8()
+            .flex_1()
+            .min_w(rems_from_px(384.))
+            .pl_1p5()
+            .pr_2()
+            .py_1()
+            .gap_2()
+            .border_1()
+            .border_color(editor_border)
+            .rounded_lg()
+            .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
+            .child(self.render_text_input(&self.query_editor, cx))
     }
 
     fn render_text_input(
@@ -1010,7 +1023,12 @@ impl ExtensionsPage {
     }
 
     fn refresh_search(&mut self, cx: &mut Context<Self>) {
-        self.fetch_extensions_debounced(cx);
+        self.fetch_extensions_debounced(
+            Some(Box::new(|this, cx| {
+                this.scroll_to_top(cx);
+            })),
+            cx,
+        );
         self.refresh_feature_upsells(cx);
     }
 
@@ -1023,7 +1041,11 @@ impl ExtensionsPage {
         self.refresh_search(cx);
     }
 
-    fn fetch_extensions_debounced(&mut self, cx: &mut Context<ExtensionsPage>) {
+    fn fetch_extensions_debounced(
+        &mut self,
+        on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
+        cx: &mut Context<ExtensionsPage>,
+    ) {
         self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
             let search = this
                 .update(cx, |this, cx| this.search_query(cx))
@@ -1043,7 +1065,12 @@ impl ExtensionsPage {
             };
 
             this.update(cx, |this, cx| {
-                this.fetch_extensions(search, Some(BTreeSet::from_iter(this.provides_filter)), cx);
+                this.fetch_extensions(
+                    search,
+                    Some(BTreeSet::from_iter(this.provides_filter)),
+                    on_complete,
+                    cx,
+                );
             })
             .ok();
         }));
@@ -1193,52 +1220,6 @@ impl ExtensionsPage {
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
         }))
     }
-
-    fn build_extension_provides_filter_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        let this = cx.entity();
-        ContextMenu::build(window, cx, |mut menu, _window, _cx| {
-            menu = menu.header("Extension Category").toggleable_entry(
-                "All",
-                self.provides_filter.is_none(),
-                IconPosition::End,
-                None,
-                {
-                    let this = this.clone();
-                    move |_window, cx| {
-                        this.update(cx, |this, cx| {
-                            this.change_provides_filter(None, cx);
-                        });
-                    }
-                },
-            );
-
-            for provides in ExtensionProvides::iter() {
-                let label = extension_provides_label(provides);
-
-                menu = menu.toggleable_entry(
-                    label,
-                    self.provides_filter == Some(provides),
-                    IconPosition::End,
-                    None,
-                    {
-                        let this = this.clone();
-                        move |_window, cx| {
-                            this.update(cx, |this, cx| {
-                                this.change_provides_filter(Some(provides), cx);
-                                this.provides_filter = Some(provides);
-                            });
-                        }
-                    },
-                )
-            }
-
-            menu
-        })
-    }
 }
 
 impl Render for ExtensionsPage {
@@ -1249,9 +1230,8 @@ impl Render for ExtensionsPage {
             .child(
                 v_flex()
                     .gap_4()
-                    .p_4()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
+                    .pt_4()
+                    .px_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(
                         h_flex()
@@ -1271,29 +1251,9 @@ impl Render for ExtensionsPage {
                     .child(
                         h_flex()
                             .w_full()
-                            .gap_2()
-                            .justify_between()
-                            .child(h_flex().gap_2().child(self.render_search(cx)).child({
-                                let this = cx.entity().clone();
-                                PopoverMenu::new("extension-provides-filter")
-                                    .menu(move |window, cx| {
-                                        Some(this.update(cx, |this, cx| {
-                                            this.build_extension_provides_filter_menu(window, cx)
-                                        }))
-                                    })
-                                    .trigger_with_tooltip(
-                                        Button::new(
-                                            "extension-provides-filter-button",
-                                            self.provides_filter
-                                                .map(extension_provides_label)
-                                                .unwrap_or("All"),
-                                        )
-                                        .icon(IconName::Filter)
-                                        .icon_position(IconPosition::Start),
-                                        Tooltip::text("Filter extensions by category"),
-                                    )
-                                    .anchor(gpui::Corner::TopLeft)
-                            }))
+                            .gap_4()
+                            .flex_wrap()
+                            .child(self.render_search(cx))
                             .child(
                                 h_flex()
                                     .child(
@@ -1304,6 +1264,7 @@ impl Render for ExtensionsPage {
                                             .on_click(cx.listener(|this, _event, _, cx| {
                                                 this.filter = ExtensionFilter::All;
                                                 this.filter_extension_entries(cx);
+                                                this.scroll_to_top(cx);
                                             }))
                                             .tooltip(move |_, cx| {
                                                 Tooltip::simple("Show all extensions", cx)
@@ -1318,6 +1279,7 @@ impl Render for ExtensionsPage {
                                             .on_click(cx.listener(|this, _event, _, cx| {
                                                 this.filter = ExtensionFilter::Installed;
                                                 this.filter_extension_entries(cx);
+                                                this.scroll_to_top(cx);
                                             }))
                                             .tooltip(move |_, cx| {
                                                 Tooltip::simple("Show installed extensions", cx)
@@ -1334,6 +1296,7 @@ impl Render for ExtensionsPage {
                                             .on_click(cx.listener(|this, _event, _, cx| {
                                                 this.filter = ExtensionFilter::NotInstalled;
                                                 this.filter_extension_entries(cx);
+                                                this.scroll_to_top(cx);
                                             }))
                                             .tooltip(move |_, cx| {
                                                 Tooltip::simple("Show not installed extensions", cx)
@@ -1342,6 +1305,47 @@ impl Render for ExtensionsPage {
                                     ),
                             ),
                     ),
+            )
+            .child(
+                h_flex()
+                    .id("filter-row")
+                    .gap_2()
+                    .py_2p5()
+                    .px_4()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .overflow_x_scroll()
+                    .child(
+                        Button::new("filter-all-categories", "All")
+                            .when(self.provides_filter.is_none(), |button| {
+                                button.style(ButtonStyle::Filled)
+                            })
+                            .when(self.provides_filter.is_some(), |button| {
+                                button.style(ButtonStyle::Subtle)
+                            })
+                            .toggle_state(self.provides_filter.is_none())
+                            .on_click(cx.listener(|this, _event, _, cx| {
+                                this.change_provides_filter(None, cx);
+                            })),
+                    )
+                    .children(ExtensionProvides::iter().map(|provides| {
+                        let label = extension_provides_label(provides);
+                        Button::new(
+                            SharedString::from(format!("filter-category-{}", label)),
+                            label,
+                        )
+                        .style(if self.provides_filter == Some(provides) {
+                            ButtonStyle::Filled
+                        } else {
+                            ButtonStyle::Subtle
+                        })
+                        .toggle_state(self.provides_filter == Some(provides))
+                        .on_click({
+                            cx.listener(move |this, _event, _, cx| {
+                                this.change_provides_filter(Some(provides), cx);
+                            })
+                        })
+                    })),
             )
             .child(self.render_feature_upsells(cx))
             .child(
@@ -1398,8 +1402,8 @@ impl Focusable for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Extensions".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Extensions".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

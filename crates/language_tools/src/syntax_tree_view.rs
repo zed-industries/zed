@@ -401,8 +401,8 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Syntax Tree".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Syntax Tree".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

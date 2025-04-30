@@ -35,6 +35,13 @@ actions!(
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
         CreateDebuggingSession,
+        FocusConsole,
+        FocusVariables,
+        FocusBreakpointList,
+        FocusFrames,
+        FocusModules,
+        FocusLoadedSources,
+        FocusTerminal,
     ]
 );
 
@@ -57,7 +64,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.pause_thread(cx))
                         }
@@ -68,7 +75,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.restart_session(cx))
                         }
@@ -79,7 +86,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.step_in(cx))
                         }
@@ -90,7 +97,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.step_over(cx))
                         }
@@ -101,7 +108,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.step_back(cx))
                         }
@@ -112,7 +119,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             cx.defer(move |cx| {
                                 active_item.update(cx, |item, cx| item.stop_thread(cx))
@@ -125,7 +132,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
                         }
@@ -202,11 +209,8 @@ pub fn init(cx: &mut App) {
                                 state: debugger::breakpoint_store::BreakpointState::Enabled,
                             };
 
-                            active_session
-                                .update(cx, |session_item, _| {
-                                    session_item.mode().as_running().cloned()
-                                })?
-                                .update(cx, |state, cx| {
+                            active_session.update(cx, |session, cx| {
+                                session.running_state().update(cx, |state, cx| {
                                     if let Some(thread_id) = state.selected_thread_id() {
                                         state.session().update(cx, |session, cx| {
                                             session.run_to_position(
@@ -217,6 +221,7 @@ pub fn init(cx: &mut App) {
                                         })
                                     }
                                 });
+                            });
 
                             Some(())
                         });
@@ -239,17 +244,16 @@ pub fn init(cx: &mut App) {
                                 cx,
                             )?;
 
-                            active_session
-                                .update(cx, |session_item, _| {
-                                    session_item.mode().as_running().cloned()
-                                })?
-                                .update(cx, |state, cx| {
+                            active_session.update(cx, |session, cx| {
+                                session.running_state().update(cx, |state, cx| {
                                     let stack_id = state.selected_stack_frame_id(cx);
 
                                     state.session().update(cx, |session, cx| {
                                         session.evaluate(text, None, stack_id, None, cx).detach();
                                     });
                                 });
+                            });
+
                             Some(())
                         });
                     },

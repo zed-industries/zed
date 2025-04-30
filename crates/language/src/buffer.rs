@@ -213,6 +213,8 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
     pub message: String,
+    /// The human-readable message (in markdown format)
+    pub markdown: Option<String>,
     /// An id that identifies the group to which this diagnostic belongs.
     ///
     /// When a language server produces a diagnostic with
@@ -4616,6 +4618,7 @@ impl Default for Diagnostic {
             code_description: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
+            markdown: None,
             group_id: 0,
             is_primary: false,
             is_disk_based: false,

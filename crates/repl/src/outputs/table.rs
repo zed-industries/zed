@@ -61,7 +61,7 @@ use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{IntoElement, Styled, div, prelude::*, v_flex};
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownEscaped;
 
 use crate::outputs::OutputContent;
 
@@ -170,7 +170,7 @@ impl TableView {
                 let row_content = schema
                     .fields
                     .iter()
-                    .map(|field| MarkdownString::escape(&cell_content(record, &field.name)).0)
+                    .map(|field| MarkdownEscaped(&cell_content(record, &field.name)).to_string())
                     .collect::<Vec<_>>();
 
                 row_content.join(" | ")

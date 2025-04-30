@@ -41,7 +41,7 @@ use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal}
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
-pub use crate::thread::{Message, Thread, ThreadEvent};
+pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
 pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 
@@ -50,6 +50,8 @@ actions!(
     [
         NewTextThread,
         ToggleContextPicker,
+        ToggleNavigationMenu,
+        DeleteRecentlyOpenThread,
         ToggleProfileSelector,
         RemoveAllContext,
         ExpandMessageEditor,
