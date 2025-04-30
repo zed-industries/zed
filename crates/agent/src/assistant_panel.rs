@@ -31,8 +31,7 @@ use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, Divider, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip,
-    prelude::*,
+    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
