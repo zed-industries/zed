@@ -12,7 +12,7 @@ pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
 use editor::Editor;
-use file_finder_settings::{FileFinderAutoSelect, FileFinderSettings, FileFinderWidth};
+use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{

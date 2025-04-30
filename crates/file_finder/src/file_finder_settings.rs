@@ -46,11 +46,3 @@ pub enum FileFinderWidth {
     XLarge,
     Full,
 }
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FileFinderAutoSelect {
-    #[default]
-    SkipActive,
-    First,
-}
