@@ -147,7 +147,7 @@ pub struct ContextMenu {
     keep_open_on_confirm: bool,
     eager: bool,
     documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
-    fixed_width: Option<gpui::Length>,
+    fixed_width: Option<DefiniteLength>,
 }
 
 impl Focusable for ContextMenu {
@@ -541,8 +541,8 @@ impl ContextMenu {
         handler(None, window, cx);
     }
 
-    pub fn fixed_width(mut self, width: impl Into<gpui::Length>) -> Self {
-        self.fixed_width = Some(width.into());
+    pub fn fixed_width(mut self, width: DefiniteLength) -> Self {
+        self.fixed_width = Some(width);
         self
     }
 
@@ -1055,15 +1055,13 @@ impl Render for ContextMenu {
                     .child(
                         v_flex()
                             .id("context-menu")
-                            .map(|this| {
-                                if let Some(width) = self.fixed_width {
-                                    this.w(width)
-                                } else {
-                                    this.min_w(px(200.))
-                                }
-                            })
                             .max_h(vh(0.75, window))
-                            .flex_1()
+                            .when_some(self.fixed_width, |this, width| {
+                                this.w(width).overflow_x_hidden()
+                            })
+                            .when(self.fixed_width.is_none(), |this| {
+                                this.min_w(px(200.)).flex_1()
+                            })
                             .overflow_y_scroll()
                             .track_focus(&self.focus_handle(cx))
                             .on_mouse_down_out(cx.listener(|this, _, window, cx| {

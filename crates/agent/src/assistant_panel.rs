@@ -433,8 +433,9 @@ impl AssistantPanel {
                             })
                         })
                         .unwrap_or_default();
+
                     if !recently_opened.is_empty() {
-                        menu = menu.header("Recently Opened");
+                        menu = menu.fixed_width(px(320.).into()).header("Recently Opened");
                         for entry in recently_opened.iter() {
                             let summary = entry.summary(cx);
                             menu = menu.entry_with_end_slot(
@@ -495,7 +496,6 @@ impl AssistantPanel {
 
                     menu.action("View All", Box::new(OpenHistory))
                         .keep_open_on_confirm(false)
-                        .fixed_width(rems(24.))
                         .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
                         .key_context("NavigationMenu")
                 });
