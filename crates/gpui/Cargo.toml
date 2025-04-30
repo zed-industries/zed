@@ -144,11 +144,6 @@ objc2-metal = { version = "0.2", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-core = "0.61"
-windows-numerics = "0.2"
-windows-registry = "0.5"
-
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 
@@ -214,7 +209,7 @@ xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf
 ], optional = true }
 x11-clipboard = { version = "0.9.3", optional = true }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 blade-util.workspace = true
 bytemuck = "1"
 blade-graphics.workspace = true
@@ -222,6 +217,9 @@ blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
+windows-core = "0.61"
+windows-numerics = "0.2"
+windows-registry = "0.5"
 
 [dev-dependencies]
 backtrace = "0.3"
