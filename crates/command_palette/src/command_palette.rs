@@ -1,11 +1,6 @@
 mod persistence;
 
-use std::{
-    cmp::{self, Reverse},
-    collections::HashMap,
-    sync::Arc,
-    time::Duration,
-};
+use std::{cmp::Reverse, collections::HashMap, sync::Arc, time::Duration};
 
 use client::parse_zed_link;
 use command_palette_hooks::{
