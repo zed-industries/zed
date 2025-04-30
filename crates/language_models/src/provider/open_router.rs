@@ -449,7 +449,7 @@ pub fn into_open_router(
     open_router::Request {
         model: model.id().into(),
         messages,
-        stream,
+        stream: true, // all open router requests should be streamed
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_tokens: max_output_tokens,
