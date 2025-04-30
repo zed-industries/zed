@@ -86,7 +86,7 @@ impl HistoryStore {
                     .background_spawn(async move { std::fs::read_to_string(path) })
                     .await
                     .context("reading persisted agent panel navigation history")?;
-                let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(dbg!(&contents))
+                let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(&contents)
                     .context("deserializing persisted agent panel navigation history")?
                     .into_iter()
                     .take(MAX_RECENTLY_OPENED_ENTRIES)
@@ -183,7 +183,7 @@ impl HistoryStore {
             cx.background_spawn(async move {
                 let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
                 let content = serde_json::to_string(&serialized_entries)?;
-                dbg!(&content);
+                &content;
                 std::fs::write(path, content)?;
                 anyhow::Ok(())
             })
