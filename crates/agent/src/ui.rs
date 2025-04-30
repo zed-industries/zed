@@ -7,4 +7,5 @@ mod usage_banner;
 pub use agent_notification::*;
 pub use animated_label::*;
 pub use context_pill::*;
+pub use upsell::*;
 pub use usage_banner::*;
