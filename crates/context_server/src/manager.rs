@@ -451,7 +451,7 @@ mod tests {
         });
 
         manager
-            .update(cx, |manager, cx| manager.start_server(server_2, cx))
+            .update(cx, |manager, cx| manager.start_server(server_2.clone(), cx))
             .await
             .unwrap();
 
@@ -461,9 +461,21 @@ mod tests {
                 Some(ContextServerStatus::Running)
             );
             assert_eq!(
+                manager.read(cx).status_for_server(&server_2_id),
+                Some(ContextServerStatus::Running)
+            );
+        });
+
+        manager
+            .update(cx, |manager, cx| manager.stop_server(server_2, cx))
+            .unwrap();
+
+        cx.update(|cx| {
+            assert_eq!(
                 manager.read(cx).status_for_server(&server_1_id),
                 Some(ContextServerStatus::Running)
             );
+            assert_eq!(manager.read(cx).status_for_server(&server_2_id), None);
         });
     }
 
