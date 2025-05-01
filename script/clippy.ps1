@@ -17,7 +17,7 @@ if ($env:CARGO)
     $Cargo = "cargo"
 } else
 {
-    $Cargo = "~/.cargo/bin/cargo.exe"
+    $Cargo = "$env:USERPROFILE\.cargo\bin\cargo.exe"
 }
 
 if ($needAddWorkspace)
