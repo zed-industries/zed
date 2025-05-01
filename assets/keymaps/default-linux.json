@@ -297,14 +297,6 @@
     }
   },
   {
-    "context": "ConfigureContextServerModal > Editor",
-    "bindings": {
-      "escape": "menu::Cancel",
-      "enter": "editor::Newline",
-      "alt-enter": "menu::Confirm"
-    }
-  },
-  {
     "context": "ContextStrip",
     "bindings": {
       "up": "agent::FocusUp",
@@ -972,10 +964,10 @@
     }
   },
   {
-    "context": "ConfigureContextServerModal",
-    "use_key_equivalents": true,
+    "context": "ConfigureContextServerModal > Editor",
     "bindings": {
       "escape": "menu::Cancel",
+      "enter": "editor::Newline",
       "ctrl-enter": "menu::Confirm"
     }
   },
