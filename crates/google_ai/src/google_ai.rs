@@ -645,7 +645,6 @@ where
     let secs = duration.as_secs();
     let nanos = duration.subsec_nanos();
 
-    // Format with only the necessary decimal places (up to 9)
     let formatted = if nanos == 0 {
         format!("{}s", secs)
     } else {
@@ -673,7 +672,6 @@ where
         )));
     };
 
-    // Check if the string contains a decimal point
     if let Some(decimal_ix) = num_part.find('.') {
         let secs_part = &num_part[0..decimal_ix];
         let frac_len = (num_part.len() - (decimal_ix + 1)).min(9);
@@ -699,7 +697,6 @@ where
 
         Ok(Duration::new(secs, nanos))
     } else {
-        // No decimal point, just whole seconds
         let secs = u64::from_str_radix(num_part, 10).map_err(|e| {
             serde::de::Error::custom(format!(
                 "Invalid duration format: {}. Error: {}",
