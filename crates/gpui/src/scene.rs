@@ -3,7 +3,7 @@
 
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -737,10 +737,7 @@ impl Path<Pixels> {
     pub fn line_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
         if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
+            self.push_triangle((self.start, self.current, to));
         }
         self.current = to;
     }
@@ -749,25 +746,15 @@ impl Path<Pixels> {
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
         self.contour_count += 1;
         if self.contour_count > 1 {
-            self.push_triangle(
-                (self.start, self.current, to),
-                (point(0., 1.), point(0., 1.), point(0., 1.)),
-            );
+            self.push_triangle((self.start, self.current, to));
         }
 
-        self.push_triangle(
-            (self.current, ctrl, to),
-            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
-        );
+        self.push_triangle((self.current, ctrl, to));
         self.current = to;
     }
 
     /// Push a triangle to the Path.
-    pub fn push_triangle(
-        &mut self,
-        xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
-        st: (Point<f32>, Point<f32>, Point<f32>),
-    ) {
+    pub fn push_triangle(&mut self, xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>)) {
         self.bounds = self
             .bounds
             .union(&Bounds {
@@ -785,17 +772,14 @@ impl Path<Pixels> {
 
         self.vertices.push(PathVertex {
             xy_position: xy.0,
-            st_position: st.0,
             content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.1,
-            st_position: st.1,
             content_mask: Default::default(),
         });
         self.vertices.push(PathVertex {
             xy_position: xy.2,
-            st_position: st.2,
             content_mask: Default::default(),
         });
     }
@@ -811,7 +795,6 @@ impl From<Path<ScaledPixels>> for Primitive {
 #[repr(C)]
 pub(crate) struct PathVertex<P: Clone + Default + Debug> {
     pub(crate) xy_position: Point<P>,
-    pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,
 }
 
@@ -819,7 +802,6 @@ impl PathVertex<Pixels> {
     pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
         PathVertex {
             xy_position: self.xy_position.scale(factor),
-            st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
     }
