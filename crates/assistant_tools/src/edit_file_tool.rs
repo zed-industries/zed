@@ -282,7 +282,7 @@ pub struct EditFileToolCard {
 }
 
 impl EditFileToolCard {
-    fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -323,7 +323,7 @@ impl EditFileToolCard {
         }
     }
 
-    fn set_diff(
+    pub fn set_diff(
         &mut self,
         path: Arc<Path>,
         old_text: String,
@@ -343,6 +343,7 @@ impl EditFileToolCard {
                         .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
+                    multibuffer.clear(cx);
                     let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
