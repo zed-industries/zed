@@ -1200,14 +1200,12 @@ impl InlineAssistant {
         let assist_group = self.assist_groups.get_mut(&assist_group_id).unwrap();
         assist_group.linked = false;
 
-        if assist_group.assist_ids.len() > 1 {
-            for assist_id in &assist_group.assist_ids {
-                let assist = self.assists.get_mut(assist_id).unwrap();
-                if let Some(editor_decorations) = assist.decorations.as_ref() {
-                    editor_decorations
-                        .prompt_editor
-                        .update(cx, |prompt_editor, cx| prompt_editor.unlink(window, cx));
-                }
+        for assist_id in &assist_group.assist_ids {
+            let assist = self.assists.get_mut(assist_id).unwrap();
+            if let Some(editor_decorations) = assist.decorations.as_ref() {
+                editor_decorations
+                    .prompt_editor
+                    .update(cx, |prompt_editor, cx| prompt_editor.unlink(window, cx));
             }
         }
         assist_group.assist_ids.clone()
