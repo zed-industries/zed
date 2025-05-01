@@ -18,7 +18,13 @@ pub struct StreamingEditFileTool;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct StreamingEditFileToolInput {
-    /// A user-friendly markdown description of the edit. This will be shown in the UI.
+    /// A one-line, user-friendly markdown description of the edit. This will be
+    /// shown in the UI and also passed to another model to perform the edit.
+    ///
+    /// Be terse, but also descriptive in what you want to achieve with this
+    /// edit. Avoid generic instructions.
+    ///
+    /// NEVER mention the file path in this description.
     ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
