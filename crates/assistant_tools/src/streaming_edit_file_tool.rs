@@ -248,12 +248,11 @@ impl Tool for StreamingEditFileTool {
             let input_path = input.path.display();
             if diff.is_empty() {
                 if hallucinated_old_text {
-                    Ok(formatdoc! {"
+                    Err(anyhow!(formatdoc! {"
                         Some edits were produced but none of them could be applied.
-                        Please, read the relevant sections of {input_path} again so that
+                        Read the relevant sections of {input_path} again so that
                         I can perform the requested edits.
-                    "}
-                    .into())
+                    "}))
                 } else {
                     Ok(format!("No edits were made."))
                 }
