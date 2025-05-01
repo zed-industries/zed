@@ -1720,7 +1720,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 
         branches.push(Branch {
             is_head: is_current_branch,
-            ref_name: dbg!(ref_name),
+            ref_name: ref_name,
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
                 subject,
@@ -1731,7 +1731,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 None
             } else {
                 Some(Upstream {
-                    ref_name: dbg!(upstream_name).into(),
+                    ref_name: upstream_name.into(),
                     tracking: upstream_tracking,
                 })
             },
