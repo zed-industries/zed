@@ -90,8 +90,9 @@ impl AskPassSession {
                     buffer.clear();
                 }
                 let prompt = String::from_utf8_lossy(&buffer);
+                let asking_for_password = prompt.to_lowercase().contains("password");
                 if let Some(password) = delegate
-                    .ask_password(if try_again {
+                    .ask_password(if asking_for_password && try_again {
                         "Wrong password, try again:".to_string()
                     } else {
                         prompt.to_string()
@@ -101,7 +102,9 @@ impl AskPassSession {
                     .log_err()
                 {
                     stream.write_all(password.as_bytes()).await.log_err();
-                    try_again = true;
+                    if asking_for_password {
+                        try_again = true;
+                    }
                 } else {
                     if let Some(kill_tx) = kill_tx.take() {
                         kill_tx.send(()).log_err();
