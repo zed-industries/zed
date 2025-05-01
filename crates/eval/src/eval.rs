@@ -52,10 +52,10 @@ struct Args {
     #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
     languages: Vec<String>,
     /// How many times to run each example.
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value = "8")]
     repetitions: usize,
     /// Maximum number of examples to run concurrently.
-    #[arg(long, default_value = "10")]
+    #[arg(long, default_value = "4")]
     concurrency: usize,
 }
 

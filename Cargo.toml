@@ -435,6 +435,7 @@ dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a0
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
+documented = "0.9.1"
 dotenv = "0.15.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
@@ -798,5 +799,6 @@ ignored = [
     "serde",
     "component",
     "linkme",
+    "documented",
     "workspace-hack",
 ]

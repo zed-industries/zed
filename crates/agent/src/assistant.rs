@@ -53,6 +53,7 @@ actions!(
         NewTextThread,
         ToggleContextPicker,
         ToggleNavigationMenu,
+        ToggleOptionsMenu,
         DeleteRecentlyOpenThread,
         ToggleProfileSelector,
         RemoveAllContext,

@@ -50,7 +50,7 @@ use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
     NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu,
+    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 pub fn init(cx: &mut App) {
@@ -111,6 +111,14 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_navigation_menu(&ToggleNavigationMenu, window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ToggleOptionsMenu, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
                     }
                 });
@@ -393,11 +401,12 @@ impl AssistantPanel {
                 }
             });
 
+        let thread_id = thread.read(cx).id().clone();
         let history_store = cx.new(|cx| {
             HistoryStore::new(
                 thread_store.clone(),
                 context_store.clone(),
-                [RecentEntry::Thread(thread.clone())],
+                [RecentEntry::Thread(thread_id, thread.clone())],
                 cx,
             )
         });
@@ -415,6 +424,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 thread_store.clone(),
+                message_editor_context_store.clone(),
                 language_registry.clone(),
                 workspace.clone(),
                 window,
@@ -459,7 +469,7 @@ impl AssistantPanel {
                                             .update(cx, {
                                                 let entry = entry.clone();
                                                 move |this, cx| match entry {
-                                                    RecentEntry::Thread(thread) => {
+                                                    RecentEntry::Thread(_, thread) => {
                                                         this.open_thread(thread, window, cx)
                                                     }
                                                     RecentEntry::Context(context) => {
@@ -617,7 +627,7 @@ impl AssistantPanel {
         let thread_view = ActiveView::thread(thread.clone(), window, cx);
         self.set_active_view(thread_view, window, cx);
 
-        let message_editor_context_store = cx.new(|_cx| {
+        let context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
                 self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
@@ -630,7 +640,7 @@ impl AssistantPanel {
                 .update(cx, |this, cx| this.open_thread(&other_thread_id, cx));
 
             cx.spawn({
-                let context_store = message_editor_context_store.clone();
+                let context_store = context_store.clone();
 
                 async move |_panel, cx| {
                     let other_thread = other_thread_task.await?;
@@ -655,6 +665,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
@@ -673,7 +684,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                message_editor_context_store,
+                context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,
@@ -834,7 +845,7 @@ impl AssistantPanel {
     ) {
         let thread_view = ActiveView::thread(thread.clone(), window, cx);
         self.set_active_view(thread_view, window, cx);
-        let message_editor_context_store = cx.new(|_cx| {
+        let context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
                 self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
@@ -851,6 +862,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
@@ -869,7 +881,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                message_editor_context_store,
+                context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,
@@ -912,6 +924,15 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) {
         self.assistant_navigation_menu_handle.toggle(window, cx);
+    }
+
+    pub fn toggle_options_menu(
+        &mut self,
+        _: &ToggleOptionsMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.assistant_dropdown_menu_handle.toggle(window, cx);
     }
 
     pub fn open_agent_diff(
@@ -1082,7 +1103,8 @@ impl AssistantPanel {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
                     if thread.read(cx).is_empty() {
-                        store.remove_recently_opened_entry(&RecentEntry::Thread(thread), cx);
+                        let id = thread.read(cx).id().clone();
+                        store.remove_recently_opened_thread(id, cx);
                     }
                 }
             }),
@@ -1092,7 +1114,8 @@ impl AssistantPanel {
         match &new_view {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
-                    store.push_recently_opened_entry(RecentEntry::Thread(thread), cx);
+                    let id = thread.read(cx).id().clone();
+                    store.push_recently_opened_entry(RecentEntry::Thread(id, thread), cx);
                 }
             }),
             ActiveView::PromptEditor { context_editor, .. } => {
@@ -1356,12 +1379,22 @@ impl AssistantPanel {
                 }),
         );
 
-        let agent_extra_menu = PopoverMenu::new("assistant-menu")
+        let agent_extra_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
-                IconButton::new("new", IconName::Ellipsis)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Subtle),
-                Tooltip::text("Toggle Agent Menu"),
+                IconButton::new("agent-options-menu", IconName::Ellipsis)
+                    .icon_size(IconSize::Small),
+                {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Agent Menu",
+                            &ToggleOptionsMenu,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                },
             )
             .anchor(Corner::TopRight)
             .with_handle(self.assistant_dropdown_menu_handle.clone())
@@ -2150,6 +2183,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::open_agent_diff))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
+            .on_action(cx.listener(Self::toggle_options_menu))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent

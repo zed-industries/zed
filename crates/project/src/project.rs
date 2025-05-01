@@ -4748,6 +4748,42 @@ impl Project {
         })
     }
 
+    pub fn language_server_with_name(
+        &self,
+        name: &str,
+        cx: &App,
+    ) -> Task<Option<LanguageServerId>> {
+        if self.is_local() {
+            Task::ready(self.lsp_store.read(cx).language_server_with_name(name, cx))
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(proto::LanguageServerIdForName {
+                project_id,
+                buffer_id: None,
+                name: name.to_string(),
+            });
+            cx.background_spawn(async move {
+                let response = request.await.log_err()?;
+                response.server_id.map(LanguageServerId::from_proto)
+            })
+        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request =
+                ssh_client
+                    .read(cx)
+                    .proto_client()
+                    .request(proto::LanguageServerIdForName {
+                        project_id: SSH_PROJECT_ID,
+                        buffer_id: None,
+                        name: name.to_string(),
+                    });
+            cx.background_spawn(async move {
+                let response = request.await.log_err()?;
+                response.server_id.map(LanguageServerId::from_proto)
+            })
+        } else {
+            Task::ready(None)
+        }
+    }
+
     pub fn language_server_id_for_name(
         &self,
         buffer: &Buffer,
@@ -4769,7 +4805,7 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::LanguageServerIdForName {
                 project_id,
-                buffer_id: buffer.remote_id().to_proto(),
+                buffer_id: Some(buffer.remote_id().to_proto()),
                 name: name.to_string(),
             });
             cx.background_spawn(async move {
@@ -4783,7 +4819,7 @@ impl Project {
                     .proto_client()
                     .request(proto::LanguageServerIdForName {
                         project_id: SSH_PROJECT_ID,
-                        buffer_id: buffer.remote_id().to_proto(),
+                        buffer_id: Some(buffer.remote_id().to_proto()),
                         name: name.to_string(),
                     });
             cx.background_spawn(async move {
