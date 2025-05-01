@@ -856,7 +856,7 @@ impl crate::Modifiers {
             control,
             platform,
             function: false,
-            capslock: capslock,
+            capslock,
         }
     }
 }
