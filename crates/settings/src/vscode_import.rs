@@ -157,7 +157,9 @@ impl VsCodeShortcuts {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
-            let Some(mut keystroke) = Keystroke::parse_with_separator(shortcut, '+').ok() else {
+            let Some(mut keystroke) =
+                Keystroke::parse_with_separator(shortcut, '+', keyboard_mapper).ok()
+            else {
                 continue;
             };
             if (keystroke.key.starts_with('[') && keystroke.key.ends_with(']'))

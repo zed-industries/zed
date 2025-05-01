@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use super::ScanCode;
+
 /// A trait for platform-specific keyboard layouts
 pub trait PlatformKeyboardLayout {
     /// Get the keyboard layout ID, which should be unique to the layout
@@ -10,6 +12,8 @@ pub trait PlatformKeyboardLayout {
 
 /// TODO:
 pub trait PlatformKeyboardMapper {
+    /// TODO:
+    fn scan_code_to_key(&self, scan_code: ScanCode) -> Result<String>;
     /// TODO:
     fn get_shifted_key(&self, key: &str) -> Result<String>;
 }
@@ -23,6 +27,10 @@ pub struct TestKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for TestKeyboardMapper {
+    fn scan_code_to_key(&self, scan_code: ScanCode) -> Result<String> {
+        self.mapper.scan_code_to_key(scan_code)
+    }
+
     fn get_shifted_key(&self, key: &str) -> Result<String> {
         self.mapper.get_shifted_key(key)
     }
@@ -37,6 +45,19 @@ impl TestKeyboardMapper {
             #[cfg(target_os = "macos")]
             mapper: super::MacKeyboardMapper::new(),
         }
+    }
+}
+
+/// A dummy keyboard mapper that does not support any key mappings
+pub struct EmptyKeyboardMapper;
+
+impl PlatformKeyboardMapper for EmptyKeyboardMapper {
+    fn scan_code_to_key(&self, _scan_code: ScanCode) -> Result<String> {
+        anyhow::bail!("EmptyKeyboardMapper does not support scan codes")
+    }
+
+    fn get_shifted_key(&self, key: &str) -> Result<String> {
+        Ok(key.to_uppercase())
     }
 }
 

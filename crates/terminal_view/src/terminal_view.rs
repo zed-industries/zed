@@ -9,9 +9,9 @@ use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
     AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
-    impl_actions,
+    KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
+    deferred, div, impl_actions,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
@@ -393,11 +393,17 @@ impl TerminalView {
             .mode
             .contains(TermMode::ALT_SCREEN)
         {
+            let keystroke = Keystroke {
+                modifiers: Modifiers {
+                    control: true,
+                    platform: true,
+                    ..Default::default()
+                },
+                key: "space".to_string(),
+                key_char: None,
+            };
             self.terminal.update(cx, |term, cx| {
-                term.try_keystroke(
-                    &Keystroke::parse("ctrl-cmd-space").unwrap(),
-                    TerminalSettings::get_global(cx).option_as_meta,
-                )
+                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta)
             });
         } else {
             window.show_character_palette();
@@ -671,7 +677,7 @@ impl TerminalView {
     }
 
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
+        if let Some(keystroke) = Keystroke::parse(&text.0, cx.keyboard_mapper()).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 let processed =
