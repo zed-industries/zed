@@ -3791,7 +3791,8 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) {
         match evt {
-            extension::Event::ExtensionInstalled(_) => return,
+            extension::Event::ExtensionInstalled(_)
+            | extension::Event::ConfigureExtensionRequested(_) => return,
             extension::Event::ExtensionsInstalledChanged => {}
         }
         if self.as_local().is_none() {

@@ -755,12 +755,12 @@ impl ExtensionStore {
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
                     if let Some(events) = ExtensionEvents::try_global(cx) {
                         if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                        events.update(cx, |this, cx| {
-                            this.emit(
-                                extension::Event::ExtensionInstalled(manifest.clone()),
-                                cx,
-                            )
-                        });
+                            events.update(cx, |this, cx| {
+                                this.emit(
+                                    extension::Event::ExtensionInstalled(manifest.clone()),
+                                    cx,
+                                )
+                            });
                         }
                     }
                 })

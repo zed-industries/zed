@@ -40,6 +40,17 @@ pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
                             cx,
                         );
                     }
+                    extension::Event::ConfigureExtensionRequested(manifest) => {
+                        if !manifest.context_servers.is_empty() {
+                            show_configure_mcp_modal(
+                                language_registry.clone(),
+                                manifest,
+                                workspace,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
                     _ => {}
                 }
             })
