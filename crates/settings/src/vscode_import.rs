@@ -166,14 +166,6 @@ impl VsCodeShortcuts {
                 ));
                 continue;
             };
-            if keystroke.key.starts_with("oem") {
-                // The oem_key will be handled after https://github.com/zed-industries/zed/pull/29144
-                skipped.push((
-                    shortcut.to_string(),
-                    format!("Unable to parse keystroke that using Scan Code or Virtual Key"),
-                ));
-                continue;
-            }
             let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
                 continue;
             };
@@ -306,8 +298,6 @@ mod tests {
             )
         );
 
-        // TODO:
-        // register actions
         let content = r#"
         [
             {
@@ -324,5 +314,29 @@ mod tests {
         assert_eq!(shortcuts.content.len(), 2);
         let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
         assert_eq!(skipped.len(), 0);
+    }
+
+    #[test]
+    fn test_load_oem_shortcuts() {
+        let keyboard_mapper = TestKeyboardMapper::new();
+        let content = r#"
+        [
+            {
+                "key": "ctrl+oem_3",
+                "command": "list.focusFirst",
+            }
+        ]
+        "#;
+        let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
+        assert_eq!(shortcuts.content.len(), 1);
+        let (_, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(
+            skipped[0],
+            (
+                "ctrl+oem_3".to_string(),
+                "Unable to parse keystroke".to_string()
+            )
+        );
     }
 }

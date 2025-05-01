@@ -204,6 +204,10 @@ impl Keystroke {
         };
         let mut key = key.ok_or_else(error)?;
 
+        if key.starts_with("oem") {
+            // The oem_key will be handled after https://github.com/zed-industries/zed/pull/29144
+            return Err(error());
+        }
         if key.starts_with('[') && key.ends_with(']') {
             let scan_code = ScanCode::parse(&key).ok_or_else(error)?;
             key = mapper.scan_code_to_key(scan_code).map_err(|_| error())?;
