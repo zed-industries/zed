@@ -12,9 +12,10 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ContextServerConfiguration, ExtensionManifest};
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    TextStyle, Transformation, WeakEntity, percentage,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, percentage,
 };
 use language::{Language, LanguageRegistry};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
@@ -120,6 +121,7 @@ fn show_configure_mcp_modal(
                 descriptors.into_iter().flatten(),
                 jsonc_language,
                 context_server_manager,
+                language_registry,
                 cx.entity().downgrade(),
                 window,
                 cx,
@@ -134,7 +136,7 @@ fn show_configure_mcp_modal(
 
 struct ConfigureContextServer {
     id: Arc<str>,
-    installation_instructions: SharedString,
+    installation_instructions: Entity<markdown::Markdown>,
     settings_validator: Option<jsonschema::Validator>,
     settings_editor: Entity<Editor>,
     last_error: Option<SharedString>,
@@ -152,6 +154,7 @@ impl ConfigureContextServerModal {
         configurations: impl Iterator<Item = (Arc<str>, ContextServerConfiguration)>,
         jsonc_language: Option<Arc<Language>>,
         context_server_manager: Entity<ContextServerManager>,
+        language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -164,7 +167,14 @@ impl ConfigureContextServerModal {
                     .log_err();
                 ConfigureContextServer {
                     id: id.clone(),
-                    installation_instructions: manifest.installation_instructions.clone().into(),
+                    installation_instructions: cx.new(|cx| {
+                        Markdown::new(
+                            manifest.installation_instructions.clone().into(),
+                            Some(language_registry.clone()),
+                            None,
+                            cx,
+                        )
+                    }),
                     settings_validator,
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
@@ -377,10 +387,10 @@ impl Render for ConfigureContextServerModal {
                     .header(ModalHeader::new().headline(format!("Configure {}", configuration.id)))
                     .section(
                         Section::new()
-                            .child(
-                                Label::new(configuration.installation_instructions.clone())
-                                    .color(Color::Muted),
-                            )
+                            .child(div().py_2().child(MarkdownElement::new(
+                                configuration.installation_instructions.clone(),
+                                default_markdown_style(window, cx),
+                            )))
                             .child(
                                 div()
                                     .p_2()
@@ -500,8 +510,36 @@ impl Render for ConfigureContextServerModal {
     }
 }
 
-impl ModalView for ConfigureContextServerModal {}
+pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let colors = cx.theme().colors();
+    let mut text_style = window.text_style();
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.ui_font.family.clone()),
+        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+        font_features: Some(theme_settings.ui_font.features.clone()),
+        font_size: Some(TextSize::XSmall.rems(cx).into()),
+        color: Some(colors.text_muted),
+        ..Default::default()
+    });
 
+    MarkdownStyle {
+        base_text_style: text_style.clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        link: TextStyleRefinement {
+            background_color: Some(colors.editor_foreground.opacity(0.025)),
+            underline: Some(UnderlineStyle {
+                color: Some(colors.text_accent.opacity(0.5)),
+                thickness: px(1.),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+impl ModalView for ConfigureContextServerModal {}
 impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
 impl Focusable for ConfigureContextServerModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
