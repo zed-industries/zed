@@ -35,7 +35,7 @@ impl Template for EditAgentTemplate {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditAgentOutputEvent {
     Edited,
-    OldTextNotFound(SharedString),
+    HallucinatedOldText(SharedString),
 }
 
 #[derive(Clone, Debug)]
@@ -138,7 +138,7 @@ impl EditAgent {
             let Some(old_range) = old_range else {
                 // We couldn't find the old text in the buffer. Report the error.
                 output_events
-                    .unbounded_send(EditAgentOutputEvent::OldTextNotFound(old_text_query))
+                    .unbounded_send(EditAgentOutputEvent::HallucinatedOldText(old_text_query))
                     .ok();
                 continue;
             };
@@ -201,7 +201,7 @@ impl EditAgent {
                 anyhow::Ok(edit_events)
             });
 
-            // todo!("group all edits into one transaction")
+            // TODO: group all edits into one transaction
             let mut edits_rx = edits_rx.ready_chunks(32);
             while let Some(edits) = edits_rx.next().await {
                 // Edit the buffer and report edits to the action log as part of the
@@ -744,7 +744,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
-            vec![EditAgentOutputEvent::OldTextNotFound(
+            vec![EditAgentOutputEvent::HallucinatedOldText(
                 "hallucinated old".into()
             )]
         );

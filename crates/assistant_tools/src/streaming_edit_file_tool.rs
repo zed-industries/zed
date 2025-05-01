@@ -8,6 +8,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task};
+use indoc::formatdoc;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolSchemaFormat,
 };
@@ -193,6 +194,8 @@ impl Tool for StreamingEditFileTool {
                 messages,
                 cx,
             );
+
+            let mut hallucinated_old_text = false;
             while let Some(event) = events.next().await {
                 match event {
                     EditAgentOutputEvent::Edited => {
@@ -216,9 +219,7 @@ impl Tool for StreamingEditFileTool {
                             .log_err();
                         }
                     }
-                    EditAgentOutputEvent::OldTextNotFound(shared_string) => {
-                        // todo!()
-                    }
+                    EditAgentOutputEvent::HallucinatedOldText(_) => hallucinated_old_text = true,
                 }
             }
             output.await?;
@@ -244,11 +245,21 @@ impl Tool for StreamingEditFileTool {
                 .log_err();
             }
 
-            Ok(format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                input.path.display(),
-                diff
-            ))
+            let input_path = input.path.display();
+            if diff.is_empty() {
+                if hallucinated_old_text {
+                    Ok(formatdoc! {"
+                        Some edits were produced but none of them could be applied.
+                        Please, read the relevant sections of {input_path} again so that
+                        I can perform the requested edits.
+                    "}
+                    .into())
+                } else {
+                    Ok(format!("No edits were made."))
+                }
+            } else {
+                Ok(format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff))
+            }
         });
 
         ToolResult {
@@ -258,7 +269,6 @@ impl Tool for StreamingEditFileTool {
     }
 }
 
-// todo!("add unit tests for failure modes of edit, like file not found, etc.")
 #[cfg(test)]
 mod tests {
     use super::*;
