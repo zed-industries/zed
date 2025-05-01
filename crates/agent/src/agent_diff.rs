@@ -6,7 +6,7 @@ use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
-    actions::{GoToHunk, GoToPreviousHunk},
+    actions::{GoToHunk, GoToNextChange, GoToPreviousHunk},
     scroll::Autoscroll,
 };
 use gpui::{
@@ -919,6 +919,7 @@ impl Render for AgentDiffToolbar {
                 };
 
                 let agent_diff = AgentDiff::global(cx);
+                let editor_focus_handle = editor.read(cx).focus_handle(cx);
 
                 let content = match agent_diff.read(cx).editor_state(&editor) {
                     EditorState::Idle => return Empty.into_any(),
@@ -937,8 +938,39 @@ impl Render for AgentDiffToolbar {
                     ],
                     EditorState::Reviewing => vec![
                         h_flex()
-                            .child(IconButton::new("hunk-up", IconName::ArrowUp))
-                            .child(IconButton::new("hunk-down", IconName::ArrowDown))
+                            .child(
+                                IconButton::new("hunk-up", IconName::ArrowUp)
+                                    .tooltip(ui::Tooltip::for_action_title_in(
+                                        "Previous Hunk",
+                                        &GoToPreviousHunk,
+                                        &editor_focus_handle,
+                                    ))
+                                    .on_click({
+                                        let editor_focus_handle = editor_focus_handle.clone();
+                                        move |_, window, cx| {
+                                            editor_focus_handle.dispatch_action(
+                                                &GoToPreviousHunk,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("hunk-down", IconName::ArrowDown)
+                                    .tooltip(ui::Tooltip::for_action_title_in(
+                                        "Next Hunk",
+                                        &GoToHunk,
+                                        &editor_focus_handle,
+                                    ))
+                                    .on_click({
+                                        let editor_focus_handle = editor_focus_handle.clone();
+                                        move |_, window, cx| {
+                                            editor_focus_handle
+                                                .dispatch_action(&GoToHunk, window, cx);
+                                        }
+                                    }),
+                            )
                             .into_any(),
                         vertical_divider().into_any_element(),
                         h_flex()
