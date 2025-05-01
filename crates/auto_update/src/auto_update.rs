@@ -23,7 +23,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use which::which;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
@@ -63,7 +62,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct JsonRelease {
     pub version: String,
     pub url: String,
@@ -118,6 +117,13 @@ impl Settings for AutoUpdateSetting {
             .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
 
         Ok(Self(auto_update.0))
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting("update.mode", current, |s| match s {
+            "none" | "manual" => Some(AutoUpdateSettingContent(false)),
+            _ => Some(AutoUpdateSettingContent(true)),
+        });
     }
 }
 
@@ -235,6 +241,46 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
         }
     }
     None
+}
+
+#[cfg(not(target_os = "windows"))]
+struct InstallerDir(tempfile::TempDir);
+
+#[cfg(not(target_os = "windows"))]
+impl InstallerDir {
+    async fn new() -> Result<Self> {
+        Ok(Self(
+            tempfile::Builder::new()
+                .prefix("zed-auto-update")
+                .tempdir()?,
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct InstallerDir(PathBuf);
+
+#[cfg(target_os = "windows")]
+impl InstallerDir {
+    async fn new() -> Result<Self> {
+        let installer_dir = std::env::current_exe()?
+            .parent()
+            .context("No parent dir for Zed.exe")?
+            .join("updates");
+        if smol::fs::metadata(&installer_dir).await.is_ok() {
+            smol::fs::remove_dir_all(&installer_dir).await?;
+        }
+        smol::fs::create_dir(&installer_dir).await?;
+        Ok(Self(installer_dir))
+    }
+
+    fn path(&self) -> &Path {
+        self.0.as_path()
+    }
 }
 
 impl AutoUpdater {
@@ -469,22 +515,21 @@ impl AutoUpdater {
             cx.notify();
         })?;
 
-        let temp_dir = tempfile::Builder::new()
-            .prefix("zed-auto-update")
-            .tempdir()?;
-
+        let installer_dir = InstallerDir::new().await?;
         let filename = match OS {
             "macos" => Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
+            "windows" => Ok("ZedUpdateInstaller.exe"),
             _ => Err(anyhow!("not supported: {:?}", OS)),
         }?;
 
+        #[cfg(not(target_os = "windows"))]
         anyhow::ensure!(
-            which("rsync").is_ok(),
+            which::which("rsync").is_ok(),
             "Aborting. Could not find rsync which is required for auto-updates."
         );
 
-        let downloaded_asset = temp_dir.path().join(filename);
+        let downloaded_asset = installer_dir.path().join(filename);
         download_release(&downloaded_asset, release, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
@@ -493,8 +538,9 @@ impl AutoUpdater {
         })?;
 
         let binary_path = match OS {
-            "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx).await,
-            "linux" => install_release_linux(&temp_dir, downloaded_asset, &cx).await,
+            "macos" => install_release_macos(&installer_dir, downloaded_asset, &cx).await,
+            "linux" => install_release_linux(&installer_dir, downloaded_asset, &cx).await,
+            "windows" => install_release_windows(downloaded_asset).await,
             _ => Err(anyhow!("not supported: {:?}", OS)),
         }?;
 
@@ -629,7 +675,7 @@ async fn download_release(
 }
 
 async fn install_release_linux(
-    temp_dir: &tempfile::TempDir,
+    temp_dir: &InstallerDir,
     downloaded_tar_gz: PathBuf,
     cx: &AsyncApp,
 ) -> Result<PathBuf> {
@@ -696,7 +742,7 @@ async fn install_release_linux(
 }
 
 async fn install_release_macos(
-    temp_dir: &tempfile::TempDir,
+    temp_dir: &InstallerDir,
     downloaded_dmg: PathBuf,
     cx: &AsyncApp,
 ) -> Result<PathBuf> {
@@ -742,4 +788,42 @@ async fn install_release_macos(
     );
 
     Ok(running_app_path)
+}
+
+async fn install_release_windows(downloaded_installer: PathBuf) -> Result<PathBuf> {
+    let output = Command::new(downloaded_installer)
+        .arg("/verysilent")
+        .arg("/update=true")
+        .arg("!desktopicon")
+        .arg("!quicklaunchicon")
+        .output()
+        .await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to start installer: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(std::env::current_exe()?)
+}
+
+pub fn check_pending_installation() -> bool {
+    let Some(installer_path) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("updates")))
+    else {
+        return false;
+    };
+
+    // The installer will create a flag file after it finishes updating
+    let flag_file = installer_path.join("versions.txt");
+    if flag_file.exists() {
+        if let Some(helper) = installer_path
+            .parent()
+            .map(|p| p.join("tools\\auto_update_helper.exe"))
+        {
+            let _ = std::process::Command::new(helper).spawn();
+            return true;
+        }
+    }
+    false
 }

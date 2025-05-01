@@ -8,8 +8,8 @@ use assistant_slash_commands::{
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
-    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
+    ProposedChangeLocation, ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
@@ -48,7 +48,14 @@ use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::TypeId,
+    cmp,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::SelectionGoal;
 use ui::{
     ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
@@ -139,7 +146,7 @@ pub trait AssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>>;
@@ -155,7 +162,8 @@ pub trait AssistantPanelDelegate {
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
+        selection_ranges: Vec<Range<Anchor>>,
+        buffer: Entity<MultiBuffer>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
@@ -290,6 +298,7 @@ impl ContextEditor {
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -616,6 +625,7 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
+            ContextEvent::SummaryGenerated => {}
             ContextEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(
@@ -1800,23 +1810,45 @@ impl ContextEditor {
             return;
         };
 
-        let Some(creases) = selections_creases(workspace, cx) else {
+        let Some((selections, buffer)) = maybe!({
+            let editor = workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))?;
+
+            let buffer = editor.read(cx).buffer().clone();
+            let snapshot = buffer.read(cx).snapshot(cx);
+            let selections = editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .all_adjusted(cx)
+                    .into_iter()
+                    .filter_map(|s| {
+                        (!s.is_empty())
+                            .then(|| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
+                    })
+                    .collect::<Vec<_>>()
+            });
+            Some((selections, buffer))
+        }) else {
             return;
         };
 
-        if creases.is_empty() {
+        if selections.is_empty() {
             return;
         }
 
-        assistant_panel_delegate.quote_selection(workspace, creases, window, cx);
+        assistant_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
-    pub fn quote_creases(
+    pub fn quote_ranges(
         &mut self,
-        creases: Vec<(String, String)>,
+        ranges: Vec<Range<Point>>,
+        snapshot: MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let creases = selections_creases(ranges, snapshot, cx);
+
         self.editor.update(cx, |editor, cx| {
             editor.insert("\n", window, cx);
             for (text, crease_title) in creases {
@@ -2065,7 +2097,7 @@ impl ContextEditor {
                         continue;
                     };
                     let image_id = image.id();
-                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+                    let image_task = LanguageModelImage::from_image(Arc::new(image), cx).shared();
 
                     for image_position in image_positions.iter() {
                         context.insert_content(
@@ -2155,13 +2187,8 @@ impl ContextEditor {
         });
     }
 
-    pub fn title(&self, cx: &App) -> Cow<str> {
-        self.context
-            .read(cx)
-            .summary()
-            .map(|summary| summary.text.clone())
-            .map(Cow::Owned)
-            .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
+    pub fn title(&self, cx: &App) -> SharedString {
+        self.context.read(cx).summary_or_default()
     }
 
     fn render_patch_block(
@@ -3136,8 +3163,8 @@ impl Focusable for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content_text(&self, _window: &Window, cx: &App) -> Option<SharedString> {
-        Some(util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into())
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
@@ -3744,7 +3771,7 @@ pub fn make_lsp_adapter_delegate(
         let Some(worktree) = project.worktrees(cx).next() else {
             return Ok(None::<Arc<dyn LspAdapterDelegate>>);
         };
-        let http_client = project.client().http_client().clone();
+        let http_client = project.client().http_client();
         project.lsp_store().update(cx, |_, cx| {
             Ok(Some(LocalLspAdapterDelegate::new(
                 project.languages().clone(),

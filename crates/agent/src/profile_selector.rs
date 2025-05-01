@@ -68,30 +68,41 @@ impl ProfileSelector {
 
             menu = menu.header("Profiles");
             for (profile_id, profile) in self.profiles.clone() {
-                menu = menu.toggleable_entry(
-                    profile.name.clone(),
-                    profile_id == settings.default_profile,
-                    icon_position,
-                    None,
-                    {
-                        let fs = self.fs.clone();
-                        let thread_store = self.thread_store.clone();
-                        move |_window, cx| {
-                            update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-                                let profile_id = profile_id.clone();
-                                move |settings, _cx| {
-                                    settings.set_profile(profile_id.clone());
-                                }
-                            });
+                let documentation = match profile.name.to_lowercase().as_str() {
+                    "write" => Some("Get help to write anything."),
+                    "ask" => Some("Chat about your codebase."),
+                    "manual" => Some("Chat about anything; no tools."),
+                    _ => None,
+                };
 
-                            thread_store
-                                .update(cx, |this, cx| {
-                                    this.load_profile_by_id(&profile_id, cx);
-                                })
-                                .log_err();
-                        }
-                    },
-                );
+                let entry = ContextMenuEntry::new(profile.name.clone())
+                    .toggleable(icon_position, profile_id == settings.default_profile);
+
+                let entry = if let Some(doc_text) = documentation {
+                    entry.documentation_aside(move |_| Label::new(doc_text).into_any_element())
+                } else {
+                    entry
+                };
+
+                menu = menu.item(entry.handler({
+                    let fs = self.fs.clone();
+                    let thread_store = self.thread_store.clone();
+                    let profile_id = profile_id.clone();
+                    move |_window, cx| {
+                        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+                            let profile_id = profile_id.clone();
+                            move |settings, _cx| {
+                                settings.set_profile(profile_id.clone());
+                            }
+                        });
+
+                        thread_store
+                            .update(cx, |this, cx| {
+                                this.load_profile_by_id(profile_id.clone(), cx);
+                            })
+                            .log_err();
+                    }
+                }));
             }
 
             menu = menu.separator();
@@ -141,6 +152,7 @@ impl Render for ProfileSelector {
 
         let this = cx.entity().clone();
         let focus_handle = self.focus_handle.clone();
+
         PopoverMenu::new("profile-selector")
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
@@ -183,7 +195,7 @@ impl Render for ProfileSelector {
                     )
                     .tooltip(Tooltip::text("The current model does not support tools."))
             })
-            .anchor(gpui::Corner::BottomLeft)
+            .anchor(gpui::Corner::BottomRight)
             .with_handle(self.menu_handle.clone())
     }
 }

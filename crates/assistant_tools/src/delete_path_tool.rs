@@ -1,8 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
@@ -45,7 +45,7 @@ impl Tool for DeletePathTool {
         IconName::FileDelete
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<DeletePathToolInput>(format)
     }
 
@@ -62,16 +62,18 @@ impl Tool for DeletePathTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
             Ok(input) => input.path,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let Some(project_path) = project.read(cx).find_project_path(&path_str, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            )));
+            )))
+            .into();
         };
 
         let Some(worktree) = project
@@ -80,7 +82,8 @@ impl Tool for DeletePathTool {
         else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            )));
+            )))
+            .into();
         };
 
         let worktree_snapshot = worktree.read(cx).snapshot();
@@ -132,5 +135,6 @@ impl Tool for DeletePathTool {
                 )),
             }
         })
+        .into()
     }
 }

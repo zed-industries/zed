@@ -49,8 +49,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -574,6 +574,21 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
+    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
+        let to_remove = self
+            .inlay_map
+            .current_inlays()
+            .filter_map(|inlay| {
+                if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                    Some(inlay.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.inlay_map.splice(&to_remove, Vec::new());
+    }
+
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
@@ -793,10 +808,14 @@ impl DisplaySnapshot {
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = MultiBufferPoint::new(range.start.row, 0);
-        let new_end = MultiBufferPoint::new(
-            range.end.row,
-            self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
-        );
+        let new_end = if range.end.column > 0 {
+            MultiBufferPoint::new(
+                range.end.row,
+                self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+            )
+        } else {
+            range.end
+        };
 
         new_start..new_end
     }
@@ -1742,7 +1761,6 @@ pub mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.background_executor
@@ -1760,7 +1778,7 @@ pub mod tests {
                 editor.update(cx, |editor, _cx| editor.text_layout_details(window));
 
             let font_size = px(12.0);
-            let wrap_width = Some(px(64.));
+            let wrap_width = Some(px(96.));
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
@@ -2411,8 +2429,6 @@ pub mod tests {
         }
     }
 
-    // todo(linux) fails due to pixel differences in text rendering
-    #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         cx.background_executor

@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -9,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
@@ -55,15 +56,15 @@ impl Tool for CopyPathTool {
         IconName::Clipboard
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<CopyPathToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CopyPathToolInput>(input.clone()) {
             Ok(input) => {
-                let src = MarkdownString::inline_code(&input.source_path);
-                let dest = MarkdownString::inline_code(&input.destination_path);
+                let src = MarkdownInlineCode(&input.source_path);
+                let dest = MarkdownInlineCode(&input.destination_path);
                 format!("Copy {src} to {dest}")
             }
             Err(_) => "Copy path".to_string(),
@@ -76,11 +77,12 @@ impl Tool for CopyPathTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CopyPathToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let copy_task = project.update(cx, |project, cx| {
             match project
@@ -117,5 +119,6 @@ impl Tool for CopyPathTool {
                 )),
             }
         })
+        .into()
     }
 }

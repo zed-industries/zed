@@ -3,7 +3,7 @@ use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
 use client::{ProxySettings, telemetry};
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
@@ -11,7 +11,7 @@ use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, 
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
@@ -428,7 +428,7 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::Application::headless().run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
@@ -441,6 +441,7 @@ pub fn execute_run(
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
+        dap_adapters::init(cx);
 
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
@@ -472,7 +473,6 @@ pub fn execute_run(
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
             let languages = Arc::new(languages);
-            let debug_adapters = DapRegistry::default().into();
 
             HeadlessProject::new(
                 HeadlessAppState {
@@ -481,7 +481,6 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
-                    debug_adapters,
                     extension_host_proxy,
                 },
                 cx,
@@ -854,13 +853,13 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
-                .parse::<Uri>()
+                .parse::<Url>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })

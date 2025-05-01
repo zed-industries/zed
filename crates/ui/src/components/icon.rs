@@ -267,7 +267,7 @@ impl RenderOnce for IconWithIndicator {
 
 impl Component for Icon {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::Images
     }
 
     fn description() -> Option<&'static str> {

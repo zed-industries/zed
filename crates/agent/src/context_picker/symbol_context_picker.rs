@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AppContext, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task, WeakEntity,
@@ -10,12 +10,11 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{DocumentSymbol, Symbol};
-use text::OffsetRangeExt;
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 
 pub struct SymbolContextPicker {
@@ -27,16 +26,10 @@ impl SymbolContextPicker {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = SymbolContextPickerDelegate::new(
-            context_picker,
-            workspace,
-            context_store,
-            confirm_behavior,
-        );
+        let delegate = SymbolContextPickerDelegate::new(context_picker, workspace, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
@@ -59,7 +52,6 @@ pub struct SymbolContextPickerDelegate {
     context_picker: WeakEntity<ContextPicker>,
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    confirm_behavior: ConfirmBehavior,
     matches: Vec<SymbolEntry>,
     selected_index: usize,
 }
@@ -69,13 +61,11 @@ impl SymbolContextPickerDelegate {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
             context_store,
-            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -119,11 +109,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let search_task = search_symbols(query, Arc::<AtomicBool>::default(), &workspace, cx);
         let context_store = self.context_store.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let symbols = search_task
-                .await
-                .context("Failed to load symbols")
-                .log_err()
-                .unwrap_or_default();
+            let symbols = search_task.await;
 
             let symbol_entries = context_store
                 .read_with(cx, |context_store, cx| {
@@ -139,7 +125,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -147,7 +133,6 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             return;
         };
 
-        let confirm_behavior = self.confirm_behavior;
         let add_symbol_task = add_symbol(
             mat.symbol.clone(),
             true,
@@ -157,15 +142,11 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         );
 
         let selected_index = self.selected_index;
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let included = add_symbol_task.await?;
-            this.update_in(cx, |this, window, cx| {
+            this.update(cx, |this, _| {
                 if let Some(mat) = this.delegate.matches.get_mut(selected_index) {
                     mat.is_included = included;
-                }
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }
             })
         })
@@ -190,10 +171,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let mat = &self.matches[ix];
 
         Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
-            render_symbol_context_entry(
-                ElementId::NamedInteger("symbol-ctx-picker".into(), ix),
-                mat,
-            ),
+            render_symbol_context_entry(ElementId::named_usize("symbol-ctx-picker", ix), mat),
         ))
     }
 }
@@ -246,18 +224,16 @@ pub(crate) fn add_symbol(
             )
         })?;
 
-        context_store
-            .update(cx, move |context_store, cx| {
-                context_store.add_symbol(
-                    buffer,
-                    name.into(),
-                    range,
-                    enclosing_range,
-                    remove_if_exists,
-                    cx,
-                )
-            })?
-            .await
+        context_store.update(cx, move |context_store, cx| {
+            context_store.add_symbol(
+                buffer,
+                name.into(),
+                range,
+                enclosing_range,
+                remove_if_exists,
+                cx,
+            )
+        })
     })
 }
 
@@ -285,12 +261,16 @@ fn find_matching_symbol(symbol: &Symbol, candidates: &[DocumentSymbol]) -> Optio
     }
 }
 
+pub struct SymbolMatch {
+    pub symbol: Symbol,
+}
+
 pub(crate) fn search_symbols(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
-) -> Task<Result<Vec<(StringMatch, Symbol)>>> {
+) -> Task<Vec<SymbolMatch>> {
     let symbols_task = workspace.update(cx, |workspace, cx| {
         workspace
             .project()
@@ -298,19 +278,28 @@ pub(crate) fn search_symbols(
     });
     let project = workspace.read(cx).project().clone();
     cx.spawn(async move |cx| {
-        let symbols = symbols_task.await?;
-        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
-            .update(cx, |project, cx| {
-                symbols
-                    .iter()
-                    .enumerate()
-                    .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.label.filter_text()))
-                    .partition(|candidate| {
-                        project
-                            .entry_for_path(&symbols[candidate.id].path, cx)
-                            .map_or(false, |e| !e.is_ignored)
-                    })
-            })?;
+        let Some(symbols) = symbols_task.await.log_err() else {
+            return Vec::new();
+        };
+        let Some((visible_match_candidates, external_match_candidates)): Option<(Vec<_>, Vec<_>)> =
+            project
+                .update(cx, |project, cx| {
+                    symbols
+                        .iter()
+                        .enumerate()
+                        .map(|(id, symbol)| {
+                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                        })
+                        .partition(|candidate| {
+                            project
+                                .entry_for_path(&symbols[candidate.id].path, cx)
+                                .map_or(false, |e| !e.is_ignored)
+                        })
+                })
+                .log_err()
+        else {
+            return Vec::new();
+        };
 
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
@@ -339,7 +328,7 @@ pub(crate) fn search_symbols(
         let mut matches = visible_matches;
         matches.append(&mut external_matches);
 
-        Ok(matches
+        matches
             .into_iter()
             .map(|mut mat| {
                 let symbol = symbols[mat.candidate_id].clone();
@@ -347,49 +336,24 @@ pub(crate) fn search_symbols(
                 for position in &mut mat.positions {
                     *position += filter_start;
                 }
-                (mat, symbol)
+                SymbolMatch { symbol }
             })
-            .collect())
+            .collect()
     })
 }
 
 fn compute_symbol_entries(
-    symbols: Vec<(StringMatch, Symbol)>,
+    symbols: Vec<SymbolMatch>,
     context_store: &ContextStore,
     cx: &App,
 ) -> Vec<SymbolEntry> {
-    let mut symbol_entries = Vec::with_capacity(symbols.len());
-    for (_, symbol) in symbols {
-        let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
-        let is_included = if let Some(symbols_for_path) = symbols_for_path {
-            let mut is_included = false;
-            for included_symbol_id in symbols_for_path {
-                if included_symbol_id.name.as_ref() == symbol.name.as_str() {
-                    if let Some(buffer) = context_store.buffer_for_symbol(included_symbol_id) {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let included_symbol_range =
-                            included_symbol_id.range.to_point_utf16(&snapshot);
-
-                        if included_symbol_range.start == symbol.range.start.0
-                            && included_symbol_range.end == symbol.range.end.0
-                        {
-                            is_included = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            is_included
-        } else {
-            false
-        };
-
-        symbol_entries.push(SymbolEntry {
+    symbols
+        .into_iter()
+        .map(|SymbolMatch { symbol, .. }| SymbolEntry {
+            is_included: context_store.includes_symbol(&symbol, cx),
             symbol,
-            is_included,
         })
-    }
-    symbol_entries
+        .collect::<Vec<_>>()
 }
 
 pub fn render_symbol_context_entry(id: ElementId, entry: &SymbolEntry) -> Stateful<Div> {

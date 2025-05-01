@@ -1,11 +1,12 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use ui::{ListItem, prelude::*};
 
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::{self, ContextStore};
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
@@ -19,16 +20,11 @@ impl ThreadContextPicker {
         thread_store: WeakEntity<ThreadStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = ThreadContextPickerDelegate::new(
-            thread_store,
-            context_picker,
-            context_store,
-            confirm_behavior,
-        );
+        let delegate =
+            ThreadContextPickerDelegate::new(thread_store, context_picker, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         ThreadContextPicker { picker }
@@ -57,7 +53,6 @@ pub struct ThreadContextPickerDelegate {
     thread_store: WeakEntity<ThreadStore>,
     context_picker: WeakEntity<ContextPicker>,
     context_store: WeakEntity<context_store::ContextStore>,
-    confirm_behavior: ConfirmBehavior,
     matches: Vec<ThreadContextEntry>,
     selected_index: usize,
 }
@@ -67,13 +62,11 @@ impl ThreadContextPickerDelegate {
         thread_store: WeakEntity<ThreadStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
-        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         ThreadContextPickerDelegate {
             thread_store,
             context_picker,
             context_store,
-            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -110,15 +103,15 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let Some(threads) = self.thread_store.upgrade() else {
+        let Some(thread_store) = self.thread_store.upgrade() else {
             return Task::ready(());
         };
 
-        let search_task = search_threads(query, threads, cx);
+        let search_task = search_threads(query, Arc::new(AtomicBool::default()), thread_store, cx);
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
-                this.delegate.matches = matches;
+                this.delegate.matches = matches.into_iter().map(|mat| mat.thread).collect();
                 this.delegate.selected_index = 0;
                 cx.notify();
             })
@@ -126,7 +119,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -137,20 +130,15 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&entry.id, cx));
 
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let thread = open_thread_task.await?;
-            this.update_in(cx, |this, window, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| {
                         context_store.add_thread(thread, true, cx)
                     })
                     .ok();
-
-                match this.delegate.confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-                }
             })
         })
         .detach_and_log_err(cx);
@@ -185,7 +173,7 @@ pub fn render_thread_context_entry(
     cx: &mut App,
 ) -> Div {
     let added = context_store.upgrade().map_or(false, |ctx_store| {
-        ctx_store.read(cx).includes_thread(&thread.id).is_some()
+        ctx_store.read(cx).includes_thread(&thread.id)
     });
 
     h_flex()
@@ -217,25 +205,38 @@ pub fn render_thread_context_entry(
         })
 }
 
+#[derive(Clone)]
+pub struct ThreadMatch {
+    pub thread: ThreadContextEntry,
+    pub is_recent: bool,
+}
+
 pub(crate) fn search_threads(
     query: String,
+    cancellation_flag: Arc<AtomicBool>,
     thread_store: Entity<ThreadStore>,
     cx: &mut App,
-) -> Task<Vec<ThreadContextEntry>> {
-    let threads = thread_store.update(cx, |this, _cx| {
-        this.threads()
-            .into_iter()
-            .map(|thread| ThreadContextEntry {
-                id: thread.id,
-                summary: thread.summary,
-            })
-            .collect::<Vec<_>>()
-    });
+) -> Task<Vec<ThreadMatch>> {
+    let threads = thread_store
+        .read(cx)
+        .reverse_chronological_threads()
+        .into_iter()
+        .map(|thread| ThreadContextEntry {
+            id: thread.id,
+            summary: thread.summary,
+        })
+        .collect::<Vec<_>>();
 
     let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
         if query.is_empty() {
             threads
+                .into_iter()
+                .map(|thread| ThreadMatch {
+                    thread,
+                    is_recent: false,
+                })
+                .collect()
         } else {
             let candidates = threads
                 .iter()
@@ -247,14 +248,17 @@ pub(crate) fn search_threads(
                 &query,
                 false,
                 100,
-                &Default::default(),
+                &cancellation_flag,
                 executor,
             )
             .await;
 
             matches
                 .into_iter()
-                .map(|mat| threads[mat.candidate_id].clone())
+                .map(|mat| ThreadMatch {
+                    thread: threads[mat.candidate_id].clone(),
+                    is_recent: false,
+                })
                 .collect()
         }
     })

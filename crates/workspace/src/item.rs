@@ -30,7 +30,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::{Color, Element as _, Icon, IntoElement, Label, LabelCommon};
+use ui::{Color, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -141,6 +141,35 @@ impl Settings for ItemSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
+            current.show_close_button = Some(if b {
+                ShowCloseButton::Always
+            } else {
+                ShowCloseButton::Hidden
+            })
+        }
+        vscode.enum_setting(
+            "workbench.editor.tabActionLocation",
+            &mut current.close_position,
+            |s| match s {
+                "right" => Some(ClosePosition::Right),
+                "left" => Some(ClosePosition::Left),
+                _ => None,
+            },
+        );
+        if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
+            current.activate_on_close = Some(if b {
+                ActivateOnClose::History
+            } else {
+                ActivateOnClose::LeftNeighbour
+            })
+        }
+
+        vscode.bool_setting("workbench.editor.showIcons", &mut current.file_icons);
+        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
+    }
 }
 
 impl Settings for PreviewTabsSettings {
@@ -150,6 +179,18 @@ impl Settings for PreviewTabsSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.bool_setting("workbench.editor.enablePreview", &mut current.enabled);
+        vscode.bool_setting(
+            "workbench.editor.enablePreviewFromCodeNavigation",
+            &mut current.enable_preview_from_code_navigation,
+        );
+        vscode.bool_setting(
+            "workbench.editor.enablePreviewFromQuickOpen",
+            &mut current.enable_preview_from_file_finder,
+        );
     }
 }
 
@@ -168,17 +209,25 @@ pub struct BreadcrumbText {
     pub font: Option<Font>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct TabContentParams {
     pub detail: Option<usize>,
     pub selected: bool,
     pub preview: bool,
+    /// Tab content should be deemphasized when active pane does not have focus.
+    pub deemphasized: bool,
 }
 
 impl TabContentParams {
     /// Returns the text color to be used for the tab content.
     pub fn text_color(&self) -> Color {
-        if self.selected {
+        if self.deemphasized {
+            if self.selected {
+                Color::Muted
+            } else {
+                Color::Hidden
+            }
+        } else if self.selected {
             Color::Default
         } else {
             Color::Muted
@@ -198,10 +247,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     ///
     /// By default this returns a [`Label`] that displays that text from
     /// `tab_content_text`.
-    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
-        let Some(text) = self.tab_content_text(window, cx) else {
-            return gpui::Empty.into_any();
-        };
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let text = self.tab_content_text(params.detail.unwrap_or_default(), cx);
 
         Label::new(text)
             .color(params.text_color())
@@ -209,11 +256,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     }
 
     /// Returns the textual contents of the tab.
-    ///
-    /// Use this if you don't need to customize the tab contents.
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        None
-    }
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
@@ -232,10 +275,6 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// `tab_tooltip_text`.
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
-    }
-
-    fn tab_description(&self, _: usize, _: &App) -> Option<SharedString> {
-        None
     }
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
@@ -443,8 +482,8 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut App,
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription;
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -567,12 +606,11 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).telemetry_event_text()
     }
 
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
-        self.read(cx).tab_description(detail, cx)
-    }
-
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         self.read(cx).tab_content(params, window, cx)
+    }
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        self.read(cx).tab_content_text(detail, cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
@@ -1401,11 +1439,15 @@ pub mod test {
             f(*event)
         }
 
-        fn tab_description(&self, detail: usize, _: &App) -> Option<SharedString> {
-            self.tab_descriptions.as_ref().and_then(|descriptions| {
-                let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
-                Some(description.into())
-            })
+        fn tab_content_text(&self, detail: usize, _cx: &App) -> SharedString {
+            self.tab_descriptions
+                .as_ref()
+                .and_then(|descriptions| {
+                    let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
+                    description.into()
+                })
+                .unwrap_or_default()
+                .into()
         }
 
         fn telemetry_event_text(&self) -> Option<&'static str> {

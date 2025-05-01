@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
@@ -39,7 +38,8 @@ impl From<Role> for String {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq, JsonSchema)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(untagged)]
 pub enum KeepAlive {
     /// Keep model alive for N seconds
@@ -84,7 +84,9 @@ fn get_max_tokens(name: &str) -> usize {
         "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "qwen2.5-coder"
         | "dolphin-mixtral" => 32768,
         "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
-        | "deepseek-coder-v2" | "deepseek-r1" | "yi-coder" => 128000,
+        | "qwen3" | "gemma3" | "deepseek-coder-v2" | "deepseek-v3" | "deepseek-r1" | "yi-coder" => {
+            128000
+        }
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)

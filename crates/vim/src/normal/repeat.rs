@@ -170,6 +170,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.clear_operator(window, cx);
 
         let globals = Vim::globals(cx);
@@ -201,6 +202,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();

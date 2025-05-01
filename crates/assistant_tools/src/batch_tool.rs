@@ -1,8 +1,8 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolWorkingSet};
 use futures::future::join_all;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -43,7 +43,7 @@ pub struct BatchToolInput {
     ///       }
     ///     },
     ///     {
-    ///       "name": "regex_search",
+    ///       "name": "grep",
     ///       "input": {
     ///         "regex": "fn run\\("
     ///       }
@@ -91,13 +91,13 @@ pub struct BatchToolInput {
     /// {
     ///   "invocations": [
     ///     {
-    ///       "name": "regex_search",
+    ///       "name": "grep",
     ///       "input": {
     ///         "regex": "impl Database"
     ///       }
     ///     },
     ///     {
-    ///       "name": "path_search",
+    ///       "name": "find_path",
     ///       "input": {
     ///         "glob": "**/*test*.rs"
     ///       }
@@ -172,7 +172,7 @@ impl Tool for BatchTool {
         IconName::Cog
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<BatchToolInput>(format)
     }
 
@@ -218,15 +218,16 @@ impl Tool for BatchTool {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<BatchToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         if input.invocations.is_empty() {
-            return Task::ready(Err(anyhow!("No tool invocations provided")));
+            return Task::ready(Err(anyhow!("No tool invocations provided"))).into();
         }
 
         let run_tools_concurrently = input.run_tools_concurrently;
@@ -257,11 +258,13 @@ impl Tool for BatchTool {
                     let project = project.clone();
                     let action_log = action_log.clone();
                     let messages = messages.clone();
-                    let task = cx
-                        .update(|cx| tool.run(invocation.input, &messages, project, action_log, cx))
+                    let tool_result = cx
+                        .update(|cx| {
+                            tool.run(invocation.input, &messages, project, action_log, window, cx)
+                        })
                         .map_err(|err| anyhow!("Failed to start tool '{}': {}", tool_name, err))?;
 
-                    tasks.push(task);
+                    tasks.push(tool_result.output);
                 }
 
                 Ok((tasks, tool_names))
@@ -306,5 +309,6 @@ impl Tool for BatchTool {
 
             Ok(formatted_results.trim().to_string())
         })
+        .into()
     }
 }

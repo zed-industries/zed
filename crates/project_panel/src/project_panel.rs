@@ -331,15 +331,19 @@ impl ProjectPanel {
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx);
+                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
                     this.marked_entries.clear();
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    this.reveal_entry(project.clone(), *entry_id, false, cx);
-                    cx.emit(PanelEvent::Activate);
+                    if let Some(()) = this
+                        .reveal_entry(project.clone(), *entry_id, false, cx)
+                        .log_err()
+                    {
+                        cx.emit(PanelEvent::Activate);
+                    }
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -1385,63 +1389,81 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(SelectedEntry {
-            worktree_id,
-            entry_id,
-        }) = self.selection
+        let Some((worktree_id, entry_id)) = self
+            .selection
+            .map(|entry| (entry.worktree_id, entry.entry_id))
+            .or_else(|| {
+                let entry_id = self.last_worktree_root_id?;
+                let worktree_id = self
+                    .project
+                    .read(cx)
+                    .worktree_for_entry(entry_id, cx)?
+                    .read(cx)
+                    .id();
+
+                self.selection = Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+
+                Some((worktree_id, entry_id))
+            })
+        else {
+            return;
+        };
+
+        let directory_id;
+        let new_entry_id = self.resolve_entry(entry_id);
+        if let Some((worktree, expanded_dir_ids)) = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .zip(self.expanded_dir_ids.get_mut(&worktree_id))
         {
-            let directory_id;
-            let new_entry_id = self.resolve_entry(entry_id);
-            if let Some((worktree, expanded_dir_ids)) = self
-                .project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
-            {
-                let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
-                    loop {
-                        if entry.is_dir() {
-                            if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                                expanded_dir_ids.insert(ix, entry.id);
-                            }
-                            directory_id = entry.id;
-                            break;
-                        } else {
-                            if let Some(parent_path) = entry.path.parent() {
-                                if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
-                                    entry = parent_entry;
-                                    continue;
-                                }
-                            }
-                            return;
+            let worktree = worktree.read(cx);
+            if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
+                loop {
+                    if entry.is_dir() {
+                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                            expanded_dir_ids.insert(ix, entry.id);
                         }
+                        directory_id = entry.id;
+                        break;
+                    } else {
+                        if let Some(parent_path) = entry.path.parent() {
+                            if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
+                                entry = parent_entry;
+                                continue;
+                            }
+                        }
+                        return;
                     }
-                } else {
-                    return;
-                };
+                }
             } else {
                 return;
             };
-            self.marked_entries.clear();
-            self.edit_state = Some(EditState {
-                worktree_id,
-                entry_id: directory_id,
-                leaf_entry_id: None,
-                is_dir,
-                processing_filename: None,
-                previously_focused: self.selection,
-                depth: 0,
-                validation_state: ValidationState::None,
-            });
-            self.filename_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-                window.focus(&editor.focus_handle(cx));
-            });
-            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
-            self.autoscroll(cx);
-            cx.notify();
-        }
+        } else {
+            return;
+        };
+
+        self.marked_entries.clear();
+        self.edit_state = Some(EditState {
+            worktree_id,
+            entry_id: directory_id,
+            leaf_entry_id: None,
+            is_dir,
+            processing_filename: None,
+            previously_focused: self.selection,
+            depth: 0,
+            validation_state: ValidationState::None,
+        });
+        self.filename_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+            window.focus(&editor.focus_handle(cx));
+        });
+        self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+        self.autoscroll(cx);
+        cx.notify();
     }
 
     fn unflatten_entry_id(&self, leaf_entry_id: ProjectEntryId) -> ProjectEntryId {
@@ -2983,16 +3005,18 @@ impl ProjectPanel {
 
         let open_file_after_drop = paths.len() == 1 && paths[0].is_file();
 
-        let Some((target_directory, worktree)) = maybe!({
-            let worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
+        let Some((target_directory, worktree, fs)) = maybe!({
+            let project = self.project.read(cx);
+            let fs = project.fs().clone();
+            let worktree = project.worktree_for_entry(entry_id, cx)?;
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
-            let path = worktree.read(cx).absolutize(&entry.path).ok()?;
-            let target_directory = if path.is_dir() {
-                path
+            let path = entry.path.clone();
+            let target_directory = if entry.is_dir() {
+                path.to_path_buf()
             } else {
                 path.parent()?.to_path_buf()
             };
-            Some((target_directory, worktree))
+            Some((target_directory, worktree, fs))
         }) else {
             return;
         };
@@ -3034,10 +3058,10 @@ impl ProjectPanel {
                 }
 
                 let task = worktree.update( cx, |worktree, cx| {
-                    worktree.copy_external_entries(target_directory, paths, true, cx)
+                    worktree.copy_external_entries(target_directory.into(), paths, fs, cx)
                 })?;
 
-                let opened_entries = task.await?;
+                let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         this.open_entry(opened_entries[0], true, false, cx);
@@ -3697,7 +3721,6 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let selections = Arc::new(self.marked_entries.clone());
-        let is_local = self.project.read(cx).is_local();
 
         let dragged_selection = DraggedSelection {
             active_selection: selection,
@@ -3762,60 +3785,57 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
-            .when(is_local, |div| {
-                div.on_drag_move::<ExternalPaths>(cx.listener(
-                    move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                        if event.bounds.contains(&event.event.position) {
-                            if this.last_external_paths_drag_over_entry == Some(entry_id) {
-                                return;
-                            }
-                            this.last_external_paths_drag_over_entry = Some(entry_id);
-                            this.marked_entries.clear();
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        if this.last_external_paths_drag_over_entry == Some(entry_id) {
+                            return;
+                        }
+                        this.last_external_paths_drag_over_entry = Some(entry_id);
+                        this.marked_entries.clear();
 
-                            let Some((worktree, path, entry)) = maybe!({
-                                let worktree = this
-                                    .project
-                                    .read(cx)
-                                    .worktree_for_id(selection.worktree_id, cx)?;
-                                let worktree = worktree.read(cx);
-                                let abs_path = worktree.absolutize(&path).log_err()?;
-                                let path = if abs_path.is_dir() {
-                                    path.as_ref()
-                                } else {
-                                    path.parent()?
-                                };
-                                let entry = worktree.entry_for_path(path)?;
-                                Some((worktree, path, entry))
-                            }) else {
-                                return;
+                        let Some((worktree, path, entry)) = maybe!({
+                            let worktree = this
+                                .project
+                                .read(cx)
+                                .worktree_for_id(selection.worktree_id, cx)?;
+                            let worktree = worktree.read(cx);
+                            let entry = worktree.entry_for_path(&path)?;
+                            let path = if entry.is_dir() {
+                                path.as_ref()
+                            } else {
+                                path.parent()?
                             };
+                            Some((worktree, path, entry))
+                        }) else {
+                            return;
+                        };
 
+                        this.marked_entries.insert(SelectedEntry {
+                            entry_id: entry.id,
+                            worktree_id: worktree.id(),
+                        });
+
+                        for entry in worktree.child_entries(path) {
                             this.marked_entries.insert(SelectedEntry {
                                 entry_id: entry.id,
                                 worktree_id: worktree.id(),
                             });
-
-                            for entry in worktree.child_entries(path) {
-                                this.marked_entries.insert(SelectedEntry {
-                                    entry_id: entry.id,
-                                    worktree_id: worktree.id(),
-                                });
-                            }
-
-                            cx.notify();
                         }
-                    },
-                ))
-                .on_drop(cx.listener(
-                    move |this, external_paths: &ExternalPaths, window, cx| {
-                        this.hover_scroll_task.take();
-                        this.last_external_paths_drag_over_entry = None;
-                        this.marked_entries.clear();
-                        this.drop_external_files(external_paths.paths(), entry_id, window, cx);
-                        cx.stop_propagation();
-                    },
-                ))
-            })
+
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(cx.listener(
+                move |this, external_paths: &ExternalPaths, window, cx| {
+                    this.hover_scroll_task.take();
+                    this.last_external_paths_drag_over_entry = None;
+                    this.marked_entries.clear();
+                    this.drop_external_files(external_paths.paths(), entry_id, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
             .on_drag_move::<DraggedSelection>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
                     if event.bounds.contains(&event.event.position) {
@@ -4424,7 +4444,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         skip_ignored: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<()> {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
             if skip_ignored
@@ -4432,7 +4452,9 @@ impl ProjectPanel {
                     .entry_for_id(entry_id)
                     .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
             {
-                return;
+                return Err(anyhow!(
+                    "can't reveal an ignored entry in the project panel"
+                ));
             }
 
             let worktree_id = worktree.id();
@@ -4445,6 +4467,11 @@ impl ProjectPanel {
             });
             self.autoscroll(cx);
             cx.notify();
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "can't reveal a non-existent entry in the project panel"
+            ))
         }
     }
 

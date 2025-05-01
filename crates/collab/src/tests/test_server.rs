@@ -1,5 +1,5 @@
 use crate::{
-    AppState, Config, RateLimiter,
+    AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
@@ -14,7 +14,7 @@ use client::{
 use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
-use dap::DapRegistry;
+
 use fs::FakeFs;
 use futures::{StreamExt as _, channel::oneshot};
 use git::GitHostingProviderRegistry;
@@ -275,14 +275,12 @@ impl TestServer {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let debug_adapters = Arc::new(DapRegistry::default());
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,
             languages: language_registry,
-            debug_adapters,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
@@ -519,7 +517,6 @@ impl TestServer {
             blob_store_client: None,
             stripe_client: None,
             stripe_billing: None,
-            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             kinesis_client: None,
             config: Config {
@@ -795,7 +792,6 @@ impl TestClient {
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
-                self.app_state.debug_adapters.clone(),
                 self.app_state.fs.clone(),
                 None,
                 cx,

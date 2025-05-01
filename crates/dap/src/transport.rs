@@ -21,8 +21,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TCPHost;
-use util::ResultExt as _;
+use task::TcpArgumentsTemplate;
+use util::{ResultExt as _, TryFutureExt};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -74,16 +74,14 @@ pub enum Transport {
 }
 
 impl Transport {
-    #[cfg(any(test, feature = "test-support"))]
-    async fn start(_: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        #[cfg(any(test, feature = "test-support"))]
-        return FakeTransport::start(cx)
-            .await
-            .map(|(transports, fake)| (transports, Self::Fake(fake)));
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if cfg!(any(test, feature = "test-support")) {
+            return FakeTransport::start(cx)
+                .await
+                .map(|(transports, fake)| (transports, Self::Fake(fake)));
+        }
+
         if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
@@ -128,6 +126,7 @@ pub(crate) struct TransportDelegate {
     pending_requests: Requests,
     transport: Transport,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
+    _tasks: Vec<gpui::Task<Option<()>>>,
 }
 
 impl TransportDelegate {
@@ -142,6 +141,7 @@ impl TransportDelegate {
             log_handlers: Default::default(),
             current_requests: Default::default(),
             pending_requests: Default::default(),
+            _tasks: Default::default(),
         };
         let messages = this.start_handlers(transport_pipes, cx).await?;
         Ok((messages, this))
@@ -168,35 +168,43 @@ impl TransportDelegate {
 
         cx.update(|cx| {
             if let Some(stdout) = params.stdout.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_adapter_log(stdout, log_handler.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_adapter_log(stdout, log_handler.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_output(
-                    params.output,
-                    client_tx,
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_output(
+                        params.output,
+                        client_tx,
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
 
             if let Some(stderr) = params.stderr.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_error(stderr, self.log_handlers.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_input(
-                    params.input,
-                    client_rx,
-                    self.current_requests.clone(),
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_input(
+                        params.input,
+                        client_rx,
+                        self.current_requests.clone(),
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
         })?;
 
         {
@@ -369,6 +377,7 @@ impl TransportDelegate {
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
+        log::debug!("Handle error started");
         let mut buffer = String::new();
 
         let mut reader = BufReader::new(stderr);
@@ -520,18 +529,21 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     /// Get an open port to use with the tcp client when not supplied by debug config
-    pub async fn port(host: &TCPHost) -> Result<u16> {
+    pub async fn port(host: &TcpArgumentsTemplate) -> Result<u16> {
         if let Some(port) = host.port {
             Ok(port)
         } else {
-            Ok(TcpListener::bind(SocketAddrV4::new(host.host(), 0))
-                .await?
-                .local_addr()?
-                .port())
+            Self::unused_port(host.host()).await
         }
     }
 
-    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
+    pub async fn unused_port(host: Ipv4Addr) -> Result<u16> {
+        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
+            .await?
+            .local_addr()?
+            .port())
+    }
+
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
@@ -540,19 +552,16 @@ impl TcpTransport {
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::null())
@@ -629,19 +638,16 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::piped())
@@ -699,14 +705,8 @@ impl StdioTransport {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-type RequestHandler = Box<
-    dyn Send
-        + FnMut(
-            u64,
-            serde_json::Value,
-            Arc<Mutex<async_pipe::PipeWriter>>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
->;
+type RequestHandler =
+    Box<dyn Send + FnMut(u64, serde_json::Value) -> dap_types::messages::Response>;
 
 #[cfg(any(test, feature = "test-support"))]
 type ResponseHandler = Box<dyn Send + Fn(Response)>;
@@ -714,45 +714,41 @@ type ResponseHandler = Box<dyn Send + Fn(Response)>;
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeTransport {
     // for sending fake response back from adapter side
-    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+    request_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, RequestHandler>>>,
     // for reverse request responses
-    response_handlers: Arc<Mutex<HashMap<&'static str, ResponseHandler>>>,
+    response_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, ResponseHandler>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeTransport {
-    pub async fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
+    pub fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
         F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response, ErrorResponse>,
     {
-        self.request_handlers.lock().await.insert(
+        self.request_handlers.lock().insert(
             R::COMMAND,
-            Box::new(
-                move |seq, args, writer: Arc<Mutex<async_pipe::PipeWriter>>| {
-                    let response = handler(seq, serde_json::from_value(args).unwrap());
-
-                    let message = serde_json::to_string(&Message::Response(Response {
+            Box::new(move |seq, args| {
+                let result = handler(seq, serde_json::from_value(args).unwrap());
+                let response = match result {
+                    Ok(response) => Response {
                         seq: seq + 1,
                         request_seq: seq,
-                        success: response.as_ref().is_ok(),
+                        success: true,
                         command: R::COMMAND.into(),
-                        body: util::maybe!({ serde_json::to_value(response.ok()?).ok() }),
+                        body: Some(serde_json::to_value(response).unwrap()),
                         message: None,
-                    }))
-                    .unwrap();
-
-                    let writer = writer.clone();
-
-                    Box::pin(async move {
-                        let mut writer = writer.lock().await;
-                        writer
-                            .write_all(TransportDelegate::build_rpc_message(message).as_bytes())
-                            .await
-                            .unwrap();
-                        writer.flush().await.unwrap();
-                    })
-                },
-            ),
+                    },
+                    Err(response) => Response {
+                        seq: seq + 1,
+                        request_seq: seq,
+                        success: false,
+                        command: R::COMMAND.into(),
+                        body: Some(serde_json::to_value(response).unwrap()),
+                        message: None,
+                    },
+                };
+                response
+            }),
         );
     }
 
@@ -762,14 +758,13 @@ impl FakeTransport {
     {
         self.response_handlers
             .lock()
-            .await
             .insert(R::COMMAND, Box::new(handler));
     }
 
     async fn start(cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let this = Self {
-            request_handlers: Arc::new(Mutex::new(HashMap::default())),
-            response_handlers: Arc::new(Mutex::new(HashMap::default())),
+            request_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
+            response_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
         };
         use dap_types::requests::{Request, RunInTerminal, StartDebugging};
         use serde_json::json;
@@ -816,23 +811,31 @@ impl FakeTransport {
                                             .unwrap();
                                         writer.flush().await.unwrap();
                                     } else {
-                                        if let Some(handle) = request_handlers
+                                        let response = if let Some(handle) = request_handlers
                                             .lock()
-                                            .await
                                             .get_mut(request.command.as_str())
                                         {
                                             handle(
                                                 request.seq,
                                                 request.arguments.unwrap_or(json!({})),
-                                                stdout_writer.clone(),
                                             )
-                                            .await;
                                         } else {
-                                            log::error!(
-                                                "No request handler for {}",
-                                                request.command
-                                            );
-                                        }
+                                            panic!("No request handler for {}", request.command);
+                                        };
+                                        let message =
+                                            serde_json::to_string(&Message::Response(response))
+                                                .unwrap();
+
+                                        let mut writer = stdout_writer.lock().await;
+
+                                        writer
+                                            .write_all(
+                                                TransportDelegate::build_rpc_message(message)
+                                                    .as_bytes(),
+                                            )
+                                            .await
+                                            .unwrap();
+                                        writer.flush().await.unwrap();
                                     }
                                 }
                                 Message::Event(event) => {
@@ -850,10 +853,8 @@ impl FakeTransport {
                                     writer.flush().await.unwrap();
                                 }
                                 Message::Response(response) => {
-                                    if let Some(handle) = response_handlers
-                                        .lock()
-                                        .await
-                                        .get(response.command.as_str())
+                                    if let Some(handle) =
+                                        response_handlers.lock().get(response.command.as_str())
                                     {
                                         handle(response);
                                     } else {

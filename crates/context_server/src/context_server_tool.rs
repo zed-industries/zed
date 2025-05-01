@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolSource};
-use gpui::{App, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use icons::IconName;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -53,16 +53,18 @@ impl Tool for ContextServerTool {
         true
     }
 
-    fn input_schema(&self, _: LanguageModelToolSchemaFormat) -> serde_json::Value {
-        match &self.tool.input_schema {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        let mut schema = self.tool.input_schema.clone();
+        assistant_tool::adapt_schema_to_format(&mut schema, format)?;
+        Ok(match schema {
             serde_json::Value::Null => {
                 serde_json::json!({ "type": "object", "properties": [] })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
                 serde_json::json!({ "type": "object", "properties": [] })
             }
-            _ => self.tool.input_schema.clone(),
-        }
+            _ => schema,
+        })
     }
 
     fn ui_text(&self, _input: &serde_json::Value) -> String {
@@ -75,8 +77,9 @@ impl Tool for ContextServerTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
             let server_clone = server.clone();
@@ -116,8 +119,9 @@ impl Tool for ContextServerTool {
                 }
                 Ok(result)
             })
+            .into()
         } else {
-            Task::ready(Err(anyhow!("Context server not found")))
+            Task::ready(Err(anyhow!("Context server not found"))).into()
         }
     }
 }

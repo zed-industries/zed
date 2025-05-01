@@ -36,7 +36,7 @@
 {"ReadRegister":{"name":"\"","value":"fox jumps over\nthe lazy dog\n"}}
 {"Put":{"state":"The quick brown\nfox ˇjumps over\nthe lazy dog"}}
 {"Key":"shift-v"}
-{"Key":"shift-4"}
+{"Key":"$"}
 {"Key":"shift-y"}
 {"Get":{"state":"The quick brown\nˇfox jumps over\nthe lazy dog","mode":"Normal"}}
 {"ReadRegister":{"name":"\"","value":"fox jumps over\n"}}

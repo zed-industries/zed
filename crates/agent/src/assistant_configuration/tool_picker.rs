@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use assistant_settings::{
     AgentProfile, AgentProfileContent, AgentProfileId, AssistantSettings, AssistantSettingsContent,
-    ContextServerPresetContent, VersionedAssistantSettingsContent,
+    ContextServerPresetContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
@@ -60,7 +60,7 @@ pub struct ToolPickerDelegate {
 impl ToolPickerDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        tool_set: Arc<ToolWorkingSet>,
+        tool_set: Entity<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
         profile_id: AgentProfileId,
         profile: AgentProfile,
@@ -68,7 +68,7 @@ impl ToolPickerDelegate {
     ) -> Self {
         let mut tool_entries = Vec::new();
 
-        for (source, tools) in tool_set.tools_by_source(cx) {
+        for (source, tools) in tool_set.read(cx).tools_by_source(cx) {
             tool_entries.extend(tools.into_iter().map(|tool| ToolEntry {
                 name: tool.name().into(),
                 source: source.clone(),
@@ -192,7 +192,7 @@ impl PickerDelegate for ToolPickerDelegate {
         if active_profile_id == &self.profile_id {
             self.thread_store
                 .update(cx, |this, cx| {
-                    this.load_profile(&self.profile, cx);
+                    this.load_profile(self.profile.clone(), cx);
                 })
                 .log_err();
         }
@@ -201,10 +201,10 @@ impl PickerDelegate for ToolPickerDelegate {
             let profile_id = self.profile_id.clone();
             let default_profile = self.profile.clone();
             let tool = tool.clone();
-            move |settings, _cx| match settings {
-                AssistantSettingsContent::Versioned(boxed) => {
-                    if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
-                        let profiles = settings.profiles.get_or_insert_default();
+            move |settings: &mut AssistantSettingsContent, _cx| {
+                settings
+                    .v2_setting(|v2_settings| {
+                        let profiles = v2_settings.profiles.get_or_insert_default();
                         let profile =
                             profiles
                                 .entry(profile_id)
@@ -240,9 +240,10 @@ impl PickerDelegate for ToolPickerDelegate {
                                 *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
                             }
                         }
-                    }
-                }
-                _ => {}
+
+                        Ok(())
+                    })
+                    .ok();
             }
         });
     }
@@ -271,7 +272,7 @@ impl PickerDelegate for ToolPickerDelegate {
                 .get(id.as_ref())
                 .and_then(|preset| preset.tools.get(&tool.name))
                 .copied()
-                .unwrap_or(false),
+                .unwrap_or(self.profile.enable_all_context_servers),
         };
 
         Some(

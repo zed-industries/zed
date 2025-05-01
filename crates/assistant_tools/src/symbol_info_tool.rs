@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
-use gpui::{App, AsyncApp, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::{AnyWindowHandle, App, AsyncApp, Entity, Task};
 use language::{self, Anchor, Buffer, BufferSnapshot, Location, Point, ToPoint, ToPointUtf16};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, ops::Range, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 use crate::schema::json_schema_for;
 
@@ -84,14 +84,14 @@ impl Tool for SymbolInfoTool {
         IconName::Code
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<SymbolInfoToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<SymbolInfoToolInput>(input.clone()) {
             Ok(input) => {
-                let symbol = MarkdownString::inline_code(&input.symbol);
+                let symbol = MarkdownInlineCode(&input.symbol);
 
                 match input.command {
                     Info::Definition => {
@@ -121,11 +121,12 @@ impl Tool for SymbolInfoTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<SymbolInfoToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         cx.spawn(async move |cx| {
@@ -140,7 +141,7 @@ impl Tool for SymbolInfoTool {
             };
 
             action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx);
+                action_log.track_buffer(buffer.clone(), cx);
             })?;
 
             let position = {
@@ -205,7 +206,7 @@ impl Tool for SymbolInfoTool {
             } else {
                 Ok(output)
             }
-        })
+        }).into()
     }
 }
 

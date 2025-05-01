@@ -44,8 +44,8 @@ use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
     IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    PopoverMenu, PopoverMenuHandle, ScrollableHandle, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
 
@@ -294,7 +294,7 @@ pub struct Pane {
     toolbar: Entity<Toolbar>,
     pub(crate) workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
-    drag_split_direction: Option<SplitDirection>,
+    pub drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
     custom_drop_handle: Option<
         Arc<dyn Fn(&mut Pane, &dyn Any, &mut Window, &mut Context<Pane>) -> ControlFlow<(), ()>>,
@@ -309,6 +309,7 @@ pub struct Pane {
             &mut Context<Pane>,
         ) -> (Option<AnyElement>, Option<AnyElement>),
     >,
+    render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
@@ -435,88 +436,8 @@ impl Pane {
             custom_drop_handle: None,
             can_split_predicate: None,
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
-            render_tab_bar_buttons: Rc::new(move |pane, window, cx| {
-                if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
-                    return (None, None);
-                }
-                // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
-                // `end_slot`, but due to needing a view here that isn't possible.
-                let right_children = h_flex()
-                    // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
-                    .gap(DynamicSpacing::Base04.rems(cx))
-                    .child(
-                        PopoverMenu::new("pane-tab-bar-popover-menu")
-                            .trigger_with_tooltip(
-                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                                Tooltip::text("New..."),
-                            )
-                            .anchor(Corner::TopRight)
-                            .with_handle(pane.new_item_context_menu_handle.clone())
-                            .menu(move |window, cx| {
-                                Some(ContextMenu::build(window, cx, |menu, _, _| {
-                                    menu.action("New File", NewFile.boxed_clone())
-                                        .action(
-                                            "Open File",
-                                            ToggleFileFinder::default().boxed_clone(),
-                                        )
-                                        .separator()
-                                        .action(
-                                            "Search Project",
-                                            DeploySearch {
-                                                replace_enabled: false,
-                                            }
-                                            .boxed_clone(),
-                                        )
-                                        .action(
-                                            "Search Symbols",
-                                            ToggleProjectSymbols.boxed_clone(),
-                                        )
-                                        .separator()
-                                        .action("New Terminal", NewTerminal.boxed_clone())
-                                }))
-                            }),
-                    )
-                    .child(
-                        PopoverMenu::new("pane-tab-bar-split")
-                            .trigger_with_tooltip(
-                                IconButton::new("split", IconName::Split)
-                                    .icon_size(IconSize::Small),
-                                Tooltip::text("Split Pane"),
-                            )
-                            .anchor(Corner::TopRight)
-                            .with_handle(pane.split_item_context_menu_handle.clone())
-                            .menu(move |window, cx| {
-                                ContextMenu::build(window, cx, |menu, _, _| {
-                                    menu.action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
-                                })
-                                .into()
-                            }),
-                    )
-                    .child({
-                        let zoomed = pane.is_zoomed();
-                        IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
-                            .toggle_state(zoomed)
-                            .selected_icon(IconName::Minimize)
-                            .on_click(cx.listener(|pane, _, window, cx| {
-                                pane.toggle_zoom(&crate::ToggleZoom, window, cx);
-                            }))
-                            .tooltip(move |window, cx| {
-                                Tooltip::for_action(
-                                    if zoomed { "Zoom Out" } else { "Zoom In" },
-                                    &ToggleZoom,
-                                    window,
-                                    cx,
-                                )
-                            })
-                    })
-                    .into_any_element()
-                    .into();
-                (None, right_children)
-            }),
+            render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
+            render_tab_bar: Rc::new(Self::render_tab_bar),
             show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
@@ -581,6 +502,7 @@ impl Pane {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.was_focused {
             self.was_focused = true;
+            self.update_history(self.active_item_index);
             cx.emit(Event::Focus);
             cx.notify();
         }
@@ -722,6 +644,14 @@ impl Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.set_can_navigate(can_navigate, cx);
         });
+        cx.notify();
+    }
+
+    pub fn set_render_tab_bar<F>(&mut self, cx: &mut Context<Self>, render: F)
+    where
+        F: 'static + Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement,
+    {
+        self.render_tab_bar = Rc::new(render);
         cx.notify();
     }
 
@@ -1166,17 +1096,7 @@ impl Pane {
                     prev_item.deactivated(window, cx);
                 }
             }
-            if let Some(newly_active_item) = self.items.get(index) {
-                self.activation_history
-                    .retain(|entry| entry.entity_id != newly_active_item.item_id());
-                self.activation_history.push(ActivationHistoryEntry {
-                    entity_id: newly_active_item.item_id(),
-                    timestamp: self
-                        .next_activation_timestamp
-                        .fetch_add(1, Ordering::SeqCst),
-                });
-            }
-
+            self.update_history(index);
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
 
@@ -1195,6 +1115,19 @@ impl Pane {
             }
 
             cx.notify();
+        }
+    }
+
+    fn update_history(&mut self, index: usize) {
+        if let Some(newly_active_item) = self.items.get(index) {
+            self.activation_history
+                .retain(|entry| entry.entity_id != newly_active_item.item_id());
+            self.activation_history.push(ActivationHistoryEntry {
+                entity_id: newly_active_item.item_id(),
+                timestamp: self
+                    .next_activation_timestamp
+                    .fetch_add(1, Ordering::SeqCst),
+            });
         }
     }
 
@@ -2218,6 +2151,7 @@ impl Pane {
                 detail: Some(detail),
                 selected: is_active,
                 preview: is_preview,
+                deemphasized: !self.has_focus(window, cx),
             },
             window,
             cx,
@@ -2668,7 +2602,7 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> impl IntoElement {
+    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> AnyElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -2704,7 +2638,7 @@ impl Pane {
             .items
             .iter()
             .enumerate()
-            .zip(tab_details(&self.items, cx))
+            .zip(tab_details(&self.items, window, cx))
             .map(|((ix, item), detail)| {
                 self.render_tab(ix, &**item, detail, &focus_handle, window, cx)
             })
@@ -2733,10 +2667,20 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
+                let content_width = self
+                    .tab_bar_scroll_handle
+                    .content_size()
+                    .map(|content_size| content_size.size.width)
+                    .unwrap_or(px(0.));
+                let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
+                // We need to check both because offset returns delta values even when the scroll handle is not scrollable
+                let is_scrollable = content_width > viewport_width;
+                let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
                 h_flex()
                     .children(pinned_tabs)
-                    .border_r_2()
-                    .border_color(cx.theme().colors().border)
+                    .when(is_scrollable && is_scrolled, |this| {
+                        this.border_r_1().border_color(cx.theme().colors().border)
+                    })
             }))
             .child(
                 h_flex()
@@ -2791,6 +2735,7 @@ impl Pane {
                             })),
                     ),
             )
+            .into_any_element()
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
@@ -2864,7 +2809,7 @@ impl Pane {
         }
     }
 
-    fn handle_tab_drop(
+    pub fn handle_tab_drop(
         &mut self,
         dragged_tab: &DraggedTab,
         ix: usize,
@@ -3137,6 +3082,86 @@ impl Pane {
     }
 }
 
+fn default_render_tab_bar_buttons(
+    pane: &mut Pane,
+    window: &mut Window,
+    cx: &mut Context<Pane>,
+) -> (Option<AnyElement>, Option<AnyElement>) {
+    if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
+        return (None, None);
+    }
+    // Ideally we would return a vec of elements here to pass directly to the [TabBar]'s
+    // `end_slot`, but due to needing a view here that isn't possible.
+    let right_children = h_flex()
+        // Instead we need to replicate the spacing from the [TabBar]'s `end_slot` here.
+        .gap(DynamicSpacing::Base04.rems(cx))
+        .child(
+            PopoverMenu::new("pane-tab-bar-popover-menu")
+                .trigger_with_tooltip(
+                    IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                    Tooltip::text("New..."),
+                )
+                .anchor(Corner::TopRight)
+                .with_handle(pane.new_item_context_menu_handle.clone())
+                .menu(move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _, _| {
+                        menu.action("New File", NewFile.boxed_clone())
+                            .action("Open File", ToggleFileFinder::default().boxed_clone())
+                            .separator()
+                            .action(
+                                "Search Project",
+                                DeploySearch {
+                                    replace_enabled: false,
+                                }
+                                .boxed_clone(),
+                            )
+                            .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
+                            .separator()
+                            .action("New Terminal", NewTerminal.boxed_clone())
+                    }))
+                }),
+        )
+        .child(
+            PopoverMenu::new("pane-tab-bar-split")
+                .trigger_with_tooltip(
+                    IconButton::new("split", IconName::Split).icon_size(IconSize::Small),
+                    Tooltip::text("Split Pane"),
+                )
+                .anchor(Corner::TopRight)
+                .with_handle(pane.split_item_context_menu_handle.clone())
+                .menu(move |window, cx| {
+                    ContextMenu::build(window, cx, |menu, _, _| {
+                        menu.action("Split Right", SplitRight.boxed_clone())
+                            .action("Split Left", SplitLeft.boxed_clone())
+                            .action("Split Up", SplitUp.boxed_clone())
+                            .action("Split Down", SplitDown.boxed_clone())
+                    })
+                    .into()
+                }),
+        )
+        .child({
+            let zoomed = pane.is_zoomed();
+            IconButton::new("toggle_zoom", IconName::Maximize)
+                .icon_size(IconSize::Small)
+                .toggle_state(zoomed)
+                .selected_icon(IconName::Minimize)
+                .on_click(cx.listener(|pane, _, window, cx| {
+                    pane.toggle_zoom(&crate::ToggleZoom, window, cx);
+                }))
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action(
+                        if zoomed { "Zoom Out" } else { "Zoom In" },
+                        &ToggleZoom,
+                        window,
+                        cx,
+                    )
+                })
+        })
+        .into_any_element()
+        .into();
+    (None, right_children)
+}
+
 impl Focusable for Pane {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -3301,7 +3326,7 @@ impl Render for Pane {
                 }),
             )
             .when(self.active_item().is_some() && display_tab_bar, |pane| {
-                pane.child(self.render_tab_bar(window, cx))
+                pane.child((self.render_tab_bar.clone())(self, window, cx))
             })
             .child({
                 let has_worktrees = project.read(cx).visible_worktrees(cx).next().is_some();
@@ -3611,7 +3636,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;
@@ -3620,15 +3645,12 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
 
         // Store item indices by their tab description.
         for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            if let Some(description) = item.tab_description(*detail, cx) {
-                if *detail == 0
-                    || Some(&description) != item.tab_description(detail - 1, cx).as_ref()
-                {
-                    tab_descriptions
-                        .entry(description)
-                        .or_insert(Vec::new())
-                        .push(ix);
-                }
+            let description = item.tab_content_text(*detail, cx);
+            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
+                tab_descriptions
+                    .entry(description)
+                    .or_insert(Vec::new())
+                    .push(ix);
             }
         }
 
@@ -3667,6 +3689,7 @@ impl Render for DraggedTab {
                 detail: Some(self.detail),
                 selected: false,
                 preview: false,
+                deemphasized: false,
             },
             window,
             cx,

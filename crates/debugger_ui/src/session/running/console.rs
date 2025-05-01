@@ -7,7 +7,9 @@ use collections::HashMap;
 use dap::OutputEvent;
 use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
-use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
+use gpui::{
+    Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
+};
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
@@ -17,7 +19,7 @@ use project::{
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{Divider, prelude::*};
 
 pub struct Console {
     console: Entity<Editor>,
@@ -28,6 +30,7 @@ pub struct Console {
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
     update_output_task: Task<()>,
+    focus_handle: FocusHandle,
 }
 
 impl Console {
@@ -42,7 +45,7 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
-            editor.set_show_gutter(true, cx);
+            editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -54,8 +57,11 @@ impl Console {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
+            editor.set_use_modal_editing(false);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
+        let focus_handle = cx.focus_handle();
 
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
@@ -82,6 +88,7 @@ impl Console {
             stack_frame_list,
             update_output_task: Task::ready(()),
             last_token: OutputToken(0),
+            focus_handle,
         }
     }
 
@@ -103,6 +110,10 @@ impl Console {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
         }
+    }
+
+    pub(crate) fn show_indicator(&self, cx: &App) -> bool {
+        self.session.read(cx).has_new_output(self.last_token)
     }
 
     pub fn add_messages<'a>(
@@ -137,18 +148,41 @@ impl Console {
             expression
         });
 
-        self.session.update(cx, |state, cx| {
-            state.evaluate(
-                expression,
-                Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).current_stack_frame_id(),
-                None,
-                cx,
-            );
+        self.add_messages(
+            [OutputEvent {
+                category: None,
+                output: format!("> {expression}"),
+                group: None,
+                variables_reference: None,
+                source: None,
+                line: None,
+                column: None,
+                data: None,
+                location_reference: None,
+            }]
+            .iter(),
+            window,
+            cx,
+        );
+
+        self.session.update(cx, |session, cx| {
+            session
+                .evaluate(
+                    expression,
+                    Some(dap::EvaluateArgumentsContext::Variables),
+                    self.stack_frame_list.read(cx).selected_stack_frame_id(),
+                    None,
+                    cx,
+                )
+                .detach();
         });
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
+        EditorElement::new(&self.console, self.editor_style(cx))
+    }
+
+    fn editor_style(&self, cx: &Context<Self>) -> EditorStyle {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
@@ -163,44 +197,16 @@ impl Console {
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
-
-        EditorElement::new(
-            &self.console,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        EditorStyle {
+            background: cx.theme().colors().editor_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            ..Default::default()
+        }
     }
 
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: if self.console.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                cx.theme().colors().text
-            },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: TextSize::Editor.rems(cx).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
-            ..Default::default()
-        };
-
-        EditorElement::new(
-            &self.query_bar,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        EditorElement::new(&self.query_bar, self.editor_style(cx))
     }
 }
 
@@ -224,15 +230,22 @@ impl Render for Console {
         });
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
             .when(self.is_local(cx), |this| {
-                this.child(self.render_query_bar(cx))
-                    .pt(DynamicSpacing::Base04.rems(cx))
+                this.child(Divider::horizontal())
+                    .child(self.render_query_bar(cx))
             })
             .border_2()
+    }
+}
+
+impl Focusable for Console {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -384,7 +397,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).current_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),

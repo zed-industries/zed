@@ -755,6 +755,13 @@ impl Database {
                         .transpose()?
                         .unwrap_or_default();
 
+                    let head_commit_details = db_repository
+                        .head_commit_details
+                        .as_ref()
+                        .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                        .transpose()?
+                        .unwrap_or_default();
+
                     let entry_ids = serde_json::from_str(&db_repository.entry_ids)
                         .context("failed to deserialize repository's entry ids")?;
 
@@ -778,6 +785,7 @@ impl Database {
                             removed_statuses,
                             current_merge_conflicts,
                             branch_summary,
+                            head_commit_details,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path,

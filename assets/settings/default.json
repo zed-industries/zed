@@ -80,6 +80,8 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -165,7 +167,23 @@
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
   // Determines when the mouse cursor should be hidden in an editor or input box.
+  //
+  // 1. Never hide the mouse cursor:
+  //    "never"
+  // 2. Hide only when typing:
+  //    "on_typing"
+  // 3. Hide on both typing and cursor movement:
+  //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines how snippets are sorted relative to other completion items.
+  //
+  // 1. Place snippets at the top of the completion list:
+  //    "top"
+  // 2. Place snippets normally without any preference:
+  //    "inline"
+  // 3. Place snippets at the bottom of the completion list:
+  //    "bottom"
+  "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -179,8 +197,6 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
-  // The debounce delay before querying highlights based on the selected text.
-  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
@@ -210,7 +226,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 3,
+  "expand_excerpt_lines": 5,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -586,6 +602,12 @@
     // Default: main
     "fallback_branch_name": "main",
 
+    // Whether to sort entries in the panel by path
+    // or by status (the default).
+    //
+    // Default: false
+    "sort_by_path": false,
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -624,14 +646,14 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // The model to use when applying edits from the assistant.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
@@ -642,38 +664,50 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "contents": true,
           "diagnostics": true,
           "fetch": true,
           "list_directory": false,
           "now": true,
-          "path_search": true,
+          "find_path": true,
           "read_file": true,
-          "regex_search": true,
-          "thinking": true
+          "open": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true
         }
       },
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
         "tools": {
-          "bash": true,
-          "batch_tool": true,
-          "code_symbols": true,
+          "batch_tool": false,
+          "code_actions": false,
+          "code_symbols": false,
+          "contents": false,
           "copy_path": false,
           "create_file": true,
           "delete_path": false,
           "diagnostics": true,
-          "find_replace_file": true,
+          "edit_file": true,
           "fetch": true,
-          "list_directory": false,
+          "list_directory": true,
           "move_path": false,
-          "now": true,
-          "path_search": true,
+          "now": false,
+          "find_path": true,
           "read_file": true,
-          "regex_search": true,
-          "symbol_info": true,
-          "thinking": true
+          "grep": true,
+          "rename": false,
+          "symbol_info": false,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true
         }
+      },
+      "manual": {
+        "name": "Manual",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
     // Where to show notifications when an agent has either completed
@@ -801,7 +835,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1484,7 +1531,12 @@
     "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
-    "custom_digraphs": {}
+    "custom_digraphs": {},
+    // Cursor shape for the each mode.
+    // Specify the mode as the key and the shape as the value.
+    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // The shape can be one of the following: "block", "bar", "underline", "hollow".
+    "cursor_shape": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
@@ -1554,7 +1606,6 @@
   //   }
   // ]
   "ssh_connections": [],
-
   // Configures context servers for use in the Assistant.
   "context_servers": {},
   "debugger": {

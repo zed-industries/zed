@@ -85,6 +85,10 @@ pub fn lsp_tasks(
         .map(|(name, buffer_ids)| {
             let buffers = buffer_ids
                 .iter()
+                .filter(|&&buffer_id| match for_position {
+                    Some(for_position) => for_position.buffer_id == Some(buffer_id),
+                    None => true,
+                })
                 .filter_map(|&buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))
                 .collect::<Vec<_>>();
             language_server_for_buffers(project.clone(), name.clone(), buffers, cx)

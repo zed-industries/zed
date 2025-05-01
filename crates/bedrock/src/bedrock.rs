@@ -8,12 +8,14 @@ pub use aws_sdk_bedrockruntime::types::{
     Tool as BedrockTool, ToolChoice as BedrockToolChoice, ToolConfiguration as BedrockToolConfig,
     ToolInputSchema as BedrockToolInputSchema, ToolSpecification as BedrockToolSpec,
 };
+pub use aws_smithy_types::Blob as BedrockBlob;
 use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::{
     ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
     ImageBlock as BedrockImageBlock, Message as BedrockMessage,
+    ReasoningContentBlock as BedrockThinkingBlock, ReasoningTextBlock as BedrockThinkingTextBlock,
     ResponseStream as BedrockResponseStream, ToolResultBlock as BedrockToolResultBlock,
     ToolResultContentBlock as BedrockToolResultContentBlock,
     ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,

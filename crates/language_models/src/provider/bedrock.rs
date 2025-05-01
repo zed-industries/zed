@@ -1,3 +1,7 @@
+use std::pin::Pin;
+use std::str::FromStr;
+use std::sync::Arc;
+
 use crate::ui::InstructionListItem;
 use anyhow::{Context as _, Result, anyhow};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
@@ -11,10 +15,11 @@ use bedrock::bedrock_client::types::{
     StopReason,
 };
 use bedrock::{
-    BedrockAutoToolChoice, BedrockError, BedrockInnerContent, BedrockMessage, BedrockModelMode,
-    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolConfig,
-    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
-    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent, BedrockMessage,
+    BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock,
+    BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema,
+    BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus,
+    BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -28,9 +33,10 @@ use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -284,6 +290,18 @@ impl BedrockLanguageModelProvider {
             state,
         }
     }
+
+    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(BedrockModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            http_client: self.http_client.clone(),
+            handler: self.handler.clone(),
+            state: self.state.clone(),
+            client: OnceCell::new(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProvider for BedrockLanguageModelProvider {
@@ -300,16 +318,11 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = bedrock::Model::default();
-        Some(Arc::new(BedrockModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            http_client: self.http_client.clone(),
-            handler: self.handler.clone(),
-            state: self.state.clone(),
-            client: OnceCell::new(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(bedrock::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(bedrock::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -341,17 +354,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(BedrockModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    http_client: self.http_client.clone(),
-                    handler: self.handler.clone(),
-                    state: self.state.clone(),
-                    client: OnceCell::new(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -543,7 +546,12 @@ impl LanguageModel for BedrockModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
             // Get region - from credentials or directly from settings
             let region = state
@@ -615,6 +623,24 @@ pub fn into_bedrock(
                             } else {
                                 None
                             }
+                        }
+                        MessageContent::Thinking { text, signature } => {
+                            let thinking = BedrockThinkingTextBlock::builder()
+                                .text(text)
+                                .set_signature(signature)
+                                .build()
+                                .context("failed to build reasoning block")
+                                .log_err()?;
+
+                            Some(BedrockInnerContent::ReasoningContent(
+                                BedrockThinkingBlock::ReasoningText(thinking),
+                            ))
+                        }
+                        MessageContent::RedactedThinking(blob) => {
+                            let redacted =
+                                BedrockThinkingBlock::RedactedContent(BedrockBlob::new(blob));
+
+                            Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
                         MessageContent::ToolUse(tool_use) => BedrockToolUseBlock::builder()
                             .name(tool_use.name.to_string())
@@ -735,9 +761,10 @@ pub fn get_bedrock_tokens(
 
                 for content in message.content {
                     match content {
-                        MessageContent::Text(text) => {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                             string_contents.push_str(&text);
                         }
+                        MessageContent::RedactedThinking(_) => {}
                         MessageContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
                         }
@@ -845,41 +872,176 @@ pub fn map_to_language_model_completion_events(
                                     serde_json::Value::from_str(&tool_use.input_json)
                                         .unwrap_or(Value::Null)
                                 };
+                                            Some(ContentBlockDelta::ToolUse(text_out)) => {
+                                                if let Some(tool_use) = state
+                                                    .tool_uses_by_index
+                                                    .get_mut(&cb_delta.content_block_index)
+                                                {
+                                                    tool_use.input_json.push_str(text_out.input());
+                                                }
+                                            }
 
-                                Ok(LanguageModelCompletionEvent::ToolUse(
-                                    LanguageModelToolUse {
-                                        id: tool_use.id.into(),
-                                        name: tool_use.name.into(),
-                                        input,
-                                    },
-                                ))
-                            }),
-                        ConverseStreamOutput::Metadata(cb_meta) => cb_meta.usage.map(|metadata| {
-                            Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                                input_tokens: metadata.input_tokens as u32,
-                                output_tokens: metadata.output_tokens as u32,
-                                cache_creation_input_tokens: default(),
-                                cache_read_input_tokens: default(),
-                            }))
-                        }),
-                        ConverseStreamOutput::MessageStop(message_stop) => {
-                            let stop_reason = match message_stop.stop_reason {
-                                StopReason::ToolUse => language_model::StopReason::ToolUse,
-                                _ => language_model::StopReason::EndTurn,
-                            };
-                            Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason)))
+                                            Some(ContentBlockDelta::ReasoningContent(thinking)) => {
+                                                match thinking {
+                                                    ReasoningContentBlockDelta::RedactedContent(
+                                                        redacted,
+                                                    ) => {
+                                                        let thinking_event =
+                                                            LanguageModelCompletionEvent::Thinking {
+                                                                text: String::from_utf8(
+                                                                    redacted.into_inner(),
+                                                                )
+                                                                .unwrap_or("REDACTED".to_string()),
+                                                                signature: None,
+                                                            };
+
+                                                        return Some((
+                                                            Some(Ok(thinking_event)),
+                                                            state,
+                                                        ));
+                                                    }
+                                                    ReasoningContentBlockDelta::Signature(
+                                                        signature,
+                                                    ) => {
+                                                        return Some((
+                                                            Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                                                text: "".to_string(),
+                                                                signature: Some(signature)
+                                                            })),
+                                                            state,
+                                                        ));
+                                                    }
+                                                    ReasoningContentBlockDelta::Text(thoughts) => {
+                                                        let thinking_event =
+                                                            LanguageModelCompletionEvent::Thinking {
+                                                                text: thoughts.to_string(),
+                                                                signature: None
+                                                            };
+
+                                                        return Some((
+                                                            Some(Ok(thinking_event)),
+                                                            state,
+                                                        ));
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                                        if let Some(ContentBlockStart::ToolUse(text_out)) =
+                                            cb_start.start
+                                        {
+                                            let tool_use = RawToolUse {
+                                                id: text_out.tool_use_id,
+                                                name: text_out.name,
+                                                input_json: String::new(),
+                                            };
+
+                                            state
+                                                .tool_uses_by_index
+                                                .insert(cb_start.content_block_index, tool_use);
+                                        }
+                                    }
+                                    ConverseStreamOutput::ContentBlockStop(cb_stop) => {
+                                        if let Some(tool_use) = state
+                                            .tool_uses_by_index
+                                            .remove(&cb_stop.content_block_index)
+                                        {
+                                            let tool_use_event = LanguageModelToolUse {
+                                                id: tool_use.id.into(),
+                                                name: tool_use.name.into(),
+                                                is_input_complete: true,
+                                                raw_input: tool_use.input_json.clone(),
+                                                input: if tool_use.input_json.is_empty() {
+                                                    Value::Null
+                                                } else {
+                                                    serde_json::Value::from_str(
+                                                        &tool_use.input_json,
+                                                    )
+                                                    .map_err(|err| anyhow!(err))
+                                                    .unwrap()
+                                                },
+                                            };
+
+                                            return Some((
+                                                Some(Ok(LanguageModelCompletionEvent::ToolUse(
+                                                    tool_use_event,
+                                                ))),
+                                                state,
+                                            ));
+                                        }
+                                    }
+
+                                    ConverseStreamOutput::Metadata(cb_meta) => {
+                                        if let Some(metadata) = cb_meta.usage {
+                                            let completion_event =
+                                                LanguageModelCompletionEvent::UsageUpdate(
+                                                    TokenUsage {
+                                                        input_tokens: metadata.input_tokens as u32,
+                                                        output_tokens: metadata.output_tokens
+                                                            as u32,
+                                                        cache_creation_input_tokens: default(),
+                                                        cache_read_input_tokens: default(),
+                                                    },
+                                                );
+                                            return Some((Some(Ok(completion_event)), state));
+                                        }
+                                    }
+                                    ConverseStreamOutput::MessageStop(message_stop) => {
+                                        let reason = match message_stop.stop_reason {
+                                            StopReason::ContentFiltered => {
+                                                LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::EndTurn,
+                                                )
+                                            }
+                                            StopReason::EndTurn => {
+                                                LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::EndTurn,
+                                                )
+                                            }
+                                            StopReason::GuardrailIntervened => {
+                                                LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::EndTurn,
+                                                )
+                                            }
+                                            StopReason::MaxTokens => {
+                                                LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::EndTurn,
+                                                )
+                                            }
+                                            StopReason::StopSequence => {
+                                                LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::EndTurn,
+                                                )
+                                            }
+                                            StopReason::ToolUse => {
+                                                LanguageModelCompletionEvent::Stop(
+                                                    language_model::StopReason::ToolUse,
+                                                )
+                                            }
+                                            _ => LanguageModelCompletionEvent::Stop(
+                                                language_model::StopReason::EndTurn,
+                                            ),
+                                        };
+                                        return Some((Some(Ok(reason)), state));
+                                    }
+                                    _ => {}
+                                },
+
+                                Err(err) => return Some((Some(Err(anyhow!(err).into())), state)),
+                            }
                         }
-                        _ => None,
-                    };
-
-                    Some((result, state))
-                }
-                Err(err) => Some((Some(Err(anyhow!(err))), state)),
-            },
-            None => None,
-        }
-    })
-    .filter_map(|result| async move { result })
+                        None
+                    })
+                    .await
+                    .log_err()
+                    .flatten()
+            }
+        },
+    )
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -1053,7 +1215,7 @@ impl ConfigurationView {
 
     fn make_input_styles(&self, cx: &Context<Self>) -> Div {
         let bg_color = cx.theme().colors().editor_background;
-        let border_color = cx.theme().colors().border_variant;
+        let border_color = cx.theme().colors().border;
 
         h_flex()
             .w_full()
@@ -1081,8 +1243,13 @@ impl Render for ConfigurationView {
 
         if let Some(auth) = self.should_render_editor(cx) {
             return h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -1094,16 +1261,16 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        .disabled(env_var_set || creds_type)
+                        // .disabled(env_var_set || creds_type)
                         .when(env_var_set, |this| {
                             this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
                         })
                         .when(creds_type, |this| {
-                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
+                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how."))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )
@@ -1114,19 +1281,19 @@ impl Render for ConfigurationView {
             .size_full()
             .on_action(cx.listener(ConfigurationView::save_credentials))
             .child(Label::new("To use Zed's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
-            .child(Label::new("Though to access models on AWS first, you will have to: "))
+            .child(Label::new("But, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()
                     .child(
                         InstructionListItem::new(
-                            "Grant permissions to the strategy you plan to use according to this documentation: ",
+                            "Grant permissions to the strategy you'll use according to the:",
                             Some("Prerequisites"),
                             Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
                         )
                     )
                     .child(
                         InstructionListItem::new(
-                            "Select the models you would like access to: ",
+                            "Select the models you would like access to:",
                             Some("Bedrock Model Catalog"),
                             Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
                         )
@@ -1136,7 +1303,15 @@ impl Render for ConfigurationView {
             .child(self.render_common_fields(cx))
             .child(
                 Label::new(
-                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed.\n Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
+                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
+                )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .my_1(),
+            )
+            .child(
+                Label::new(
+                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -1215,7 +1390,6 @@ impl ConfigurationView {
                 Label::new(
                     "This method uses your AWS access key ID and secret access key directly.",
                 )
-                    .size(LabelSize::Small),
             )
             .child(
                 List::new()
@@ -1265,16 +1439,11 @@ impl ConfigurationView {
 
     fn render_common_fields(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex()
-            .my_2()
-            .gap_1p5()
+            .gap_0p5()
+            .child(Label::new("Region").size(LabelSize::Small))
             .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Label::new("Region").size(LabelSize::Small))
-                    .child(
-                        self.make_input_styles(cx)
-                            .child(self.render_region_editor(cx)),
-                    ),
+                self.make_input_styles(cx)
+                    .child(self.render_region_editor(cx)),
             )
             .into_any_element()
     }

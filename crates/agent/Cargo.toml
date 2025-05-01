@@ -19,7 +19,6 @@ test-support = [
 ]
 
 [dependencies]
-agent_rules.workspace = true
 anyhow.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
@@ -29,9 +28,9 @@ async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
-clock.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+component.workspace = true
 context_server.workspace = true
 convert_case.workspace = true
 db.workspace = true
@@ -51,6 +50,7 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_model_selector.workspace = true
+linkme.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
@@ -60,10 +60,12 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+postage.workspace = true
 project.workspace = true
-prompt_library.workspace = true
+rules_library.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
+ref-cast.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 schemars.workspace = true
@@ -79,15 +81,17 @@ terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
+thiserror.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }

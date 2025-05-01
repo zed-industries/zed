@@ -4,9 +4,9 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use convert_case::{Case, Casing as _};
 use futures::AsyncReadExt;
 use futures::io::BufReader;
+use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{
@@ -106,7 +106,7 @@ impl ExtensionBuilder {
         }
 
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
-            let snake_cased_grammar_name = grammar_name.to_case(Case::Snake);
+            let snake_cased_grammar_name = grammar_name.to_snake_case();
             if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
                 bail!(
                     "grammar name '{grammar_name}' must be written in snake_case: {snake_cased_grammar_name}"

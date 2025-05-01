@@ -191,8 +191,17 @@ pub fn components() -> AllComponents {
     all_components
 }
 
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub enum ComponentStatus {
+//     WorkInProgress,
+//     EngineeringReady,
+//     Live,
+//     Deprecated,
+// }
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentScope {
+    Agent,
     Collaboration,
     DataDisplay,
     Editor,
@@ -212,6 +221,7 @@ pub enum ComponentScope {
 impl Display for ComponentScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ComponentScope::Agent => write!(f, "Agent"),
             ComponentScope::Collaboration => write!(f, "Collaboration"),
             ComponentScope::DataDisplay => write!(f, "Data Display"),
             ComponentScope::Editor => write!(f, "Editor"),
@@ -241,24 +251,30 @@ pub struct ComponentExample {
 impl RenderOnce for ComponentExample {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
+            .pt_2()
             .w_full()
             .flex()
             .flex_col()
             .gap_3()
             .child(
                 div()
-                    .child(self.variant_name.clone())
-                    .text_size(rems(1.25))
-                    .text_color(cx.theme().colors().text),
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .child(self.variant_name.clone())
+                            .text_size(rems(1.0))
+                            .text_color(cx.theme().colors().text),
+                    )
+                    .when_some(self.description, |this, description| {
+                        this.child(
+                            div()
+                                .text_size(rems(0.875))
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(description.clone()),
+                        )
+                    }),
             )
-            .when_some(self.description, |this, description| {
-                this.child(
-                    div()
-                        .text_size(rems(0.9375))
-                        .text_color(cx.theme().colors().text_muted)
-                        .child(description.clone()),
-                )
-            })
             .child(
                 div()
                     .flex()
@@ -268,11 +284,11 @@ impl RenderOnce for ComponentExample {
                     .justify_center()
                     .p_8()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border.opacity(0.5))
                     .bg(pattern_slash(
                         cx.theme().colors().surface_background.opacity(0.5),
-                        24.0,
-                        24.0,
+                        12.0,
+                        12.0,
                     ))
                     .shadow_sm()
                     .child(self.element),

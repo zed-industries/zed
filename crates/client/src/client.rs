@@ -104,6 +104,8 @@ impl Settings for ClientSettings {
         }
         Ok(result)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -129,6 +131,10 @@ impl Settings for ProxySettings {
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.string_setting("http.proxy", &mut current.proxy);
     }
 }
 
@@ -518,6 +524,18 @@ impl settings::Settings for TelemetrySettings {
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting("telemetry.telemetryLevel", &mut current.metrics, |s| {
+            Some(s == "all")
+        });
+        vscode.enum_setting("telemetry.telemetryLevel", &mut current.diagnostics, |s| {
+            Some(matches!(s, "all" | "error" | "crash"))
+        });
+        // we could translate telemetry.telemetryLevel, but just because users didn't want
+        // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
+        // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
+    }
 }
 
 impl Client {
@@ -546,7 +564,7 @@ impl Client {
 
     pub fn production(cx: &mut App) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new_uri(
+        let http = Arc::new(HttpClientWithUrl::new_url(
             cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
             cx.http_client().proxy().cloned(),

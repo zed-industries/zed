@@ -1,9 +1,9 @@
 use crate::{
-    AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds, DefiniteLength, Element,
-    ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window, px,
-    swap_rgba_pa_to_bgra,
+    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
+    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
+    Window, px, swap_rgba_pa_to_bgra,
 };
 use anyhow::{Result, anyhow};
 
@@ -190,6 +190,7 @@ pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     style: ImageStyle,
+    image_cache: Option<AnyImageCache>,
 }
 
 /// Create a new image element.
@@ -198,6 +199,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         interactivity: Interactivity::default(),
         source: source.into(),
         style: ImageStyle::default(),
+        image_cache: None,
     }
 }
 
@@ -209,6 +211,23 @@ impl Img {
             "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
+    }
+
+    /// Sets the image cache for the current node.
+    ///
+    /// If the `image_cache` is not explicitly provided, the function will determine the image cache by:
+    ///
+    /// 1. Checking if any ancestor node of the current node contains an `ImageCacheElement`, If such a node exists, the image cache specified by that ancestor will be used.
+    /// 2. If no ancestor node contains an `ImageCacheElement`, the global image cache will be used as a fallback.
+    ///
+    /// This mechanism provides a flexible way to manage image caching, allowing precise control when needed,
+    /// while ensuring a default behavior when no cache is explicitly specified.
+    #[inline]
+    pub fn image_cache<I: ImageCache>(self, image_cache: &Entity<I>) -> Self {
+        Self {
+            image_cache: Some(image_cache.clone().into()),
+            ..self
+        }
     }
 }
 
@@ -276,7 +295,13 @@ impl Element for Img {
                 |mut style, window, cx| {
                     let mut replacement_id = None;
 
-                    match self.source.use_data(window, cx) {
+                    match self.source.use_data(
+                        self.image_cache
+                            .clone()
+                            .or_else(|| window.image_cache_stack.last().cloned()),
+                        window,
+                        cx,
+                    ) {
                         Some(Ok(data)) => {
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
@@ -421,7 +446,13 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                if let Some(Ok(data)) = source.use_data(window, cx) {
+                if let Some(Ok(data)) = source.use_data(
+                    self.image_cache
+                        .clone()
+                        .or_else(|| window.image_cache_stack.last().cloned()),
+                    window,
+                    cx,
+                ) {
                     let new_bounds = self
                         .style
                         .object_fit
@@ -474,14 +505,52 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
+        cache: Option<AnyImageCache>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
+            ImageSource::Resource(resource) => {
+                if let Some(cache) = cache {
+                    cache.load(resource, window, cx)
+                } else {
+                    window.use_asset::<ImgResourceLoader>(resource, cx)
+                }
+            }
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    pub(crate) fn get_data(
+        &self,
+        cache: Option<AnyImageCache>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        match self {
+            ImageSource::Resource(resource) => {
+                if let Some(cache) = cache {
+                    cache.load(resource, window, cx)
+                } else {
+                    window.get_asset::<ImgResourceLoader>(resource, cx)
+                }
+            }
+            ImageSource::Custom(loading_fn) => loading_fn(window, cx),
+            ImageSource::Render(data) => Some(Ok(data.to_owned())),
+            ImageSource::Image(data) => window.get_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    /// Remove this image source from the asset system
+    pub fn remove_asset(&self, cx: &mut App) {
+        match self {
+            ImageSource::Resource(resource) => {
+                cx.remove_asset::<ImgResourceLoader>(resource);
+            }
+            ImageSource::Custom(_) | ImageSource::Render(_) => {}
+            ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result, anyhow};
 use dap::{
-    Capabilities, ContinueArguments, InitializeRequestArguments,
+    Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
     StepInArguments, StepOutArguments, SteppingGranularity, ValueFormat, Variable,
     VariablesArgumentsFilter,
@@ -14,7 +14,7 @@ use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
 
-pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
+pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
 
@@ -30,7 +30,7 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-pub(crate) trait DapCommand: LocalDapCommand {
+pub trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send;
     type ProtoResponse: 'static + Send;
     const CACHEABLE: bool = false;
@@ -1663,6 +1663,44 @@ impl LocalDapCommand for SetBreakpoints {
         message: <Self::DapRequest as dap::requests::Request>::Response,
     ) -> Result<Self::Response> {
         Ok(message.breakpoints)
+    }
+}
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) enum SetExceptionBreakpoints {
+    Plain {
+        filters: Vec<String>,
+    },
+    WithOptions {
+        filters: Vec<ExceptionFilterOptions>,
+    },
+}
+
+impl LocalDapCommand for SetExceptionBreakpoints {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetExceptionBreakpoints;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        match self {
+            SetExceptionBreakpoints::Plain { filters } => dap::SetExceptionBreakpointsArguments {
+                filters: filters.clone(),
+                exception_options: None,
+                filter_options: None,
+            },
+            SetExceptionBreakpoints::WithOptions { filters } => {
+                dap::SetExceptionBreakpointsArguments {
+                    filters: vec![],
+                    filter_options: Some(filters.clone()),
+                    exception_options: None,
+                }
+            }
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints.unwrap_or_default())
     }
 }
 
