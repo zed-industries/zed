@@ -109,7 +109,6 @@ impl ContextServer {
 
     async fn initialize(&self, client: Client) -> Result<()> {
         log::info!("starting context server {}", self.id);
-        dbg!("Settign up");
         let protocol = crate::protocol::ModelContextProtocol::new(client);
         let client_info = types::Implementation {
             name: "Zed".to_string(),
@@ -393,14 +392,14 @@ impl ContextServerManager {
 
 #[cfg(test)]
 mod tests {
-    use std::{pin::Pin, time::Duration};
+    use std::pin::Pin;
 
     use crate::types::{
         Implementation, InitializeResponse, ProtocolVersion, RequestType, ServerCapabilities,
     };
 
     use super::*;
-    use futures::Stream;
+    use futures::{Stream, StreamExt as _, lock::Mutex};
     use gpui::{AppContext as _, TestAppContext};
     use project::FakeFs;
     use serde_json::json;
@@ -411,30 +410,32 @@ mod tests {
         init_test_settings(cx);
         let project = create_test_project(cx, json!({"code.rs": ""})).await;
 
-        let transport = Arc::new(FakeTransport::new(|request_type, _| match request_type {
-            Some(RequestType::Initialize) => Some(
-                serde_json::to_string(&InitializeResponse {
-                    protocol_version: ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
-                    server_info: Implementation {
-                        name: "mcp".to_string(),
-                        version: "1.0.0".to_string(),
-                    },
-                    capabilities: ServerCapabilities::default(),
-                    meta: None,
-                })
-                .unwrap(),
-            ),
-            _ => None,
-        }));
-
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let manager = cx.new(|cx| ContextServerManager::new(registry.clone(), project, cx));
 
         let server_1_id: Arc<str> = "mcp-1".into();
         let server_2_id: Arc<str> = "mcp-2".into();
 
-        let server_1 = ContextServer::test(server_1_id.clone(), transport.clone());
-        let server_2 = ContextServer::test(server_2_id.clone(), transport.clone());
+        let transport_1 = Arc::new(FakeTransport::new(
+            |_, request_type, _| match request_type {
+                Some(RequestType::Initialize) => {
+                    Some(create_initialize_response("mcp-1".to_string()))
+                }
+                _ => None,
+            },
+        ));
+
+        let transport_2 = Arc::new(FakeTransport::new(
+            |_, request_type, _| match request_type {
+                Some(RequestType::Initialize) => {
+                    Some(create_initialize_response("mcp-2".to_string()))
+                }
+                _ => None,
+            },
+        ));
+
+        let server_1 = ContextServer::test(server_1_id.clone(), transport_1.clone());
+        let server_2 = ContextServer::test(server_2_id.clone(), transport_2.clone());
 
         manager
             .update(cx, |manager, cx| manager.start_server(server_1, cx))
@@ -484,22 +485,45 @@ mod tests {
         });
     }
 
+    fn create_initialize_response(server_name: String) -> serde_json::Value {
+        serde_json::to_value(&InitializeResponse {
+            protocol_version: ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
+            server_info: Implementation {
+                name: server_name,
+                version: "1.0.0".to_string(),
+            },
+            capabilities: ServerCapabilities::default(),
+            meta: None,
+        })
+        .unwrap()
+    }
+
     struct FakeTransport {
-        messages: Arc<RwLock<Vec<String>>>,
-        on_request:
-            Arc<dyn Fn(Option<RequestType>, serde_json::Value) -> Option<String> + Send + Sync>,
+        on_request: Arc<
+            dyn Fn(u64, Option<RequestType>, serde_json::Value) -> Option<serde_json::Value>
+                + Send
+                + Sync,
+        >,
+        tx: futures::channel::mpsc::UnboundedSender<String>,
+        rx: Arc<Mutex<futures::channel::mpsc::UnboundedReceiver<String>>>,
     }
 
     impl FakeTransport {
         fn new(
-            on_request: impl Fn(Option<RequestType>, serde_json::Value) -> Option<String>
+            on_request: impl Fn(
+                u64,
+                Option<RequestType>,
+                serde_json::Value,
+            ) -> Option<serde_json::Value>
             + 'static
             + Send
             + Sync,
         ) -> Self {
+            let (tx, rx) = futures::channel::mpsc::unbounded();
             Self {
-                messages: Arc::new(RwLock::new(Vec::new())),
                 on_request: Arc::new(on_request),
+                tx,
+                rx: Arc::new(Mutex::new(rx)),
             }
         }
     }
@@ -507,19 +531,23 @@ mod tests {
     #[async_trait::async_trait]
     impl Transport for FakeTransport {
         async fn send(&self, message: String) -> Result<()> {
-            println!("Got {}", &message);
             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&message) {
+                let id = msg.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
+
                 if let Some(method) = msg.get("method") {
                     let request_type = method
                         .as_str()
                         .and_then(|method| types::RequestType::try_from(method).ok());
-                    println!(
-                        "Request type: {:?}",
-                        request_type.as_ref().map(|s| s.as_str())
-                    );
-                    if let Some(response) = (self.on_request.as_ref())(request_type, msg) {
-                        println!("Response with {}", &response);
-                        self.messages.write().push(response);
+                    if let Some(payload) = (self.on_request.as_ref())(id, request_type, msg) {
+                        let response = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "result": payload
+                        });
+
+                        self.tx
+                            .unbounded_send(response.to_string())
+                            .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
                     }
                 }
             }
@@ -527,18 +555,15 @@ mod tests {
         }
 
         fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-            let messages = self.messages.clone();
-            println!("Messages: {:?}", &messages);
-            Box::pin(futures::stream::unfold(messages, |messages| async move {
-                let message = {
-                    let mut messages = messages.write();
-                    if messages.is_empty() {
-                        return None;
-                    }
-                    messages.remove(0)
-                };
-                println!("Receiving: {}", &message);
-                Some((message, messages))
+            let rx = self.rx.clone();
+            Box::pin(futures::stream::unfold(rx, |rx| async move {
+                let mut rx_guard = rx.lock().await;
+                if let Some(message) = rx_guard.next().await {
+                    drop(rx_guard);
+                    Some((message, rx))
+                } else {
+                    None
+                }
             }))
         }
 
