@@ -4,7 +4,7 @@ use crate::{
     edit_file_tool::EditFileToolCard,
     schema::json_schema_for,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task};
@@ -156,23 +156,17 @@ impl Tool for StreamingEditFileTool {
         });
 
         let card_clone = card.clone();
-        // todo!("read model from settings...")
-        let models = LanguageModelRegistry::read_global(cx);
-        let model = models
-            .available_models(cx)
-            .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
-            .unwrap();
-        let provider = models.provider(&model.provider_id()).unwrap();
-        let authenticated = provider.authenticate(cx);
         let messages = messages.to_vec();
-
-        // todo!("reuse templates")
-        let edit_agent = EditAgent::new(model, action_log, Templates::new());
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            authenticated.await?;
             if !exists.await? {
                 return Err(anyhow!("{} not found", input.path.display()));
             }
+
+            let model = cx
+                .update(|cx| LanguageModelRegistry::read_global(cx).default_model())?
+                .context("default model not set")?
+                .model;
+            let edit_agent = EditAgent::new(model, action_log, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {
