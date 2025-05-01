@@ -70,9 +70,9 @@ You may find yourself in a situation where the default profiles don't quite fit 
 
 You can create new profile via the `Configure Profiles...` option in the profile selector (💬). From here, you can choose to `Add New Profile` or fork an existing one with your choice of tools and a custom profile name.
 
-You can also override build-in profiles. With a built-in profile selected, in the profile selector (💬), navigate to `Custom Current Profile` > `Tools...`, and select the tools you'd like. Zed will store this profile in your settings using the same name as the default you overrode.
+You can also override build-in profiles. With a built-in profile selected, in the profile selector (💬), navigate to `Custom Current Profile` > `Tools...`, and select the tools you'd like. Zed will store this profile in your settings using the same profile name as the default you overrode.
 
-All custom profiles can be edited via the UI or manually under the `profiles` key in your `settings.json` file.
+All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
 
 ### Model Support
 
@@ -84,8 +84,19 @@ All custom profiles can be edited via the UI or manually under the `profiles` ke
 
 T = Text
 P = Prompt
-                 T    P
-Raw text buffer| ✅ | X |
+                                  T     P
+Rotate through recent threads   | ✅ | ✅ | // tabs vs nav menu
+Historical thread history       | ✅ | ✅ |
+Edit past user messages         | ✅ | ✅ |
+Context-including commands      | ✅ | ✅ | // slash commands vs @-mentions
+Tools and profiles              |    | ✅ |
+Inspect code base               |    | ✅ |
+Write to code base              |    | ✅ |
+Edit past LLM response messages | ✅ |  * | // Using edit message in prompt thread generates new system responses
+Change roles                    | ✅ |    |
+MCP support                     |  ? | ✅ |
+Review changes                  |    | ✅ |
+Streaming response              | ✅ | ✅ |
 
 ## Errors and Debugging
 
