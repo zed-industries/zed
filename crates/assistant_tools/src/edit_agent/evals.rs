@@ -775,15 +775,13 @@ impl EditAgentTest {
         buffer.update(cx, |buffer, cx| {
             buffer.set_text(eval.input_content.clone(), cx)
         });
-        let edit_output = self
-            .agent
-            .edit(
-                buffer.clone(),
-                eval.edit_description,
-                eval.conversation,
-                &mut cx.to_async(),
-            )
-            .await?;
+        let (edit_output, _events) = self.agent.edit(
+            buffer.clone(),
+            eval.edit_description,
+            eval.conversation,
+            &mut cx.to_async(),
+        );
+        let edit_output = edit_output.await?;
         let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
         let actual_diff = language::unified_diff(&eval.input_content, &buffer_text);
         let assertion = match eval.assertion {

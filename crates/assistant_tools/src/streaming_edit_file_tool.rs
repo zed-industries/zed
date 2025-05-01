@@ -1,8 +1,12 @@
 use crate::{
-    Templates, edit_agent::EditAgent, edit_file_tool::EditFileToolCard, schema::json_schema_for,
+    Templates,
+    edit_agent::{EditAgent, EditAgentOutputEvent},
+    edit_file_tool::EditFileToolCard,
+    schema::json_schema_for,
 };
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult};
+use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolSchemaFormat,
@@ -176,23 +180,54 @@ impl Tool for StreamingEditFileTool {
                 .await?;
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-            edit_agent
-                .edit(
-                    buffer.clone(),
-                    input.display_description.clone(),
-                    messages,
-                    cx,
-                )
-                .await?;
-            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let old_text = cx
+                .background_spawn({
+                    let old_snapshot = old_snapshot.clone();
+                    async move { old_snapshot.text() }
+                })
+                .await;
+
+            let (output, mut events) = edit_agent.edit(
+                buffer.clone(),
+                input.display_description.clone(),
+                messages,
+                cx,
+            );
+            while let Some(event) = events.next().await {
+                match event {
+                    EditAgentOutputEvent::Edited => {
+                        if let Some(card) = card_clone.as_ref() {
+                            let new_snapshot =
+                                buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                            let new_text = cx
+                                .background_spawn({
+                                    let new_snapshot = new_snapshot.clone();
+                                    async move { new_snapshot.text() }
+                                })
+                                .await;
+                            card.update(cx, |card, cx| {
+                                card.set_diff(
+                                    project_path.path.clone(),
+                                    old_text.clone(),
+                                    new_text,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                        }
+                    }
+                    EditAgentOutputEvent::OldTextNotFound(shared_string) => {
+                        // todo!()
+                    }
+                }
+            }
+            output.await?;
+
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                 .await?;
 
-            let old_text = cx.background_spawn({
-                let old_snapshot = old_snapshot.clone();
-                async move { old_snapshot.text() }
-            });
+            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let new_text = cx.background_spawn({
                 let new_snapshot = new_snapshot.clone();
                 async move { new_snapshot.text() }
@@ -200,7 +235,7 @@ impl Tool for StreamingEditFileTool {
             let diff = cx.background_spawn(async move {
                 language::unified_diff(&old_snapshot.text(), &new_snapshot.text())
             });
-            let (old_text, new_text, diff) = futures::join!(old_text, new_text, diff);
+            let (new_text, diff) = futures::join!(new_text, diff);
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {

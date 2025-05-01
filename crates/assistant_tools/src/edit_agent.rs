@@ -12,7 +12,7 @@ use futures::{
     channel::mpsc::{self, UnboundedReceiver},
     stream::BoxStream,
 };
-use gpui::{AppContext, AsyncApp, Entity, Task};
+use gpui::{AppContext, AsyncApp, Entity, SharedString, Task};
 use language::{Bias, Buffer, BufferSnapshot, LineIndent, Point};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
@@ -32,12 +32,19 @@ impl Template for EditAgentTemplate {
     const TEMPLATE_NAME: &'static str = "edit_agent.hbs";
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditAgentOutputEvent {
+    Edited,
+    OldTextNotFound(SharedString),
+}
+
 #[derive(Clone, Debug)]
 pub struct EditAgentOutput {
     pub _raw_edits: String,
     pub _parser_metrics: EditParserMetrics,
 }
 
+#[derive(Clone)]
 pub struct EditAgent {
     model: Arc<dyn LanguageModel>,
     action_log: Entity<ActionLog>,
@@ -57,25 +64,55 @@ impl EditAgent {
         }
     }
 
-    pub async fn edit(
+    pub fn edit(
         &self,
         buffer: Entity<Buffer>,
         edit_description: String,
         previous_messages: Vec<LanguageModelRequestMessage>,
         cx: &mut AsyncApp,
-    ) -> Result<EditAgentOutput> {
-        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-        let edit_chunks = self
-            .request_edits(snapshot, edit_description, previous_messages, cx)
-            .await?;
-        let output = self.apply_edits(buffer, edit_chunks, cx).await?;
-        Ok(output)
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let this = self.clone();
+        let (events_tx, events_rx) = mpsc::unbounded();
+        let output = cx.spawn(async move |cx| {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+            let edit_chunks = this
+                .request_edits(snapshot, edit_description, previous_messages, cx)
+                .await?;
+            let (output, mut inner_events) = this.apply_edits(buffer, edit_chunks, cx);
+            while let Some(event) = inner_events.next().await {
+                events_tx.unbounded_send(event).ok();
+            }
+            output.await
+        });
+        (output, events_rx)
     }
 
-    async fn apply_edits(
+    fn apply_edits(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
+    ) {
+        let (output_events_tx, output_events_rx) = mpsc::unbounded();
+        let this = self.clone();
+        let task = cx.spawn(async move |mut cx| {
+            this.apply_edits_internal(buffer, edit_chunks, output_events_tx, &mut cx)
+                .await
+        });
+        (task, output_events_rx)
+    }
+
+    async fn apply_edits_internal(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        output_events: mpsc::UnboundedSender<EditAgentOutputEvent>,
         cx: &mut AsyncApp,
     ) -> Result<EditAgentOutput> {
         // Ensure the buffer is tracked by the action log.
@@ -87,64 +124,80 @@ impl EditAgent {
             let EditParserEvent::OldText(old_text_query) = edit_event? else {
                 continue;
             };
+            let old_text_query = SharedString::from(old_text_query);
 
             let (edits_tx, edits_rx) = mpsc::unbounded();
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let old_range = cx
+                .background_spawn({
+                    let snapshot = snapshot.clone();
+                    let old_text_query = old_text_query.clone();
+                    async move { Self::resolve_location(&snapshot, &old_text_query) }
+                })
+                .await;
+            let Some(old_range) = old_range else {
+                // We couldn't find the old text in the buffer. Report the error.
+                output_events
+                    .unbounded_send(EditAgentOutputEvent::OldTextNotFound(old_text_query))
+                    .ok();
+                continue;
+            };
+
             let compute_edits = cx.background_spawn(async move {
-                if let Some(range) = Self::resolve_location(&snapshot, &old_text_query) {
-                    let buffer_start_indent =
-                        snapshot.line_indent_for_row(snapshot.offset_to_point(range.start).row);
-                    let old_text_start_indent = old_text_query
-                        .lines()
-                        .next()
-                        .map_or(buffer_start_indent, |line| {
-                            LineIndent::from_iter(line.chars())
-                        });
-                    let indent_delta = if buffer_start_indent.tabs > 0 {
-                        IndentDelta::Tabs(
-                            buffer_start_indent.tabs as isize - old_text_start_indent.tabs as isize,
-                        )
+                let buffer_start_indent =
+                    snapshot.line_indent_for_row(snapshot.offset_to_point(old_range.start).row);
+                let old_text_start_indent = old_text_query
+                    .lines()
+                    .next()
+                    .map_or(buffer_start_indent, |line| {
+                        LineIndent::from_iter(line.chars())
+                    });
+                let indent_delta = if buffer_start_indent.tabs > 0 {
+                    IndentDelta::Tabs(
+                        buffer_start_indent.tabs as isize - old_text_start_indent.tabs as isize,
+                    )
+                } else {
+                    IndentDelta::Spaces(
+                        buffer_start_indent.spaces as isize - old_text_start_indent.spaces as isize,
+                    )
+                };
+
+                let old_text = snapshot
+                    .text_for_range(old_range.clone())
+                    .collect::<String>();
+                let mut diff = StreamingDiff::new(old_text);
+                let mut edit_start = old_range.start;
+                let mut new_text_chunks =
+                    Self::reindent_new_text_chunks(indent_delta, &mut edit_events);
+                let mut done = false;
+                while !done {
+                    let char_operations = if let Some(new_text_chunk) = new_text_chunks.next().await
+                    {
+                        diff.push_new(&new_text_chunk?)
                     } else {
-                        IndentDelta::Spaces(
-                            buffer_start_indent.spaces as isize
-                                - old_text_start_indent.spaces as isize,
-                        )
+                        done = true;
+                        mem::take(&mut diff).finish()
                     };
 
-                    let old_text = snapshot.text_for_range(range.clone()).collect::<String>();
-                    let mut diff = StreamingDiff::new(old_text);
-                    let mut edit_start = range.start;
-                    let mut new_text_chunks =
-                        Self::reindent_new_text_chunks(indent_delta, &mut edit_events);
-                    let mut done = false;
-                    while !done {
-                        let char_operations =
-                            if let Some(new_text_chunk) = new_text_chunks.next().await {
-                                diff.push_new(&new_text_chunk?)
-                            } else {
-                                done = true;
-                                mem::take(&mut diff).finish()
-                            };
-
-                        for op in char_operations {
-                            match op {
-                                CharOperation::Insert { text } => {
-                                    let edit_start = snapshot.anchor_after(edit_start);
-                                    edits_tx.unbounded_send((edit_start..edit_start, text))?;
-                                }
-                                CharOperation::Delete { bytes } => {
-                                    let edit_end = edit_start + bytes;
-                                    let edit_range = snapshot.anchor_after(edit_start)
-                                        ..snapshot.anchor_before(edit_end);
-                                    edit_start = edit_end;
-                                    edits_tx.unbounded_send((edit_range, String::new()))?;
-                                }
-                                CharOperation::Keep { bytes } => edit_start += bytes,
+                    for op in char_operations {
+                        match op {
+                            CharOperation::Insert { text } => {
+                                let edit_start = snapshot.anchor_after(edit_start);
+                                edits_tx.unbounded_send((edit_start..edit_start, text))?;
                             }
+                            CharOperation::Delete { bytes } => {
+                                let edit_end = edit_start + bytes;
+                                let edit_range = snapshot.anchor_after(edit_start)
+                                    ..snapshot.anchor_before(edit_end);
+                                edit_start = edit_end;
+                                edits_tx.unbounded_send((edit_range, String::new()))?;
+                            }
+                            CharOperation::Keep { bytes } => edit_start += bytes,
                         }
                     }
                 }
 
+                drop(new_text_chunks);
                 anyhow::Ok(edit_events)
             });
 
@@ -159,6 +212,9 @@ impl EditAgent {
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
                 })?;
+                output_events
+                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .ok();
             }
 
             edit_events = compute_edits.await?;
@@ -555,10 +611,8 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
-            .await
-            .unwrap();
+        let (apply, _events) = agent.apply_edits(buffer.clone(), raw_edits, &mut cx.to_async());
+        apply.await.unwrap();
         pretty_assertions::assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             indoc! {"
@@ -594,10 +648,8 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
-            .await
-            .unwrap();
+        let (apply, _events) = agent.apply_edits(buffer.clone(), raw_edits, &mut cx.to_async());
+        apply.await.unwrap();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abc\nDeF\nghi"
@@ -627,14 +679,127 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
-            .await
-            .unwrap();
+        let (apply, _events) = agent.apply_edits(buffer.clone(), raw_edits, &mut cx.to_async());
+        apply.await.unwrap();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "ABC\ndef\nghi"
         );
+    }
+
+    #[gpui::test]
+    async fn test_events(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        let (apply, mut events) = agent.apply_edits(
+            buffer.clone(),
+            chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        chunks_tx.unbounded_send("<old_text>a").unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("bc</old_text>").unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abc\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("<new_text>abX").unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXc\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("cY".into()).unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("</new_text>").unwrap();
+        chunks_tx.unbounded_send("<old_text>hall").unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("ucinated old</old_text>").unwrap();
+        chunks_tx.unbounded_send("<new_text>").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::OldTextNotFound(
+                "hallucinated old".into()
+            )]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("hallucinated new</new_").unwrap();
+        chunks_tx.unbounded_send("text>").unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("<old_text>gh").unwrap();
+        chunks_tx.unbounded_send("i</old_text>").unwrap();
+        chunks_tx.unbounded_send("<new_text>").unwrap();
+        cx.run_until_parked();
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nghi"
+        );
+
+        chunks_tx.unbounded_send("GHI</new_text>").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nGHI"
+        );
+
+        drop(chunks_tx);
+        apply.await.unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "abXcY\ndef\nGHI"
+        );
+        assert_eq!(drain_events(&mut events), vec![]);
+
+        fn drain_events(
+            stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
+        ) -> Vec<EditAgentOutputEvent> {
+            let mut events = Vec::new();
+            while let Ok(Some(event)) = stream.try_next() {
+                events.push(event);
+            }
+            events
+        }
     }
 
     #[gpui::test]
