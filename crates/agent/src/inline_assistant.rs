@@ -8,9 +8,10 @@ use anyhow::{Context as _, Result};
 use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::display_map::EditorMargins;
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
@@ -453,11 +454,11 @@ impl InlineAssistant {
                 )
             });
 
-            let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+            let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
             let prompt_editor = cx.new(|cx| {
                 PromptEditor::new_buffer(
                     assist_id,
-                    gutter_dimensions.clone(),
+                    editor_margins,
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
@@ -570,11 +571,11 @@ impl InlineAssistant {
             )
         });
 
-        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+        let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new_buffer(
                 assist_id,
-                gutter_dimensions.clone(),
+                editor_margins,
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen.clone(),
@@ -1424,7 +1425,7 @@ impl InlineAssistant {
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.window.line_height())
-                            .pl(cx.gutter_dimensions.full_width())
+                            .pl(cx.margins.gutter.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
                     }),
@@ -1586,9 +1587,9 @@ fn build_assist_editor_renderer(editor: &Entity<PromptEditor<BufferCodegen>>) ->
     let editor = editor.clone();
 
     Arc::new(move |cx: &mut BlockContext| {
-        let gutter_dimensions = editor.read(cx).gutter_dimensions();
+        let editor_margins = editor.read(cx).editor_margins();
 
-        *gutter_dimensions.lock() = *cx.gutter_dimensions;
+        *editor_margins.lock() = *cx.margins;
         editor.clone().into_any_element()
     })
 }

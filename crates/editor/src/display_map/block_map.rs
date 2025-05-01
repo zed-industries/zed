@@ -223,6 +223,12 @@ pub enum BlockStyle {
     Sticky,
 }
 
+#[derive(Debug, Default, Copy, Clone)]
+pub struct EditorMargins {
+    pub gutter: GutterDimensions,
+    pub right: Pixels,
+}
+
 #[derive(gpui::AppContext, gpui::VisualContext)]
 pub struct BlockContext<'a, 'b> {
     #[window]
@@ -231,7 +237,7 @@ pub struct BlockContext<'a, 'b> {
     pub app: &'b mut App,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
-    pub gutter_dimensions: &'b GutterDimensions,
+    pub margins: &'b EditorMargins,
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: BlockId,

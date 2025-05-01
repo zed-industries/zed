@@ -940,7 +940,7 @@ impl ContextEditor {
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext| {
                         let max_width = cx.max_width;
-                        let gutter_width = cx.gutter_dimensions.full_width();
+                        let gutter_width = cx.margins.gutter.full_width();
                         let block_id = cx.block_id;
                         let selected = cx.selected;
                         let window = &mut cx.window;
@@ -1486,7 +1486,7 @@ impl ContextEditor {
 
                         h_flex()
                             .id(("message_header", message_id.as_u64()))
-                            .pl(cx.gutter_dimensions.full_width())
+                            .pl(cx.margins.gutter.full_width())
                             .h_11()
                             .w_full()
                             .relative()
@@ -2143,12 +2143,12 @@ impl ContextEditor {
                             let image_size = size_for_image(
                                 &image,
                                 size(
-                                    cx.max_width - cx.gutter_dimensions.full_width(),
+                                    cx.max_width - cx.margins.gutter.full_width(),
                                     MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
                                 ),
                             );
                             h_flex()
-                                .pl(cx.gutter_dimensions.full_width())
+                                .pl(cx.margins.gutter.full_width())
                                 .child(
                                     img(image.clone())
                                         .object_fit(gpui::ObjectFit::ScaleDown)

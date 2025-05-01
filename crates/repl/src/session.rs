@@ -126,7 +126,8 @@ impl EditorBlock {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx.window, cx.app);
 
-            let gutter = cx.gutter_dimensions;
+            let editor_margins = cx.margins;
+            let gutter = editor_margins.gutter;
 
             let block_id = cx.block_id;
             let on_close = on_close.clone();
@@ -184,7 +185,8 @@ impl EditorBlock {
                         .flex_1()
                         .size_full()
                         .py(text_line_height / 2.)
-                        .mr(gutter.width)
+                        .mr(editor_margins.right)
+                        .pr_2()
                         .child(execution_view),
                 )
                 .into_any_element()

@@ -9362,7 +9362,7 @@ impl Editor {
             placement: BlockPlacement::Above(anchor),
             height: Some(height),
             render: Arc::new(move |cx| {
-                *cloned_prompt.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
+                *cloned_prompt.read(cx).editor_margins.lock() = *cx.margins;
                 cloned_prompt.clone().into_any_element()
             }),
             priority: 0,
@@ -21037,7 +21037,7 @@ struct BreakpointPromptEditor {
     breakpoint: Breakpoint,
     edit_action: BreakpointPromptEditAction,
     block_ids: HashSet<CustomBlockId>,
-    gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+    editor_margins: Arc<Mutex<EditorMargins>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -21093,7 +21093,7 @@ impl BreakpointPromptEditor {
             breakpoint_anchor,
             breakpoint,
             edit_action,
-            gutter_dimensions: Arc::new(Mutex::new(GutterDimensions::default())),
+            editor_margins: Arc::new(Mutex::new(EditorMargins::default())),
             block_ids: Default::default(),
             _subscriptions: vec![],
         }
@@ -21178,7 +21178,8 @@ impl BreakpointPromptEditor {
 
 impl Render for BreakpointPromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let gutter_dimensions = *self.gutter_dimensions.lock();
+        let editor_margins = *self.editor_margins.lock();
+        let gutter_dimensions = editor_margins.gutter;
         h_flex()
             .key_context("Editor")
             .bg(cx.theme().colors().editor_background)

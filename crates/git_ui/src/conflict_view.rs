@@ -386,7 +386,7 @@ fn render_conflict_buttons(
     h_flex()
         .h(cx.line_height)
         .items_end()
-        .ml(cx.gutter_dimensions.width)
+        .ml(cx.margins.gutter.width)
         .id(cx.block_id)
         .gap_0p5()
         .child(

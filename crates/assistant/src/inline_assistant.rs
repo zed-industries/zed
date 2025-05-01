@@ -9,12 +9,11 @@ use client::{ErrorExt, telemetry::Telemetry};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
-    ToOffset as _, ToPoint,
+    EditorStyle, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
-        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
-        ToDisplayPoint,
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
+        RenderBlock, ToDisplayPoint,
     },
 };
 use feature_flags::{
@@ -348,11 +347,11 @@ impl InlineAssistant {
                 )
             });
 
-            let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+            let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
             let prompt_editor = cx.new(|cx| {
                 PromptEditor::new(
                     assist_id,
-                    gutter_dimensions.clone(),
+                    editor_margins,
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
@@ -457,11 +456,11 @@ impl InlineAssistant {
             )
         });
 
-        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+        let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new(
                 assist_id,
-                gutter_dimensions.clone(),
+                editor_margins,
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen.clone(),
@@ -1309,7 +1308,7 @@ impl InlineAssistant {
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.window.line_height())
-                            .pl(cx.gutter_dimensions.full_width())
+                            .pl(cx.margins.gutter.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
                     }),
@@ -1420,7 +1419,7 @@ impl InlineAssistGroup {
 fn build_assist_editor_renderer(editor: &Entity<PromptEditor>) -> RenderBlock {
     let editor = editor.clone();
     Arc::new(move |cx: &mut BlockContext| {
-        *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
+        *editor.read(cx).editor_margins.lock() = *cx.margins;
         editor.clone().into_any_element()
     })
 }
@@ -1460,7 +1459,7 @@ struct PromptEditor {
     editor: Entity<Editor>,
     language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
-    gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+    editor_margins: Arc<Mutex<EditorMargins>>,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
@@ -1484,7 +1483,8 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let gutter_dimensions = *self.gutter_dimensions.lock();
+        let editor_margins = *self.editor_margins.lock();
+        let gutter_dimensions = editor_margins.gutter;
         let codegen = self.codegen.read(cx);
 
         let mut buttons = Vec::new();
@@ -1609,6 +1609,7 @@ impl Render for PromptEditor {
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
+            .pr(editor_margins.right)
             .py(window.line_height() / 2.5)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
@@ -1691,7 +1692,7 @@ impl Render for PromptEditor {
             .child(
                 h_flex()
                     .gap_2()
-                    .pr_6()
+                    .pr_2p5()
                     .children(self.render_token_count(cx))
                     .children(buttons),
             )
@@ -1709,7 +1710,7 @@ impl PromptEditor {
 
     fn new(
         id: InlineAssistId,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        editor_margins: Arc<Mutex<EditorMargins>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<Codegen>,
@@ -1772,7 +1773,7 @@ impl PromptEditor {
                 )
             }),
             edited_since_done: false,
-            gutter_dimensions,
+            editor_margins,
             prompt_history,
             prompt_history_ix: None,
             pending_prompt: String::new(),

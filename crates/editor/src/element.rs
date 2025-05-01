@@ -11,7 +11,8 @@ use crate::{
     SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
-        Block, BlockContext, BlockStyle, DisplaySnapshot, FoldId, HighlightedChunk, ToDisplayPoint,
+        Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightedChunk,
+        ToDisplayPoint,
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MinimapThumbBorder,
@@ -2912,6 +2913,7 @@ impl EditorElement {
         rows: &Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
         gutter_dimensions: &GutterDimensions,
+        right_margin: Pixels,
         line_height: Pixels,
         em_width: Pixels,
         text_hitbox: &Hitbox,
@@ -2971,13 +2973,18 @@ impl EditorElement {
                     })
                     .is_ok();
 
+                let margins = EditorMargins {
+                    gutter: *gutter_dimensions,
+                    right: right_margin,
+                };
+
                 div()
                     .size_full()
                     .child(custom.render(&mut BlockContext {
                         window,
                         app: cx,
                         anchor_x,
-                        gutter_dimensions,
+                        margins: &margins,
                         line_height,
                         em_width,
                         block_id,
@@ -3303,6 +3310,7 @@ impl EditorElement {
         editor_width: Pixels,
         scroll_width: &mut Pixels,
         gutter_dimensions: &GutterDimensions,
+        right_margin: Pixels,
         em_width: Pixels,
         text_x: Pixels,
         line_height: Pixels,
@@ -3347,6 +3355,7 @@ impl EditorElement {
                 &rows,
                 line_layouts,
                 gutter_dimensions,
+                right_margin,
                 line_height,
                 em_width,
                 text_hitbox,
@@ -3404,6 +3413,7 @@ impl EditorElement {
                 &rows,
                 line_layouts,
                 gutter_dimensions,
+                right_margin,
                 line_height,
                 em_width,
                 text_hitbox,
@@ -3458,6 +3468,7 @@ impl EditorElement {
                             &rows,
                             line_layouts,
                             gutter_dimensions,
+                            right_margin,
                             line_height,
                             em_width,
                             text_hitbox,
@@ -7608,6 +7619,7 @@ impl Element for EditorElement {
                             editor_width,
                             &mut scroll_width,
                             &gutter_dimensions,
+                            right_margin,
                             em_width,
                             gutter_dimensions.full_width(),
                             line_height,
