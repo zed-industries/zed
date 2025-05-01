@@ -182,6 +182,16 @@ message LspExtSwitchSourceHeaderResponse {
     string target_file = 1;
 }
 
+message LspExtGoToParentModule {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtGoToParentModuleResponse {
+    repeated LocationLink links = 1;
+}
+
 message GetCompletionsResponse {
     repeated Completion completions = 1;
     repeated VectorClockEntry version = 2;
