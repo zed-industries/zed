@@ -424,6 +424,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 thread_store.clone(),
+                message_editor_context_store.clone(),
                 language_registry.clone(),
                 workspace.clone(),
                 window,
@@ -626,7 +627,7 @@ impl AssistantPanel {
         let thread_view = ActiveView::thread(thread.clone(), window, cx);
         self.set_active_view(thread_view, window, cx);
 
-        let message_editor_context_store = cx.new(|_cx| {
+        let context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
                 self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
@@ -639,7 +640,7 @@ impl AssistantPanel {
                 .update(cx, |this, cx| this.open_thread(&other_thread_id, cx));
 
             cx.spawn({
-                let context_store = message_editor_context_store.clone();
+                let context_store = context_store.clone();
 
                 async move |_panel, cx| {
                     let other_thread = other_thread_task.await?;
@@ -664,6 +665,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
@@ -682,7 +684,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                message_editor_context_store,
+                context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,
@@ -843,7 +845,7 @@ impl AssistantPanel {
     ) {
         let thread_view = ActiveView::thread(thread.clone(), window, cx);
         self.set_active_view(thread_view, window, cx);
-        let message_editor_context_store = cx.new(|_cx| {
+        let context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
                 self.project.downgrade(),
                 Some(self.thread_store.downgrade()),
@@ -860,6 +862,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
                 window,
@@ -878,7 +881,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                message_editor_context_store,
+                context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 thread,

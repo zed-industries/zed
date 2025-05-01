@@ -21,7 +21,7 @@ use crate::context::{
     SymbolContextHandle, ThreadContextHandle,
 };
 use crate::context_strip::SuggestedContext;
-use crate::thread::{Thread, ThreadId};
+use crate::thread::{MessageId, Thread, ThreadId};
 
 pub struct ContextStore {
     project: WeakEntity<Project>,
@@ -54,9 +54,14 @@ impl ContextStore {
         self.context_thread_ids.clear();
     }
 
-    pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AgentContextHandle> {
+    pub fn new_context_for_thread(
+        &self,
+        thread: &Thread,
+        exclude_messages_from_id: Option<MessageId>,
+    ) -> Vec<AgentContextHandle> {
         let existing_context = thread
             .messages()
+            .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
             .flat_map(|message| {
                 message
                     .loaded_context
