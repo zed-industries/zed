@@ -1,4 +1,5 @@
 mod add_context_server_modal;
+mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
@@ -22,6 +23,7 @@ use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
 
 pub(crate) use add_context_server_modal::AddContextServerModal;
+pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::AddContextServer;
