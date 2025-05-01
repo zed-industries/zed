@@ -293,7 +293,7 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn substitute_all_template_variables_in_str<A: AsRef<str>>(
+pub fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
