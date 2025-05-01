@@ -3207,7 +3207,9 @@ dependencies = [
 name = "component_preview"
 version = "0.1.0"
 dependencies = [
+ "agent",
  "anyhow",
+ "assistant_tool",
  "client",
  "collections",
  "component",
@@ -3217,9 +3219,11 @@ dependencies = [
  "log",
  "notifications",
  "project",
+ "prompt_store",
  "serde",
  "ui",
  "ui_input",
+ "util",
  "workspace",
  "workspace-hack",
 ]
