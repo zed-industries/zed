@@ -8,7 +8,7 @@ use project::{
     lsp_command::location_link_from_proto,
     lsp_store::{
         lsp_ext_command::{DocsUrls, ExpandMacro, ExpandedMacro},
-        rust_analyzer_ext::RUST_ANALYZER_NAME,
+        rust_analyzer_ext::{RUST_ANALYZER_NAME, cancel_flycheck, clear_flycheck, run_flycheck},
     },
 };
 use rpc::proto;
@@ -37,9 +37,9 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         register_action(&editor, window, go_to_parent_module);
         register_action(&editor, window, expand_macro_recursively);
         register_action(&editor, window, open_docs);
-        register_action(&editor, window, cancel_flycheck);
-        register_action(&editor, window, run_flycheck);
-        register_action(&editor, window, clear_flycheck);
+        register_action(&editor, window, cancel_flycheck_action);
+        register_action(&editor, window, run_flycheck_action);
+        register_action(&editor, window, clear_flycheck_action);
     }
 }
 
@@ -304,10 +304,10 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
     .detach_and_log_err(cx);
 }
 
-fn cancel_flycheck(
+fn cancel_flycheck_action(
     editor: &mut Editor,
     _: &CancelFlycheck,
-    window: &mut Window,
+    _: &mut Window,
     cx: &mut Context<Editor>,
 ) {
     let Some(project) = &editor.project else {
@@ -318,54 +318,16 @@ fn cancel_flycheck(
         .disjoint_anchors()
         .iter()
         .find_map(|selection| selection.start.buffer_id.or(selection.end.buffer_id))
-        .map(|buffer_id| buffer_id.to_proto())
     else {
         return;
     };
-
-    let rust_analyzer_server = project
-        .read(cx)
-        .language_server_with_name(RUST_ANALYZER_NAME, cx);
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
-    let lsp_store = project.read(cx).lsp_store();
-
-    cx.spawn_in(window, async move |_editor, cx| {
-        let Some(rust_analyzer_server) = rust_analyzer_server.await else {
-            return Ok(());
-        };
-
-        if let Some((client, project_id)) = upstream_client {
-            let request = proto::LspExtCancelFlycheck {
-                project_id,
-                buffer_id,
-                language_server_id: rust_analyzer_server.to_proto(),
-            };
-            client
-                .request(request)
-                .await
-                .context("lsp ext cancel flycheck proto request")?;
-        } else {
-            lsp_store
-                .update(cx, |lsp_store, _| {
-                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                        server
-                            .notify::<project::lsp_store::lsp_ext_command::LspExtCancelFlycheck>(
-                                &(),
-                            )?;
-                    }
-                    anyhow::Ok(())
-                })?
-                .context("lsp ext cancel flycheck")?;
-        };
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    cancel_flycheck(project, buffer_id, cx).detach_and_log_err(cx);
 }
 
-fn run_flycheck(
+fn run_flycheck_action(
     editor: &mut Editor,
     _: &RunFlycheck,
-    window: &mut Window,
+    _: &mut Window,
     cx: &mut Context<Editor>,
 ) {
     let Some(project) = &editor.project else {
@@ -376,56 +338,16 @@ fn run_flycheck(
         .disjoint_anchors()
         .iter()
         .find_map(|selection| selection.start.buffer_id.or(selection.end.buffer_id))
-        .map(|buffer_id| buffer_id.to_proto())
     else {
         return;
     };
-
-    let rust_analyzer_server = project
-        .read(cx)
-        .language_server_with_name(RUST_ANALYZER_NAME, cx);
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
-    let lsp_store = project.read(cx).lsp_store();
-
-    cx.spawn_in(window, async move |_editor, cx| {
-        let Some(rust_analyzer_server) = rust_analyzer_server.await else {
-            return Ok(());
-        };
-
-        if let Some((client, project_id)) = upstream_client {
-            let request = proto::LspExtRunFlycheck {
-                project_id,
-                buffer_id,
-                language_server_id: rust_analyzer_server.to_proto(),
-                current_file_only: false,
-            };
-            client
-                .request(request)
-                .await
-                .context("lsp ext run flycheck proto request")?;
-        } else {
-            lsp_store
-                .update(cx, |lsp_store, _| {
-                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                        server.notify::<project::lsp_store::lsp_ext_command::LspExtRunFlycheck>(
-                            &project::lsp_store::lsp_ext_command::RunFlycheckParams {
-                                text_document: None,
-                            },
-                        )?;
-                    }
-                    anyhow::Ok(())
-                })?
-                .context("lsp ext run flycheck")?;
-        };
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    run_flycheck(project, buffer_id, cx).detach_and_log_err(cx);
 }
 
-fn clear_flycheck(
+fn clear_flycheck_action(
     editor: &mut Editor,
     _: &ClearFlycheck,
-    window: &mut Window,
+    _: &mut Window,
     cx: &mut Context<Editor>,
 ) {
     let Some(project) = &editor.project else {
@@ -436,45 +358,8 @@ fn clear_flycheck(
         .disjoint_anchors()
         .iter()
         .find_map(|selection| selection.start.buffer_id.or(selection.end.buffer_id))
-        .map(|buffer_id| buffer_id.to_proto())
     else {
         return;
     };
-
-    let rust_analyzer_server = project
-        .read(cx)
-        .language_server_with_name(RUST_ANALYZER_NAME, cx);
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
-    let lsp_store = project.read(cx).lsp_store();
-
-    cx.spawn_in(window, async move |_editor, cx| {
-        let Some(rust_analyzer_server) = rust_analyzer_server.await else {
-            return Ok(());
-        };
-
-        if let Some((client, project_id)) = upstream_client {
-            let request = proto::LspExtClearFlycheck {
-                project_id,
-                buffer_id,
-                language_server_id: rust_analyzer_server.to_proto(),
-            };
-            client
-                .request(request)
-                .await
-                .context("lsp ext clear flycheck proto request")?;
-        } else {
-            lsp_store
-                .update(cx, |lsp_store, _| {
-                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                        server.notify::<project::lsp_store::lsp_ext_command::LspExtClearFlycheck>(
-                            &(),
-                        )?;
-                    }
-                    anyhow::Ok(())
-                })?
-                .context("lsp ext clear flycheck")?;
-        };
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    clear_flycheck(project, buffer_id, cx).detach_and_log_err(cx);
 }

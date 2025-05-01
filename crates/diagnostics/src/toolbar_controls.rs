@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::cargo::cargo_diagnostics_sources;
 use crate::{ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
 use gpui::{Context, Entity, EventEmitter, ParentElement, Render, WeakEntity, Window};
 use ui::prelude::*;
@@ -16,11 +15,9 @@ impl Render for ToolbarControls {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
-        let cargo_diagnostics_sources = Arc::new(
-            self.diagnostics()
-                .map(|editor| cargo_diagnostics_sources(editor.read(cx), cx))
-                .unwrap_or_default(),
-        );
+        let cargo_diagnostics_sources = Arc::new(self.diagnostics().map_or(Vec::new(), |editor| {
+            editor.read(cx).cargo_diagnostics_sources(cx)
+        }));
         let fetch_cargo_diagnostics = !cargo_diagnostics_sources.is_empty();
 
         if let Some(editor) = self.diagnostics() {
@@ -28,7 +25,7 @@ impl Render for ToolbarControls {
             include_warnings = diagnostics.include_warnings;
             has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
             is_updating = if fetch_cargo_diagnostics {
-                diagnostics.cargo_diagnostics_fetch.task.is_some()
+                diagnostics.cargo_diagnostics_fetch.fetch_task.is_some()
             } else {
                 diagnostics.update_excerpts_task.is_some()
                     || diagnostics
