@@ -1,12 +1,14 @@
 use anyhow::{Context as _, anyhow};
 use fuzzy::StringMatchCandidate;
 
+use collections::HashSet;
 use git::repository::Branch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
     Subscription, Task, Window, rems,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use std::sync::Arc;
@@ -95,12 +97,35 @@ impl BranchList {
                 .context("No active repository")?
                 .await??;
 
-            all_branches.sort_by_key(|branch| {
-                branch
-                    .most_recent_commit
-                    .as_ref()
-                    .map(|commit| 0 - commit.commit_timestamp)
-            });
+            let all_branches = cx
+                .background_spawn(async move {
+                    let upstreams: HashSet<_> = all_branches
+                        .iter()
+                        .filter_map(|branch| {
+                            let upstream = branch.upstream.as_ref()?;
+                            upstream.ref_name.strip_prefix("refs/remotes/")
+                        })
+                        .collect();
+
+                    let to_filter_out: Vec<_> = all_branches
+                        .iter()
+                        .positions(|branch| upstreams.contains(branch.name.as_ref()))
+                        .collect();
+
+                    to_filter_out.into_iter().rev().for_each(|index| {
+                        all_branches.swap_remove(index);
+                    });
+
+                    all_branches.sort_by_key(|branch| {
+                        branch
+                            .most_recent_commit
+                            .as_ref()
+                            .map(|commit| 0 - commit.commit_timestamp)
+                    });
+
+                    all_branches
+                })
+                .await;
 
             this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {

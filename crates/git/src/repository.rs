@@ -71,6 +71,10 @@ impl Upstream {
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
     }
+
+    pub fn stripped_ref_name(&self) -> Option<&str> {
+        self.ref_name.strip_prefix("refs/remotes/")
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -803,68 +807,69 @@ impl GitRepository for RealGitRepository {
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
-        async move {
-            let fields = [
-                "%(HEAD)",
-                "%(objectname)",
-                "%(parent)",
-                "%(refname)",
-                "%(upstream)",
-                "%(upstream:track)",
-                "%(committerdate:unix)",
-                "%(contents:subject)",
-            ]
-            .join("%00");
-            let args = vec![
-                "for-each-ref",
-                "refs/heads/**/*",
-                "refs/remotes/**/*",
-                "--format",
-                &fields,
-            ];
-            let working_directory = working_directory?;
-            let output = new_smol_command(&git_binary_path)
-                .current_dir(&working_directory)
-                .args(args)
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Failed to git git branches:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-
-            let input = String::from_utf8_lossy(&output.stdout);
-
-            let mut branches = parse_branch_input(&input)?;
-            if branches.is_empty() {
-                let args = vec!["symbolic-ref", "--quiet", "--short", "HEAD"];
-
+        self.executor
+            .spawn(async move {
+                let fields = [
+                    "%(HEAD)",
+                    "%(objectname)",
+                    "%(parent)",
+                    "%(refname)",
+                    "%(upstream)",
+                    "%(upstream:track)",
+                    "%(committerdate:unix)",
+                    "%(contents:subject)",
+                ]
+                .join("%00");
+                let args = vec![
+                    "for-each-ref",
+                    "refs/heads/**/*",
+                    "refs/remotes/**/*",
+                    "--format",
+                    &fields,
+                ];
+                let working_directory = working_directory?;
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .args(args)
                     .output()
                     .await?;
 
-                // git symbolic-ref returns a non-0 exit code if HEAD points
-                // to something other than a branch
-                if output.status.success() {
-                    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-                    branches.push(Branch {
-                        name: name.into(),
-                        is_head: true,
-                        upstream: None,
-                        most_recent_commit: None,
-                    });
+                if !output.status.success() {
+                    return Err(anyhow!(
+                        "Failed to git git branches:\n{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
                 }
-            }
 
-            Ok(branches)
-        }
-        .boxed()
+                let input = String::from_utf8_lossy(&output.stdout);
+
+                let mut branches = parse_branch_input(&input)?;
+                if branches.is_empty() {
+                    let args = vec!["symbolic-ref", "--quiet", "--short", "HEAD"];
+
+                    let output = new_smol_command(&git_binary_path)
+                        .current_dir(&working_directory)
+                        .args(args)
+                        .output()
+                        .await?;
+
+                    // git symbolic-ref returns a non-0 exit code if HEAD points
+                    // to something other than a branch
+                    if output.status.success() {
+                        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+                        branches.push(Branch {
+                            name: name.into(),
+                            is_head: true,
+                            upstream: None,
+                            most_recent_commit: None,
+                        });
+                    }
+                }
+
+                Ok(branches)
+            })
+            .boxed()
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<Result<()>> {
@@ -1711,7 +1716,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 
         branches.push(Branch {
             is_head: is_current_branch,
-            name: ref_name,
+            name: dbg!(ref_name),
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
                 subject,
@@ -1722,7 +1727,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 None
             } else {
                 Some(Upstream {
-                    ref_name: upstream_name.into(),
+                    ref_name: dbg!(upstream_name).into(),
                     tracking: upstream_tracking,
                 })
             },

@@ -3790,13 +3790,9 @@ impl Repository {
 
     pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         let id = self.id;
-        self.send_job(None, move |repo, cx| async move {
+        self.send_job(None, move |repo, _| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => {
-                    let backend = backend.clone();
-                    cx.background_spawn(async move { backend.branches().await })
-                        .await
-                }
+                RepositoryState::Local { backend, .. } => backend.branches().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GitGetBranches {
