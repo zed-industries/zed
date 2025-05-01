@@ -912,7 +912,10 @@ pub fn map_to_language_model_completion_events(
 
                     Some((result, state))
                 }
-                Err(err) => Some((Some(Err(LanguageModelCompletionError::Other(anyhow!(err)))), state)),
+                Err(err) => Some((
+                    Some(Err(LanguageModelCompletionError::Other(anyhow!(err)))),
+                    state,
+                )),
             },
             None => None,
         }
