@@ -31,7 +31,8 @@ use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
+    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -458,7 +459,8 @@ impl AssistantPanel {
 
                         for entry in recently_opened.iter() {
                             let summary = entry.summary(cx);
-                            menu = menu.entry_with_end_slot(
+
+                            menu = menu.entry_with_end_slot_on_hover(
                                 summary,
                                 None,
                                 {
