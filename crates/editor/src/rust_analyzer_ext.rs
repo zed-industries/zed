@@ -4,15 +4,19 @@ use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language, proto::serialize_anchor};
 use multi_buffer::MultiBuffer;
-use project::lsp_store::{
-    lsp_ext_command::{DocsUrls, ExpandMacro, ExpandedMacro},
-    rust_analyzer_ext::RUST_ANALYZER_NAME,
+use project::{
+    lsp_command::location_link_from_proto,
+    lsp_store::{
+        lsp_ext_command::{DocsUrls, ExpandMacro, ExpandedMacro},
+        rust_analyzer_ext::RUST_ANALYZER_NAME,
+    },
 };
 use rpc::proto;
 use text::ToPointUtf16;
 
 use crate::{
-    Editor, ExpandMacroRecursively, OpenDocs, element::register_action,
+    Editor, ExpandMacroRecursively, GoToParentModule, GotoDefinitionKind, OpenDocs,
+    element::register_action, hover_links::HoverLink,
     lsp_ext::find_specific_language_server_in_selection,
 };
 
@@ -30,9 +34,98 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         .filter_map(|buffer| buffer.read(cx).language())
         .any(|language| is_rust_language(language))
     {
+        register_action(&editor, window, go_to_parent_module);
         register_action(&editor, window, expand_macro_recursively);
         register_action(&editor, window, open_docs);
     }
+}
+
+pub fn go_to_parent_module(
+    editor: &mut Editor,
+    _: &GoToParentModule,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if editor.selections.count() == 0 {
+        return;
+    }
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let Some(workspace) = editor.workspace() else {
+        return;
+    };
+
+    let server_lookup = find_specific_language_server_in_selection(
+        editor,
+        cx,
+        is_rust_language,
+        RUST_ANALYZER_NAME,
+    );
+
+    let project = project.clone();
+    let lsp_store = project.read(cx).lsp_store();
+    let upstream_client = lsp_store.read(cx).upstream_client();
+    cx.spawn_in(window, async move |editor, cx| {
+        let Some((trigger_anchor, rust_language, server_to_query, buffer)) = server_lookup.await
+        else {
+            return anyhow::Ok(());
+        };
+
+        let location_links = if let Some((client, project_id)) = upstream_client {
+            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
+
+            let request = proto::LspExtGoToParentModule {
+                project_id,
+                buffer_id: buffer_id.to_proto(),
+                position: Some(serialize_anchor(&trigger_anchor.text_anchor)),
+            };
+            let response = client
+                .request(request)
+                .await
+                .context("lsp ext go to parent module proto request")?;
+            futures::future::join_all(
+                response
+                    .links
+                    .into_iter()
+                    .map(|link| location_link_from_proto(link, lsp_store.clone(), cx)),
+            )
+            .await
+            .into_iter()
+            .collect::<anyhow::Result<_>>()
+            .context("go to parent module via collab")?
+        } else {
+            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+            project
+                .update(cx, |project, cx| {
+                    project.request_lsp(
+                        buffer,
+                        project::LanguageServerToQuery::Other(server_to_query),
+                        project::lsp_store::lsp_ext_command::GoToParentModule {
+                            foo: todo!("TODO kb"),
+                        },
+                        cx,
+                    )
+                })?
+                .await
+                .context("go to parent module")?
+        };
+
+        editor
+            .update_in(cx, |editor, window, cx| {
+                editor.navigate_to_hover_links(
+                    Some(GotoDefinitionKind::Declaration),
+                    location_links.into_iter().map(HoverLink::Text).collect(),
+                    false,
+                    window,
+                    cx,
+                )
+            })?
+            .await?;
+        Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 pub fn expand_macro_recursively(

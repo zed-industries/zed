@@ -301,6 +301,20 @@ pub struct SwitchSourceHeaderResult(pub String);
 #[serde(rename_all = "camelCase")]
 pub struct SwitchSourceHeader;
 
+#[derive(Default, Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GoToParentModule {
+    pub foo: (),
+}
+
+pub struct LspGoToParentModule {}
+
+impl lsp::request::Request for LspGoToParentModule {
+    type Params = lsp::TextDocumentPositionParams;
+    type Result = Option<Vec<lsp::LocationLink>>;
+    const METHOD: &'static str = "experimental/parentModule";
+}
+
 #[async_trait(?Send)]
 impl LspCommand for SwitchSourceHeader {
     type Response = SwitchSourceHeaderResult;
@@ -375,6 +389,77 @@ impl LspCommand for SwitchSourceHeader {
     }
 
     fn buffer_id_from_proto(message: &proto::LspExtSwitchSourceHeader) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GoToParentModule {
+    type Response = Vec<LocationLink>;
+    type LspRequest = LspGoToParentModule;
+    type ProtoRequest = proto::LspExtGoToParentModule;
+
+    fn display_name(&self) -> &str {
+        "Go to parent module"
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::TextDocumentPositionParams> {
+        todo!("TODO kb")
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::LocationLink>>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<Vec<LocationLink>> {
+        todo!("TODO kb")
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtGoToParentModule {
+        todo!("TODO kb")
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            foo: todo!("TODO kb"),
+        })
+    }
+
+    fn response_to_proto(
+        response: Vec<LocationLink>,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
+    ) -> proto::LspExtGoToParentModuleResponse {
+        todo!("TODO kb")
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtGoToParentModuleResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<Vec<LocationLink>> {
+        todo!("TODO kb")
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtGoToParentModule) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
@@ -633,7 +718,7 @@ impl LspCommand for GetLspRunnables {
         for lsp_runnable in message.runnables {
             let location = match lsp_runnable.location {
                 Some(location) => {
-                    Some(location_link_from_proto(location, &lsp_store, &mut cx).await?)
+                    Some(location_link_from_proto(location, lsp_store.clone(), &mut cx).await?)
                 }
                 None => None,
             };
