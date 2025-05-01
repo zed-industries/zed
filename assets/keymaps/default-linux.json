@@ -962,5 +962,12 @@
     "bindings": {
       "escape": "menu::Cancel"
     }
+  },
+  {
+    "context": "Diagnostics",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
+    }
   }
 ]

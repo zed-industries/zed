@@ -931,6 +931,24 @@
       // The minimum severity of the diagnostics to show inline.
       // Shows all diagnostics when not specified.
       "max_severity": null
+    },
+    "rust": {
+      // When enabled, Zed runs `cargo check --message-format=json`-based commands and
+      // collect cargo diagnostics instead of rust-analyzer.
+      "fetch_cargo_diagnostics": false,
+      // A command override for fetching the cargo diagnostics.
+      // First argument is the command, followed by the arguments.
+      "diagnostics_fetch_command": [
+        "cargo",
+        "check",
+        "--quiet",
+        "--workspace",
+        "--message-format=json",
+        "--all-targets",
+        "--keep-going"
+      ],
+      // Extra environment variables to pass to the diagnostics fetch command.
+      "env": {}
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
