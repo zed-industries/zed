@@ -2,7 +2,7 @@ use languages::LanguageRegistry;
 use project::Project;
 use std::sync::Arc;
 
-use agent::{ActiveThread, MessageSegment, ThreadStore};
+use agent::{ActiveThread, ContextStore, MessageSegment, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
 use prompt_store::PromptBuilder;
@@ -31,11 +31,15 @@ pub async fn load_preview_thread_store(
 
 pub fn static_active_thread(
     workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ActiveThread> {
+    let context_store =
+        cx.new(|_| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
+
     let thread = thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx));
     thread.update(cx, |thread, cx| {
         thread.insert_assistant_message(vec![
@@ -55,6 +59,7 @@ pub fn static_active_thread(
         ActiveThread::new(
             thread,
             thread_store,
+            context_store,
             language_registry,
             workspace.clone(),
             window,

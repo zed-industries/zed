@@ -264,11 +264,21 @@ impl ComponentPreview {
     ) -> &mut Self {
         let workspace = self.workspace.clone();
         let language_registry = self.language_registry.clone();
-        if let Some(thread_store) = self.thread_store.clone() {
-            let active_thread =
-                static_active_thread(workspace, language_registry, thread_store, window, cx);
-            self.active_thread = Some(active_thread);
-            cx.notify();
+        let weak_handle = self.workspace.clone();
+        if let Some(workspace) = workspace.upgrade() {
+            let project = workspace.read(cx).project().clone();
+            if let Some(thread_store) = self.thread_store.clone() {
+                let active_thread = static_active_thread(
+                    weak_handle,
+                    project,
+                    language_registry,
+                    thread_store,
+                    window,
+                    cx,
+                );
+                self.active_thread = Some(active_thread);
+                cx.notify();
+            }
         }
 
         self
