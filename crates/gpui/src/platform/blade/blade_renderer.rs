@@ -317,7 +317,6 @@ impl BladeRenderer {
         window: &I,
         config: BladeSurfaceConfig,
     ) -> anyhow::Result<Self> {
-        // workaround for https://github.com/zed-industries/zed/issues/26143
         let sample_count = std::env::var("ZED_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -607,7 +606,10 @@ impl BladeRenderer {
                         let mut encoder = pass.with(&self.pipelines.paths);
                         for path in paths {
                             let sprites = [PathSprite {
-                                bounds: path.bounds,
+                                bounds: path
+                                    .bounds
+                                    .map_origin(|origin| origin.floor())
+                                    .map_size(|size| size.ceil()),
                                 color: path.color,
                             }];
 
@@ -780,6 +782,8 @@ impl BladeRenderer {
                 }
             }
         }
+
+        // draw to screen
 
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
