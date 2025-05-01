@@ -42,7 +42,7 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
+    AgentDiff, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
     ToggleContextPicker, ToggleProfileSelector,
 };
 
@@ -204,10 +204,6 @@ impl MessageEditor {
 
     pub fn context_store(&self) -> &Entity<ContextStore> {
         &self.context_store
-    }
-
-    fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.notify();
     }
 
     pub fn expand_message_editor(
@@ -499,7 +495,6 @@ impl MessageEditor {
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::toggle_chat_mode))
             .on_action(cx.listener(Self::expand_message_editor))
             .capture_action(cx.listener(Self::paste))
             .gap_2()
