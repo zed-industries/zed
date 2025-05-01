@@ -471,13 +471,15 @@ impl DebugPanel {
                     }
 
                     for arg in launch_config.args.iter_mut() {
-                        if let Some(substitued_arg) = task::substitute_all_template_variables_in_str(
-                            &arg,
-                            &task_variables,
-                            &variable_names,
-                            &mut substituted_variables,
-                        ) {
-                            *arg = substitued_arg;
+                        if let Some(substituted_arg) =
+                            task::substitute_all_template_variables_in_str(
+                                &arg,
+                                &task_variables,
+                                &variable_names,
+                                &mut substituted_variables,
+                            )
+                        {
+                            *arg = substituted_arg;
                         }
                     }
                 }
