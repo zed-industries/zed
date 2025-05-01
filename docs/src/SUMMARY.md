@@ -37,6 +37,19 @@
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
+# AI
+
+- [Overview](./ai/ai.md)
+- [Agent Panel](./ai/agent-panel.md)
+- [Inline Assistant](./ai/inline-assistant.md)
+- [Edit Prediction](./ai/edit-prediction.md)
+- [Text Threads](./ai/text-threads.md)
+- [Rules](./ai/rules.md)
+- [Pricing](./ai/pricing.md)
+- [Configuration](./ai/configuration.md)
+- [Model Context Protocol](./ai/mcp.md)
+- [Model Improvement](./ai/model-improvement.md)
+
 # Assistant
 
 - [Overview](./assistant/assistant.md)
