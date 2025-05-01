@@ -316,7 +316,7 @@ impl CreaseMap {
         &mut self,
         ids: impl IntoIterator<Item = CreaseId>,
         snapshot: &MultiBufferSnapshot,
-    ) {
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
         let mut removals = Vec::new();
         for id in ids {
             if let Some(range) = self.id_to_range.remove(&id) {
@@ -331,11 +331,11 @@ impl CreaseMap {
             let mut new_creases = SumTree::new(snapshot);
             let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
 
-            for (id, range) in removals {
-                new_creases.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
+            for (id, range) in &removals {
+                new_creases.append(cursor.slice(range, Bias::Left, snapshot), snapshot);
                 while let Some(item) = cursor.item() {
                     cursor.next(snapshot);
-                    if item.id == id {
+                    if item.id == *id {
                         break;
                     } else {
                         new_creases.push(item.clone(), snapshot);
@@ -346,6 +346,8 @@ impl CreaseMap {
             new_creases.append(cursor.suffix(snapshot), snapshot);
             new_creases
         };
+
+        removals
     }
 }
 

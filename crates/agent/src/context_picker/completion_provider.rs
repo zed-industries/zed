@@ -19,9 +19,11 @@ use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
+use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::RULES_ICON;
+use crate::Thread;
+use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
@@ -418,21 +420,26 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let thread_id = thread_entry.id.clone();
                     let context_store = context_store.clone();
                     let thread_store = thread_store.clone();
-                    cx.spawn(async move |cx| {
-                        let thread = thread_store
+                    cx.spawn::<_, Option<_>>(async move |cx| {
+                        let thread: Entity<Thread> = thread_store
                             .update(cx, |thread_store, cx| {
                                 thread_store.open_thread(&thread_id, cx)
-                            })?
-                            .await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_thread(thread, false, cx)
-                        })
+                            })
+                            .ok()?
+                            .await
+                            .log_err()?;
+                        let context = context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_thread(thread, false, cx)
+                            })
+                            .ok()??;
+                        Some(context)
                     })
-                    .detach_and_log_err(cx);
                 },
             )),
         }
@@ -462,11 +469,13 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let user_prompt_id = rules.prompt_id;
-                    context_store.update(cx, |context_store, cx| {
-                        context_store.add_rules(user_prompt_id, false, cx);
+                    let context = context_store.update(cx, |context_store, cx| {
+                        context_store.add_rules(user_prompt_id, false, cx)
                     });
+                    Task::ready(context)
                 },
             )),
         }
@@ -497,27 +506,33 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let context_store = context_store.clone();
                     let http_client = http_client.clone();
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
-                        if context_store.update(cx, |context_store, _| {
-                            context_store.includes_url(&url_to_fetch)
-                        })? {
-                            return Ok(());
+                        if let Some(context) = context_store
+                            .update(cx, |context_store, _| {
+                                context_store.get_url_context(url_to_fetch.clone())
+                            })
+                            .ok()?
+                        {
+                            return Some(context);
                         }
                         let content = cx
                             .background_spawn(fetch_url_content(
                                 http_client,
                                 url_to_fetch.to_string(),
                             ))
-                            .await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
-                        })
+                            .await
+                            .log_err()?;
+                        context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
+                            })
+                            .ok()
                     })
-                    .detach_and_log_err(cx);
                 },
             )),
         }
@@ -576,15 +591,23 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor,
+                context_store.clone(),
                 move |cx| {
-                    context_store.update(cx, |context_store, cx| {
-                        let task = if is_directory {
-                            Task::ready(context_store.add_directory(&project_path, false, cx))
-                        } else {
+                    if is_directory {
+                        Task::ready(
+                            context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_directory(&project_path, false, cx)
+                                })
+                                .log_err()
+                                .flatten(),
+                        )
+                    } else {
+                        let result = context_store.update(cx, |context_store, cx| {
                             context_store.add_file_from_path(project_path.clone(), false, cx)
-                        };
-                        task.detach_and_log_err(cx);
-                    })
+                        });
+                        cx.spawn(async move |_| result.await.log_err().flatten())
+                    }
                 },
             )),
         }
@@ -639,18 +662,19 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let symbol = symbol.clone();
                     let context_store = context_store.clone();
                     let workspace = workspace.clone();
-                    super::symbol_context_picker::add_symbol(
+                    let result = super::symbol_context_picker::add_symbol(
                         symbol.clone(),
                         false,
                         workspace.clone(),
                         context_store.downgrade(),
                         cx,
-                    )
-                    .detach_and_log_err(cx);
+                    );
+                    cx.spawn(async move |_| result.await.log_err()?.0)
                 },
             )),
         })
@@ -872,25 +896,45 @@ fn confirm_completion_callback(
     start: Anchor,
     content_len: usize,
     editor: Entity<Editor>,
-    add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
+    context_store: Entity<ContextStore>,
+    add_context_fn: impl Fn(&mut App) -> Task<Option<AgentContextHandle>> + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
-        add_context_fn(cx);
+        let context = add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
+        let context_store = context_store.clone();
         window.defer(cx, move |window, cx| {
-            crate::context_picker::insert_crease_for_mention(
+            let crease_id = crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
                 start,
                 content_len,
-                crease_text,
+                crease_text.clone(),
                 crease_icon_path,
-                editor,
+                editor.clone(),
                 window,
                 cx,
             );
+            cx.spawn(async move |cx| {
+                let crease_id = crease_id?;
+                let context = context.await?;
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+                            addon.add_crease(
+                                &context_store,
+                                AgentContextKey(context),
+                                crease_id,
+                                crease_text,
+                                cx,
+                            );
+                        }
+                    })
+                    .ok()
+            })
+            .detach();
         });
         false
     })

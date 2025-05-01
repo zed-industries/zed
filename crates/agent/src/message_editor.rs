@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
-use crate::context::{ContextLoadResult, load_context};
+use crate::context::{ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::AnimatedLabel;
 use buffer_diff::BufferDiff;
@@ -104,6 +104,7 @@ pub(crate) fn create_editor(
             max_entries_visible: 12,
             placement: Some(ContextMenuPlacement::Above),
         });
+        editor.register_addon(ContextCreasesAddon::new());
         editor
     });
 

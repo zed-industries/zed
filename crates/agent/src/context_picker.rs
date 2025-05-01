@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 pub use completion_provider::ContextPickerCompletionProvider;
-use editor::display_map::{Crease, CreaseMetadata, FoldId};
+use editor::display_map::{Crease, CreaseId, CreaseMetadata, FoldId};
 use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use fetch_context_picker::FetchContextPicker;
 use file_context_picker::FileContextPicker;
@@ -684,12 +684,12 @@ pub(crate) fn insert_crease_for_mention(
     editor_entity: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> Option<CreaseId> {
     editor_entity.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
         let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, crease_start) else {
-            return;
+            return None;
         };
 
         let start = start.bias_right(&snapshot);
@@ -702,9 +702,10 @@ pub(crate) fn insert_crease_for_mention(
             editor_entity.downgrade(),
         );
 
-        editor.insert_creases(vec![crease.clone()], cx);
+        let ids = editor.insert_creases(vec![crease.clone()], cx);
         editor.fold_creases(vec![crease], false, window, cx);
-    });
+        Some(ids[0])
+    })
 }
 
 pub fn crease_for_mention(

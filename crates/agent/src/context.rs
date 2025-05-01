@@ -4,10 +4,12 @@ use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 
 use assistant_tool::outline;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
+use editor::display_map::CreaseId;
+use editor::{Addon, Editor};
 use futures::future;
 use futures::{FutureExt, future::Shared};
-use gpui::{App, AppContext as _, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Subscription, Task};
 use language::{Buffer, ParseStatus};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
@@ -15,10 +17,11 @@ use prompt_store::{PromptStore, UserPromptId};
 use ref_cast::RefCast;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt as _};
-use ui::{ElementId, IconName};
+use ui::{Context, ElementId, IconName};
 use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
+use crate::context_store::{ContextStore, ContextStoreEvent};
 use crate::thread::Thread;
 
 pub const RULES_ICON: IconName = IconName::Context;
@@ -67,7 +70,7 @@ pub enum AgentContextHandle {
 }
 
 impl AgentContextHandle {
-    fn id(&self) -> ContextId {
+    pub fn id(&self) -> ContextId {
         match self {
             Self::File(context) => context.context_id,
             Self::Directory(context) => context.context_id,
@@ -732,7 +735,6 @@ pub struct LoadedContext {
     pub contexts: Vec<AgentContext>,
     pub text: String,
     pub images: Vec<LanguageModelImage>,
-    // FIXME put the creases in here?
 }
 
 impl LoadedContext {
@@ -1034,6 +1036,68 @@ impl Hash for AgentContextKey {
             AgentContextHandle::Rules(context) => context.hash_for_key(state),
             AgentContextHandle::Image(context) => context.hash_for_key(state),
         }
+    }
+}
+
+pub struct ContextCreasesAddon {
+    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
+    _subscription: Option<Subscription>,
+}
+
+impl Addon for ContextCreasesAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl ContextCreasesAddon {
+    pub fn new() -> Self {
+        Self {
+            creases: HashMap::default(),
+            _subscription: None,
+        }
+    }
+
+    pub fn add_crease(
+        &mut self,
+        context_store: &Entity<ContextStore>,
+        key: AgentContextKey,
+        crease_id: CreaseId,
+        replacement_text: SharedString,
+        cx: &mut Context<Editor>,
+    ) {
+        self.creases
+            .entry(key)
+            .or_default()
+            .push((crease_id, replacement_text));
+        self._subscription = Some(cx.subscribe(
+            &context_store,
+            |editor, _, event, cx| match event {
+                ContextStoreEvent::ContextRemoved(key) => {
+                    let Some(this) = editor.addon_mut::<Self>() else {
+                        return;
+                    };
+                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
+                        .creases
+                        .remove(key)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .unzip();
+                    let ranges = editor
+                        .remove_creases(crease_ids, cx)
+                        .into_iter()
+                        .map(|(_, range)| range)
+                        .collect::<Vec<_>>();
+                    editor.unfold_ranges(&ranges, false, false, cx);
+                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
+                    cx.notify();
+                }
+            },
+        ))
     }
 }
 
