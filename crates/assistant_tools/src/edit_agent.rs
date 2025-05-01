@@ -511,7 +511,7 @@ mod tests {
     use unindent::Unindent;
     use util::test::{generate_marked_text, marked_text_ranges};
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test(iterations = 100)]
     async fn test_indentation(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
         let buffer = cx.new(|cx| {
@@ -526,7 +526,6 @@ mod tests {
             )
         });
         let raw_edits = simulate_llm_output(
-            &mut rng,
             indoc! {"
                 <old_text>
                     ipsum
@@ -540,6 +539,8 @@ mod tests {
                 amet
                 </new_text>
             "},
+            &mut rng,
+            cx,
         );
         agent
             .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
@@ -557,12 +558,11 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test(iterations = 100)]
     async fn test_dependent_edits(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
         let raw_edits = simulate_llm_output(
-            &mut rng,
             indoc! {"
                 <old_text>
                 def
@@ -578,6 +578,8 @@ mod tests {
                 DeF
                 </new_text>
             "},
+            &mut rng,
+            cx,
         );
         agent
             .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
@@ -589,12 +591,11 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test(iterations = 100)]
     async fn test_old_text_hallucination(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
         let raw_edits = simulate_llm_output(
-            &mut rng,
             indoc! {"
                 <old_text>
                 jkl
@@ -610,6 +611,8 @@ mod tests {
                 ABC
                 </new_text>
             "},
+            &mut rng,
+            cx,
         );
         agent
             .apply_edits(buffer.clone(), raw_edits, &mut cx.to_async())
@@ -857,10 +860,18 @@ mod tests {
     }
 
     fn simulate_llm_output(
-        rng: &mut StdRng,
         output: &str,
+        rng: &mut StdRng,
+        cx: &mut TestAppContext,
     ) -> impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>> {
-        stream::iter(to_random_chunks(rng, output).into_iter().map(Ok))
+        let executor = cx.executor();
+        stream::iter(to_random_chunks(rng, output).into_iter().map(Ok)).then(move |chunk| {
+            let executor = executor.clone();
+            async move {
+                executor.simulate_random_delay().await;
+                chunk
+            }
+        })
     }
 
     async fn init_test(cx: &mut TestAppContext) -> EditAgent {
