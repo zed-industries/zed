@@ -320,6 +320,55 @@ impl ScanCode {
         }
     }
 
+    /// Convert the scan code to its key face for immutable keys.
+    pub fn try_to_key(&self) -> Option<String> {
+        Some(
+            match self {
+                ScanCode::F1 => "f1",
+                ScanCode::F2 => "f2",
+                ScanCode::F3 => "f3",
+                ScanCode::F4 => "f4",
+                ScanCode::F5 => "f5",
+                ScanCode::F6 => "f6",
+                ScanCode::F7 => "f7",
+                ScanCode::F8 => "f8",
+                ScanCode::F9 => "f9",
+                ScanCode::F10 => "f10",
+                ScanCode::F11 => "f11",
+                ScanCode::F12 => "f12",
+                ScanCode::F13 => "f13",
+                ScanCode::F14 => "f14",
+                ScanCode::F15 => "f15",
+                ScanCode::F16 => "f16",
+                ScanCode::F17 => "f17",
+                ScanCode::F18 => "f18",
+                ScanCode::F19 => "f19",
+                ScanCode::F20 => "f20",
+                ScanCode::F21 => "f21",
+                ScanCode::F22 => "f22",
+                ScanCode::F23 => "f23",
+                ScanCode::F24 => "f24",
+                ScanCode::Left => "left",
+                ScanCode::Up => "up",
+                ScanCode::Right => "right",
+                ScanCode::Down => "down",
+                ScanCode::PageUp => "pageup",
+                ScanCode::PageDown => "pagedown",
+                ScanCode::End => "end",
+                ScanCode::Home => "home",
+                ScanCode::Tab => "tab",
+                ScanCode::Enter => "enter",
+                ScanCode::Escape => "escape",
+                ScanCode::Space => "space",
+                ScanCode::Backspace => "backspace",
+                ScanCode::Delete => "delete",
+                ScanCode::Insert => "insert",
+                _ => return None,
+            }
+            .to_string(),
+        )
+    }
+
     /// This function is used to convert the scan code to its key face on US keyboard layout.
     /// Test only.
     #[cfg(test)]

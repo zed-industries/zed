@@ -59,6 +59,9 @@ pub(crate) struct WindowsKeyboardMapper;
 
 impl PlatformKeyboardMapper for WindowsKeyboardMapper {
     fn scan_code_to_key(&self, scan_code: ScanCode) -> Result<String> {
+        if let Some(key) = scan_code.try_to_key() {
+            return Ok(key);
+        }
         let vkey = get_virtual_key_from_scan_code(scan_code)?;
         let (key, _) = vkey_to_key(vkey).context(format!(
             "Failed to get key from scan code: {:?}, vkey: {:?}",
@@ -312,30 +315,6 @@ fn display_keystroke(key: &str, modifiers: &Modifiers) -> String {
 fn get_virtual_key_from_scan_code(scan_code: ScanCode) -> Result<VIRTUAL_KEY> {
     // https://github.com/microsoft/node-native-keymap/blob/main/deps/chromium/dom_code_data.inc
     let code = match scan_code {
-        ScanCode::F1 => 0x003b,
-        ScanCode::F2 => 0x003c,
-        ScanCode::F3 => 0x003d,
-        ScanCode::F4 => 0x003e,
-        ScanCode::F5 => 0x003f,
-        ScanCode::F6 => 0x0040,
-        ScanCode::F7 => 0x0041,
-        ScanCode::F8 => 0x0042,
-        ScanCode::F9 => 0x0043,
-        ScanCode::F10 => 0x0044,
-        ScanCode::F11 => 0x0057,
-        ScanCode::F12 => 0x0058,
-        ScanCode::F13 => 0x0064,
-        ScanCode::F14 => 0x0065,
-        ScanCode::F15 => 0x0066,
-        ScanCode::F16 => 0x0067,
-        ScanCode::F17 => 0x0068,
-        ScanCode::F18 => 0x0069,
-        ScanCode::F19 => 0x006a,
-        ScanCode::F20 => 0x006b,
-        ScanCode::F21 => 0x006c,
-        ScanCode::F22 => 0x006d,
-        ScanCode::F23 => 0x006e,
-        ScanCode::F24 => 0x0076,
         ScanCode::A => 0x001e,
         ScanCode::B => 0x0030,
         ScanCode::C => 0x002e,
@@ -383,21 +362,7 @@ fn get_virtual_key_from_scan_code(scan_code: ScanCode) -> Result<VIRTUAL_KEY> {
         ScanCode::Comma => 0x0033,
         ScanCode::Period => 0x0034,
         ScanCode::Slash => 0x0035,
-        ScanCode::Left => 0xe04b,
-        ScanCode::Up => 0xe048,
-        ScanCode::Right => 0xe04d,
-        ScanCode::Down => 0xe050,
-        ScanCode::PageUp => 0xe049,
-        ScanCode::PageDown => 0xe051,
-        ScanCode::End => 0xe04f,
-        ScanCode::Home => 0xe047,
-        ScanCode::Tab => 0x000f,
-        ScanCode::Enter => 0x001c,
-        ScanCode::Escape => 0x0001,
-        ScanCode::Space => 0x0039,
-        ScanCode::Backspace => 0x000e,
-        ScanCode::Delete => 0xe053,
-        ScanCode::Insert => 0xe052,
+        _ => anyhow::bail!("Unsupported scan code: {:?}", scan_code),
     };
     let virtual_key = unsafe { MapVirtualKeyW(code, MAPVK_VSC_TO_VK) };
     if virtual_key == 0 {
