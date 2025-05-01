@@ -121,6 +121,10 @@ impl TcpArguments {
 /// an optional build step is completed, we turn it's result into a DebugTaskDefinition by running a locator (or using a user-provided task) and resolving task variables.
 /// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invocation ([DebugAdapterBinary]).
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(
+    any(feature = "test-support", test),
+    derive(serde::Deserialize, serde::Serialize)
+)]
 pub struct DebugTaskDefinition {
     pub label: SharedString,
     pub adapter: SharedString,
@@ -524,6 +528,7 @@ impl FakeAdapter {
             } else {
                 None
             },
+            "raw_request": serde_json::to_value(config).unwrap()
         });
         let request = match config.request {
             DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,

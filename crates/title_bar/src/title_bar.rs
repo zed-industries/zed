@@ -18,7 +18,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedProFeatureFlag};
+use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
     Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -663,7 +663,7 @@ impl TitleBar {
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, cx| {
-                        menu.when(cx.has_flag::<ZedProFeatureFlag>(), |menu| {
+                        menu.when(cx.has_flag::<NewBillingFeatureFlag>(), |menu| {
                             menu.action(
                                 format!(
                                     "Current Plan: {}",

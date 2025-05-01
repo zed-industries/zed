@@ -62,7 +62,7 @@ use persistence::{
     model::{SerializedSshProject, SerializedWorkspace},
 };
 pub use persistence::{
-    DB as WORKSPACE_DB, WorkspaceDb,
+    DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
     model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
 };
 use postage::stream::Stream;
@@ -998,7 +998,7 @@ impl Workspace {
                 | BreakpointStoreEvent::BreakpointsCleared(_) => {
                     workspace.serialize_workspace(window, cx);
                 }
-                BreakpointStoreEvent::ActiveDebugLineChanged => {}
+                BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             },
         )
         .detach();

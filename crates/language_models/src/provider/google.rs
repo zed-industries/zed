@@ -327,7 +327,8 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let request = into_google(request, self.model.id().to_string());
+        let model_id = self.model.id().to_string();
+        let request = into_google(request, model_id.clone());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -340,6 +341,7 @@ impl LanguageModel for GoogleLanguageModel {
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
+                &model_id,
                 google_ai::CountTokensRequest {
                     contents: request.contents,
                 },

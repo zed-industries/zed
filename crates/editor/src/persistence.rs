@@ -373,32 +373,6 @@ VALUES {placeholders};
         }
         Ok(())
     }
-
-    pub async fn delete_unloaded_items(
-        &self,
-        workspace: WorkspaceId,
-        alive_items: Vec<ItemId>,
-    ) -> Result<()> {
-        let placeholders = alive_items
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<&str>>()
-            .join(", ");
-
-        let query = format!(
-            "DELETE FROM editors WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-        );
-
-        self.write(move |conn| {
-            let mut statement = Statement::prepare(conn, query)?;
-            let mut next_index = statement.bind(&workspace, 1)?;
-            for id in alive_items {
-                next_index = statement.bind(&id, next_index)?;
-            }
-            statement.exec()
-        })
-        .await
-    }
 }
 
 #[cfg(test)]

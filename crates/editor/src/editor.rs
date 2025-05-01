@@ -286,7 +286,7 @@ impl InlayId {
     }
 }
 
-pub enum DebugCurrentRowHighlight {}
+pub enum ActiveDebugLine {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -871,7 +871,6 @@ pub struct Editor {
     show_breadcrumbs: bool,
     show_gutter: bool,
     show_scrollbars: bool,
-    disable_scrolling: bool,
     disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
@@ -1581,7 +1580,11 @@ impl Editor {
                     &project.read(cx).breakpoint_store(),
                     window,
                     |editor, _, event, window, cx| match event {
-                        BreakpointStoreEvent::ActiveDebugLineChanged => {
+                        BreakpointStoreEvent::ClearDebugLines => {
+                            editor.clear_row_highlights::<ActiveDebugLine>();
+                            editor.refresh_inline_values(cx);
+                        }
+                        BreakpointStoreEvent::SetDebugLine => {
                             if editor.go_to_active_debug_line(window, cx) {
                                 cx.stop_propagation();
                             }
@@ -1664,7 +1667,6 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: true,
-            disable_scrolling: false,
             mode,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
@@ -2623,7 +2625,7 @@ impl Editor {
             }
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
-            self.refresh_selected_text_highlights(window, cx);
+            self.refresh_selected_text_highlights(false, window, cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
@@ -5003,11 +5005,11 @@ impl Editor {
                 range
             };
 
-            ranges.push(range);
+            ranges.push(range.clone());
 
             if !self.linked_edit_ranges.is_empty() {
-                let start_anchor = snapshot.anchor_before(selection.head());
-                let end_anchor = snapshot.anchor_after(selection.tail());
+                let start_anchor = snapshot.anchor_before(range.start);
+                let end_anchor = snapshot.anchor_after(range.end);
                 if let Some(ranges) = self
                     .linked_editing_ranges_for(start_anchor.text_anchor..end_anchor.text_anchor, cx)
                 {
@@ -5817,7 +5819,12 @@ impl Editor {
         })
     }
 
-    fn refresh_selected_text_highlights(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    fn refresh_selected_text_highlights(
+        &mut self,
+        on_buffer_edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let Some((query_text, query_range)) = self.prepare_highlight_query_from_selection(cx)
         else {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
@@ -5826,12 +5833,13 @@ impl Editor {
             return;
         };
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        if self
-            .quick_selection_highlight_task
-            .as_ref()
-            .map_or(true, |(prev_anchor_range, _)| {
-                prev_anchor_range != &query_range
-            })
+        if on_buffer_edit
+            || self
+                .quick_selection_highlight_task
+                .as_ref()
+                .map_or(true, |(prev_anchor_range, _)| {
+                    prev_anchor_range != &query_range
+                })
         {
             let multi_buffer_visible_start = self
                 .scroll_manager
@@ -5856,12 +5864,13 @@ impl Editor {
                 ),
             ));
         }
-        if self
-            .debounced_selection_highlight_task
-            .as_ref()
-            .map_or(true, |(prev_anchor_range, _)| {
-                prev_anchor_range != &query_range
-            })
+        if on_buffer_edit
+            || self
+                .debounced_selection_highlight_task
+                .as_ref()
+                .map_or(true, |(prev_anchor_range, _)| {
+                    prev_anchor_range != &query_range
+                })
         {
             let multi_buffer_start = multi_buffer_snapshot
                 .anchor_before(0)
@@ -16476,11 +16485,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn disable_scrolling(&mut self, cx: &mut Context<Self>) {
-        self.disable_scrolling = true;
-        cx.notify();
-    }
-
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
         cx.notify();
@@ -16628,7 +16632,7 @@ impl Editor {
 
             let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
             else {
-                self.clear_row_highlights::<DebugCurrentRowHighlight>();
+                self.clear_row_highlights::<ActiveDebugLine>();
                 return None;
             };
 
@@ -16655,8 +16659,8 @@ impl Editor {
                 let multibuffer_anchor = snapshot.anchor_in_excerpt(id, position)?;
 
                 handled = true;
-                self.clear_row_highlights::<DebugCurrentRowHighlight>();
-                self.go_to_line::<DebugCurrentRowHighlight>(
+                self.clear_row_highlights::<ActiveDebugLine>();
+                self.go_to_line::<ActiveDebugLine>(
                     multibuffer_anchor,
                     Some(cx.theme().colors().editor_debugger_active_line_background),
                     window,
@@ -17681,7 +17685,7 @@ impl Editor {
 
         let current_execution_position = self
             .highlighted_rows
-            .get(&TypeId::of::<DebugCurrentRowHighlight>())
+            .get(&TypeId::of::<ActiveDebugLine>())
             .and_then(|lines| lines.last().map(|line| line.range.start));
 
         self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
@@ -17749,6 +17753,8 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
+                self.refresh_selected_text_highlights(true, window, cx);
+                refresh_matching_bracket_highlights(self, window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }

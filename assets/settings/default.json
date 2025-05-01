@@ -226,7 +226,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 3,
+  "expand_excerpt_lines": 5,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -601,6 +601,13 @@
     //
     // Default: main
     "fallback_branch_name": "main",
+
+    // Whether to sort entries in the panel by path
+    // or by status (the default).
+    //
+    // Default: false
+    "sort_by_path": false,
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -664,6 +671,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "thinking": true,
           "web_search": true
@@ -695,6 +703,11 @@
           "thinking": true,
           "web_search": true
         }
+      },
+      "manual": {
+        "name": "Manual",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
     // Where to show notifications when an agent has either completed
@@ -822,7 +835,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

@@ -951,6 +951,7 @@ mod tests {
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);
+            language_model::init_settings(cx);
         });
 
         let fs = FakeFs::new(cx.executor());

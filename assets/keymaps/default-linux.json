@@ -245,9 +245,17 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
+      "ctrl-shift-o": "agent::ToggleNavigationMenu",
+      "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
       "ctrl-e": "agent::ChatMode",
       "ctrl-alt-e": "agent::RemoveAllContext"
+    }
+  },
+  {
+    "context": "AgentPanel > NavigationMenu",
+    "bindings": {
+      "shift-backspace": "agent::DeleteRecentlyOpenThread"
     }
   },
   {
@@ -520,6 +528,7 @@
       "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
+      "f10": ["app_menu::OpenApplicationMenu", "Zed"],
       "alt-1": ["workspace::ActivatePane", 0],
       "alt-2": ["workspace::ActivatePane", 1],
       "alt-3": ["workspace::ActivatePane", 2],
@@ -578,6 +587,7 @@
   {
     "context": "ApplicationMenu",
     "bindings": {
+      "f10": "menu::Cancel",
       "left": "app_menu::ActivateMenuLeft",
       "right": "app_menu::ActivateMenuRight"
     }

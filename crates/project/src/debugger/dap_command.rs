@@ -14,7 +14,7 @@ use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
 
-pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
+pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
 
@@ -30,7 +30,7 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-pub(crate) trait DapCommand: LocalDapCommand {
+pub trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send;
     type ProtoResponse: 'static + Send;
     const CACHEABLE: bool = false;

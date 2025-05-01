@@ -435,6 +435,7 @@ dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a0
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
+documented = "0.9.1"
 dotenv = "0.15.0"
 ec4rs = "1.1"
 emojis = "0.6.1"
@@ -506,7 +507,7 @@ rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
 repair_json = "0.1.0"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = [
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
     "charset",
     "http2",
     "macos-system-configuration",
@@ -797,5 +798,6 @@ ignored = [
     "serde",
     "component",
     "linkme",
+    "documented",
     "workspace-hack",
 ]
