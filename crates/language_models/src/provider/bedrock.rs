@@ -43,9 +43,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use smol::lock::OnceCell;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::sync::Arc;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
@@ -801,7 +798,7 @@ pub fn get_bedrock_tokens(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -837,13 +834,25 @@ pub fn map_to_language_model_completion_events(
                                 None
                             }
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
-                                ReasoningContentBlockDelta::Text(thoughts) => Some(Ok(
-                                    LanguageModelCompletionEvent::Thinking(thoughts.to_string()),
-                                )),
+                                ReasoningContentBlockDelta::Text(thoughts) => {
+                                    Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: thoughts.clone(),
+                                        signature: None,
+                                    }))
+                                }
+                                ReasoningContentBlockDelta::Signature(sig) => {
+                                    Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: "".into(),
+                                        signature: Some(sig),
+                                    }))
+                                }
                                 ReasoningContentBlockDelta::RedactedContent(redacted) => {
                                     let content = String::from_utf8(redacted.into_inner())
                                         .unwrap_or("REDACTED".to_string());
-                                    Some(Ok(LanguageModelCompletionEvent::Thinking(content)))
+                                    Some(Ok(LanguageModelCompletionEvent::Thinking {
+                                        text: content,
+                                        signature: None,
+                                    }))
                                 }
                                 _ => None,
                             },
@@ -872,176 +881,43 @@ pub fn map_to_language_model_completion_events(
                                     serde_json::Value::from_str(&tool_use.input_json)
                                         .unwrap_or(Value::Null)
                                 };
-                                            Some(ContentBlockDelta::ToolUse(text_out)) => {
-                                                if let Some(tool_use) = state
-                                                    .tool_uses_by_index
-                                                    .get_mut(&cb_delta.content_block_index)
-                                                {
-                                                    tool_use.input_json.push_str(text_out.input());
-                                                }
-                                            }
 
-                                            Some(ContentBlockDelta::ReasoningContent(thinking)) => {
-                                                match thinking {
-                                                    ReasoningContentBlockDelta::RedactedContent(
-                                                        redacted,
-                                                    ) => {
-                                                        let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking {
-                                                                text: String::from_utf8(
-                                                                    redacted.into_inner(),
-                                                                )
-                                                                .unwrap_or("REDACTED".to_string()),
-                                                                signature: None,
-                                                            };
-
-                                                        return Some((
-                                                            Some(Ok(thinking_event)),
-                                                            state,
-                                                        ));
-                                                    }
-                                                    ReasoningContentBlockDelta::Signature(
-                                                        signature,
-                                                    ) => {
-                                                        return Some((
-                                                            Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                                                text: "".to_string(),
-                                                                signature: Some(signature)
-                                                            })),
-                                                            state,
-                                                        ));
-                                                    }
-                                                    ReasoningContentBlockDelta::Text(thoughts) => {
-                                                        let thinking_event =
-                                                            LanguageModelCompletionEvent::Thinking {
-                                                                text: thoughts.to_string(),
-                                                                signature: None
-                                                            };
-
-                                                        return Some((
-                                                            Some(Ok(thinking_event)),
-                                                            state,
-                                                        ));
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    ConverseStreamOutput::ContentBlockStart(cb_start) => {
-                                        if let Some(ContentBlockStart::ToolUse(text_out)) =
-                                            cb_start.start
-                                        {
-                                            let tool_use = RawToolUse {
-                                                id: text_out.tool_use_id,
-                                                name: text_out.name,
-                                                input_json: String::new(),
-                                            };
-
-                                            state
-                                                .tool_uses_by_index
-                                                .insert(cb_start.content_block_index, tool_use);
-                                        }
-                                    }
-                                    ConverseStreamOutput::ContentBlockStop(cb_stop) => {
-                                        if let Some(tool_use) = state
-                                            .tool_uses_by_index
-                                            .remove(&cb_stop.content_block_index)
-                                        {
-                                            let tool_use_event = LanguageModelToolUse {
-                                                id: tool_use.id.into(),
-                                                name: tool_use.name.into(),
-                                                is_input_complete: true,
-                                                raw_input: tool_use.input_json.clone(),
-                                                input: if tool_use.input_json.is_empty() {
-                                                    Value::Null
-                                                } else {
-                                                    serde_json::Value::from_str(
-                                                        &tool_use.input_json,
-                                                    )
-                                                    .map_err(|err| anyhow!(err))
-                                                    .unwrap()
-                                                },
-                                            };
-
-                                            return Some((
-                                                Some(Ok(LanguageModelCompletionEvent::ToolUse(
-                                                    tool_use_event,
-                                                ))),
-                                                state,
-                                            ));
-                                        }
-                                    }
-
-                                    ConverseStreamOutput::Metadata(cb_meta) => {
-                                        if let Some(metadata) = cb_meta.usage {
-                                            let completion_event =
-                                                LanguageModelCompletionEvent::UsageUpdate(
-                                                    TokenUsage {
-                                                        input_tokens: metadata.input_tokens as u32,
-                                                        output_tokens: metadata.output_tokens
-                                                            as u32,
-                                                        cache_creation_input_tokens: default(),
-                                                        cache_read_input_tokens: default(),
-                                                    },
-                                                );
-                                            return Some((Some(Ok(completion_event)), state));
-                                        }
-                                    }
-                                    ConverseStreamOutput::MessageStop(message_stop) => {
-                                        let reason = match message_stop.stop_reason {
-                                            StopReason::ContentFiltered => {
-                                                LanguageModelCompletionEvent::Stop(
-                                                    language_model::StopReason::EndTurn,
-                                                )
-                                            }
-                                            StopReason::EndTurn => {
-                                                LanguageModelCompletionEvent::Stop(
-                                                    language_model::StopReason::EndTurn,
-                                                )
-                                            }
-                                            StopReason::GuardrailIntervened => {
-                                                LanguageModelCompletionEvent::Stop(
-                                                    language_model::StopReason::EndTurn,
-                                                )
-                                            }
-                                            StopReason::MaxTokens => {
-                                                LanguageModelCompletionEvent::Stop(
-                                                    language_model::StopReason::EndTurn,
-                                                )
-                                            }
-                                            StopReason::StopSequence => {
-                                                LanguageModelCompletionEvent::Stop(
-                                                    language_model::StopReason::EndTurn,
-                                                )
-                                            }
-                                            StopReason::ToolUse => {
-                                                LanguageModelCompletionEvent::Stop(
-                                                    language_model::StopReason::ToolUse,
-                                                )
-                                            }
-                                            _ => LanguageModelCompletionEvent::Stop(
-                                                language_model::StopReason::EndTurn,
-                                            ),
-                                        };
-                                        return Some((Some(Ok(reason)), state));
-                                    }
-                                    _ => {}
-                                },
-
-                                Err(err) => return Some((Some(Err(anyhow!(err).into())), state)),
-                            }
+                                Ok(LanguageModelCompletionEvent::ToolUse(
+                                    LanguageModelToolUse {
+                                        id: tool_use.id.into(),
+                                        name: tool_use.name.into(),
+                                        is_input_complete: true,
+                                        raw_input: tool_use.input_json.clone(),
+                                        input,
+                                    },
+                                ))
+                            }),
+                        ConverseStreamOutput::Metadata(cb_meta) => cb_meta.usage.map(|metadata| {
+                            Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                                input_tokens: metadata.input_tokens as u32,
+                                output_tokens: metadata.output_tokens as u32,
+                                cache_creation_input_tokens: default(),
+                                cache_read_input_tokens: default(),
+                            }))
+                        }),
+                        ConverseStreamOutput::MessageStop(message_stop) => {
+                            let stop_reason = match message_stop.stop_reason {
+                                StopReason::ToolUse => language_model::StopReason::ToolUse,
+                                _ => language_model::StopReason::EndTurn,
+                            };
+                            Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason)))
                         }
-                        None
-                    })
-                    .await
-                    .log_err()
-                    .flatten()
-            }
-        },
-    )
-    .filter_map(|event| async move { event })
+                        _ => None,
+                    };
+
+                    Some((result, state))
+                }
+                Err(err) => Some((Some(Err(LanguageModelCompletionError::Other(anyhow!(err)))), state)),
+            },
+            None => None,
+        }
+    })
+    .filter_map(|result| async move { result })
 }
 
 struct ConfigurationView {
