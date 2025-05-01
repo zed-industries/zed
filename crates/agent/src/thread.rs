@@ -42,8 +42,8 @@ use zed_llm_client::CompletionMode;
 use crate::ThreadStore;
 use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
-    SerializedLanguageModel, SerializedMessage, SerializedMessageSegment, SerializedThread,
-    SerializedToolResult, SerializedToolUse, SharedProjectContext,
+    SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
+    SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
@@ -467,8 +467,19 @@ impl Thread {
                         text: message.context,
                         images: Vec::new(),
                     },
-                    // FIXME
-                    creases: Vec::new(),
+                    creases: message
+                        .creases
+                        .into_iter()
+                        .map(|crease| {
+                            (
+                                crease.start..crease.end,
+                                CreaseMetadata {
+                                    icon_path: crease.icon_path,
+                                    label: crease.label,
+                                },
+                            )
+                        })
+                        .collect(),
                 })
                 .collect(),
             next_message_id,
@@ -1001,6 +1012,16 @@ impl Thread {
                             })
                             .collect(),
                         context: message.loaded_context.text.clone(),
+                        creases: message
+                            .creases
+                            .iter()
+                            .map(|(range, crease)| SerializedCrease {
+                                start: range.start,
+                                end: range.end,
+                                icon_path: crease.icon_path.clone(),
+                                label: crease.label.clone(),
+                            })
+                            .collect(),
                     })
                     .collect(),
                 initial_project_snapshot,
