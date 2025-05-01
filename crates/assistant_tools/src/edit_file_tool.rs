@@ -343,6 +343,7 @@ impl EditFileToolCard {
                         .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
+                    multibuffer.clear(cx);
                     let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
