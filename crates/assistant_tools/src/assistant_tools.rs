@@ -77,7 +77,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(TerminalTool);
     registry.register_tool(BatchTool);
     registry.register_tool(CreateDirectoryTool);
-    registry.register_tool(CreateFileTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
     registry.register_tool(SymbolInfoTool);
@@ -125,12 +124,14 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 fn register_edit_file_tool(cx: &mut App) {
     let registry = ToolRegistry::global(cx);
 
+    registry.unregister_tool(CreateFileTool);
     registry.unregister_tool(EditFileTool);
     registry.unregister_tool(StreamingEditFileTool);
 
     if AssistantSettings::get_global(cx).stream_edits(cx) {
         registry.register_tool(StreamingEditFileTool);
     } else {
+        registry.register_tool(CreateFileTool);
         registry.register_tool(EditFileTool);
     }
 }

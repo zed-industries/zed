@@ -71,6 +71,7 @@ fn eval_extract_handle_command_output() {
                         StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
+                            create_or_overwrite: false,
                         },
                     )],
                 ),
@@ -126,6 +127,7 @@ fn eval_delete_run_git_blame() {
                         StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
+                            create_or_overwrite: false,
                         },
                     )],
                 ),
@@ -240,6 +242,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
+                            create_or_overwrite: false,
                         },
                     )],
                 ),
@@ -315,6 +318,7 @@ fn eval_disable_cursor_blinking() {
                         StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
+                            create_or_overwrite: false,
                         },
                     )],
                 ),
@@ -504,6 +508,7 @@ fn eval_from_pixels_constructor() {
                         StreamingEditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
+                            create_or_overwrite: false,
                         },
                     )],
                 ),
