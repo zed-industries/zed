@@ -41,10 +41,12 @@ impl ModelContextProtocol {
             client_info,
         };
 
+        println!("Sending initialize request");
         let response: types::InitializeResponse = self
             .inner
             .request(types::RequestType::Initialize.as_str(), params)
             .await?;
+        println!("Got initialize request");
 
         if !Self::supported_protocols().contains(&response.protocol_version) {
             return Err(anyhow::anyhow!(
