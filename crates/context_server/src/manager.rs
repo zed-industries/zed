@@ -325,11 +325,11 @@ impl ContextServerManager {
         })?;
 
         for (_, server) in servers_to_stop {
-            this.update(cx, |this, cx| this.stop_server(server, cx))??;
+            this.update(cx, |this, cx| this.stop_server(server, cx).ok())?;
         }
 
         for (_, server) in servers_to_start {
-            Self::run_server(this.clone(), server, cx).await?;
+            Self::run_server(this.clone(), server, cx).await.ok();
         }
 
         Ok(())
@@ -343,16 +343,14 @@ impl ContextServerManager {
         let id = server.id();
 
         this.update(cx, |this, cx| {
-            this.update_server_status(id.clone(), Some(ContextServerStatus::Starting), cx)
+            this.update_server_status(id.clone(), Some(ContextServerStatus::Starting), cx);
+            this.servers.insert(id.clone(), server.clone());
         })?;
-
-        let new_server = server.clone();
 
         match server.start(&cx).await {
             Ok(_) => {
                 log::debug!("`{}` context server started", id);
                 this.update(cx, |this, cx| {
-                    this.servers.insert(id.clone(), new_server);
                     this.update_server_status(id.clone(), Some(ContextServerStatus::Running), cx)
                 })?;
                 Ok(())
