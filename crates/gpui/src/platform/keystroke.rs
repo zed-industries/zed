@@ -584,14 +584,21 @@ mod tests {
 
     #[test]
     fn test_different_separators() {
-        let keyboard_mapper = TestKeyboardMapper::new();
         assert_eq!(
-            Keystroke::parse_with_separator("ctrl-alt--", '-', &keyboard_mapper).unwrap(),
-            Keystroke::parse_with_separator("ctrl+alt+-", '+', &keyboard_mapper).unwrap(),
+            Keystroke::parse_keystroke_components("ctrl-alt--", '-').unwrap(),
+            Keystroke::parse_keystroke_components("ctrl+alt+-", '+').unwrap(),
         );
         assert_eq!(
-            Keystroke::parse_with_separator("ctrl-alt-=", '-', &keyboard_mapper).unwrap(),
-            Keystroke::parse_with_separator("ctrl+alt+=", '+', &keyboard_mapper).unwrap(),
+            Keystroke::parse_keystroke_components("ctrl-alt-+", '-').unwrap(),
+            Keystroke::parse_keystroke_components("ctrl+alt++", '+').unwrap(),
+        );
+        assert_eq!(
+            Keystroke::parse_keystroke_components("ctrl-alt-[Minus]", '-').unwrap(),
+            Keystroke::parse_keystroke_components("ctrl+alt+[Minus]", '+').unwrap(),
+        );
+        assert_eq!(
+            Keystroke::parse_keystroke_components("ctrl-alt-[张小白]", '-').unwrap(),
+            Keystroke::parse_keystroke_components("ctrl+alt+[张小白]", '+').unwrap(),
         );
     }
 
