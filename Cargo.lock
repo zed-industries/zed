@@ -18047,6 +18047,7 @@ dependencies = [
  "getrandom 0.2.15",
  "getrandom 0.3.2",
  "gimli",
+ "handlebars 4.5.0",
  "hashbrown 0.14.5",
  "hashbrown 0.15.2",
  "heck 0.4.1",
