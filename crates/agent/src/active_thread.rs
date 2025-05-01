@@ -21,9 +21,9 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
-    ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
-    ListAlignment, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
+    ClipboardItem, CursorStyle, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter,
+    Focusable, Hsla, ListAlignment, ListState, MouseButton, PlatformDisplay, ScrollHandle,
+    Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
     UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
     pulsating_between,
 };
@@ -45,8 +45,8 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    ButtonLike, Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState,
+    TextSize, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -360,37 +360,42 @@ fn render_markdown_code_block(
             cx,
         )),
         CodeBlockKind::FencedSrc(path_range) => path_range.path.file_name().map(|file_name| {
+            let language = parsed_markdown
+                .languages_by_path
+                .get(&path_range.path)
+                .or_else(|| {
+                    path_range
+                        .path
+                        .extension()
+                        .and_then(OsStr::to_str)
+                        .and_then(|str| {
+                            let ext = SharedString::new(str.to_string());
+                            parsed_markdown.languages_by_name.get(&ext)
+                        })
+                });
+
             // We tell the model to use /dev/null for the path instead of using ```language
             // because otherwise it consistently fails to use code citations.
             if path_range.path.starts_with("/dev/null") {
-                let icon = parsed_markdown
-                    .languages_by_path
-                    .get(&path_range.path)
-                    .or_else(|| {
-                        path_range
-                            .path
-                            .extension()
-                            .and_then(OsStr::to_str)
-                            .and_then(|str| {
-                                let ext = SharedString::new(str.to_string());
-                                parsed_markdown.languages_by_name.get(&ext)
-                            })
-                    })
-                    .and_then(|language| {
-                        language
-                            .config()
-                            .matcher
-                            .path_suffixes
-                            .iter()
-                            .find_map(|extension| {
-                                file_icons::FileIcons::get_icon(Path::new(extension), cx)
-                            })
-                            .map(file_icon)
-                    });
+                let icon = language.and_then(|language| {
+                    language
+                        .config()
+                        .matcher
+                        .path_suffixes
+                        .iter()
+                        .find_map(|extension| {
+                            file_icons::FileIcons::get_icon(Path::new(extension), cx)
+                        })
+                        .map(|icon_path| {
+                            code_block_icon(ix, icon_path, Some(language.name().into()))
+                        })
+                });
 
                 div().children(icon).into_any_element()
             } else {
-                let icon = file_icons::FileIcons::get_icon(&path_range.path, cx).map(file_icon);
+                let icon = file_icons::FileIcons::get_icon(&path_range.path, cx).map(|icon_path| {
+                    code_block_icon(ix, icon_path, language.map(|lang| lang.name().into()))
+                });
                 let content = if let Some(parent) = path_range.path.parent() {
                     h_flex()
                         .ml_1()
@@ -616,10 +621,24 @@ fn render_markdown_code_block(
         )
 }
 
-fn file_icon(icon_path: SharedString) -> Icon {
-    Icon::from_path(icon_path)
-        .color(Color::Muted)
-        .size(IconSize::XSmall)
+fn code_block_icon(
+    ix: usize,
+    icon_path: SharedString,
+    tooltip: Option<SharedString>,
+) -> ButtonLike {
+    let without_tooltip = ButtonLike::new(("code_block_icon", ix))
+        .disabled(true)
+        .cursor_style(CursorStyle::Arrow)
+        .child(
+            Icon::from_path(icon_path)
+                .color(Color::Muted)
+                .size(IconSize::XSmall),
+        );
+
+    match tooltip {
+        Some(tooltip) => without_tooltip.tooltip(Tooltip::text(tooltip)),
+        None => without_tooltip,
+    }
 }
 
 fn render_code_language(
