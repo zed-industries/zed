@@ -4,7 +4,10 @@ use std::{
 };
 
 use anyhow::Context as _;
-use context_server::{ContextServerDescriptorRegistry, manager::ContextServerManager};
+use context_server::{
+    ContextServerDescriptorRegistry,
+    manager::{ContextServerManager, ContextServerStatus},
+};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension::{ContextServerConfiguration, ExtensionManifest};
 use gpui::{
@@ -310,21 +313,23 @@ fn wait_for_context_server(
     let tx = Arc::new(Mutex::new(Some(tx)));
 
     let subscription = cx.subscribe(context_server_manager, move |_, event, _cx| match event {
-        context_server::manager::Event::ServerStarted { server_id } => {
-            if server_id == &context_server_id {
-                if let Some(tx) = tx.lock().unwrap().take() {
-                    let _ = tx.send(Ok(()));
+        context_server::manager::Event::ServerStatusChanged { server_id, status } => match status {
+            Some(ContextServerStatus::Running) => {
+                if server_id == &context_server_id {
+                    if let Some(tx) = tx.lock().unwrap().take() {
+                        let _ = tx.send(Ok(()));
+                    }
                 }
             }
-        }
-        context_server::manager::Event::ServerFailedToStart { server_id, error } => {
-            if server_id == &context_server_id {
-                if let Some(tx) = tx.lock().unwrap().take() {
-                    let _ = tx.send(Err(error.clone()));
+            Some(ContextServerStatus::Error(error)) => {
+                if server_id == &context_server_id {
+                    if let Some(tx) = tx.lock().unwrap().take() {
+                        let _ = tx.send(Err(error.clone()));
+                    }
                 }
             }
-        }
-        _ => {}
+            _ => {}
+        },
     });
 
     cx.spawn(async move |_cx| {
