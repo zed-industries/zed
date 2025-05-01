@@ -178,7 +178,7 @@ impl ConfigureContextServerModal {
                     settings_validator,
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
-                        editor.set_text(manifest.default_settings, window, cx);
+                        editor.set_text(manifest.default_settings.trim(), window, cx);
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
                         }
@@ -244,7 +244,10 @@ impl ConfigureContextServerModal {
                 config.settings.as_ref() != Some(&settings_value)
             });
 
-        if !settings_changed {
+        let is_running = self.context_server_manager.read(cx).status_for_server(&id)
+            == Some(ContextServerStatus::Running);
+
+        if !settings_changed && is_running {
             self.complete_setup(id, cx);
             return;
         }
@@ -426,7 +429,7 @@ impl Render for ConfigureContextServerModal {
                                     .when_some(configuration.last_error.clone(), |this, error| {
                                         this.child(
                                             h_flex()
-                                                .gap_1()
+                                                .gap_2()
                                                 .px_2()
                                                 .py_1()
                                                 .child(
@@ -435,9 +438,11 @@ impl Render for ConfigureContextServerModal {
                                                         .color(Color::Warning),
                                                 )
                                                 .child(
-                                                    Label::new(error)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
+                                                    div().w_full().child(
+                                                        Label::new(error)
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
+                                                    ),
                                                 ),
                                         )
                                     }),
