@@ -15,6 +15,7 @@ publish = false
 
 ### BEGIN HAKARI SECTION
 [dependencies]
+ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 anstream = { version = "0.6" }
 arrayvec = { version = "0.7", features = ["serde"] }
@@ -65,6 +66,7 @@ hashbrown-3575ec1268b04181 = { package = "hashbrown", version = "0.15", features
 hashbrown-582f2526e08bb6a0 = { package = "hashbrown", version = "0.14", features = ["raw"] }
 hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
+idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -78,6 +80,8 @@ miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
+num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 percent-encoding = { version = "2" }
@@ -125,6 +129,7 @@ wasmtime-cranelift = { version = "29", default-features = false, features = ["co
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 
 [build-dependencies]
+ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 anstream = { version = "0.6" }
 arrayvec = { version = "0.7", features = ["serde"] }
@@ -177,6 +182,7 @@ hashbrown-582f2526e08bb6a0 = { package = "hashbrown", version = "0.14", features
 heck = { version = "0.4", features = ["unicode"] }
 hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
+idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 itertools-594e8ee84c453af0 = { package = "itertools", version = "0.13" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
@@ -191,6 +197,8 @@ miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
+num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 percent-encoding = { version = "2" }
@@ -352,7 +360,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
@@ -372,7 +380,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
@@ -395,7 +402,7 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
@@ -415,7 +422,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
@@ -436,7 +442,7 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.aarch64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
@@ -456,7 +462,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
@@ -479,7 +484,7 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.aarch64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
@@ -499,7 +504,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
@@ -569,7 +573,7 @@ windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", feat
 
 [target.x86_64-unknown-linux-musl.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
@@ -589,7 +593,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
@@ -612,7 +615,7 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.x86_64-unknown-linux-musl.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
@@ -632,7 +635,6 @@ mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "23", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
