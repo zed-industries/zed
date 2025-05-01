@@ -52,9 +52,6 @@ pub fn go_to_parent_module(
     let Some(project) = &editor.project else {
         return;
     };
-    let Some(workspace) = editor.workspace() else {
-        return;
-    };
 
     let server_lookup = find_specific_language_server_in_selection(
         editor,
@@ -67,8 +64,7 @@ pub fn go_to_parent_module(
     let lsp_store = project.read(cx).lsp_store();
     let upstream_client = lsp_store.read(cx).upstream_client();
     cx.spawn_in(window, async move |editor, cx| {
-        let Some((trigger_anchor, rust_language, server_to_query, buffer)) = server_lookup.await
-        else {
+        let Some((trigger_anchor, _, server_to_query, buffer)) = server_lookup.await else {
             return anyhow::Ok(());
         };
 
@@ -102,9 +98,7 @@ pub fn go_to_parent_module(
                     project.request_lsp(
                         buffer,
                         project::LanguageServerToQuery::Other(server_to_query),
-                        project::lsp_store::lsp_ext_command::GoToParentModule {
-                            foo: todo!("TODO kb"),
-                        },
+                        project::lsp_store::lsp_ext_command::GoToParentModule { position },
                         cx,
                     )
                 })?

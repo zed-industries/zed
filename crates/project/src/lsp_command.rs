@@ -966,7 +966,7 @@ fn language_server_for_buffer(
         .ok_or_else(|| anyhow!("no language server found for buffer"))
 }
 
-async fn location_links_from_proto(
+pub async fn location_links_from_proto(
     proto_links: Vec<proto::LocationLink>,
     lsp_store: Entity<LspStore>,
     mut cx: AsyncApp,
@@ -1039,7 +1039,7 @@ pub fn location_link_from_proto(
     })
 }
 
-async fn location_links_from_lsp(
+pub async fn location_links_from_lsp(
     message: Option<lsp::GotoDefinitionResponse>,
     lsp_store: Entity<LspStore>,
     buffer: Entity<Buffer>,
@@ -1180,7 +1180,7 @@ pub async fn location_link_from_lsp(
     })
 }
 
-fn location_links_to_proto(
+pub fn location_links_to_proto(
     links: Vec<LocationLink>,
     lsp_store: &mut LspStore,
     peer_id: PeerId,

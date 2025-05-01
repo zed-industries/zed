@@ -2,9 +2,10 @@ use crate::{
     LocationLink,
     lsp_command::{
         LspCommand, location_link_from_lsp, location_link_from_proto, location_link_to_proto,
+        location_links_from_lsp, location_links_from_proto, location_links_to_proto,
     },
     lsp_store::LspStore,
-    make_text_document_identifier,
+    make_lsp_text_document_position, make_text_document_identifier,
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -301,10 +302,9 @@ pub struct SwitchSourceHeaderResult(pub String);
 #[serde(rename_all = "camelCase")]
 pub struct SwitchSourceHeader;
 
-#[derive(Default, Deserialize, Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub struct GoToParentModule {
-    pub foo: (),
+    pub position: PointUtf16,
 }
 
 pub struct LspGoToParentModule {}
@@ -410,53 +410,72 @@ impl LspCommand for GoToParentModule {
         _: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::TextDocumentPositionParams> {
-        todo!("TODO kb")
+        make_lsp_text_document_position(path, self.position)
     }
 
     async fn response_from_lsp(
         self,
-        message: Option<Vec<lsp::LocationLink>>,
-        _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: LanguageServerId,
-        _: AsyncApp,
+        links: Option<Vec<lsp::LocationLink>>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: AsyncApp,
     ) -> anyhow::Result<Vec<LocationLink>> {
-        todo!("TODO kb")
+        location_links_from_lsp(
+            links.map(lsp::GotoDefinitionResponse::Link),
+            lsp_store,
+            buffer,
+            server_id,
+            cx,
+        )
+        .await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtGoToParentModule {
-        todo!("TODO kb")
+        proto::LspExtGoToParentModule {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+        }
     }
 
     async fn from_proto(
-        _: Self::ProtoRequest,
+        request: Self::ProtoRequest,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
+        let position = request
+            .position
+            .and_then(deserialize_anchor)
+            .context("bad request with bad position")?;
         Ok(Self {
-            foo: todo!("TODO kb"),
+            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
     fn response_to_proto(
-        response: Vec<LocationLink>,
-        _: &mut LspStore,
-        _: PeerId,
+        links: Vec<LocationLink>,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
         _: &clock::Global,
-        _: &mut App,
+        cx: &mut App,
     ) -> proto::LspExtGoToParentModuleResponse {
-        todo!("TODO kb")
+        proto::LspExtGoToParentModuleResponse {
+            links: location_links_to_proto(links, lsp_store, peer_id, cx),
+        }
     }
 
     async fn response_from_proto(
         self,
         message: proto::LspExtGoToParentModuleResponse,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Vec<LocationLink>> {
-        todo!("TODO kb")
+        location_links_from_proto(message.links, lsp_store, cx).await
     }
 
     fn buffer_id_from_proto(message: &proto::LspExtGoToParentModule) -> Result<BufferId> {
