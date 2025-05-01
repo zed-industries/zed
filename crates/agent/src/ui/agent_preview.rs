@@ -2,7 +2,7 @@ use collections::HashMap;
 use component::ComponentId;
 use gpui::{App, Entity, WeakEntity};
 use linkme::distributed_slice;
-use parking_lot::RwLock;
+use std::sync::OnceLock;
 use ui::{AnyElement, Component, Window};
 use workspace::Workspace;
 
@@ -17,18 +17,22 @@ pub type PreviewFn = fn(
     &mut App,
 ) -> Option<AnyElement>;
 
-/// Structure to hold component ID and its preview function
-pub struct PreviewEntry {
-    pub id: ComponentId,
-    pub preview_fn: PreviewFn,
-}
-
-/// Distributed slice that holds all agent preview data
+/// Distributed slice for preview registration functions
 #[distributed_slice]
-pub static __ALL_AGENT_PREVIEWS: [PreviewEntry] = [..];
+pub static __ALL_AGENT_PREVIEWS: [fn() -> (ComponentId, PreviewFn)] = [..];
 
 /// Trait that must be implemented by components that provide agent previews.
 pub trait AgentPreview: Component {
+    /// Get the ID for this component
+    ///
+    /// Eventually this will move to the component trait.
+    fn id() -> ComponentId
+    where
+        Self: Sized,
+    {
+        ComponentId(Self::name())
+    }
+
     /// Static method to create a preview for this component type
     fn create_preview(
         workspace: WeakEntity<Workspace>,
@@ -46,12 +50,31 @@ pub trait AgentPreview: Component {
 macro_rules! register_agent_preview {
     ($type:ty) => {
         #[linkme::distributed_slice($crate::ui::agent_preview::__ALL_AGENT_PREVIEWS)]
-        static __REGISTER_AGENT_PREVIEW: $crate::ui::agent_preview::PreviewEntry =
-            $crate::ui::agent_preview::PreviewEntry {
-                id: component::ComponentId(<$type>::name()),
-                preview_fn: <$type as $crate::ui::agent_preview::AgentPreview>::create_preview,
-            };
+        static __REGISTER_AGENT_PREVIEW: fn() -> (
+            component::ComponentId,
+            $crate::ui::agent_preview::PreviewFn,
+        ) = || {
+            (
+                <$type as $crate::ui::agent_preview::AgentPreview>::id(),
+                <$type as $crate::ui::agent_preview::AgentPreview>::create_preview,
+            )
+        };
     };
+}
+
+/// Lazy initialized registry of preview functions
+static AGENT_PREVIEW_REGISTRY: OnceLock<HashMap<ComponentId, PreviewFn>> = OnceLock::new();
+
+/// Initialize the agent preview registry if needed
+fn get_or_init_registry() -> &'static HashMap<ComponentId, PreviewFn> {
+    AGENT_PREVIEW_REGISTRY.get_or_init(|| {
+        let mut map = HashMap::default();
+        for register_fn in __ALL_AGENT_PREVIEWS.iter() {
+            let (id, preview_fn) = register_fn();
+            map.insert(id, preview_fn);
+        }
+        map
+    })
 }
 
 /// Get a specific agent preview by component ID.
@@ -63,16 +86,14 @@ pub fn get_agent_preview(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
-    __ALL_AGENT_PREVIEWS
-        .iter()
-        .find(|entry| &entry.id == id)
-        .and_then(|entry| (entry.preview_fn)(workspace, active_thread, thread_store, window, cx))
+    let registry = get_or_init_registry();
+    registry
+        .get(id)
+        .and_then(|preview_fn| preview_fn(workspace, active_thread, thread_store, window, cx))
 }
 
 /// Get all registered agent previews.
 pub fn all_agent_previews() -> Vec<ComponentId> {
-    __ALL_AGENT_PREVIEWS
-        .iter()
-        .map(|entry| entry.id.clone())
-        .collect()
+    let registry = get_or_init_registry();
+    registry.keys().cloned().collect()
 }

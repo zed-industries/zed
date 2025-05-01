@@ -9,5 +9,4 @@ pub use agent_notification::*;
 pub use agent_preview::*;
 pub use animated_label::*;
 pub use context_pill::*;
-pub use upsell::*;
 pub use usage_banner::*;

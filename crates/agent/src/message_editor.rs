@@ -1208,7 +1208,7 @@ impl AgentPreview for MessageEditor {
         if let Some(workspace_entity) = workspace.upgrade() {
             let fs = workspace_entity.read(cx).app_state().fs.clone();
             let weak_project = workspace_entity.read(cx).project().clone().downgrade();
-            let context_store = cx.new(|cx| ContextStore::new(weak_project, None));
+            let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
             let thread = active_thread.read(cx).thread().clone();
 
             let example_message_editor = cx.new(|cx| {
@@ -1224,7 +1224,6 @@ impl AgentPreview for MessageEditor {
                 )
             });
 
-            // Return the preview element
             Some(
                 v_flex()
                     .gap_4()

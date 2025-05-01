@@ -161,7 +161,6 @@ impl ComponentPreview {
                         .update_in(cx, |this, window, cx| {
                             this.thread_store = Some(thread_store.clone());
                             this.create_active_thread(window, cx);
-                            this.populate_agent_previews(window, cx);
                         })
                         .ok();
                 }
@@ -191,6 +190,40 @@ impl ComponentPreview {
             },
         );
 
+        // Initialize agent previews
+        let agent_previews = agent::all_agent_previews()
+            .into_iter()
+            .map(|id| {
+                Box::new(
+                    move |_self: &ComponentPreview,
+                          workspace: WeakEntity<Workspace>,
+                          active_thread: Entity<ActiveThread>,
+                          thread_store: WeakEntity<ThreadStore>,
+                          window: &mut Window,
+                          cx: &mut App| {
+                        agent::get_agent_preview(
+                            &id,
+                            workspace,
+                            active_thread,
+                            thread_store,
+                            window,
+                            cx,
+                        )
+                    },
+                )
+                    as Box<
+                        dyn Fn(
+                            &ComponentPreview,
+                            WeakEntity<Workspace>,
+                            Entity<ActiveThread>,
+                            WeakEntity<ThreadStore>,
+                            &mut Window,
+                            &mut App,
+                        ) -> Option<AnyElement>,
+                    >
+            })
+            .collect::<Vec<_>>();
+
         let mut component_preview = Self {
             workspace_id: None,
             focus_handle: cx.focus_handle(),
@@ -204,7 +237,7 @@ impl ComponentPreview {
             component_map: components().0,
             components: sorted_components,
             component_list,
-            agent_previews: Vec::new(),
+            agent_previews,
             cursor_index: selected_index,
             filter_editor,
             filter_text: String::new(),
@@ -236,61 +269,6 @@ impl ComponentPreview {
                 static_active_thread(workspace, language_registry, thread_store, window, cx);
             self.active_thread = Some(active_thread);
             cx.notify();
-        }
-
-        self
-    }
-
-    pub fn populate_agent_previews(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> &mut Self {
-        let workspace = self.workspace.clone();
-        if let Some(thread_store) = self.thread_store.clone() {
-            if let Some(thread) = &self.active_thread {
-                let ids = agent::all_agent_previews();
-                let mut preview_functions: Vec<
-                    Box<
-                        dyn Fn(
-                            &Self,
-                            WeakEntity<Workspace>,
-                            Entity<ActiveThread>,
-                            WeakEntity<ThreadStore>,
-                            &mut Window,
-                            &mut App,
-                        ) -> Option<AnyElement>,
-                    >,
-                > = Vec::new();
-
-                for id in ids {
-                    // Capture id in a closure that calls agent::get_agent_preview
-                    let id_clone = id.clone();
-                    let preview_fn = Box::new(
-                        move |_self: &ComponentPreview,
-                              workspace: WeakEntity<Workspace>,
-                              active_thread: Entity<ActiveThread>,
-                              thread_store: WeakEntity<ThreadStore>,
-                              window: &mut Window,
-                              cx: &mut App| {
-                            agent::get_agent_preview(
-                                &id_clone,
-                                workspace,
-                                active_thread,
-                                thread_store,
-                                window,
-                                cx,
-                            )
-                        },
-                    );
-
-                    preview_functions.push(preview_fn);
-                }
-                self.agent_previews = preview_functions;
-                cx.notify();
-            } else {
-                return self;
-            };
         }
 
         self
