@@ -88,6 +88,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
         let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
         let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
         let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
+        let capslock = modifiers.contains(NSEventModifierFlags::NSAlphaShiftKeyMask);
 
         Modifiers {
             control,
@@ -95,6 +96,7 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
             shift,
             platform: command,
             function,
+            capslock,
         }
     }
 }
@@ -445,6 +447,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 shift,
                 platform: command,
                 function,
+                capslock: false,
             },
             key,
             key_char,

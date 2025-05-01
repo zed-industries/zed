@@ -875,6 +875,7 @@ impl PlatformWindow for MacWindow {
             let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
             let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
             let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
+            let capslock = modifiers.contains(NSEventModifierFlags::NSAlphaShiftKeyMask);
 
             Modifiers {
                 control,
@@ -882,6 +883,7 @@ impl PlatformWindow for MacWindow {
                 shift,
                 platform: command,
                 function,
+                capslock,
             }
         }
     }

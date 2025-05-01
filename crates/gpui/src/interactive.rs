@@ -157,6 +157,7 @@ impl ClickEvent {
             shift: self.up.modifiers.shift && self.down.modifiers.shift,
             platform: self.up.modifiers.platform && self.down.modifiers.platform,
             function: self.up.modifiers.function && self.down.modifiers.function,
+            capslock: self.up.modifiers.capslock && self.down.modifiers.capslock,
         }
     }
 }

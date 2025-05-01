@@ -1479,6 +1479,7 @@ pub(crate) fn current_modifiers() -> Modifiers {
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
+        capslock: false, // TODO:
     }
 }
 

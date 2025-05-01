@@ -187,6 +187,7 @@ impl Keystroke {
                 shift,
                 platform,
                 function,
+                capslock: false,
             },
             key,
             key_char,
@@ -397,12 +398,16 @@ pub struct Modifiers {
     /// The function key
     #[serde(default)]
     pub function: bool,
+
+    /// The caps lock key
+    #[serde(default)]
+    pub capslock: bool,
 }
 
 impl Modifiers {
     /// Returns whether any modifier key is pressed.
     pub fn modified(&self) -> bool {
-        self.control || self.alt || self.shift || self.platform || self.function
+        self.control || self.alt || self.shift || self.platform || self.function || self.capslock
     }
 
     /// Whether the semantically 'secondary' modifier key is pressed.
@@ -428,6 +433,7 @@ impl Modifiers {
             + self.shift as u8
             + self.platform as u8
             + self.function as u8
+            + self.capslock as u8
     }
 
     /// Returns [`Modifiers`] with no modifiers.
@@ -527,5 +533,6 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+            && (other.capslock || !self.capslock)
     }
 }

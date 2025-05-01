@@ -76,7 +76,7 @@ impl AskPassSession {
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
-
+        let mut try_again = false;
         let askpass_task = executor.spawn(async move {
             let mut askpass_opened_tx = Some(askpass_opened_tx);
 
@@ -91,12 +91,17 @@ impl AskPassSession {
                 }
                 let prompt = String::from_utf8_lossy(&buffer);
                 if let Some(password) = delegate
-                    .ask_password(prompt.to_string())
+                    .ask_password(if try_again {
+                        "Wrong password, try again:".to_string()
+                    } else {
+                        prompt.to_string()
+                    })
                     .await
                     .context("failed to get askpass password")
                     .log_err()
                 {
                     stream.write_all(password.as_bytes()).await.log_err();
+                    try_again = true;
                 } else {
                     if let Some(kill_tx) = kill_tx.take() {
                         kill_tx.send(()).log_err();

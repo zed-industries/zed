@@ -251,6 +251,7 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
     control: false,
     platform: false,
     function: false,
+    capslock: false,
 };
 
 struct InlineValueCache {

@@ -192,7 +192,6 @@ impl SshPrompt {
             background_color: Some(gpui::transparent_black()),
             ..Default::default()
         };
-
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
@@ -284,6 +283,9 @@ impl Render for SshPrompt {
                         .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
+                .when(window.modifiers().capslock, |el| {
+                    el.child(Label::new("⚠️ ⇪ is on"))
+                })
             })
     }
 }

@@ -344,6 +344,7 @@ mod test {
                 shift: false,
                 platform: false,
                 function: false,
+                capslock: false,
             },
             key: "🖖🏻".to_string(), //2 char string
             key_char: None,
