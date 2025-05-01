@@ -2362,6 +2362,7 @@ impl ActiveThread {
                                     let workspace = self.workspace.clone();
                                     move |text, window, cx| {
                                         open_markdown_link(text, workspace.clone(), window, cx);
+                                        cx.stop_propagation();
                                     }
                                 }))
                                 .into_any_element()
