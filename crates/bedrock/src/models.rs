@@ -38,6 +38,7 @@ pub enum Model {
     AmazonNovaLite,
     AmazonNovaMicro,
     AmazonNovaPro,
+    AmazonNovaPremier,
     // AI21 models
     AI21J2GrandeInstruct,
     AI21J2JumboInstruct,
@@ -120,6 +121,7 @@ impl Model {
             Model::AmazonNovaLite => "amazon.nova-lite-v1:0",
             Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
+            Model::AmazonNovaPremier => "amazon.nova-premier-v1:0",
             Model::DeepSeekR1 => "us.deepseek.r1-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
@@ -166,6 +168,7 @@ impl Model {
             Self::AmazonNovaLite => "Amazon Nova Lite",
             Self::AmazonNovaMicro => "Amazon Nova Micro",
             Self::AmazonNovaPro => "Amazon Nova Pro",
+            Self::AmazonNovaPremier => "Amazon Nova Premier",
             Self::DeepSeekR1 => "DeepSeek R1",
             Self::AI21J2GrandeInstruct => "AI21 Jurassic2 Grande Instruct",
             Self::AI21J2JumboInstruct => "AI21 Jurassic2 Jumbo Instruct",
@@ -208,6 +211,7 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet => 200_000,
+            Self::AmazonNovaPremier => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
             _ => 200_000,
         }
@@ -252,7 +256,10 @@ impl Model {
             | Self::Claude3_5Haiku => true,
 
             // Amazon Nova models (all support tool use)
-            Self::AmazonNovaPro | Self::AmazonNovaLite | Self::AmazonNovaMicro => true,
+            Self::AmazonNovaPremier
+            | Self::AmazonNovaPro
+            | Self::AmazonNovaLite
+            | Self::AmazonNovaMicro => true,
 
             // AI21 Jamba 1.5 models support tool use
             Self::AI21Jamba15LargeV1 | Self::AI21Jamba15MiniV1 => true,
@@ -306,9 +313,8 @@ impl Model {
             // Models available only in US
             (Model::Claude3Opus, "us")
             | (Model::Claude3_7Sonnet, "us")
-            | (Model::Claude3_7SonnetThinking, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            | (Model::Claude3_7SonnetThinking, "us")
+            | (Model::AmazonNovaPremier, "us") => Ok(format!("{}.{}", region_group, model_id)),
 
             // Models available in US, EU, and APAC
             (Model::Claude3_5SonnetV2, "us")
