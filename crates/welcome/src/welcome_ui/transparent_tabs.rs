@@ -41,18 +41,24 @@ impl TransparentTabs {
 impl RenderOnce for TransparentTabs {
     fn render(mut self, window: &mut ui::Window, cx: &mut ui::App) -> impl IntoElement {
         let content = self.tabs[*self.selected.read(cx)].content.take().unwrap();
+        let selected = *self.selected.read(cx);
         v_flex()
             .child(
                 h_flex().children(self.tabs.into_iter().enumerate().map(|(i, t)| {
                     div()
                         .id(i)
                         .child(t.tab_title)
-                        .when(i == *self.selected.read(cx), |this| {
+                        .when(i == selected, |this| {
                             this.bg(cx.theme().colors().element_selected)
                         })
                         .on_click({
                             let selected = self.selected.clone();
-                            move |_, _window, cx| selected.update(cx, |selected, _cx| *selected = i)
+                            move |_, _window, cx| {
+                                selected.update(cx, |selected, cx| {
+                                    *selected = i;
+                                    cx.notify();
+                                })
+                            }
                         })
                 })),
             )

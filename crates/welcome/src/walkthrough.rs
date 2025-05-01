@@ -3,14 +3,13 @@ use client::telemetry::Telemetry;
 use fs::Fs;
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
-    ListState, ParentElement, Render, Styled, Subscription, TextOverflow, WeakEntity, Window, list,
-    svg,
+    ListState, ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
 use persistence::WALKTHROUGH_DB;
 use settings::SettingsStore;
 use std::sync::Arc;
 use theme::ThemeRegistry;
-use theme::{Appearance, ThemeSettings};
+use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
@@ -34,6 +33,14 @@ pub fn init(cx: &mut App) {
     register_serializable_item::<Walkthrough>(cx);
 }
 
+enum WalkthroughStep {
+    ThemeStep { tab_selection: Entity<usize> },
+    SettingsStep,
+    AiIntegrations,
+    DataSharing,
+    OpenProject,
+}
+
 pub struct Walkthrough {
     active_step: usize,
     workspace: WeakEntity<Workspace>,
@@ -41,7 +48,7 @@ pub struct Walkthrough {
     focus_handle: FocusHandle,
     _telemetry: Arc<Telemetry>,
     list: ListState,
-    steps: Vec<Box<dyn WalkthroughStep>>,
+    steps: Vec<WalkthroughStep>,
     _settings_subscription: Subscription,
 }
 
@@ -67,7 +74,10 @@ impl Walkthrough {
                     .border_1()
                     .when(active, |div| div.bg(theme.colors().element_background))
                     .id(title)
-                    .on_click(select_step(ix, cx))
+                    .on_click(cx.listener(move |walkthrough, _, _, cx| {
+                        walkthrough.active_step = ix;
+                        cx.notify();
+                    }))
                     .border_color(theme.colors().border)
                     .child(v_flex().child(Label::new(title)).when(active, |div| {
                         div.text_sm()
@@ -82,15 +92,17 @@ impl Walkthrough {
     pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         let this = cx.new(|cx| {
             let this = cx.weak_entity();
+
             let steps = vec![
-                Box::new(ThemeStep {
-                    selection: cx.new(|_| 0),
-                }) as Box<dyn WalkthroughStep>,
-                Box::new(SettingsStep),
-                Box::new(AiIntegrations),
-                Box::new(DataSharing),
-                Box::new(OpenProject),
+                WalkthroughStep::ThemeStep {
+                    tab_selection: cx.new(|_| 0),
+                },
+                WalkthroughStep::SettingsStep,
+                WalkthroughStep::AiIntegrations,
+                WalkthroughStep::DataSharing,
+                WalkthroughStep::OpenProject,
             ];
+            let steps_len = steps.len();
             Walkthrough {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
@@ -100,15 +112,12 @@ impl Walkthrough {
                     .observe_global::<SettingsStore>(move |_: &mut Walkthrough, cx| cx.notify()),
                 steps,
                 list: ListState::new(
-                    steps.len(),
+                    steps_len,
                     gpui::ListAlignment::Top,
                     px(1000.),
-                    move |ix, window, cx| {
-                        this.update(cx, |this, cx| {
-                            let current_step = &this.steps[ix];
-                            current_step.render_checkbox(ix, this, window, cx)
-                        })
-                        .unwrap_or_else(|_| div().into_any())
+                    move |ix, _window, cx| {
+                        this.update(cx, |this, cx| this.render_checkbox(ix, cx))
+                            .unwrap_or_else(|_| div().into_any())
                     },
                 ),
                 active_step: 0,
@@ -117,6 +126,258 @@ impl Walkthrough {
 
         this
     }
+
+    fn render_subpane(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match &self.steps[ix] {
+            WalkthroughStep::ThemeStep { tab_selection } => {
+                self.render_theme_step(tab_selection, window, cx)
+            }
+            WalkthroughStep::SettingsStep => self.render_settings_step(window, cx),
+            WalkthroughStep::AiIntegrations => self.render_ai_integrations_step(window, cx),
+            WalkthroughStep::DataSharing => self.render_data_sharing_step(window, cx),
+            WalkthroughStep::OpenProject => self.render_open_project_step(window, cx),
+        }
+    }
+
+    fn render_checkbox(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        match &self.steps[ix] {
+            WalkthroughStep::ThemeStep { .. } => self.checkbox_section(
+                ix,
+                "Pick a Theme",
+                "Select one of our built-in themes, or download one from the extensions page",
+                cx,
+            ),
+            WalkthroughStep::SettingsStep => self.checkbox_section(
+                ix,
+                "Configure Zed",
+                "Set initial settings and/or import from other editors",
+                cx,
+            ),
+            WalkthroughStep::AiIntegrations => self.checkbox_section(
+                ix,
+                "AI Setup",
+                "Log in and pick providers for agentic editing and edit predictions",
+                cx,
+            ),
+            WalkthroughStep::DataSharing => self.checkbox_section(
+                ix,
+                "Data Sharing",
+                "Pick which data you send to the zed team",
+                cx,
+            ),
+
+            WalkthroughStep::OpenProject => self.checkbox_section(
+                ix,
+                "Open a Project",
+                "Pick a recent project you had open in another editor",
+                cx,
+            ),
+        }
+    }
+
+    fn render_data_sharing_step(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        v_flex()
+            .items_center()
+            .justify_center()
+            .children([
+                "Send Crash Reports",
+                "Send Telemetry",
+                "---",
+                "Help Improve completions",
+                "Rate agentic edits",
+                // TODO: add note about how zed never shares your code/data by default
+            ])
+            .into_any()
+    }
+
+    fn render_settings_step(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        v_flex()
+            .items_center()
+            .justify_center()
+            .child(h_flex().children([
+                "VS Code",
+                "Atom",
+                "Sublime",
+                "Jetbrains",
+                "Text Mate",
+                "Emacs (beta)",
+            ]))
+            .child("vim mode checkbox")
+            .child("browse extensions")
+            .when(cfg!(macos), |this| {
+                this.child(
+                    h_flex()
+                        .child(Button::new("install-cli", "Install cli"))
+                        .child("Install a `zed` binary that\ncan be run from the command line"),
+                )
+            })
+            .when(
+                true,
+                // todo!("when this path exists: {}", paths::vscode_settings_file()),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .child(Button::new("import-vscode", "Import VsCode settings"))
+                            .child(format!("settings file last modified {}", "TODO ago",)),
+                    )
+                },
+            )
+            .child(h_flex().children(["open settings", "open keymap", "open config docs"]))
+            .into_any()
+    }
+
+    fn render_theme_step(
+        &self,
+        theme_tab_selection: &Entity<usize>,
+        _window: &mut Window,
+        cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        let fs = self.fs.clone();
+        v_flex()
+            .size_full()
+            .child(
+                TransparentTabs::new(theme_tab_selection.clone())
+                    .tab("Dark", {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            v_flex()
+                                .children(theme_preview_tile("One Dark", &fs, window, cx))
+                                .children(theme_preview_tile("Ayu Dark", &fs, window, cx))
+                                .children(theme_preview_tile("Gruvbox Dark", &fs, window, cx))
+                        }
+                    })
+                    .tab("Light", {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            v_flex()
+                                .children(theme_preview_tile("One Light", &fs, window, cx))
+                                .children(theme_preview_tile("Ayu Light", &fs, window, cx))
+                                .children(theme_preview_tile("Gruvbox Light", &fs, window, cx))
+                        }
+                    })
+                    // TODO: picking a theme in the system tab should set both your light and dark themes
+                    .tab("System", {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            let current = match window.appearance() {
+                                gpui::WindowAppearance::Light
+                                | gpui::WindowAppearance::VibrantLight => "Light",
+                                gpui::WindowAppearance::Dark
+                                | gpui::WindowAppearance::VibrantDark => "Dark",
+                            };
+                            v_flex()
+                                .child(
+                                    theme_preview_tile(&format!("One {current}"), &fs, window, cx)
+                                )
+                                .child(
+                                    theme_preview_tile(&format!("Ayu {current}"), &fs, window, cx)
+                                )
+                                .child(
+                                    theme_preview_tile(
+                                        &format!("Gruvbox {current}"),
+                                        &fs,
+                                        window,
+                                        cx,
+                                    )
+                                )
+                        }
+                    }),
+            )
+            .child(
+                h_flex().justify_between().children([Button::new(
+                    "install-theme",
+                    "Browse More Themes",
+                )
+                .icon(IconName::SwatchBook)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    telemetry::event!("Welcome Theme Changed");
+                    this.workspace
+                        .update(cx, |_workspace, cx| {
+                            window.dispatch_action(
+                                Box::new(Extensions {
+                                    category_filter: Some(ExtensionCategoryFilter::Themes),
+                                }),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }))]),
+            )
+            .into_any()
+    }
+
+    fn render_ai_integrations_step(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::green()).into_any()
+    }
+
+    fn render_open_project_step(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Walkthrough>,
+    ) -> AnyElement {
+        div().size_20().bg(gpui::red()).into_any()
+    }
+}
+
+fn theme_preview_tile(
+    name: &str,
+    fs: &Arc<dyn Fs>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    const THEME_PREVIEW_SEED: f32 = 0.42;
+
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme = theme_registry.clone().get(name).ok()?;
+    let current_theme = cx.theme().clone();
+    let is_selected = current_theme.id == theme.id;
+    let fs = fs.clone();
+    Some(
+        v_flex()
+            .items_center()
+            .id(theme.name.clone())
+            .child(
+                div().w(px(200.)).h(px(120.)).child(
+                    ThemePreviewTile::new(theme.clone(), is_selected, THEME_PREVIEW_SEED)
+                        .render(window, cx)
+                        .into_any_element(),
+                ),
+            )
+            .text_ui_sm(cx)
+            .child(theme.name.clone())
+            .on_click(move |_event, _window, cx| {
+                let name = theme.name.to_string();
+                telemetry::event!("Settings Changed", setting = "theme", value = &name);
+                settings::update_settings_file::<ThemeSettings>(
+                    fs.clone(),
+                    cx,
+                    move |settings, _| {
+                        settings.set_static_theme(name);
+                    },
+                );
+            })
+            .into_any(),
+    )
 }
 
 impl Render for Walkthrough {
@@ -168,333 +429,13 @@ impl Render for Walkthrough {
                                     .h_full()
                                     .w_96(),
                             )
-                            .child(div().w_96().h_full().child(
-                                self.steps[self.active_step].render_subpane(
-                                    self.active_step,
-                                    self,
-                                    window,
-                                    cx,
-                                ),
-                            )),
+                            .child(div().w_96().h_full().child(self.render_subpane(
+                                self.active_step,
+                                window,
+                                cx,
+                            ))),
                     ),
             )
-    }
-}
-
-trait WalkthroughStep {
-    fn render_checkbox(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement;
-    fn render_subpane(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement;
-}
-
-fn select_step(
-    ix: usize,
-    cx: &mut Context<Walkthrough>,
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    cx.listener(move |walkthrough, _, _, cx| {
-        walkthrough.active_step = ix;
-        cx.notify();
-    })
-}
-
-struct ThemeStep {
-    selection: Entity<usize>,
-}
-impl WalkthroughStep for ThemeStep {
-    fn render_checkbox(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        walkthrough.checkbox_section(
-            ix,
-            "Pick a Theme",
-            "Select one of our built-in themes, or download one from the extensions page",
-            cx,
-        )
-    }
-
-    //             .child(
-
-    fn render_subpane(
-        &self,
-        _ix: usize,
-        walkthrough: &mut Walkthrough,
-        window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        const THEME_PREVIEW_SEED: f32 = 0.42;
-
-        let fs = walkthrough.fs.clone();
-
-        let mut theme_preview_tile = |theme_name: &str, fs: Arc<dyn Fs>| -> Option<AnyElement> {
-            let theme_registry = ThemeRegistry::global(cx);
-            let theme = theme_registry.clone().get(theme_name).ok()?;
-            let current_theme = cx.theme().clone();
-            let is_selected = current_theme.id == theme.id;
-            Some(
-                v_flex()
-                    .items_center()
-                    .id(theme.name.clone())
-                    .child(
-                        div().w(px(200.)).h(px(120.)).child(
-                            ThemePreviewTile::new(theme.clone(), is_selected, THEME_PREVIEW_SEED)
-                                .render(window, cx)
-                                .into_any_element(),
-                        ),
-                    )
-                    .text_ui_sm(cx)
-                    .child(theme.name.clone())
-                    .on_click(move |_event, window, cx| {
-                        let name = theme_name.to_string();
-                        // TODO: filter click event?
-                        telemetry::event!("Settings Changed", setting = "theme", value = &name);
-                        settings::update_settings_file::<ThemeSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| {
-                                settings.set_static_theme(name);
-                            },
-                        );
-                    })
-                    .into_any(),
-            )
-        };
-
-        v_flex()
-            .size_full()
-            .child(
-                TransparentTabs::new(self.selection.clone())
-                    .tab("Dark", |_window, _app| {
-                        v_flex()
-                            .child(theme_preview_tile("One Dark", fs.clone()).unwrap())
-                            .child(theme_preview_tile("Ayu Dark", fs.clone()).unwrap())
-                            .child(theme_preview_tile("Gruvbox Dark", fs.clone()).unwrap())
-                    })
-                    .tab("Light", |_window, _app| {
-                        v_flex()
-                            .child(theme_preview_tile("One Light", fs.clone()).unwrap())
-                            .child(theme_preview_tile("Ayu Light", fs.clone()).unwrap())
-                            .child(theme_preview_tile("Gruvbox Light", fs.clone()).unwrap())
-                    })
-                    // TODO: picking a theme in the system tab should set both your light and dark themes
-                    .tab("System", |window, _app| {
-                        let current = match window.appearance() {
-                            gpui::WindowAppearance::Light
-                            | gpui::WindowAppearance::VibrantLight => "light",
-                            gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark => {
-                                "dark"
-                            }
-                        };
-                        v_flex()
-                            .child(
-                                theme_preview_tile(&format!("One {current}"), fs.clone()).unwrap(),
-                            )
-                            .child(
-                                theme_preview_tile(&format!("Ayu {current}"), fs.clone()).unwrap(),
-                            )
-                            .child(
-                                theme_preview_tile(&format!("Gruvbox {current}"), fs.clone())
-                                    .unwrap(),
-                            )
-                    }),
-            )
-            .child(
-                h_flex().justify_between().children([Button::new(
-                    "install-theme",
-                    "Browse More Themes",
-                )
-                .icon(IconName::SwatchBook)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    telemetry::event!("Welcome Theme Changed");
-                    this.workspace
-                        .update(cx, |_workspace, cx| {
-                            window.dispatch_action(
-                                Box::new(Extensions {
-                                    category_filter: Some(ExtensionCategoryFilter::Themes),
-                                }),
-                                cx,
-                            );
-                        })
-                        .ok();
-                }))]),
-            )
-            .into_any()
-    }
-}
-
-struct SettingsStep;
-impl WalkthroughStep for SettingsStep {
-    fn render_checkbox(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        walkthrough.checkbox_section(
-            ix,
-            "Configure Zed",
-            "Set initial settings and/or import from other editors",
-            cx,
-        )
-    }
-
-    fn render_subpane(
-        &self,
-        _ix: usize,
-        _walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        v_flex()
-            .items_center()
-            .justify_center()
-            .child(h_flex().children([
-                "VS Code",
-                "Atom",
-                "Sublime",
-                "Jetbrains",
-                "Text Mate",
-                "Emacs (beta)",
-            ]))
-            .child("vim mode checkbox")
-            .child("browse extensions")
-            .when(cfg!(macos), |this| {
-                this.child(
-                    h_flex()
-                        .child(Button::new("install-cli", "Install cli"))
-                        .child("Install a `zed` binary that\ncan be run from the command line"),
-                )
-            })
-            .when(
-                true,
-                // todo!("when this path exists: {}", paths::vscode_settings_file()),
-                |this| {
-                    this.child(
-                        h_flex()
-                            .child(Button::new("import-vscode", "Import VsCode settings"))
-                            .child(format!("settings file last modified {}", "TODO ago",)),
-                    )
-                },
-            )
-            .child(h_flex().children(["open settings", "open keymap", "open config docs"]))
-            .into_any()
-    }
-}
-
-struct AiIntegrations;
-impl WalkthroughStep for AiIntegrations {
-    fn render_checkbox(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        walkthrough.checkbox_section(
-            ix,
-            "AI Setup",
-            "Log in and pick providers for agentic editing and edit predictions",
-            cx,
-        )
-    }
-
-    fn render_subpane(
-        &self,
-        _ix: usize,
-        _walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        // agentic setup section
-        // inline "try-edit-predictions" section
-        div().size_20().bg(gpui::green()).into_any()
-    }
-}
-
-struct DataSharing;
-impl WalkthroughStep for DataSharing {
-    fn render_checkbox(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        walkthrough.checkbox_section(
-            ix,
-            "Data Sharing",
-            "Pick which data you send to the zed team",
-            cx,
-        )
-    }
-
-    fn render_subpane(
-        &self,
-        _ix: usize,
-        _walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        v_flex()
-            .items_center()
-            .justify_center()
-            .children([
-                "Send Crash Reports",
-                "Send Telemetry",
-                "---",
-                "Help Improve completions",
-                "Rate agentic edits",
-                // TODO: add note about how zed never shares your code/data by default
-            ])
-            .into_any()
-    }
-}
-
-struct OpenProject;
-impl WalkthroughStep for OpenProject {
-    fn render_checkbox(
-        &self,
-        ix: usize,
-        walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        walkthrough.checkbox_section(
-            ix,
-            "Open a Project",
-            "Pick a recent project you had open in another editor",
-            cx,
-        )
-    }
-
-    fn render_subpane(
-        &self,
-        _ix: usize,
-        _walkthrough: &mut Walkthrough,
-        _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
-    ) -> AnyElement {
-        // spinner "searching for recent projects" while running? or just have them pop-in
-        // single list sorted by mtime (with source editor icons) or separate into separate lists by source?
-        div().size_20().bg(gpui::rgba(0x87ceeb)).into_any()
     }
 }
 
