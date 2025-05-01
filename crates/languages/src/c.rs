@@ -298,9 +298,9 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
         server_id: LanguageServerId,
-        buffer_access: Option<&'_ Buffer>,
+        buffer: Option<&'_ Buffer>,
     ) {
-        if let Some(buffer) = buffer_access {
+        if let Some(buffer) = buffer {
             let snapshot = buffer.snapshot();
             let inactive_regions = buffer
                 .get_diagnostics(server_id)

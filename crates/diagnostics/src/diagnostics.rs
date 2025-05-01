@@ -1,3 +1,4 @@
+mod cargo;
 pub mod items;
 mod toolbar_controls;
 
@@ -7,7 +8,12 @@ mod diagnostic_renderer;
 mod diagnostics_tests;
 
 use anyhow::Result;
-use collections::{BTreeSet, HashMap};
+use cargo::{
+    FetchStatus, FetchUpdate, cargo_diagnostics_sources, fetch_worktree_diagnostics,
+    is_outdated_cargo_fetch_diagnostic, map_rust_diagnostic_to_lsp, next_cargo_fetch_generation,
+    url_from_abs_path,
+};
+use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
@@ -22,14 +28,16 @@ use gpui::{
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
-use lsp::DiagnosticSeverity;
-
-use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
+use lsp::{DiagnosticSeverity, LanguageServerId};
+use project::{
+    DiagnosticSummary, Project, ProjectPath, Worktree,
+    lsp_store::rust_analyzer_ext::{CARGO_DIAGNOSTICS_SOURCE_NAME, RUST_ANALYZER_NAME},
+    project_settings::ProjectSettings,
+};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp,
-    cmp::Ordering,
+    cmp::{self, Ordering},
     ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
@@ -45,7 +53,10 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-actions!(diagnostics, [Deploy, ToggleWarnings]);
+actions!(
+    diagnostics,
+    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+);
 
 #[derive(Default)]
 pub(crate) struct IncludeWarnings(bool);
@@ -68,7 +79,13 @@ pub(crate) struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
+    cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     _subscription: Subscription,
+}
+
+struct CargoDiagnosticsFetchState {
+    task: Option<Task<()>>,
+    rust_analyzer: Option<LanguageServerId>,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -126,6 +143,7 @@ impl Render for ProjectDiagnosticsEditor {
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
+            .on_action(cx.listener(Self::toggle_diagnostics_refresh))
             .child(child)
     }
 }
@@ -212,7 +230,11 @@ impl ProjectDiagnosticsEditor {
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
             this.include_warnings = cx.global::<IncludeWarnings>().0;
             this.diagnostics.clear();
-            this.update_all_excerpts(window, cx);
+            this.update_all_diagnostics(window, cx);
+        })
+        .detach();
+        cx.observe_release(&cx.entity(), |editor, _, cx| {
+            editor.stop_cargo_diagnostics_fetch(cx);
         })
         .detach();
 
@@ -229,9 +251,13 @@ impl ProjectDiagnosticsEditor {
             editor,
             paths_to_update: Default::default(),
             update_excerpts_task: None,
+            cargo_diagnostics_fetch: CargoDiagnosticsFetchState {
+                task: None,
+                rust_analyzer: None,
+            },
             _subscription: project_event_subscription,
         };
-        this.update_all_excerpts(window, cx);
+        this.update_all_diagnostics(window, cx);
         this
     }
 
@@ -239,15 +265,17 @@ impl ProjectDiagnosticsEditor {
         if self.update_excerpts_task.is_some() {
             return;
         }
+
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(DIAGNOSTICS_UPDATE_DELAY)
                 .await;
             loop {
-                let Some(path) = this.update(cx, |this, _| {
+                let Some(path) = this.update(cx, |this, cx| {
                     let Some(path) = this.paths_to_update.pop_first() else {
-                        this.update_excerpts_task.take();
+                        this.update_excerpts_task = None;
+                        cx.notify();
                         return None;
                     };
                     Some(path)
@@ -307,6 +335,32 @@ impl ProjectDiagnosticsEditor {
         cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
+    fn toggle_diagnostics_refresh(
+        &mut self,
+        _: &ToggleDiagnosticsRefresh,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+
+        if fetch_cargo_diagnostics {
+            if self.cargo_diagnostics_fetch.task.is_some() {
+                self.stop_cargo_diagnostics_fetch(cx);
+            } else {
+                self.update_all_diagnostics(window, cx);
+            }
+        } else {
+            if self.update_excerpts_task.is_some() {
+                self.update_excerpts_task = None;
+            } else {
+                self.update_all_diagnostics(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.focus_handle(cx).focus(window)
@@ -318,6 +372,303 @@ impl ProjectDiagnosticsEditor {
         {
             self.update_stale_excerpts(window, cx);
         }
+    }
+
+    fn update_all_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let cargo_diagnostics_sources = cargo_diagnostics_sources(self, cx);
+        if cargo_diagnostics_sources.is_empty() {
+            self.update_all_excerpts(window, cx);
+        } else {
+            self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), window, cx);
+        }
+    }
+
+    fn fetch_cargo_diagnostics(
+        &mut self,
+        diagnostics_sources: Arc<Vec<Entity<Worktree>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cargo_diagnostics_fetch.task = Some(cx.spawn_in(window, async move |editor, cx| {
+            let rust_analyzer_server = editor
+                .update(cx, |editor, cx| {
+                    editor
+                        .project
+                        .read(cx)
+                        .language_server_with_name(RUST_ANALYZER_NAME, cx)
+                })
+                .ok();
+            let rust_analyzer_server = match rust_analyzer_server {
+                Some(rust_analyzer_server) => rust_analyzer_server.await,
+                None => None,
+            };
+
+            let mut worktree_diagnostics_tasks = Vec::new();
+            let mut paths_with_reported_cargo_diagnostics = HashSet::default();
+            if let Some(rust_analyzer_server) = rust_analyzer_server {
+                let can_continue = editor
+                    .update(cx, |editor, cx| {
+                        editor.cargo_diagnostics_fetch.rust_analyzer = Some(rust_analyzer_server);
+                        let status_inserted =
+                            editor
+                                .project
+                                .read(cx)
+                                .lsp_store()
+                                .update(cx, |lsp_store, cx| {
+                                    if let Some(rust_analyzer_status) = lsp_store
+                                        .language_server_statuses
+                                        .get_mut(&rust_analyzer_server)
+                                    {
+                                        rust_analyzer_status
+                                            .progress_tokens
+                                            .insert(fetch_cargo_diagnostics_token());
+                                        paths_with_reported_cargo_diagnostics.extend(editor.diagnostics.iter().filter_map(|(buffer_id, diagnostics)| {
+                                            if diagnostics.iter().any(|d| d.diagnostic.source.as_deref() == Some(CARGO_DIAGNOSTICS_SOURCE_NAME)) {
+                                                Some(*buffer_id)
+                                            } else {
+                                                None
+                                            }
+                                        }).filter_map(|buffer_id| {
+                                            let buffer = lsp_store.buffer_store().read(cx).get(buffer_id)?;
+                                            let path = buffer.read(cx).file()?.as_local()?.abs_path(cx);
+                                            Some(url_from_abs_path(&path))
+                                        }));
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                });
+                        if status_inserted {
+                            editor.update_cargo_fetch_status(FetchStatus::Started, cx);
+                            next_cargo_fetch_generation();
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+
+                if can_continue {
+                    for worktree in diagnostics_sources.iter() {
+                        if let Some(((_task, worktree_diagnostics), worktree_root)) = cx
+                            .update(|_, cx| {
+                                let worktree_root = worktree.read(cx).abs_path();
+                                log::info!("Fetching cargo diagnostics for {worktree_root:?}");
+                                fetch_worktree_diagnostics(&worktree_root, cx)
+                                    .zip(Some(worktree_root))
+                            })
+                            .ok()
+                            .flatten()
+                        {
+                            let editor = editor.clone();
+                            worktree_diagnostics_tasks.push(cx.spawn(async move |cx| {
+                                let _task = _task;
+                                let mut file_diagnostics = HashMap::default();
+                                let mut diagnostics_total = 0;
+                                let mut updated_urls = HashSet::default();
+                                while let Ok(fetch_update) = worktree_diagnostics.recv().await {
+                                    match fetch_update {
+                                        FetchUpdate::Diagnostic(diagnostic) => {
+                                            for (url, diagnostic) in map_rust_diagnostic_to_lsp(
+                                                &worktree_root,
+                                                &diagnostic,
+                                            ) {
+                                                let file_diagnostics = file_diagnostics
+                                                    .entry(url)
+                                                    .or_insert_with(Vec::<lsp::Diagnostic>::new);
+                                                let i = file_diagnostics
+                                                    .binary_search_by(|probe| {
+                                                        probe.range.start.cmp(&diagnostic.range.start)
+                                                            .then(probe.range.end.cmp(&diagnostic.range.end))
+                                                            .then(Ordering::Greater)
+                                                    })
+                                                    .unwrap_or_else(|i| i);
+                                                file_diagnostics.insert(i, diagnostic);
+                                            }
+
+                                            let file_changed = file_diagnostics.len() > 1;
+                                            if file_changed {
+                                                if editor
+                                                    .update_in(cx, |editor, window, cx| {
+                                                        editor
+                                                            .project
+                                                            .read(cx)
+                                                            .lsp_store()
+                                                            .update(cx, |lsp_store, cx| {
+                                                                for (uri, mut diagnostics) in
+                                                                    file_diagnostics.drain()
+                                                                {
+                                                                    diagnostics.dedup();
+                                                                    diagnostics_total += diagnostics.len();
+                                                                    updated_urls.insert(uri.clone());
+
+                                                                    lsp_store.merge_diagnostics(
+                                                                    rust_analyzer_server,
+                                                                    lsp::PublishDiagnosticsParams {
+                                                                        uri,
+                                                                        diagnostics,
+                                                                        version: None,
+                                                                    },
+                                                                    &[],
+                                                                    |diagnostic, _| {
+                                                                        !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                                                    },
+                                                                    cx,
+                                                                )?;
+                                                                }
+                                                                anyhow::Ok(())
+                                                            })?;
+                                                        editor.update_all_excerpts(window, cx);
+                                                        anyhow::Ok(())
+                                                    })
+                                                    .ok()
+                                                    .transpose()
+                                                    .ok()
+                                                    .flatten()
+                                                    .is_none()
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        FetchUpdate::Progress(message) => {
+                                            if editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.update_cargo_fetch_status(
+                                                        FetchStatus::Progress { message },
+                                                        cx,
+                                                    );
+                                                })
+                                                .is_err()
+                                            {
+                                                return updated_urls;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                editor
+                                    .update_in(cx, |editor, window, cx| {
+                                        editor
+                                            .project
+                                            .read(cx)
+                                            .lsp_store()
+                                            .update(cx, |lsp_store, cx| {
+                                                for (uri, mut diagnostics) in
+                                                    file_diagnostics.drain()
+                                                {
+                                                    diagnostics.dedup();
+                                                    diagnostics_total += diagnostics.len();
+                                                    updated_urls.insert(uri.clone());
+
+                                                    lsp_store.merge_diagnostics(
+                                                        rust_analyzer_server,
+                                                        lsp::PublishDiagnosticsParams {
+                                                            uri,
+                                                            diagnostics,
+                                                            version: None,
+                                                        },
+                                                        &[],
+                                                        |diagnostic, _| {
+                                                            !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                                        },
+                                                        cx,
+                                                    )?;
+                                                }
+                                                anyhow::Ok(())
+                                            })?;
+                                        editor.update_all_excerpts(window, cx);
+                                        anyhow::Ok(())
+                                    })
+                                    .ok();
+                                log::info!("Fetched {diagnostics_total} cargo diagnostics for worktree {worktree_root:?}");
+                                updated_urls
+                            }));
+                        }
+                    }
+                } else {
+                    log::info!(
+                        "No rust-analyzer language server found, skipping diagnostics fetch"
+                    );
+                }
+            }
+
+
+            let updated_urls = futures::future::join_all(worktree_diagnostics_tasks).await.into_iter().flatten().collect();
+            if let Some(rust_analyzer_server) = rust_analyzer_server {
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor
+                        .project
+                        .read(cx)
+                        .lsp_store()
+                        .update(cx, |lsp_store, cx| {
+                            for uri_to_cleanup in paths_with_reported_cargo_diagnostics.difference(&updated_urls).cloned() {
+                                lsp_store.merge_diagnostics(
+                                    rust_analyzer_server,
+                                    lsp::PublishDiagnosticsParams {
+                                        uri: uri_to_cleanup,
+                                        diagnostics: Vec::new(),
+                                        version: None,
+                                    },
+                                    &[],
+                                    |diagnostic, _| {
+                                        !is_outdated_cargo_fetch_diagnostic(diagnostic)
+                                    },
+                                    cx,
+                                ).ok();
+                            }
+                        });
+                    editor.update_all_excerpts(window, cx);
+
+                    editor.stop_cargo_diagnostics_fetch(cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+        }));
+    }
+
+    fn update_cargo_fetch_status(&self, status: FetchStatus, cx: &mut App) {
+        let Some(rust_analyzer) = self.cargo_diagnostics_fetch.rust_analyzer else {
+            return;
+        };
+
+        let work_done = match status {
+            FetchStatus::Started => lsp::WorkDoneProgress::Begin(lsp::WorkDoneProgressBegin {
+                title: "cargo".to_string(),
+                cancellable: None,
+                message: Some("Fetching cargo diagnostics".to_string()),
+                percentage: None,
+            }),
+            FetchStatus::Progress { message } => {
+                lsp::WorkDoneProgress::Report(lsp::WorkDoneProgressReport {
+                    message: Some(message),
+                    cancellable: None,
+                    percentage: None,
+                })
+            }
+            FetchStatus::Finished => {
+                lsp::WorkDoneProgress::End(lsp::WorkDoneProgressEnd { message: None })
+            }
+        };
+        let progress = lsp::ProgressParams {
+            token: lsp::NumberOrString::String(fetch_cargo_diagnostics_token()),
+            value: lsp::ProgressParamsValue::WorkDone(work_done),
+        };
+
+        self.project
+            .read(cx)
+            .lsp_store()
+            .update(cx, |lsp_store, cx| {
+                lsp_store.on_lsp_progress(progress, rust_analyzer, None, cx)
+            });
+    }
+
+    fn stop_cargo_diagnostics_fetch(&mut self, cx: &mut App) {
+        self.update_cargo_fetch_status(FetchStatus::Finished, cx);
+        self.cargo_diagnostics_fetch.task = None;
+        log::info!("Finished fetching cargo diagnostics");
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
@@ -422,20 +773,17 @@ impl ProjectDiagnosticsEditor {
                 })?;
 
                 for item in more {
-                    let insert_pos = blocks
-                        .binary_search_by(|existing| {
-                            match existing.initial_range.start.cmp(&item.initial_range.start) {
-                                Ordering::Equal => item
-                                    .initial_range
-                                    .end
-                                    .cmp(&existing.initial_range.end)
-                                    .reverse(),
-                                other => other,
-                            }
+                    let i = blocks
+                        .binary_search_by(|probe| {
+                            probe
+                                .initial_range
+                                .start
+                                .cmp(&item.initial_range.start)
+                                .then(probe.initial_range.end.cmp(&item.initial_range.end))
+                                .then(Ordering::Greater)
                         })
-                        .unwrap_or_else(|pos| pos);
-
-                    blocks.insert(insert_pos, item);
+                        .unwrap_or_else(|i| i);
+                    blocks.insert(i, item);
                 }
             }
 
@@ -448,10 +796,25 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
-                excerpt_ranges.push(ExcerptRange {
-                    context: excerpt_range,
-                    primary: b.initial_range.clone(),
-                })
+                let i = excerpt_ranges
+                    .binary_search_by(|probe| {
+                        probe
+                            .context
+                            .start
+                            .cmp(&excerpt_range.start)
+                            .then(probe.context.end.cmp(&excerpt_range.end))
+                            .then(probe.primary.start.cmp(&b.initial_range.start))
+                            .then(probe.primary.end.cmp(&b.initial_range.end))
+                            .then(cmp::Ordering::Greater)
+                    })
+                    .unwrap_or_else(|i| i);
+                excerpt_ranges.insert(
+                    i,
+                    ExcerptRange {
+                        context: excerpt_range,
+                        primary: b.initial_range.clone(),
+                    },
+                )
             }
 
             this.update_in(cx, |this, window, cx| {
@@ -922,4 +1285,8 @@ fn is_line_blank_or_indented_less(
 ) -> bool {
     let line_indent = snapshot.line_indent_for_row(row);
     line_indent.is_line_blank() || line_indent.len(tab_size) < indent_level
+}
+
+fn fetch_cargo_diagnostics_token() -> String {
+    "fetch_cargo_diagnostics".to_string()
 }
