@@ -40,15 +40,21 @@
 # AI
 
 - [Overview](./ai/ai.md)
-- [Agent Panel](./ai/agent-panel.md)
-- [Inline Assistant](./ai/inline-assistant.md)
-- [Edit Prediction](./ai/edit-prediction.md)
-- [Text Threads](./ai/text-threads.md)
-- [Rules](./ai/rules.md)
-- [Pricing](./ai/pricing.md)
+- [Product](./ai/product.md)
+  - [Agent Panel](./ai/agent-panel.md)
+  - [Inline Assistant](./ai/inline-assistant.md)
+  - [Edit Prediction](./ai/edit-prediction.md)
+  - [Text Threads](./ai/text-threads.md)
+  - [Rules](./ai/rules.md)
+  - [Model Context Protocol](./ai/mcp.md)
+- [Subscription](./ai/subscription.md)
+  - [Plans and Usage](./ai/plans-and-usage.md)
+  - [Billing](./ai/billing.md)
+  - [Models](./ai/models.md)
 - [Configuration](./ai/configuration.md)
-- [Model Context Protocol](./ai/mcp.md)
-- [Model Improvement](./ai/model-improvement.md)
+  - [Custom API Keys](./ai/custom-api-keys.md)
+- [Privacy and Security](./ai/privacy-and-security.md)
+  - [Model Improvement](./ai/model-improvement.md)
 
 # Assistant
 
