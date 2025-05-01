@@ -147,19 +147,14 @@ impl VsCodeShortcuts {
         })
     }
 
-    pub fn parse_shortcuts(
-        &self,
-        keyboard_mapper: &dyn PlatformKeyboardMapper,
-    ) -> (KeymapFile, Vec<(String, String)>) {
+    pub fn parse_shortcuts(&self) -> (KeymapFile, Vec<(String, String)>) {
         let mut result = KeymapFile::default();
         let mut skipped = Vec::new();
         for content in self.content.iter() {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
-            let Some(keystroke) =
-                Keystroke::parse_with_separator(shortcut, '+', keyboard_mapper).ok()
-            else {
+            let Some(keystroke) = Keystroke::parse_keystroke_components(shortcut, '+').ok() else {
                 skipped.push((
                     shortcut.to_string(),
                     "Unable to parse keystroke".to_string(),

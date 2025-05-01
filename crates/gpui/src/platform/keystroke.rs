@@ -99,14 +99,40 @@ impl Keystroke {
         source: &str,
         mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
-        Self::parse_with_separator(source, '-', mapper)
+        let mut keystroke = Keystroke::parse_keystroke_components(source, '-')?;
+        // Create error once for reuse
+        let error = || InvalidKeystrokeError {
+            keystroke: source.to_owned(),
+        };
+
+        if keystroke.key.starts_with("oem") {
+            // The oem_key will be handled after https://github.com/zed-industries/zed/pull/29144
+            return Err(error());
+        }
+        if keystroke.key.starts_with('[') && keystroke.key.ends_with(']') {
+            let scan_code = ScanCode::parse(&keystroke.key).ok_or_else(error)?;
+            keystroke.key = mapper.scan_code_to_key(scan_code).map_err(|_| error())?;
+        }
+        if keystroke.modifiers.shift
+            && !is_immutable_key(&keystroke.key)
+            && !is_alphabetic_key(&keystroke.key)
+            && keystroke.key.len() == 1
+        {
+            if let Ok(shifted_key) = mapper.get_shifted_key(&keystroke.key) {
+                keystroke.modifiers.shift = false;
+                keystroke.key = shifted_key;
+            }
+        }
+
+        Ok(keystroke)
     }
 
-    /// This allows separators other than `-` to be used.
-    pub fn parse_with_separator(
+    /// Parses a keystroke string representation into a `Keystroke` struct using a specified separator character.
+    /// This is the low-level parsing function that handles the basic string format without additional
+    /// platform-specific mapping or transformations.
+    pub fn parse_keystroke_components(
         source: &str,
         separator: char,
-        mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut modifiers = Modifiers::none();
         let mut key = None;
@@ -198,27 +224,9 @@ impl Keystroke {
             }
         });
 
-        // Create error once for reuse
-        let error = || InvalidKeystrokeError {
+        let key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
-        };
-        let mut key = key.ok_or_else(error)?;
-
-        if key.starts_with("oem") {
-            // The oem_key will be handled after https://github.com/zed-industries/zed/pull/29144
-            return Err(error());
-        }
-        if key.starts_with('[') && key.ends_with(']') {
-            let scan_code = ScanCode::parse(&key).ok_or_else(error)?;
-            key = mapper.scan_code_to_key(scan_code).map_err(|_| error())?;
-        }
-        if shift && !is_immutable_key(&key) && !is_alphabetic_key(&key) && key.len() == 1 {
-            if let Ok(shifted_key) = mapper.get_shifted_key(&key) {
-                shift = false;
-                key = shifted_key;
-            }
-        }
-
+        })?;
         Ok(Keystroke {
             modifiers,
             key,
