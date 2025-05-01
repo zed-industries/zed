@@ -576,13 +576,10 @@ impl ToolCard for EditFileToolCard {
                 card.child(
                     v_flex()
                         .relative()
-                        .map(|editor_container| {
-                            if self.full_height_expanded {
-                                editor_container.h_full()
-                            } else {
-                                editor_container
-                                    .h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
-                            }
+                        .h_full()
+                        .when(!self.full_height_expanded, |editor_container| {
+                            editor_container
+                                .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
                         })
                         .overflow_hidden()
                         .border_t_1()
