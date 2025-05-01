@@ -81,20 +81,13 @@ impl NewSessionModal {
 
         if let Some(task_store) = task_store {
             cx.defer_in(window, |this, window, cx| {
-                let picker = cx.new(|cx| {
-                    Picker::uniform_list(
-                        DebugScenarioDelegate::new(
-                            this.debug_panel.clone(),
-                            this.workspace.clone(),
-                            task_store,
-                        ),
-                        window,
-                        cx,
-                    )
-                    .modal(false)
-                });
-
-                this.mode = NewSessionMode::Scenario(picker);
+                this.mode = NewSessionMode::scenario(
+                    this.debug_panel.clone(),
+                    this.workspace.clone(),
+                    task_store,
+                    window,
+                    cx,
+                );
             });
         };
 
@@ -391,6 +384,12 @@ impl AttachMode {
 
             modal
         });
+
+        cx.subscribe(&attach_picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        })
+        .detach();
+
         cx.new(|_| Self {
             definition,
             attach_picker,
@@ -437,6 +436,31 @@ impl NewSessionMode {
         } else {
             None
         }
+    }
+
+    fn scenario(
+        debug_panel: WeakEntity<DebugPanel>,
+        workspace: WeakEntity<Workspace>,
+        task_store: Entity<TaskStore>,
+        window: &mut Window,
+        cx: &mut Context<NewSessionModal>,
+    ) -> NewSessionMode {
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(
+                DebugScenarioDelegate::new(debug_panel, workspace, task_store),
+                window,
+                cx,
+            )
+            .modal(false)
+        });
+
+        cx.subscribe(&picker, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        })
+        .detach();
+
+        picker.focus_handle(cx).focus(window);
+        NewSessionMode::Scenario(picker)
     }
 }
 
@@ -596,21 +620,14 @@ impl Render for NewSessionModal {
                                             return;
                                         };
 
-                                        let picker = cx.new(|cx| {
-                                            Picker::uniform_list(
-                                                DebugScenarioDelegate::new(
-                                                    this.debug_panel.clone(),
-                                                    this.workspace.clone(),
-                                                    task_store,
-                                                ),
-                                                window,
-                                                cx,
-                                            )
-                                            .modal(false)
-                                        });
+                                        this.mode = NewSessionMode::scenario(
+                                            this.debug_panel.clone(),
+                                            this.workspace.clone(),
+                                            task_store,
+                                            window,
+                                            cx,
+                                        );
 
-                                        this.mode = NewSessionMode::Scenario(picker);
-                                        this.mode.focus_handle(cx).focus(window);
                                         cx.notify();
                                     }))
                                     .first(),
@@ -887,11 +904,12 @@ impl PickerDelegate for DebugScenarioDelegate {
                         panel.start_session(debug_scenario, task_context, None, window, cx);
                     })
                     .ok();
+
+                cx.emit(DismissEvent);
             })
+            .ok();
         })
         .detach();
-
-        cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
