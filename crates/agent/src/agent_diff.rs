@@ -1,4 +1,6 @@
-use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel};
+use crate::{
+    Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel,
+};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
@@ -22,6 +24,7 @@ use std::{
     sync::Arc,
 };
 use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
@@ -915,9 +918,9 @@ impl Render for AgentDiffToolbar {
                     return Empty.into_any();
                 };
 
-                let agent_diff = AgentDiff::global(cx).read(cx);
+                let agent_diff = AgentDiff::global(cx);
 
-                let content = match agent_diff.editor_state(&editor) {
+                let content = match agent_diff.read(cx).editor_state(&editor) {
                     EditorState::Idle => return Empty.into_any(),
                     EditorState::Generating => vec![
                         h_flex()
@@ -925,7 +928,11 @@ impl Render for AgentDiffToolbar {
                             .gap_1p5()
                             .w_32()
                             .child(Icon::new(IconName::ZedAssistant))
-                            .child(AnimatedLabel::new("Generating"))
+                            .child(
+                                div()
+                                    .w(rems(6.5625))
+                                    .child(AnimatedLabel::new("Generating")),
+                            )
                             .into_any(),
                     ],
                     EditorState::Reviewing => vec![
@@ -949,7 +956,32 @@ impl Render for AgentDiffToolbar {
                     .gap_1()
                     .children(content)
                     .child(vertical_divider())
-                    .child(IconButton::new("review", IconName::ListTree))
+                    .key_context("AgentDiffEditorToolbar")
+                    .on_action({
+                        let agent_diff = agent_diff.clone();
+                        let workspace = editor.read(cx).workspace().map(|w| w.downgrade());
+                        move |_action: &OpenAgentDiff, window, cx| {
+                            if let Some(workspace) = &workspace {
+                                agent_diff.update(cx, |agent_diff, cx| {
+                                    agent_diff.deploy_pane(workspace.clone(), window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .when_some(editor.read(cx).workspace(), |this, _workspace| {
+                        this.child(
+                            IconButton::new("review", IconName::ListTree)
+                                .tooltip(ui::Tooltip::for_action_title(
+                                    "Review All Files",
+                                    &OpenAgentDiff,
+                                ))
+                                .on_click({
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.dispatch_action(&OpenAgentDiff, window, cx);
+                                    })
+                                }),
+                        )
+                    })
                     .into_any()
             }
             Self::Pane(agent_diff) => {
@@ -1058,6 +1090,18 @@ impl AgentDiff {
         self.reviewing_editors
             .get(&editor.downgrade())
             .unwrap_or(&EditorState::Idle)
+    }
+
+    fn deploy_pane(&self, workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut App) {
+        let Some(WorkspaceThread { thread, .. }) = self.workspace_threads.get(&workspace) else {
+            return;
+        };
+
+        let Some(thread) = thread.upgrade() else {
+            return;
+        };
+
+        AgentDiffPane::deploy(thread, workspace, window, cx).log_err();
     }
 
     pub fn register_active_thread(
