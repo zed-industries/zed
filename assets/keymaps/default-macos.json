@@ -290,7 +290,8 @@
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
-      "cmd-ctrl-a": "agent::ToggleNavigationMenu",
+      "cmd-shift-o": "agent::ToggleNavigationMenu",
+      "cmd-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
       "cmd-e": "agent::ChatMode",
       "cmd-alt-e": "agent::RemoveAllContext"
@@ -299,7 +300,7 @@
   {
     "context": "AgentPanel > NavigationMenu",
     "bindings": {
-      "ctrl-backspace": "agent::DeleteRecentlyOpenThread"
+      "shift-backspace": "agent::DeleteRecentlyOpenThread"
     }
   },
   {

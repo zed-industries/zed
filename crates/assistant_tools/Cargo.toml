@@ -70,6 +70,7 @@ pretty_assertions.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"]}
+tempfile.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

@@ -362,12 +362,7 @@ async fn create_billing_subscription(
     let checkout_session_url = match body.product {
         Some(ProductCode::ZedPro) => {
             stripe_billing
-                .checkout_with_price(
-                    app.config.zed_pro_price_id()?,
-                    customer_id,
-                    &user.github_login,
-                    &success_url,
-                )
+                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
                 .await?
         }
         Some(ProductCode::ZedProTrial) => {
@@ -384,7 +379,6 @@ async fn create_billing_subscription(
 
             stripe_billing
                 .checkout_with_zed_pro_trial(
-                    app.config.zed_pro_price_id()?,
                     customer_id,
                     &user.github_login,
                     feature_flags,
@@ -458,6 +452,14 @@ async fn manage_billing_subscription(
         ))?
     };
 
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::error!("failed to retrieve Stripe billing object");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
+
     let customer = app
         .db
         .get_billing_customer_by_user_id(user.id)
@@ -508,8 +510,8 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id = app.config.zed_pro_price_id()?;
-            let zed_free_price_id = app.config.zed_free_price_id()?;
+            let zed_pro_price_id = stripe_billing.zed_pro_price_id().await?;
+            let zed_free_price_id = stripe_billing.zed_free_price_id().await?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
@@ -856,9 +858,11 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
-    let subscription_kind = maybe!({
-        let zed_pro_price_id = app.config.zed_pro_price_id().ok()?;
-        let zed_free_price_id = app.config.zed_free_price_id().ok()?;
+    let subscription_kind = maybe!(async {
+        let stripe_billing = app.stripe_billing.clone()?;
+
+        let zed_pro_price_id = stripe_billing.zed_pro_price_id().await.ok()?;
+        let zed_free_price_id = stripe_billing.zed_free_price_id().await.ok()?;
 
         subscription.items.data.iter().find_map(|item| {
             let price = item.price.as_ref()?;
@@ -875,7 +879,8 @@ async fn handle_customer_subscription_event(
                 None
             }
         })
-    });
+    })
+    .await;
 
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
@@ -1091,8 +1096,16 @@ struct UsageCounts {
 }
 
 #[derive(Debug, Serialize)]
+struct ModelRequestUsage {
+    pub model: String,
+    pub mode: CompletionMode,
+    pub requests: i32,
+}
+
+#[derive(Debug, Serialize)]
 struct GetCurrentUsageResponse {
     pub model_requests: UsageCounts,
+    pub model_request_usage: Vec<ModelRequestUsage>,
     pub edit_predictions: UsageCounts,
 }
 
@@ -1119,6 +1132,7 @@ async fn get_current_usage(
             limit: Some(0),
             remaining: Some(0),
         },
+        model_request_usage: Vec::new(),
         edit_predictions: UsageCounts {
             used: 0,
             limit: Some(0),
@@ -1163,12 +1177,30 @@ async fn get_current_usage(
         zed_llm_client::UsageLimit::Unlimited => None,
     };
 
+    let subscription_usage_meters = llm_db
+        .get_current_subscription_usage_meters_for_user(user.id, Utc::now())
+        .await?;
+
+    let model_request_usage = subscription_usage_meters
+        .into_iter()
+        .filter_map(|(usage_meter, _usage)| {
+            let model = llm_db.model_by_id(usage_meter.model_id).ok()?;
+
+            Some(ModelRequestUsage {
+                model: model.name.clone(),
+                mode: usage_meter.mode,
+                requests: usage_meter.requests,
+            })
+        })
+        .collect::<Vec<_>>();
+
     Ok(Json(GetCurrentUsageResponse {
         model_requests: UsageCounts {
             used: usage.model_requests,
             limit: model_requests_limit,
             remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
         },
+        model_request_usage,
         edit_predictions: UsageCounts {
             used: usage.edit_predictions,
             limit: edit_prediction_limit,
@@ -1371,13 +1403,13 @@ async fn sync_model_request_usage_with_stripe(
         .await?;
 
     let claude_3_5_sonnet = stripe_billing
-        .find_price_by_lookup_key("claude-3-5-sonnet-requests")
+        .find_price_id_by_lookup_key("claude-3-5-sonnet-requests")
         .await?;
     let claude_3_7_sonnet = stripe_billing
-        .find_price_by_lookup_key("claude-3-7-sonnet-requests")
+        .find_price_id_by_lookup_key("claude-3-7-sonnet-requests")
         .await?;
     let claude_3_7_sonnet_max = stripe_billing
-        .find_price_by_lookup_key("claude-3-7-sonnet-requests-max")
+        .find_price_id_by_lookup_key("claude-3-7-sonnet-requests-max")
         .await?;
 
     for (usage_meter, usage) in usage_meters {
@@ -1403,11 +1435,11 @@ async fn sync_model_request_usage_with_stripe(
             let model = llm_db.model_by_id(usage_meter.model_id)?;
 
             let (price_id, meter_event_name) = match model.name.as_str() {
-                "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
+                "claude-3-5-sonnet" => (&claude_3_5_sonnet, "claude_3_5_sonnet/requests"),
                 "claude-3-7-sonnet" => match usage_meter.mode {
-                    CompletionMode::Normal => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
+                    CompletionMode::Normal => (&claude_3_7_sonnet, "claude_3_7_sonnet/requests"),
                     CompletionMode::Max => {
-                        (&claude_3_7_sonnet_max.id, "claude_3_7_sonnet/requests/max")
+                        (&claude_3_7_sonnet_max, "claude_3_7_sonnet/requests/max")
                     }
                 },
                 model_name => {
