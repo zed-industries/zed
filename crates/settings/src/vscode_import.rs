@@ -150,16 +150,20 @@ impl VsCodeShortcuts {
     pub fn parse_shortcuts(
         &self,
         keyboard_mapper: &dyn PlatformKeyboardMapper,
-    ) -> Vec<(String, String)> {
+    ) -> (KeymapFile, Vec<(String, String)>) {
         let mut result = KeymapFile::default();
         let mut skipped = Vec::new();
         for content in self.content.iter() {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
-            let Some(mut keystroke) =
+            let Some(keystroke) =
                 Keystroke::parse_with_separator(shortcut, '+', keyboard_mapper).ok()
             else {
+                skipped.push((
+                    shortcut.to_string(),
+                    "Unable to parse keystroke".to_string(),
+                ));
                 continue;
             };
             if keystroke.key.starts_with("oem") {
@@ -186,28 +190,11 @@ impl VsCodeShortcuts {
                 ));
                 continue;
             };
-            if is_alphabetic_key(keystroke.key.as_str()) || !keystroke.modifiers.shift {
-                result.insert_keystroke(context, keystroke, action);
-                continue;
-            }
-            match keyboard_mapper.get_shifted_key(&keystroke.key) {
-                Ok(key) => {
-                    keystroke.modifiers.shift = false;
-                    keystroke.key = key;
-                    result.insert_keystroke(context, keystroke, action);
-                }
-                Err(err) => {
-                    skipped.push((
-                        shortcut.to_string(),
-                        format!("Unable to parse keystroke: {}", err),
-                    ));
-                    continue;
-                }
-            }
+            result.insert_keystroke(context, keystroke, action);
         }
         println!("=> result: {:#?}", result);
         println!("=> skipped: {:#?}", skipped);
-        skipped
+        (result, skipped)
     }
 
     pub fn to_json(self) -> String {
@@ -268,7 +255,19 @@ fn vscode_shortcut_command_to_zed_action(
 mod tests {
     use gpui::TestKeyboardMapper;
 
+    use crate::KeymapFile;
+
     use super::VsCodeShortcuts;
+
+    fn collect_bindings(keymap: &KeymapFile) -> Vec<String> {
+        let mut result = Vec::new();
+        for section in keymap.sections() {
+            for binding in section.bindings() {
+                result.push(binding.0.clone());
+            }
+        }
+        result
+    }
 
     #[test]
     fn test_load_vscode_shortcuts() {
@@ -276,31 +275,34 @@ mod tests {
         let content = r#"
         [
             {
+                "key": "ctrl+[BracketLeft]",
+                "command": "list.focusFirst",
+            },
+            {
                 "key": "shift+[BracketRight]",
                 "command": "list.focusFirst",
             },
             {
-                "key": "ctrl+shift+oem_3",
+                "key": "ctrl+shift+alt+[Minus]",
+                "command": "list.focusFirst",
+            },
+            {
+                "key": "ctrl+shift+alt+[张小白]",
                 "command": "list.focusFirst",
             }
         ]
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
-        assert_eq!(shortcuts.content.len(), 2);
-        let result = shortcuts.parse_shortcuts(&keyboard_mapper);
-        assert_eq!(result.len(), 1);
-        // assert_eq!(
-        //     result[0],
-        //     (
-        //         "shift+[BracketRight]".to_string(),
-        //         "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
-        //     )
-        // );
+        assert_eq!(shortcuts.content.len(), 4);
+        let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
+        let bindings = collect_bindings(&keymap);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(bindings, vec!["ctrl-[", "}", "ctrl-alt-_"]);
         assert_eq!(
-            result[0],
+            skipped[0],
             (
-                "ctrl+shift+oem_3".to_string(),
-                "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
+                "ctrl+shift+alt+[张小白]".to_string(),
+                "Unable to parse keystroke".to_string()
             )
         );
 
@@ -320,8 +322,7 @@ mod tests {
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 2);
-        let result = shortcuts.parse_shortcuts(&keyboard_mapper);
-        assert_eq!(result.len(), 0);
-        println!("result: {:#?}", result);
+        let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
+        assert_eq!(skipped.len(), 0);
     }
 }
