@@ -151,6 +151,10 @@ pub fn is_alphabetic_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use strum::IntoEnumIterator;
+
+    use crate::ScanCode;
+
     use super::{PlatformKeyboardMapper, TestKeyboardMapper};
 
     #[test]
@@ -188,6 +192,15 @@ mod tests {
         ];
         for (key, shifted_key) in shift_pairs {
             assert_eq!(mapper.get_shifted_key(key).unwrap(), shifted_key);
+        }
+    }
+
+    #[test]
+    fn test_scan_code_to_key() {
+        let mapper = TestKeyboardMapper::new();
+        for scan_code in ScanCode::iter() {
+            let key = mapper.scan_code_to_key(scan_code).unwrap();
+            assert_eq!(key, scan_code.to_key());
         }
     }
 }

@@ -1,7 +1,9 @@
+use strum::EnumIter;
+
 /// Scan codes for the keyboard, which are used to identify keys in a keyboard layout-independent way.
 /// Currently, we only support a limited set of scan codes here:
 /// https://code.visualstudio.com/docs/configure/keybindings#_keyboard-layoutindependent-bindings
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
 pub enum ScanCode {
     /// F1 key
     F1,
@@ -315,6 +317,100 @@ impl ScanCode {
             // "[NumpadDecimal]" => Some(Self::NumpadDecimal),
             // "[NumpadDivide]" => Some(Self::NumpadDivide),
             _ => None,
+        }
+    }
+
+    /// This function is used to convert the scan code to its key face on US keyboard layout.
+    /// Test only.
+    #[cfg(test)]
+    pub fn to_key(&self) -> &str {
+        match self {
+            ScanCode::F1 => "f1",
+            ScanCode::F2 => "f2",
+            ScanCode::F3 => "f3",
+            ScanCode::F4 => "f4",
+            ScanCode::F5 => "f5",
+            ScanCode::F6 => "f6",
+            ScanCode::F7 => "f7",
+            ScanCode::F8 => "f8",
+            ScanCode::F9 => "f9",
+            ScanCode::F10 => "f10",
+            ScanCode::F11 => "f11",
+            ScanCode::F12 => "f12",
+            ScanCode::F13 => "f13",
+            ScanCode::F14 => "f14",
+            ScanCode::F15 => "f15",
+            ScanCode::F16 => "f16",
+            ScanCode::F17 => "f17",
+            ScanCode::F18 => "f18",
+            ScanCode::F19 => "f19",
+            ScanCode::F20 => "f20",
+            ScanCode::F21 => "f21",
+            ScanCode::F22 => "f22",
+            ScanCode::F23 => "f23",
+            ScanCode::F24 => "f24",
+            ScanCode::A => "a",
+            ScanCode::B => "b",
+            ScanCode::C => "c",
+            ScanCode::D => "d",
+            ScanCode::E => "e",
+            ScanCode::F => "f",
+            ScanCode::G => "g",
+            ScanCode::H => "h",
+            ScanCode::I => "i",
+            ScanCode::J => "j",
+            ScanCode::K => "k",
+            ScanCode::L => "l",
+            ScanCode::M => "m",
+            ScanCode::N => "n",
+            ScanCode::O => "o",
+            ScanCode::P => "p",
+            ScanCode::Q => "q",
+            ScanCode::R => "r",
+            ScanCode::S => "s",
+            ScanCode::T => "t",
+            ScanCode::U => "u",
+            ScanCode::V => "v",
+            ScanCode::W => "w",
+            ScanCode::X => "x",
+            ScanCode::Y => "y",
+            ScanCode::Z => "z",
+            ScanCode::Digit0 => "0",
+            ScanCode::Digit1 => "1",
+            ScanCode::Digit2 => "2",
+            ScanCode::Digit3 => "3",
+            ScanCode::Digit4 => "4",
+            ScanCode::Digit5 => "5",
+            ScanCode::Digit6 => "6",
+            ScanCode::Digit7 => "7",
+            ScanCode::Digit8 => "8",
+            ScanCode::Digit9 => "9",
+            ScanCode::Backquote => "`",
+            ScanCode::Minus => "-",
+            ScanCode::Equal => "=",
+            ScanCode::BracketLeft => "[",
+            ScanCode::BracketRight => "]",
+            ScanCode::Backslash => "\\",
+            ScanCode::Semicolon => ";",
+            ScanCode::Quote => "'",
+            ScanCode::Comma => ",",
+            ScanCode::Period => ".",
+            ScanCode::Slash => "/",
+            ScanCode::Left => "left",
+            ScanCode::Up => "up",
+            ScanCode::Right => "right",
+            ScanCode::Down => "down",
+            ScanCode::PageUp => "pageup",
+            ScanCode::PageDown => "pagedown",
+            ScanCode::End => "end",
+            ScanCode::Home => "home",
+            ScanCode::Tab => "tab",
+            ScanCode::Enter => "enter",
+            ScanCode::Escape => "escape",
+            ScanCode::Space => "space",
+            ScanCode::Backspace => "backspace",
+            ScanCode::Delete => "delete",
+            ScanCode::Insert => "insert",
         }
     }
 }
