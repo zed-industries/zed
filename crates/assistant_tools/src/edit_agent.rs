@@ -722,7 +722,7 @@ mod tests {
             "abXc\ndef\nghi"
         );
 
-        chunks_tx.unbounded_send("cY".into()).unwrap();
+        chunks_tx.unbounded_send("cY").unwrap();
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
         assert_eq!(

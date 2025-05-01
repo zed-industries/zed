@@ -286,7 +286,7 @@ fn eval_disable_cursor_blinking() {
                     [tool_result(
                         "tool_1",
                         "grep",
-                        vec![
+                        [
                             lines(input_file_content, 100..400),
                             lines(input_file_content, 800..1300),
                             lines(input_file_content, 1600..2000),

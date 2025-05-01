@@ -99,7 +99,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     register_edit_file(cx);
     cx.observe_flag::<AgentStreamEditsFeatureFlag, _>(|_, cx| register_edit_file(cx))
         .detach();
-    cx.observe_global::<SettingsStore>(|cx| register_edit_file(cx))
+    cx.observe_global::<SettingsStore>(register_edit_file)
         .detach();
 
     cx.subscribe(

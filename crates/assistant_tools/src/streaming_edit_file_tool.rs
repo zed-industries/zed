@@ -248,7 +248,7 @@ impl Tool for StreamingEditFileTool {
                         I can perform the requested edits.
                     "}))
                 } else {
-                    Ok(format!("No edits were made."))
+                    Ok("No edits were made.".to_string())
                 }
             } else {
                 Ok(format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff))
