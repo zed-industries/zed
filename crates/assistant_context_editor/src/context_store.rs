@@ -7,8 +7,8 @@ use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use client::{Client, TypedEnvelope, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::HashMap;
-use context_server::ContextServerFactoryRegistry;
-use context_server::manager::ContextServerManager;
+use context_server::ContextServerDescriptorRegistry;
+use context_server::manager::{ContextServerManager, ContextServerStatus};
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -99,7 +99,7 @@ impl ContextStore {
 
             let this = cx.new(|cx: &mut Context<Self>| {
                 let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
+                    ContextServerDescriptorRegistry::default_global(cx);
                 let context_server_manager = cx.new(|cx| {
                     ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
                 });
@@ -831,54 +831,60 @@ impl ContextStore {
     ) {
         let slash_command_working_set = self.slash_commands.clone();
         match event {
-            context_server::manager::Event::ServerStarted { server_id } => {
-                if let Some(server) = context_server_manager.read(cx).get_server(server_id) {
-                    let context_server_manager = context_server_manager.clone();
-                    cx.spawn({
-                        let server = server.clone();
-                        let server_id = server_id.clone();
-                        async move |this, cx| {
-                            let Some(protocol) = server.client() else {
-                                return;
-                            };
+            context_server::manager::Event::ServerStatusChanged { server_id, status } => {
+                match status {
+                    Some(ContextServerStatus::Running) => {
+                        if let Some(server) = context_server_manager.read(cx).get_server(server_id)
+                        {
+                            let context_server_manager = context_server_manager.clone();
+                            cx.spawn({
+                                let server = server.clone();
+                                let server_id = server_id.clone();
+                                async move |this, cx| {
+                                    let Some(protocol) = server.client() else {
+                                        return;
+                                    };
 
-                            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
-                                if let Some(prompts) = protocol.list_prompts().await.log_err() {
-                                    let slash_command_ids = prompts
-                                        .into_iter()
-                                        .filter(assistant_slash_commands::acceptable_prompt)
-                                        .map(|prompt| {
-                                            log::info!(
-                                                "registering context server command: {:?}",
-                                                prompt.name
-                                            );
-                                            slash_command_working_set.insert(Arc::new(
-                                                assistant_slash_commands::ContextServerSlashCommand::new(
-                                                    context_server_manager.clone(),
-                                                    &server,
-                                                    prompt,
-                                                ),
-                                            ))
-                                        })
-                                        .collect::<Vec<_>>();
+                                    if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
+                                        if let Some(prompts) = protocol.list_prompts().await.log_err() {
+                                            let slash_command_ids = prompts
+                                                .into_iter()
+                                                .filter(assistant_slash_commands::acceptable_prompt)
+                                                .map(|prompt| {
+                                                    log::info!(
+                                                        "registering context server command: {:?}",
+                                                        prompt.name
+                                                    );
+                                                    slash_command_working_set.insert(Arc::new(
+                                                        assistant_slash_commands::ContextServerSlashCommand::new(
+                                                            context_server_manager.clone(),
+                                                            &server,
+                                                            prompt,
+                                                        ),
+                                                    ))
+                                                })
+                                                .collect::<Vec<_>>();
 
-                                    this.update( cx, |this, _cx| {
-                                        this.context_server_slash_command_ids
-                                            .insert(server_id.clone(), slash_command_ids);
-                                    })
-                                    .log_err();
+                                            this.update( cx, |this, _cx| {
+                                                this.context_server_slash_command_ids
+                                                    .insert(server_id.clone(), slash_command_ids);
+                                            })
+                                            .log_err();
+                                        }
+                                    }
                                 }
-                            }
+                            })
+                            .detach();
                         }
-                    })
-                    .detach();
-                }
-            }
-            context_server::manager::Event::ServerStopped { server_id } => {
-                if let Some(slash_command_ids) =
-                    self.context_server_slash_command_ids.remove(server_id)
-                {
-                    slash_command_working_set.remove(&slash_command_ids);
+                    }
+                    None => {
+                        if let Some(slash_command_ids) =
+                            self.context_server_slash_command_ids.remove(server_id)
+                        {
+                            slash_command_working_set.remove(&slash_command_ids);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
