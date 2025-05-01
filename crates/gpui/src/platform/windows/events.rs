@@ -1467,7 +1467,7 @@ fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
 fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
     matches!(
         virtual_key,
-        VK_CONTROL | VK_MENU | VK_SHIFT | VK_LWIN | VK_RWIN
+        VK_CONTROL | VK_MENU | VK_SHIFT | VK_LWIN | VK_RWIN | VK_CAPITAL
     )
 }
 
@@ -1479,7 +1479,7 @@ pub(crate) fn current_modifiers() -> Modifiers {
         shift: is_virtual_key_pressed(VK_SHIFT),
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
-        capslock: false, // TODO:
+        capslock: is_virtual_key_pressed(VK_CAPITAL),
     }
 }
 
