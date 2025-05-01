@@ -52,6 +52,7 @@ pub struct ContextMenuEntry {
     end_slot_icon: Option<IconName>,
     end_slot_title: Option<SharedString>,
     end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
+    show_end_slot_on_hover: bool,
 }
 
 impl ContextMenuEntry {
@@ -70,6 +71,7 @@ impl ContextMenuEntry {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }
     }
 
@@ -365,6 +367,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -392,6 +395,35 @@ impl ContextMenu {
             end_slot_icon: Some(end_slot_icon),
             end_slot_title: Some(end_slot_title),
             end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: false,
+        }));
+        self
+    }
+
+    pub fn entry_with_end_slot_on_hover(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: None,
+            icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: true,
         }));
         self
     }
@@ -418,6 +450,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -472,6 +505,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -500,6 +534,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -519,6 +554,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -822,6 +858,7 @@ impl ContextMenu {
             end_slot_icon,
             end_slot_title,
             end_slot_handler,
+            show_end_slot_on_hover,
         } = entry;
         let this = cx.weak_entity();
 
@@ -884,6 +921,7 @@ impl ContextMenu {
             )
             .child(
                 ListItem::new(ix)
+                    .group_name("label_container")
                     .inset(true)
                     .disabled(*disabled)
                     .toggle_state(Some(ix) == self.selected_index)
@@ -942,8 +980,8 @@ impl ContextMenu {
                             .zip(end_slot_title.as_ref())
                             .zip(end_slot_handler.as_ref()),
                         |el, (((icon, action), title), handler)| {
-                            el.end_slot(
-                                IconButton::new("end-slot-icon", *icon)
+                            el.end_slot({
+                                let icon_button = IconButton::new("end-slot-icon", *icon)
                                     .shape(IconButtonShape::Square)
                                     .tooltip({
                                         let action_context = self.action_context.clone();
@@ -981,8 +1019,17 @@ impl ContextMenu {
                                             })
                                             .ok();
                                         }
-                                    }),
-                            )
+                                    });
+
+                                if *show_end_slot_on_hover {
+                                    div()
+                                        .visible_on_hover("label_container")
+                                        .child(icon_button)
+                                        .into_any_element()
+                                } else {
+                                    icon_button.into_any_element()
+                                }
+                            })
                         },
                     )
                     .on_click({

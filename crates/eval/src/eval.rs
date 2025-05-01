@@ -420,7 +420,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
-    assistant_tools::init(client.http_client(), cx);
     context_server::init(cx);
     prompt_store::init(cx);
     let stdout_is_a_pty = false;
@@ -432,6 +431,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         languages.clone(),
         cx,
     );
+    assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(include_str!("../runner_settings.json"), cx)

@@ -458,7 +458,8 @@ impl AssistantPanel {
 
                         for entry in recently_opened.iter() {
                             let summary = entry.summary(cx);
-                            menu = menu.entry_with_end_slot(
+
+                            menu = menu.entry_with_end_slot_on_hover(
                                 summary,
                                 None,
                                 {
