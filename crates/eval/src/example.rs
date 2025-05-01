@@ -119,6 +119,7 @@ impl ExampleContext {
                     text.to_string(),
                     ContextLoadResult::default(),
                     None,
+                    Vec::new(),
                     cx,
                 );
             })

@@ -732,6 +732,7 @@ pub struct LoadedContext {
     pub contexts: Vec<AgentContext>,
     pub text: String,
     pub images: Vec<LanguageModelImage>,
+    // FIXME put the creases in here?
 }
 
 impl LoadedContext {

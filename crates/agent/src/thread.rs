@@ -9,6 +9,7 @@ use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
+use editor::display_map::CreaseMetadata;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
@@ -103,6 +104,7 @@ pub struct Message {
     pub role: Role,
     pub segments: Vec<MessageSegment>,
     pub loaded_context: LoadedContext,
+    pub creases: Vec<(Range<usize>, CreaseMetadata)>,
 }
 
 impl Message {
@@ -465,6 +467,8 @@ impl Thread {
                         text: message.context,
                         images: Vec::new(),
                     },
+                    // FIXME
+                    creases: Vec::new(),
                 })
                 .collect(),
             next_message_id,
@@ -818,6 +822,7 @@ impl Thread {
         text: impl Into<String>,
         loaded_context: ContextLoadResult,
         git_checkpoint: Option<GitStoreCheckpoint>,
+        creases: Vec<(Range<usize>, CreaseMetadata)>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         if !loaded_context.referenced_buffers.is_empty() {
@@ -832,6 +837,7 @@ impl Thread {
             Role::User,
             vec![MessageSegment::Text(text.into())],
             loaded_context.loaded_context,
+            creases,
             cx,
         );
 
@@ -852,7 +858,13 @@ impl Thread {
         segments: Vec<MessageSegment>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        self.insert_message(Role::Assistant, segments, LoadedContext::default(), cx)
+        self.insert_message(
+            Role::Assistant,
+            segments,
+            LoadedContext::default(),
+            Vec::new(),
+            cx,
+        )
     }
 
     pub fn insert_message(
@@ -860,6 +872,7 @@ impl Thread {
         role: Role,
         segments: Vec<MessageSegment>,
         loaded_context: LoadedContext,
+        creases: Vec<(Range<usize>, CreaseMetadata)>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -868,6 +881,7 @@ impl Thread {
             role,
             segments,
             loaded_context,
+            creases,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -2494,7 +2508,13 @@ mod tests {
 
         // Insert user message with context
         let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Please explain this code", loaded_context, None, cx)
+            thread.insert_user_message(
+                "Please explain this code",
+                loaded_context,
+                None,
+                Vec::new(),
+                cx,
+            )
         });
 
         // Check content and context in message object
@@ -2570,7 +2590,7 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message1_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 1", loaded_context, None, cx)
+            thread.insert_user_message("Message 1", loaded_context, None, Vec::new(), cx)
         });
 
         // Second message with contexts 1 and 2 (context 1 should be skipped as it's already included)
@@ -2585,7 +2605,7 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message2_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 2", loaded_context, None, cx)
+            thread.insert_user_message("Message 2", loaded_context, None, Vec::new(), cx)
         });
 
         // Third message with all three contexts (contexts 1 and 2 should be skipped)
@@ -2601,7 +2621,7 @@ fn main() {{
             .update(|cx| load_context(new_contexts, &project, &None, cx))
             .await;
         let message3_id = thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Message 3", loaded_context, None, cx)
+            thread.insert_user_message("Message 3", loaded_context, None, Vec::new(), cx)
         });
 
         // Check what contexts are included in each message
@@ -2715,6 +2735,7 @@ fn main() {{
                 "What is the best way to learn Rust?",
                 ContextLoadResult::default(),
                 None,
+                Vec::new(),
                 cx,
             )
         });
@@ -2748,6 +2769,7 @@ fn main() {{
                 "Are there any good books?",
                 ContextLoadResult::default(),
                 None,
+                Vec::new(),
                 cx,
             )
         });
@@ -2797,7 +2819,7 @@ fn main() {{
 
         // Insert user message with the buffer as context
         thread.update(cx, |thread, cx| {
-            thread.insert_user_message("Explain this code", loaded_context, None, cx)
+            thread.insert_user_message("Explain this code", loaded_context, None, Vec::new(), cx)
         });
 
         // Create a request and check that it doesn't have a stale buffer warning yet
@@ -2831,6 +2853,7 @@ fn main() {{
                 "What does the code do now?",
                 ContextLoadResult::default(),
                 None,
+                Vec::new(),
                 cx,
             )
         });

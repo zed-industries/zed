@@ -9,8 +9,8 @@ use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, MultiBuffer,
+    AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
+    EditorMode, EditorStyle, MultiBuffer,
 };
 use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
@@ -293,10 +293,24 @@ impl MessageEditor {
             return;
         }
 
-        let user_message = self.editor.update(cx, |editor, cx| {
+        let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
             let text = editor.text(cx);
+            let creases = editor.display_map.update(cx, |display_map, cx| {
+                display_map
+                    .snapshot(cx)
+                    .crease_snapshot
+                    .creases()
+                    .filter_map(|crease| {
+                        Some((
+                            crease.range().to_offset(&buffer_snapshot),
+                            crease.metadata()?.clone(),
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+            });
             editor.clear(window, cx);
-            text
+            (text, creases)
         });
 
         self.last_estimated_token_count.take();
@@ -314,7 +328,13 @@ impl MessageEditor {
 
             thread
                 .update(cx, |thread, cx| {
-                    thread.insert_user_message(user_message, loaded_context, checkpoint.ok(), cx);
+                    thread.insert_user_message(
+                        user_message,
+                        loaded_context,
+                        checkpoint.ok(),
+                        user_message_creases,
+                        cx,
+                    );
                 })
                 .log_err();
 

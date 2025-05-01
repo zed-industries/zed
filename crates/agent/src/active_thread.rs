@@ -1,5 +1,5 @@
 use crate::context::{AgentContextHandle, RULES_ICON};
-use crate::context_picker::{ContextPicker, MentionLink};
+use crate::context_picker::{ContextPicker, MentionLink, crease_for_mention};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{
@@ -17,6 +17,7 @@ use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
+use editor::display_map::CreaseMetadata;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
@@ -38,6 +39,7 @@ use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
 use std::ffi::OsStr;
+use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1240,6 +1242,7 @@ impl ActiveThread {
         &mut self,
         message_id: MessageId,
         message_segments: &[MessageSegment],
+        creases: &[(Range<usize>, CreaseMetadata)],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1260,6 +1263,23 @@ impl ActiveThread {
             editor.set_text(message_text.clone(), window, cx);
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let creases = creases
+                .iter()
+                .map(|(range, metadata)| {
+                    let start = buffer_snapshot.anchor_after(range.start);
+                    let end = buffer_snapshot.anchor_before(range.end);
+                    crease_for_mention(
+                        metadata.label.clone(),
+                        metadata.icon_path.clone(),
+                        start..end,
+                        cx.weak_entity(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            editor.insert_creases(creases.clone(), cx);
+            editor.fold_creases(creases, false, window, cx);
         });
         let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::BufferEdited => {
@@ -1705,6 +1725,7 @@ impl ActiveThread {
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
+        let message_creases = message.creases.clone();
 
         let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
             return Empty.into_any();
@@ -1995,6 +2016,7 @@ impl ActiveThread {
                                 this.start_editing_message(
                                     message_id,
                                     &message_segments,
+                                    &message_creases,
                                     window,
                                     cx,
                                 );
