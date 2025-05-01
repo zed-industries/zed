@@ -16,15 +16,16 @@ use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
-use editor::actions::MoveUp;
+use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
-    AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardItem,
-    DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla, ListAlignment,
-    ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription,
-    Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
-    linear_color_stop, linear_gradient, list, percentage, pulsating_between,
+    AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
+    ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
+    ListAlignment, ListState, MouseButton, PlatformDisplay, ScrollHandle, Stateful,
+    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
+    UnderlineStyle, WeakEntity, WindowHandle, linear_color_stop, linear_gradient, list, percentage,
+    pulsating_between,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
@@ -1438,6 +1439,34 @@ impl ActiveThread {
         }
     }
 
+    fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image_instance(Arc::new(image), cx);
+            }
+        });
+    }
+
     fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         self.editing_message.take();
         cx.notify();
@@ -1653,6 +1682,7 @@ impl ActiveThread {
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::cancel_editing_message))
             .on_action(cx.listener(Self::confirm_editing_message))
+            .capture_action(cx.listener(Self::paste))
             .min_h_6()
             .flex_grow()
             .w_full()
