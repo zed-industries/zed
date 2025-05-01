@@ -257,7 +257,11 @@ impl AssistantConfiguration {
             )
     }
 
-    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_context_servers_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let context_servers = self.context_server_manager.read(cx).all_servers().clone();
 
         const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
@@ -276,7 +280,7 @@ impl AssistantConfiguration {
             .children(
                 context_servers
                     .into_iter()
-                    .map(|context_server| self.render_context_server(context_server, cx)),
+                    .map(|context_server| self.render_context_server(context_server, window, cx)),
             )
             .child(
                 h_flex()
@@ -305,7 +309,7 @@ impl AssistantConfiguration {
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)
                             .full_width()
-                            .icon(IconName::DatabaseZap)
+                            .icon(IconName::Hammer)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {
@@ -327,6 +331,7 @@ impl AssistantConfiguration {
     fn render_context_server(
         &self,
         context_server: Arc<ContextServer>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl use<> + IntoElement {
         let tools_by_source = self.tools.read(cx).tools_by_source(cx);
@@ -356,24 +361,26 @@ impl AssistantConfiguration {
             .map_or([].as_slice(), |tools| tools.as_slice());
         let tool_count = tools.len();
 
+        let border_color = cx.theme().colors().border.opacity(0.6);
+
         v_flex()
             .id(SharedString::from(context_server.id()))
             .border_1()
             .rounded_md()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().background.opacity(0.25))
+            .border_color(border_color)
+            .bg(cx.theme().colors().background.opacity(0.2))
+            .overflow_hidden()
             .child(
                 h_flex()
                     .p_1()
                     .justify_between()
-                    .when(are_tools_expanded && tool_count > 1, |element| {
-                        element
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border)
-                    })
+                    .when(
+                        error.is_some() || are_tools_expanded && tool_count > 1,
+                        |element| element.border_b_1().border_color(border_color),
+                    )
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1p5()
                             .child(
                                 Disclosure::new(
                                     "tool-list-disclosure",
@@ -419,7 +426,7 @@ impl AssistantConfiguration {
                                 }
                                 None => Indicator::dot().color(Color::Muted).into_any_element(),
                             })
-                            .child(Label::new(context_server.id()))
+                            .child(Label::new(context_server.id()).ml_0p5())
                             .when(is_running, |this| {
                                 this.child(
                                     Label::new(if tool_count == 1 {
@@ -470,12 +477,29 @@ impl AssistantConfiguration {
             .map(|parent| {
                 if let Some(error) = error {
                     return parent.child(
-                        div().py_1p5().px_2().child(
-                            Label::new(error)
-                                .color(Color::Muted)
-                                .buffer_font(cx)
-                                .size(LabelSize::Small),
-                        ),
+                        h_flex()
+                            .p_2()
+                            .gap_2()
+                            .items_start()
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .h(window.line_height() / 1.6_f32)
+                                    .justify_center()
+                                    .child(
+                                        Icon::new(IconName::XCircle)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Error),
+                                    ),
+                            )
+                            .child(
+                                div().w_full().child(
+                                    Label::new(error)
+                                        .buffer_font(cx)
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                ),
+                            ),
                     );
                 }
 
@@ -510,7 +534,7 @@ impl AssistantConfiguration {
 }
 
 impl Render for AssistantConfiguration {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("assistant-configuration")
             .key_context("AgentConfiguration")
@@ -527,7 +551,7 @@ impl Render for AssistantConfiguration {
                     .overflow_y_scroll()
                     .child(self.render_command_permission(cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
-                    .child(self.render_context_servers_section(cx))
+                    .child(self.render_context_servers_section(window, cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_provider_configuration_section(cx)),
             )
