@@ -4456,7 +4456,7 @@ fn deserialize_blame_buffer_response(
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
-        name: branch.name.to_string(),
+        ref_name: branch.ref_name.to_string(),
         unix_timestamp: branch
             .most_recent_commit
             .as_ref()
@@ -4485,7 +4485,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     git::repository::Branch {
         is_head: proto.is_head,
-        name: proto.name.clone().into(),
+        ref_name: proto.ref_name.clone().into(),
         upstream: proto
             .upstream
             .as_ref()

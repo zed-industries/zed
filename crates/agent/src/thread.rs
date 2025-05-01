@@ -2110,7 +2110,7 @@ impl Thread {
                 .map(|repo| {
                     repo.update(cx, |repo, _| {
                         let current_branch =
-                            repo.branch.as_ref().map(|branch| branch.name.to_string());
+                            repo.branch.as_ref().map(|branch| branch.name().to_owned());
                         repo.send_job(None, |state, _| async move {
                             let RepositoryState::Local { backend, .. } = state else {
                                 return GitState {

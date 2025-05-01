@@ -37,12 +37,24 @@ pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
     pub is_head: bool,
-    pub name: SharedString,
+    pub ref_name: SharedString,
     pub upstream: Option<Upstream>,
     pub most_recent_commit: Option<CommitSummary>,
 }
 
 impl Branch {
+    pub fn name(&self) -> &str {
+        self.ref_name
+            .as_ref()
+            .strip_prefix("refs/heads/")
+            .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
+            .unwrap_or(self.ref_name.as_ref())
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.ref_name.starts_with("refs/remotes/")
+    }
+
     pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
         self.upstream
             .as_ref()
@@ -845,7 +857,7 @@ impl GitRepository for RealGitRepository {
 
                 let mut branches = parse_branch_input(&input)?;
                 if branches.is_empty() {
-                    let args = vec!["symbolic-ref", "--quiet", "--short", "HEAD"];
+                    let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
@@ -859,7 +871,7 @@ impl GitRepository for RealGitRepository {
                         let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
                         branches.push(Branch {
-                            name: name.into(),
+                            ref_name: name.into(),
                             is_head: true,
                             upstream: None,
                             most_recent_commit: None,
@@ -1696,15 +1708,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
         let is_current_branch = fields.next().context("no HEAD")? == "*";
         let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
         let parent_sha: SharedString = fields.next().context("no parent")?.to_string().into();
-        let raw_ref_name = fields.next().context("no refname")?;
-        let ref_name: SharedString =
-            if let Some(ref_name) = raw_ref_name.strip_prefix("refs/heads/") {
-                ref_name.to_string().into()
-            } else if let Some(ref_name) = raw_ref_name.strip_prefix("refs/remotes/") {
-                ref_name.to_string().into()
-            } else {
-                return Err(anyhow!("unexpected format for refname"));
-            };
+        let ref_name = fields.next().context("no refname")?.to_string().into();
         let upstream_name = fields.next().context("no upstream")?.to_string();
         let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
         let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
@@ -1716,7 +1720,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 
         branches.push(Branch {
             is_head: is_current_branch,
-            name: dbg!(ref_name),
+            ref_name: dbg!(ref_name),
             most_recent_commit: Some(CommitSummary {
                 sha: head_sha,
                 subject,
@@ -1979,7 +1983,7 @@ mod tests {
             parse_branch_input(&input).unwrap(),
             vec![Branch {
                 is_head: true,
-                name: "zed-patches".into(),
+                ref_name: "refs/heads/zed-patches".into(),
                 upstream: Some(Upstream {
                     ref_name: "refs/remotes/origin/zed-patches".into(),
                     tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {

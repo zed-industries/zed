@@ -1953,7 +1953,12 @@ impl GitPanel {
             })?;
 
             let pull = repo.update(cx, |repo, cx| {
-                repo.pull(branch.name.clone(), remote.name.clone(), askpass, cx)
+                repo.pull(
+                    branch.name().to_owned().into(),
+                    remote.name.clone(),
+                    askpass,
+                    cx,
+                )
             })?;
 
             let remote_message = pull.await?;
@@ -2020,7 +2025,7 @@ impl GitPanel {
 
             let push = repo.update(cx, |repo, cx| {
                 repo.push(
-                    branch.name.clone(),
+                    branch.name().to_owned().into(),
                     remote.name.clone(),
                     options,
                     askpass_delegate,
@@ -2030,7 +2035,7 @@ impl GitPanel {
 
             let remote_output = push.await?;
 
-            let action = RemoteAction::Push(branch.name, remote);
+            let action = RemoteAction::Push(branch.name().to_owned().into(), remote);
             this.update(cx, |this, cx| match remote_output {
                 Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
                 Err(e) => {
@@ -2092,7 +2097,7 @@ impl GitPanel {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
-                    Ok(repo.get_remotes(Some(current_branch.name.to_string())))
+                    Ok(repo.get_remotes(Some(current_branch.name().to_string())))
                 })??
                 .await??;
 
@@ -4355,19 +4360,17 @@ impl RenderOnce for PanelRepoFooter {
         let branch_name = self
             .branch
             .as_ref()
-            .map(|branch| branch.name.clone())
+            .map(|branch| branch.name().to_owned())
             .or_else(|| {
                 self.head_commit.as_ref().map(|commit| {
-                    SharedString::from(
-                        commit
-                            .sha
-                            .chars()
-                            .take(MAX_SHORT_SHA_LEN)
-                            .collect::<String>(),
-                    )
+                    commit
+                        .sha
+                        .chars()
+                        .take(MAX_SHORT_SHA_LEN)
+                        .collect::<String>()
                 })
             })
-            .unwrap_or_else(|| SharedString::from(" (no branch)"));
+            .unwrap_or_else(|| " (no branch)".to_owned());
         let show_separator = self.branch.is_some() || self.head_commit.is_some();
 
         let active_repo_name = self.active_repository.clone();
@@ -4534,7 +4537,7 @@ impl Component for PanelRepoFooter {
         fn branch(upstream: Option<UpstreamTracking>) -> Branch {
             Branch {
                 is_head: true,
-                name: "some-branch".into(),
+                ref_name: "some-branch".into(),
                 upstream: upstream.map(|tracking| Upstream {
                     ref_name: "origin/some-branch".into(),
                     tracking,
@@ -4551,7 +4554,7 @@ impl Component for PanelRepoFooter {
         fn custom(branch_name: &str, upstream: Option<UpstreamTracking>) -> Branch {
             Branch {
                 is_head: true,
-                name: branch_name.to_string().into(),
+                ref_name: branch_name.to_string().into(),
                 upstream: upstream.map(|tracking| Upstream {
                     ref_name: format!("zed/{}", branch_name).into(),
                     tracking,
