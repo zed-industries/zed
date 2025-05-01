@@ -363,22 +363,34 @@ fn render_markdown_code_block(
             // We tell the model to use /dev/null for the path instead of using ```language
             // because otherwise it consistently fails to use code citations.
             if path_range.path.starts_with("/dev/null") {
-                let ext = path_range
-                    .path
-                    .extension()
-                    .and_then(OsStr::to_str)
-                    .map(|str| SharedString::new(str.to_string()))
-                    .unwrap_or_default();
+                let icon = parsed_markdown
+                    .languages_by_path
+                    .get(&path_range.path)
+                    .or_else(|| {
+                        path_range
+                            .path
+                            .extension()
+                            .and_then(OsStr::to_str)
+                            .and_then(|str| {
+                                let ext = SharedString::new(str.to_string());
+                                parsed_markdown.languages_by_name.get(&ext)
+                            })
+                    })
+                    .and_then(|language| {
+                        language
+                            .config()
+                            .matcher
+                            .path_suffixes
+                            .iter()
+                            .find_map(|extension| {
+                                file_icons::FileIcons::get_icon(Path::new(extension), cx)
+                            })
+                            .map(file_icon)
+                    });
 
-                render_code_language(
-                    parsed_markdown
-                        .languages_by_path
-                        .get(&path_range.path)
-                        .or_else(|| parsed_markdown.languages_by_name.get(&ext)),
-                    ext,
-                    cx,
-                )
+                div().children(icon).into_any_element()
             } else {
+                let icon = file_icons::FileIcons::get_icon(&path_range.path, cx).map(file_icon);
                 let content = if let Some(parent) = path_range.path.parent() {
                     h_flex()
                         .ml_1()
@@ -411,19 +423,11 @@ fn render_markdown_code_block(
                     .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
                     .tooltip(Tooltip::text("Jump to File"))
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .children(
-                                file_icons::FileIcons::get_icon(&path_range.path, cx)
-                                    .map(Icon::from_path)
-                                    .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
-                            )
-                            .child(content)
-                            .child(
-                                Icon::new(IconName::ArrowUpRight)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Ignored),
-                            ),
+                        h_flex().gap_0p5().children(icon).child(content).child(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::XSmall)
+                                .color(Color::Ignored),
+                        ),
                     )
                     .on_click({
                         let path_range = path_range.clone();
@@ -610,6 +614,12 @@ fn render_markdown_code_block(
                 }
             },
         )
+}
+
+fn file_icon(icon_path: SharedString) -> Icon {
+    Icon::from_path(icon_path)
+        .color(Color::Muted)
+        .size(IconSize::XSmall)
 }
 
 fn render_code_language(
