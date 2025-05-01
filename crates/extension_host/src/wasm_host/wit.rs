@@ -25,6 +25,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
+    zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
@@ -722,6 +723,29 @@ impl Extension {
             | Extension::V0_0_6(_)
             | Extension::V0_1_0(_) => Err(anyhow!(
                 "`context_server_command` not available prior to v0.2.0"
+            )),
+        }
+    }
+
+    pub async fn call_context_server_configuration(
+        &self,
+        store: &mut Store<WasmState>,
+        context_server_id: Arc<str>,
+        project: Resource<ExtensionProject>,
+    ) -> Result<Result<Option<ContextServerConfiguration>, String>> {
+        match self {
+            Extension::V0_5_0(ext) => {
+                ext.call_context_server_configuration(store, &context_server_id, project)
+                    .await
+            }
+            Extension::V0_0_1(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_4_0(_) => Err(anyhow!(
+                "`context_server_configuration` not available prior to v0.5.0"
             )),
         }
     }

@@ -1,0 +1,49 @@
+You are an expert text editor and your task is to produce a series of edits to a file given a description of the changes you need to make.
+
+You MUST respond with a series of edits to that one file in the following format:
+
+```
+<edits>
+
+<old_text>
+OLD TEXT 1 HERE
+</old_text>
+<new_text>
+NEW TEXT 1 HERE
+</new_text>
+
+<old_text>
+OLD TEXT 2 HERE
+</old_text>
+<new_text>
+NEW TEXT 2 HERE
+</new_text>
+
+<old_text>
+OLD TEXT 3 HERE
+</old_text>
+<new_text>
+NEW TEXT 3 HERE
+</new_text>
+
+</edits>
+```
+
+Rules for editing:
+
+- `old_text` represents lines in the input file that will be replaced with `new_text`. `old_text` MUST exactly match the existing file content, character for character, including indentation.
+- Always include enough context around the lines you want to replace in `old_text` such that it's impossible to mistake them for other lines.
+- If you want to replace many occurrences of the same text, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
+- When reporting multiple edits, each edit assumes the previous one has already been applied! Therefore, you must ensure `old_text` doesn't reference text that has already been modified by a previous edit.
+- Don't explain the edits, just report them.
+- Only edit the file specified in `<file_to_edit>` and NEVER include edits to other files!
+- If you open an <old_text> tag, you MUST close it using </old_text>
+- If you open an <new_text> tag, you MUST close it using </new_text>
+
+<file_to_edit>
+{{path}}
+</file_to_edit>
+
+<edit_description>
+{{edit_description}}
+</edit_description>

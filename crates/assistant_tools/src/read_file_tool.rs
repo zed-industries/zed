@@ -122,7 +122,8 @@ impl Tool for ReadFileTool {
             if input.start_line.is_some() || input.end_line.is_some() {
                 let result = buffer.read_with(cx, |buffer, _cx| {
                     let text = buffer.text();
-                    let start = input.start_line.unwrap_or(1);
+                    // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
+                    let start = input.start_line.unwrap_or(1).max(1);
                     let lines = text.split('\n').skip(start - 1);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
@@ -327,6 +328,67 @@ mod test {
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+    }
+
+    #[gpui::test]
+    async fn test_read_file_line_range_edge_cases(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        // start_line of 0 should be treated as 1
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "root/multiline.txt",
+                    "start_line": 0,
+                    "end_line": 2
+                });
+                Arc::new(ReadFileTool)
+                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .output
+            })
+            .await;
+        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+
+        // end_line of 0 should result in at least 1 line
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "root/multiline.txt",
+                    "start_line": 1,
+                    "end_line": 0
+                });
+                Arc::new(ReadFileTool)
+                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .output
+            })
+            .await;
+        assert_eq!(result.unwrap(), "Line 1");
+
+        // when start_line > end_line, should still return at least 1 line
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "root/multiline.txt",
+                    "start_line": 3,
+                    "end_line": 2
+                });
+                Arc::new(ReadFileTool)
+                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .output
+            })
+            .await;
+        assert_eq!(result.unwrap(), "Line 3");
     }
 
     fn init_test(cx: &mut TestAppContext) {

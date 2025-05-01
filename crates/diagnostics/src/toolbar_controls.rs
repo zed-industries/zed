@@ -1,4 +1,7 @@
-use crate::ProjectDiagnosticsEditor;
+use std::sync::Arc;
+
+use crate::cargo::cargo_diagnostics_sources;
+use crate::{ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
 use gpui::{Context, Entity, EventEmitter, ParentElement, Render, WeakEntity, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
@@ -13,18 +16,28 @@ impl Render for ToolbarControls {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
+        let cargo_diagnostics_sources = Arc::new(
+            self.diagnostics()
+                .map(|editor| cargo_diagnostics_sources(editor.read(cx), cx))
+                .unwrap_or_default(),
+        );
+        let fetch_cargo_diagnostics = !cargo_diagnostics_sources.is_empty();
 
         if let Some(editor) = self.diagnostics() {
             let diagnostics = editor.read(cx);
             include_warnings = diagnostics.include_warnings;
             has_stale_excerpts = !diagnostics.paths_to_update.is_empty();
-            is_updating = diagnostics.update_excerpts_task.is_some()
-                || diagnostics
-                    .project
-                    .read(cx)
-                    .language_servers_running_disk_based_diagnostics(cx)
-                    .next()
-                    .is_some();
+            is_updating = if fetch_cargo_diagnostics {
+                diagnostics.cargo_diagnostics_fetch.task.is_some()
+            } else {
+                diagnostics.update_excerpts_task.is_some()
+                    || diagnostics
+                        .project
+                        .read(cx)
+                        .language_servers_running_disk_based_diagnostics(cx)
+                        .next()
+                        .is_some()
+            };
         }
 
         let tooltip = if include_warnings {
@@ -41,21 +54,57 @@ impl Render for ToolbarControls {
 
         h_flex()
             .gap_1()
-            .when(has_stale_excerpts, |div| {
-                div.child(
-                    IconButton::new("update-excerpts", IconName::Update)
-                        .icon_color(Color::Info)
-                        .shape(IconButtonShape::Square)
-                        .disabled(is_updating)
-                        .tooltip(Tooltip::text("Update excerpts"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if let Some(diagnostics) = this.diagnostics() {
-                                diagnostics.update(cx, |diagnostics, cx| {
-                                    diagnostics.update_all_excerpts(window, cx);
-                                });
-                            }
-                        })),
-                )
+            .map(|div| {
+                if is_updating {
+                    div.child(
+                        IconButton::new("stop-updating", IconName::StopFilled)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .tooltip(Tooltip::for_action_title(
+                                "Stop diagnostics update",
+                                &ToggleDiagnosticsRefresh,
+                            ))
+                            .on_click(cx.listener(move |toolbar_controls, _, _, cx| {
+                                if let Some(diagnostics) = toolbar_controls.diagnostics() {
+                                    diagnostics.update(cx, |diagnostics, cx| {
+                                        diagnostics.stop_cargo_diagnostics_fetch(cx);
+                                        diagnostics.update_excerpts_task = None;
+                                        cx.notify();
+                                    });
+                                }
+                            })),
+                    )
+                } else {
+                    div.child(
+                        IconButton::new("refresh-diagnostics", IconName::Update)
+                            .icon_color(Color::Info)
+                            .shape(IconButtonShape::Square)
+                            .disabled(!has_stale_excerpts && !fetch_cargo_diagnostics)
+                            .tooltip(Tooltip::for_action_title(
+                                "Refresh diagnostics",
+                                &ToggleDiagnosticsRefresh,
+                            ))
+                            .on_click(cx.listener({
+                                move |toolbar_controls, _, window, cx| {
+                                    if let Some(diagnostics) = toolbar_controls.diagnostics() {
+                                        let cargo_diagnostics_sources =
+                                            Arc::clone(&cargo_diagnostics_sources);
+                                        diagnostics.update(cx, move |diagnostics, cx| {
+                                            if fetch_cargo_diagnostics {
+                                                diagnostics.fetch_cargo_diagnostics(
+                                                    cargo_diagnostics_sources,
+                                                    window,
+                                                    cx,
+                                                );
+                                            } else {
+                                                diagnostics.update_all_excerpts(window, cx);
+                                            }
+                                        });
+                                    }
+                                }
+                            })),
+                    )
+                }
             })
             .child(
                 IconButton::new("toggle-warnings", IconName::Warning)
