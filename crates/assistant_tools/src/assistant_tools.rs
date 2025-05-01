@@ -96,10 +96,10 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
 
-    register_edit_file(cx);
-    cx.observe_flag::<AgentStreamEditsFeatureFlag, _>(|_, cx| register_edit_file(cx))
+    register_edit_file_tool(cx);
+    cx.observe_flag::<AgentStreamEditsFeatureFlag, _>(|_, cx| register_edit_file_tool(cx))
         .detach();
-    cx.observe_global::<SettingsStore>(register_edit_file)
+    cx.observe_global::<SettingsStore>(register_edit_file_tool)
         .detach();
 
     cx.subscribe(
@@ -122,7 +122,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     .detach();
 }
 
-fn register_edit_file(cx: &mut App) {
+fn register_edit_file_tool(cx: &mut App) {
     let registry = ToolRegistry::global(cx);
 
     registry.unregister_tool(EditFileTool);
@@ -173,6 +173,7 @@ mod tests {
     #[gpui::test]
     fn test_builtin_tool_schema_compatibility(cx: &mut App) {
         settings::init(cx);
+        AssistantSettings::register(cx);
 
         let client = Client::new(
             Arc::new(FakeSystemClock::new()),
