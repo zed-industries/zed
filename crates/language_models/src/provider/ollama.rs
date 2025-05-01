@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
-use futures::TryFutureExt;
-use futures::{FutureExt, StreamExt, TryStreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRequestTool, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelRequestTool, LanguageModelToolUse, LanguageModelToolUseId, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -13,13 +13,14 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, KeepAlive, OllamaFunctionTool, OllamaToolCall,
-    get_models, preload_model, show_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
+    OllamaToolCall, get_models, preload_model, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, sync::Arc};
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
@@ -217,7 +218,6 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     model: model.clone(),
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
-                    tool_id: Arc::new(AtomicU32::new(0)),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -256,8 +256,6 @@ pub struct OllamaLanguageModel {
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
-    /// Create unique tool ids by concatenating with model id
-    tool_id: Arc<AtomicU32>,
 }
 
 impl OllamaLanguageModel {
@@ -359,49 +357,93 @@ impl LanguageModel for OllamaLanguageModel {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
-        let id = self.id.0.to_string();
-        let tool_ids = Arc::clone(&self.tool_id);
-
         let future = self.request_limiter.stream(async move {
-            let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
-            let stream = response
-                .map_ok(move |delta| match delta.message {
-                    ChatMessage::User { content } => LanguageModelCompletionEvent::Text(content),
-                    ChatMessage::Assistant {
-                        content,
-                        tool_calls,
-                    } => {
-                        // TODO: Support multiple tool calls simultaneously
-                        if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
-                            match tool_call {
-                                OllamaToolCall::Function(function) => {
-                                    LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
-                                        id: LanguageModelToolUseId::from(format!(
-                                            "{}-{}",
-                                            id,
-                                            tool_ids.fetch_add(1, Ordering::Relaxed)
-                                        )),
-                                        name: Arc::from(function.name),
-                                        raw_input: serde_json::to_string(&function.arguments)
-                                            .unwrap(),
-                                        input: function.arguments,
-                                        is_input_complete: true,
-                                    })
-                                }
-                            }
-                        } else {
-                            LanguageModelCompletionEvent::Text(content)
-                        }
-                    }
-                    ChatMessage::System { content } => LanguageModelCompletionEvent::Text(content),
-                })
-                .map_err(LanguageModelCompletionError::Other)
-                .boxed();
+            let stream = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
+            let stream = map_to_language_model_completion_events(stream);
             Ok(stream)
         });
 
         future.map_ok(|f| f.boxed()).boxed()
     }
+}
+
+fn map_to_language_model_completion_events(
+    stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+    // Used for creating unique tool use ids
+    static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct State {
+        stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
+    }
+
+    // We need to create a ToolUse and Stop event from a single
+    // response from the original stream
+    let stream = stream::unfold(State { stream }, async move |mut state| {
+        let response = state.stream.next().await?;
+
+        let delta = match response {
+            Ok(delta) => delta,
+            Err(e) => {
+                let event = Err(LanguageModelCompletionError::Other(anyhow!(e)));
+                return Some((vec![event], state));
+            }
+        };
+
+        let mut events = Vec::new();
+
+        match delta.message {
+            ChatMessage::User { content } => {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
+            ChatMessage::System { content } => {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
+            ChatMessage::Assistant {
+                content,
+                tool_calls,
+            } => {
+                // Check for tool calls
+                if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
+                    match tool_call {
+                        OllamaToolCall::Function(function) => {
+                            let tool_id = format!(
+                                "{}-{}",
+                                &function.name,
+                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::Relaxed)
+                            );
+                            let event =
+                                LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                                    id: LanguageModelToolUseId::from(tool_id),
+                                    name: Arc::from(function.name),
+                                    raw_input: function.arguments.to_string(),
+                                    input: function.arguments,
+                                    is_input_complete: true,
+                                });
+                            events.push(Ok(event));
+                            events
+                                .push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                        }
+                    }
+                } else {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
+            }
+        };
+
+        if let Some(reason) = delta.done_reason {
+            match reason.as_str() {
+                "stop" => {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+                _ => {}
+            }
+        }
+
+        Some((events, state))
+    });
+
+    stream.flat_map(futures::stream::iter)
 }
 
 struct ConfigurationView {
