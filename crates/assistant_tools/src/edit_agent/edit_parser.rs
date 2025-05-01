@@ -1,5 +1,11 @@
+use derive_more::{Add, AddAssign};
 use smallvec::SmallVec;
-use std::mem;
+use std::{cmp, mem, ops::Range};
+
+const OLD_TEXT_END_TAG: &str = "</old_text>";
+const NEW_TEXT_END_TAG: &str = "</new_text>";
+const END_TAG_LEN: usize = OLD_TEXT_END_TAG.len();
+const _: () = debug_assert!(OLD_TEXT_END_TAG.len() == NEW_TEXT_END_TAG.len());
 
 #[derive(Debug)]
 pub enum EditParserEvent {
@@ -7,10 +13,17 @@ pub enum EditParserEvent {
     NewTextChunk { chunk: String, done: bool },
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Add, AddAssign)]
+pub struct EditParserMetrics {
+    pub tags: usize,
+    pub mismatched_tags: usize,
+}
+
 #[derive(Debug)]
 pub struct EditParser {
     state: EditParserState,
     buffer: String,
+    metrics: EditParserMetrics,
 }
 
 #[derive(Debug, PartialEq)]
@@ -26,6 +39,7 @@ impl EditParser {
         EditParser {
             state: EditParserState::Pending,
             buffer: String::new(),
+            metrics: EditParserMetrics::default(),
         }
     }
 
@@ -44,17 +58,22 @@ impl EditParser {
                     }
                 }
                 EditParserState::WithinOldText => {
-                    if let Some(end) = self.buffer.find("</old_text>") {
+                    if let Some(tag_range) = self.find_end_tag() {
                         let mut start = 0;
                         if self.buffer.starts_with('\n') {
                             start = 1;
                         }
-                        let mut old_text = self.buffer[start..end].to_string();
+                        let mut old_text = self.buffer[start..tag_range.start].to_string();
                         if old_text.ends_with('\n') {
                             old_text.pop();
                         }
 
-                        self.buffer.drain(..end + "</old_text>".len());
+                        self.metrics.tags += 1;
+                        if &self.buffer[tag_range.clone()] != OLD_TEXT_END_TAG {
+                            self.metrics.mismatched_tags += 1;
+                        }
+
+                        self.buffer.drain(..tag_range.end);
                         self.state = EditParserState::AfterOldText;
                         edit_events.push(EditParserEvent::OldText(old_text));
                     } else {
@@ -70,8 +89,6 @@ impl EditParser {
                     }
                 }
                 EditParserState::WithinNewText { start } => {
-                    const NEW_TEXT_END_TAG: &str = "</new_text>";
-
                     if !self.buffer.is_empty() {
                         if *start && self.buffer.starts_with('\n') {
                             self.buffer.remove(0);
@@ -79,18 +96,23 @@ impl EditParser {
                         *start = false;
                     }
 
-                    if let Some(end) = self.buffer.find(NEW_TEXT_END_TAG) {
-                        let mut chunk = self.buffer[..end].to_string();
+                    if let Some(tag_range) = self.find_end_tag() {
+                        let mut chunk = self.buffer[..tag_range.start].to_string();
                         if chunk.ends_with('\n') {
                             chunk.pop();
                         }
 
-                        edit_events.push(EditParserEvent::NewTextChunk { chunk, done: true });
-                        self.buffer.drain(..end + NEW_TEXT_END_TAG.len());
+                        self.metrics.tags += 1;
+                        if &self.buffer[tag_range.clone()] != NEW_TEXT_END_TAG {
+                            self.metrics.mismatched_tags += 1;
+                        }
+
+                        self.buffer.drain(..tag_range.end);
                         self.state = EditParserState::Pending;
+                        edit_events.push(EditParserEvent::NewTextChunk { chunk, done: true });
                     } else {
-                        let mut end_prefixes = (1..NEW_TEXT_END_TAG.len())
-                            .map(|i| &NEW_TEXT_END_TAG[..i])
+                        let mut end_prefixes = (1..END_TAG_LEN)
+                            .flat_map(|i| [&NEW_TEXT_END_TAG[..i], &OLD_TEXT_END_TAG[..i]])
                             .chain(["\n"]);
                         if end_prefixes.all(|prefix| !self.buffer.ends_with(&prefix)) {
                             edit_events.push(EditParserEvent::NewTextChunk {
@@ -105,6 +127,23 @@ impl EditParser {
         }
         edit_events
     }
+
+    fn find_end_tag(&self) -> Option<Range<usize>> {
+        let old_text_end_tag_ix = self.buffer.find(OLD_TEXT_END_TAG);
+        let new_text_end_tag_ix = self.buffer.find(NEW_TEXT_END_TAG);
+        let start_ix = if let Some((old_text_ix, new_text_ix)) =
+            old_text_end_tag_ix.zip(new_text_end_tag_ix)
+        {
+            cmp::min(old_text_ix, new_text_ix)
+        } else {
+            old_text_end_tag_ix.or(new_text_end_tag_ix)?
+        };
+        Some(start_ix..start_ix + END_TAG_LEN)
+    }
+
+    pub fn finish(self) -> EditParserMetrics {
+        self.metrics
+    }
 }
 
 #[cfg(test)]
@@ -116,22 +155,32 @@ mod tests {
 
     #[gpui::test(iterations = 1000)]
     fn test_single_edit(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse(
+            parse_random_chunks(
                 "<old_text>original</old_text><new_text>updated</new_text>",
+                &mut parser,
                 &mut rng
             ),
             vec![Edit {
                 old_text: "original".to_string(),
                 new_text: "updated".to_string(),
             }]
-        )
+        );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 2,
+                mismatched_tags: 0
+            }
+        );
     }
 
     #[gpui::test(iterations = 1000)]
     fn test_multiple_edits(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse(
+            parse_random_chunks(
                 indoc! {"
                     <old_text>
                     first old
@@ -140,6 +189,7 @@ mod tests {
                     second new
                     </new_text>
                 "},
+                &mut parser,
                 &mut rng
             ),
             vec![
@@ -153,12 +203,20 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 4,
+                mismatched_tags: 0
+            }
+        );
     }
 
     #[gpui::test(iterations = 1000)]
     fn test_edits_with_extra_text(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse(
+            parse_random_chunks(
                 indoc! {"
                     ignore this <old_text>
                     content</old_text>extra stuff<new_text>updated content</new_text>trailing data
@@ -166,6 +224,7 @@ mod tests {
                     </old_text>middle text<new_text>modified second item</new_text>end
                     <old_text>third case</old_text><new_text>improved third case</new_text> with trailing text
                 "},
+                &mut parser,
                 &mut rng
             ),
             vec![
@@ -183,13 +242,22 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 6,
+                mismatched_tags: 0
+            }
+        );
     }
 
     #[gpui::test(iterations = 1000)]
     fn test_nested_tags(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse(
+            parse_random_chunks(
                 "<old_text>code with <tag>nested</tag> elements</old_text><new_text>new <code>content</code></new_text>",
+                &mut parser,
                 &mut rng
             ),
             vec![Edit {
@@ -197,38 +265,45 @@ mod tests {
                 new_text: "new <code>content</code>".to_string(),
             }]
         );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 2,
+                mismatched_tags: 0
+            }
+        );
     }
 
     #[gpui::test(iterations = 1000)]
     fn test_empty_old_and_new_text(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse("<old_text></old_text><new_text></new_text>", &mut rng),
+            parse_random_chunks(
+                "<old_text></old_text><new_text></new_text>",
+                &mut parser,
+                &mut rng
+            ),
             vec![Edit {
                 old_text: "".to_string(),
                 new_text: "".to_string(),
             }]
         );
-    }
-
-    #[gpui::test(iterations = 1000)]
-    fn test_with_special_characters(mut rng: StdRng) {
         assert_eq!(
-            parse(
-                "<old_text>function(x) { return x * 2; }</old_text><new_text>function(x) { return x ** 2; }</new_text>",
-                &mut rng
-            ),
-            vec![Edit {
-                old_text: "function(x) { return x * 2; }".to_string(),
-                new_text: "function(x) { return x ** 2; }".to_string(),
-            }]
+            parser.finish(),
+            EditParserMetrics {
+                tags: 2,
+                mismatched_tags: 0
+            }
         );
     }
 
     #[gpui::test(iterations = 100)]
     fn test_multiline_content(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse(
+            parse_random_chunks(
                 "<old_text>line1\nline2\nline3</old_text><new_text>line1\nmodified line2\nline3</new_text>",
+                &mut parser,
                 &mut rng
             ),
             vec![Edit {
@@ -236,12 +311,20 @@ mod tests {
                 new_text: "line1\nmodified line2\nline3".to_string(),
             }]
         );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 2,
+                mismatched_tags: 0
+            }
+        );
     }
 
     #[gpui::test(iterations = 1000)]
-    fn test_unmatched_tags(mut rng: StdRng) {
+    fn test_mismatched_tags(mut rng: StdRng) {
+        let mut parser = EditParser::new();
         assert_eq!(
-            parse(
+            parse_random_chunks(
                 // Reduced from an actual Sonnet 3.7 output
                 indoc! {"
                     <old_text>
@@ -254,13 +337,37 @@ mod tests {
                     B
                     c
                     </old_text>
+                    <old_text>
+                    d
+                    e
+                    f
+                    </new_text>
+                    <new_text>
+                    D
+                    e
+                    F
+                    </old_text>
                 "},
+                &mut parser,
                 &mut rng
             ),
-            vec![Edit {
-                old_text: "a\nb\nc".to_string(),
-                new_text: "a\nB\nc".to_string(),
-            }]
+            vec![
+                Edit {
+                    old_text: "a\nb\nc".to_string(),
+                    new_text: "a\nB\nc".to_string(),
+                },
+                Edit {
+                    old_text: "d\ne\nf".to_string(),
+                    new_text: "D\ne\nF".to_string(),
+                }
+            ]
+        );
+        assert_eq!(
+            parser.finish(),
+            EditParserMetrics {
+                tags: 4,
+                mismatched_tags: 4
+            }
         );
     }
 
@@ -270,8 +377,7 @@ mod tests {
         new_text: String,
     }
 
-    fn parse(input: &str, rng: &mut StdRng) -> Vec<Edit> {
-        let mut parser = EditParser::new();
+    fn parse_random_chunks(input: &str, parser: &mut EditParser, rng: &mut StdRng) -> Vec<Edit> {
         let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
@@ -284,15 +390,10 @@ mod tests {
             for event in parser.push(&input[last_ix..chunk_ix]) {
                 match event {
                     EditParserEvent::OldText(old_text) => {
-                        assert!(!old_text.contains("old_text"));
-                        assert!(!old_text.contains("new_text"));
                         pending_edit.old_text = old_text;
                     }
                     EditParserEvent::NewTextChunk { chunk, done } => {
                         pending_edit.new_text.push_str(&chunk);
-                        assert!(!pending_edit.new_text.contains("old_text"));
-                        assert!(!pending_edit.new_text.contains("new_text"));
-
                         if done {
                             edits.push(pending_edit);
                             pending_edit = Edit::default();

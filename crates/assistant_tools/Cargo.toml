@@ -21,6 +21,7 @@ chrono.workspace = true
 collections.workspace = true
 component.workspace = true
 editor.workspace = true
+derive_more.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true

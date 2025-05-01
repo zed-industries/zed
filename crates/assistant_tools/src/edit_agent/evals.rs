@@ -72,10 +72,7 @@ fn eval_extract_handle_command_output() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: ExpectedOutput {
-                text: output_file_content.into(),
-                comparison: ComparisonKind::IgnoreEmptyLines,
-            },
+            assertion: EvalAssertion::AssertEqual(output_file_content.into()),
         },
     );
 }
@@ -129,10 +126,7 @@ fn eval_delete_run_git_blame() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: ExpectedOutput {
-                text: output_file_content.into(),
-                comparison: ComparisonKind::IgnoreEmptyLines,
-            },
+            assertion: EvalAssertion::AssertEqual(output_file_content.into()),
         },
     );
 }
@@ -142,8 +136,6 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     let input_file_path = "root/lib.rs";
     let input_file_content =
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
-    let output_file_content =
-        include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/after.rs");
     let edit_description = "Update compile_parser_to_wasm to use wasi-sdk instead of emscripten";
     eval(
         100,
@@ -247,10 +239,10 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: ExpectedOutput {
-                text: output_file_content.into(),
-                comparison: ComparisonKind::Judge,
-            },
+            assertion: EvalAssertion::JudgeDiff(indoc! {"
+                - The compile_parser_to_wasm method has been changed to use wasi-sdk
+                - ureq is used to download the SDK for current platform and architecture
+            "}),
         },
     );
 }
@@ -321,10 +313,7 @@ fn eval_disable_cursor_blinking() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: ExpectedOutput {
-                text: output_file_content.into(),
-                comparison: ComparisonKind::IgnoreEmptyLines,
-            },
+            assertion: EvalAssertion::AssertEqual(output_file_content.into()),
         },
     );
 }
@@ -333,7 +322,6 @@ fn eval_disable_cursor_blinking() {
 fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
-    let output_file_content = include_str!("evals/fixtures/from_pixels_constructor/after.rs");
     let edit_description = "Implement from_pixels constructor and add tests.";
     eval(
         100,
@@ -513,10 +501,10 @@ fn eval_from_pixels_constructor() {
             input_path: input_file_path.into(),
             input_content: input_file_content.into(),
             edit_description: edit_description.into(),
-            expected_output: ExpectedOutput {
-                text: output_file_content.into(),
-                comparison: ComparisonKind::IgnoreEmptyLines,
-            },
+            assertion: EvalAssertion::JudgeDiff(indoc! {"
+                - The diff contains a new `from_pixels` constructor
+                - The diff contains new tests for the `from_pixels` constructor
+            "}),
         },
     );
 }
@@ -543,18 +531,6 @@ fn lines(input: &str, range: Range<usize>) -> String {
         .take(range.len())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-#[derive(Clone)]
-struct ExpectedOutput {
-    text: String,
-    comparison: ComparisonKind,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum ComparisonKind {
-    IgnoreEmptyLines,
-    Judge,
 }
 
 fn tool_use(
@@ -590,7 +566,7 @@ struct EvalInput {
     input_path: PathBuf,
     input_content: String,
     edit_description: String,
-    expected_output: ExpectedOutput,
+    assertion: EvalAssertion,
 }
 
 fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
@@ -615,10 +591,14 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut failed_count = 0;
     let mut failed_evals = HashMap::default();
     let mut errored_evals = HashMap::default();
+    let mut eval_outputs = Vec::new();
+    let mut cumulative_parser_metrics = EditParserMetrics::default();
     while let Ok(output) = rx.recv() {
         match output {
             Ok(output) => {
-                if output.score.score < 80 {
+                cumulative_parser_metrics += output.edit_output._parser_metrics.clone();
+                eval_outputs.push(output.clone());
+                if output.assertion.score < 80 {
                     failed_count += 1;
                     failed_evals
                         .entry(output.buffer_text.clone())
@@ -647,21 +627,25 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
 
         let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
         failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
-        for (_buffer_output, evals) in failed_evals {
-            let eval = evals.first().unwrap();
-
-            println!("Eval failed {} times", evals.len());
-            if let Some(judge_output) = &eval.score.message {
-                println!("Judge Output:\n{}", judge_output);
-            }
-            println!("Diff:\n{}", eval.diff);
-            println!("Raw Edits:\n{}", eval.raw_edits);
+        for (_buffer_output, failed_evals) in failed_evals {
+            let eval = failed_evals.first().unwrap();
+            println!("Eval failed {} times", failed_evals.len());
+            println!("{:#?}", eval);
         }
 
         panic!(
             "Actual pass ratio: {}\nExpected pass ratio: {}",
             actual_pass_ratio, expected_pass_ratio
         );
+    }
+
+    let mismatched_tag_ratio =
+        cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
+    if mismatched_tag_ratio > 0.02 {
+        for eval in eval_outputs {
+            println!("{:#?}", eval);
+        }
+        panic!("Too many mismatched tags: {:?}", cumulative_parser_metrics);
     }
 }
 
@@ -675,11 +659,12 @@ fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
     tx.send(output).unwrap();
 }
 
+#[derive(Clone, Debug)]
 struct EvalOutput {
-    score: EvalScore,
+    assertion: EvalAssertionResult,
     buffer_text: String,
-    raw_edits: String,
-    diff: String,
+    edit_output: EditAgentOutput,
+    _diff: String,
 }
 
 fn report_progress(evaluated_count: usize, iterations: usize) {
@@ -766,7 +751,7 @@ impl EditAgentTest {
         buffer.update(cx, |buffer, cx| {
             buffer.set_text(eval.input_content.clone(), cx)
         });
-        let raw_edits = self
+        let edit_output = self
             .agent
             .edit(
                 buffer.clone(),
@@ -777,60 +762,38 @@ impl EditAgentTest {
             .await?;
         let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
         let actual_diff = language::unified_diff(&eval.input_content, &buffer_text);
-        if actual_diff.contains("<old_text>") || actual_diff.contains("<new_text>") {
-            return Ok(EvalOutput {
-                score: EvalScore {
-                    score: 0,
-                    message: Some("Found <old_text>/<new_text> in diff".into()),
-                },
-                buffer_text,
-                raw_edits,
-                diff: actual_diff,
-            });
-        } else {
-            return Ok(EvalOutput {
-                score: EvalScore {
-                    score: 100,
-                    message: None,
-                },
-                buffer_text,
-                raw_edits,
-                diff: actual_diff,
-            });
-        }
-
-        let diff_comparison = match eval.expected_output.comparison {
-            ComparisonKind::IgnoreEmptyLines => EvalScore {
-                score: if strip_empty_lines(&buffer_text)
-                    == strip_empty_lines(&eval.expected_output.text)
-                {
+        let assertion = match eval.assertion {
+            EvalAssertion::AssertEqual(expected_output) => EvalAssertionResult {
+                score: if strip_empty_lines(&buffer_text) == strip_empty_lines(&expected_output) {
                     100
                 } else {
                     0
                 },
                 message: None,
             },
-            ComparisonKind::Judge => {
-                let expected_diff =
-                    language::unified_diff(&eval.input_content, &eval.expected_output.text);
-                self.compare_diffs(&actual_diff, &expected_diff, &cx.to_async())
-                    .await
-                    .context("failed comparing diffs")?
-            }
+            EvalAssertion::JudgeDiff(assertions) => self
+                .judge_diff(&actual_diff, assertions, &cx.to_async())
+                .await
+                .context("failed comparing diffs")?,
         };
 
         Ok(EvalOutput {
-            score: diff_comparison,
-            diff: actual_diff,
+            assertion,
+            _diff: actual_diff,
             buffer_text,
-            raw_edits,
+            edit_output,
         })
     }
 
-    async fn compare_diffs(&self, diff_a: &str, diff_b: &str, cx: &AsyncApp) -> Result<EvalScore> {
+    async fn judge_diff(
+        &self,
+        diff: &str,
+        assertions: &'static str,
+        cx: &AsyncApp,
+    ) -> Result<EvalAssertionResult> {
         let prompt = DiffJudgeTemplate {
-            diff_a: diff_a.to_string(),
-            diff_b: diff_b.to_string(),
+            diff: diff.to_string(),
+            assertions,
         }
         .render(&self.agent.templates)
         .unwrap();
@@ -855,7 +818,7 @@ impl EditAgentTest {
         if let Some(captures) = re.captures(&output) {
             if let Some(score_match) = captures.get(1) {
                 let score = score_match.as_str().parse().unwrap_or(0);
-                return Ok(EvalScore {
+                return Ok(EvalAssertionResult {
                     score,
                     message: Some(output),
                 });
@@ -869,16 +832,22 @@ impl EditAgentTest {
     }
 }
 
-#[derive(Debug, Eq, PartialEq, Hash)]
-struct EvalScore {
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+enum EvalAssertion {
+    AssertEqual(String),
+    JudgeDiff(&'static str),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct EvalAssertionResult {
     score: usize,
     message: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct DiffJudgeTemplate {
-    diff_a: String,
-    diff_b: String,
+    diff: String,
+    assertions: &'static str,
 }
 
 impl Template for DiffJudgeTemplate {

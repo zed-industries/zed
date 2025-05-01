@@ -6,7 +6,7 @@ use crate::{Template, Templates};
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use assistant_tool::ActionLog;
-use edit_parser::{EditParser, EditParserEvent};
+use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
 use futures::{
     Stream, StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -30,6 +30,12 @@ pub struct EditAgentTemplate {
 
 impl Template for EditAgentTemplate {
     const TEMPLATE_NAME: &'static str = "edit_agent.hbs";
+}
+
+#[derive(Clone, Debug)]
+pub struct EditAgentOutput {
+    pub _raw_edits: String,
+    pub _parser_metrics: EditParserMetrics,
 }
 
 pub struct EditAgent {
@@ -57,27 +63,26 @@ impl EditAgent {
         edit_description: String,
         previous_messages: Vec<LanguageModelRequestMessage>,
         cx: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<EditAgentOutput> {
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         let edit_chunks = self
             .request_edits(snapshot, edit_description, previous_messages, cx)
             .await?;
-        let raw_output = self.apply_edits(buffer, edit_chunks, cx).await?;
-        Ok(raw_output)
+        let output = self.apply_edits(buffer, edit_chunks, cx).await?;
+        Ok(output)
     }
 
-    // todo!("add tests for this")
     async fn apply_edits(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
         cx: &mut AsyncApp,
-    ) -> Result<String> {
+    ) -> Result<EditAgentOutput> {
         // Ensure the buffer is tracked by the action log.
         self.action_log
             .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
 
-        let (raw_output, mut edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
+        let (output, mut edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         while let Some(edit_event) = edit_events.next().await {
             let EditParserEvent::OldText(old_text_query) = edit_event? else {
                 continue;
@@ -89,7 +94,7 @@ impl EditAgent {
                 if let Some(range) = Self::resolve_location(&snapshot, &old_text_query) {
                     let buffer_start_indent =
                         snapshot.line_indent_for_row(snapshot.offset_to_point(range.start).row);
-                    let old_text_start_index = old_text_query
+                    let old_text_start_indent = old_text_query
                         .lines()
                         .next()
                         .map_or(buffer_start_indent, |line| {
@@ -97,12 +102,12 @@ impl EditAgent {
                         });
                     let indent_delta = if buffer_start_indent.tabs > 0 {
                         IndentDelta::Tabs(
-                            buffer_start_indent.tabs as isize - old_text_start_index.tabs as isize,
+                            buffer_start_indent.tabs as isize - old_text_start_indent.tabs as isize,
                         )
                     } else {
                         IndentDelta::Spaces(
                             buffer_start_indent.spaces as isize
-                                - old_text_start_index.spaces as isize,
+                                - old_text_start_indent.spaces as isize,
                         )
                     };
 
@@ -159,26 +164,26 @@ impl EditAgent {
             edit_events = compute_edits.await?;
         }
 
-        raw_output.await
+        output.await
     }
 
     fn parse_edit_chunks(
         chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
         cx: &mut AsyncApp,
     ) -> (
-        Task<Result<String>>,
+        Task<Result<EditAgentOutput>>,
         UnboundedReceiver<Result<EditParserEvent>>,
     ) {
         let (tx, rx) = mpsc::unbounded();
-        let raw_output = cx.background_spawn(async move {
+        let output = cx.background_spawn(async move {
             futures::pin_mut!(chunks);
 
             let mut parser = EditParser::new();
-            let mut output = String::new();
+            let mut raw_edits = String::new();
             while let Some(chunk) = chunks.next().await {
                 match chunk {
                     Ok(chunk) => {
-                        output.push_str(&chunk);
+                        raw_edits.push_str(&chunk);
                         for event in parser.push(&chunk) {
                             tx.unbounded_send(Ok(event))?;
                         }
@@ -188,9 +193,12 @@ impl EditAgent {
                     }
                 }
             }
-            Ok(output)
+            Ok(EditAgentOutput {
+                _raw_edits: raw_edits,
+                _parser_metrics: parser.finish(),
+            })
         });
-        (raw_output, rx)
+        (output, rx)
     }
 
     fn reindent_new_text_chunks(

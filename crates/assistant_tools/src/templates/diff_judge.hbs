@@ -1,15 +1,23 @@
-You are an expert coder, and have been tasked with looking at two diffs and determining how close they are to achieving the same goal.
+You are an expert coder, and have been tasked with looking at the following diff:
 
-<diff_a>
-{{diff_a}}
-</diff_a>
+<diff>
+{{diff}}
+</diff>
 
-<diff_b>
-{{diff_b}}
-</diff_b>
+Evaluate the following assertions:
 
-## Output
+<assertions>
+{{assertions}}
+</assertions>
 
-You must respond with a score between 0 and 100, where 100 means the diffs are identical and 0 means they are completely different, using the following format:
+You must respond with a short analysis and a score between 0 and 100, where:
+- 0 means no assertions pass
+- 100 means all the assertions pass perfectly
 
-<score>your_score_here</score>
+<analysis>
+- Assertion 1: one line describing why the first assertion passes or fails (even partially)
+- Assertion 2: one line describing why the second assertion passes or fails (even partially)
+- ...
+- Assertion N: one line describing why the Nth assertion passes or fails (even partially)
+</analysis>
+<score>YOUR FINAL SCORE HERE</score>

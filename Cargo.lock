@@ -713,6 +713,7 @@ dependencies = [
  "clock",
  "collections",
  "component",
+ "derive_more",
  "editor",
  "feature_flags",
  "fs",
