@@ -424,7 +424,13 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     prompt_store::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
-    agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
+    agent::init(
+        fs.clone(),
+        client.clone(),
+        prompt_builder.clone(),
+        languages.clone(),
+        cx,
+    );
     assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
