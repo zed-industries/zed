@@ -484,7 +484,7 @@ impl AssistantConfiguration {
                             .child(
                                 h_flex()
                                     .flex_none()
-                                    .h(window.line_height() / 1.6 as f32)
+                                    .h(window.line_height() / 1.6_f32)
                                     .justify_center()
                                     .child(
                                         Icon::new(IconName::XCircle)
