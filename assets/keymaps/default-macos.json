@@ -46,10 +46,30 @@
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
-      "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
-      "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
+      "cmd-=": [
+        "zed::IncreaseBufferFontSize",
+        {
+          "persist": false
+        }
+      ],
+      "cmd-+": [
+        "zed::IncreaseBufferFontSize",
+        {
+          "persist": false
+        }
+      ],
+      "cmd--": [
+        "zed::DecreaseBufferFontSize",
+        {
+          "persist": false
+        }
+      ],
+      "cmd-0": [
+        "zed::ResetBufferFontSize",
+        {
+          "persist": false
+        }
+      ],
       "cmd-,": "zed::OpenSettings",
       "cmd-q": "zed::Quit",
       "cmd-h": "zed::Hide",
@@ -109,12 +129,45 @@
       "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
-      "cmd-left": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "ctrl-a": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }],
-      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "cmd-right": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
-      "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
-      "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
+      "cmd-left": [
+        "editor::MoveToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true,
+          "stop_at_indent": true
+        }
+      ],
+      "ctrl-a": [
+        "editor::MoveToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": false,
+          "stop_at_indent": true
+        }
+      ],
+      "home": [
+        "editor::MoveToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true,
+          "stop_at_indent": true
+        }
+      ],
+      "cmd-right": [
+        "editor::MoveToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "ctrl-e": [
+        "editor::MoveToEndOfLine",
+        {
+          "stop_at_soft_wraps": false
+        }
+      ],
+      "end": [
+        "editor::MoveToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
       "cmd-up": "editor::MoveToBeginning",
       "cmd-down": "editor::MoveToEnd",
       "cmd-home": "editor::MoveToBeginning", // Typed via `cmd-fn-left`
@@ -137,14 +190,57 @@
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
       "alt-shift-o": "editor::OrganizeImports",
-      "cmd-shift-left": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
-      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
-      "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
-      "ctrl-v": ["editor::MovePageDown", { "center_cursor": true }],
-      "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
+      "cmd-shift-left": [
+        "editor::SelectToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true,
+          "stop_at_indent": true
+        }
+      ],
+      "shift-home": [
+        "editor::SelectToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true,
+          "stop_at_indent": true
+        }
+      ],
+      "ctrl-shift-a": [
+        "editor::SelectToBeginningOfLine",
+        {
+          "stop_at_soft_wraps": true,
+          "stop_at_indent": true
+        }
+      ],
+      "cmd-shift-right": [
+        "editor::SelectToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "shift-end": [
+        "editor::SelectToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "ctrl-shift-e": [
+        "editor::SelectToEndOfLine",
+        {
+          "stop_at_soft_wraps": true
+        }
+      ],
+      "ctrl-v": [
+        "editor::MovePageDown",
+        {
+          "center_cursor": true
+        }
+      ],
+      "ctrl-shift-v": [
+        "editor::MovePageUp",
+        {
+          "center_cursor": true
+        }
+      ],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
@@ -169,8 +265,18 @@
       "cmd-k z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": "buffer_search::DeployReplace",
-      "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
-      "cmd-e": ["buffer_search::Deploy", { "focus": false }],
+      "cmd-alt-l": [
+        "buffer_search::Deploy",
+        {
+          "selection_search_enabled": true
+        }
+      ],
+      "cmd-e": [
+        "buffer_search::Deploy",
+        {
+          "focus": false
+        }
+      ],
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
@@ -245,6 +351,17 @@
       "cmd-n": "agent::Reject",
       "cmd-shift-y": "agent::KeepAll",
       "cmd-shift-n": "agent::RejectAll"
+    }
+  },
+  {
+    "context": "Editor && editor_agent_diff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-y": "agent::Keep",
+      "cmd-n": "agent::Reject",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -461,13 +578,43 @@
       "cmd-}": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
-      "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
-      "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
+      "cmd-w": [
+        "pane::CloseActiveItem",
+        {
+          "close_pinned": false
+        }
+      ],
+      "alt-cmd-t": [
+        "pane::CloseInactiveItems",
+        {
+          "close_pinned": false
+        }
+      ],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
-      "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
-      "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
-      "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
-      "cmd-k w": ["pane::CloseAllItems", { "close_pinned": false }],
+      "cmd-k e": [
+        "pane::CloseItemsToTheLeft",
+        {
+          "close_pinned": false
+        }
+      ],
+      "cmd-k t": [
+        "pane::CloseItemsToTheRight",
+        {
+          "close_pinned": false
+        }
+      ],
+      "cmd-k u": [
+        "pane::CloseCleanItems",
+        {
+          "close_pinned": false
+        }
+      ],
+      "cmd-k w": [
+        "pane::CloseAllItems",
+        {
+          "close_pinned": false
+        }
+      ],
       "cmd-k cmd-w": "workspace::CloseAllItemsAndPanes",
       "cmd-f": "project_search::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
@@ -500,17 +647,42 @@
       "alt-shift-down": "editor::DuplicateLineDown",
       "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand Selection
       "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
-      "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch / find_under_expand
+      "cmd-d": [
+        "editor::SelectNext",
+        {
+          "replace_newest": false
+        }
+      ], // editor.action.addSelectionToNextFindMatch / find_under_expand
       "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
-      "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }], // editor.action.moveSelectionToNextFindMatch / find_under_expand_skip
+      "cmd-k cmd-d": [
+        "editor::SelectNext",
+        {
+          "replace_newest": true
+        }
+      ], // editor.action.moveSelectionToNextFindMatch / find_under_expand_skip
       // macOS binds `ctrl-cmd-d` to Show Dictionary which breaks these two binds
       // To use `ctrl-cmd-d` or `ctrl-k ctrl-cmd-d` in Zed you must execute this command and then restart:
       //   defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 70 '<dict><key>enabled</key><false/></dict>'
-      "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
-      "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
+      "ctrl-cmd-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": false
+        }
+      ], // editor.action.addSelectionToPreviousFindMatch
+      "cmd-k ctrl-cmd-d": [
+        "editor::SelectPrevious",
+        {
+          "replace_newest": true
+        }
+      ], // editor.action.moveSelectionToPreviousFindMatch
       "cmd-k cmd-i": "editor::Hover",
-      "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
+      "cmd-/": [
+        "editor::ToggleComments",
+        {
+          "advance_downwards": false
+        }
+      ],
       "cmd-u": "editor::UndoSelection",
       "cmd-shift-u": "editor::RedoSelection",
       "f8": "editor::GoToDiagnostic",
@@ -529,15 +701,42 @@
       "cmd-k cmd-l": "editor::ToggleFold",
       "cmd-k cmd-[": "editor::FoldRecursive",
       "cmd-k cmd-]": "editor::UnfoldRecursive",
-      "cmd-k cmd-1": ["editor::FoldAtLevel", 1],
-      "cmd-k cmd-2": ["editor::FoldAtLevel", 2],
-      "cmd-k cmd-3": ["editor::FoldAtLevel", 3],
-      "cmd-k cmd-4": ["editor::FoldAtLevel", 4],
-      "cmd-k cmd-5": ["editor::FoldAtLevel", 5],
-      "cmd-k cmd-6": ["editor::FoldAtLevel", 6],
-      "cmd-k cmd-7": ["editor::FoldAtLevel", 7],
-      "cmd-k cmd-8": ["editor::FoldAtLevel", 8],
-      "cmd-k cmd-9": ["editor::FoldAtLevel", 9],
+      "cmd-k cmd-1": [
+        "editor::FoldAtLevel",
+        1
+      ],
+      "cmd-k cmd-2": [
+        "editor::FoldAtLevel",
+        2
+      ],
+      "cmd-k cmd-3": [
+        "editor::FoldAtLevel",
+        3
+      ],
+      "cmd-k cmd-4": [
+        "editor::FoldAtLevel",
+        4
+      ],
+      "cmd-k cmd-5": [
+        "editor::FoldAtLevel",
+        5
+      ],
+      "cmd-k cmd-6": [
+        "editor::FoldAtLevel",
+        6
+      ],
+      "cmd-k cmd-7": [
+        "editor::FoldAtLevel",
+        7
+      ],
+      "cmd-k cmd-8": [
+        "editor::FoldAtLevel",
+        8
+      ],
+      "cmd-k cmd-9": [
+        "editor::FoldAtLevel",
+        9
+      ],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
       // Using `ctrl-space` / `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
@@ -567,15 +766,42 @@
     "context": "Pane",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-1": ["pane::ActivateItem", 0],
-      "ctrl-2": ["pane::ActivateItem", 1],
-      "ctrl-3": ["pane::ActivateItem", 2],
-      "ctrl-4": ["pane::ActivateItem", 3],
-      "ctrl-5": ["pane::ActivateItem", 4],
-      "ctrl-6": ["pane::ActivateItem", 5],
-      "ctrl-7": ["pane::ActivateItem", 6],
-      "ctrl-8": ["pane::ActivateItem", 7],
-      "ctrl-9": ["pane::ActivateItem", 8],
+      "ctrl-1": [
+        "pane::ActivateItem",
+        0
+      ],
+      "ctrl-2": [
+        "pane::ActivateItem",
+        1
+      ],
+      "ctrl-3": [
+        "pane::ActivateItem",
+        2
+      ],
+      "ctrl-4": [
+        "pane::ActivateItem",
+        3
+      ],
+      "ctrl-5": [
+        "pane::ActivateItem",
+        4
+      ],
+      "ctrl-6": [
+        "pane::ActivateItem",
+        5
+      ],
+      "ctrl-7": [
+        "pane::ActivateItem",
+        6
+      ],
+      "ctrl-8": [
+        "pane::ActivateItem",
+        7
+      ],
+      "ctrl-9": [
+        "pane::ActivateItem",
+        8
+      ],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
       "ctrl-_": "pane::GoForward",
@@ -598,28 +824,65 @@
       "cmd-shift-s": "workspace::SaveAs",
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
-      "cmd-1": ["workspace::ActivatePane", 0],
-      "cmd-2": ["workspace::ActivatePane", 1],
-      "cmd-3": ["workspace::ActivatePane", 2],
-      "cmd-4": ["workspace::ActivatePane", 3],
-      "cmd-5": ["workspace::ActivatePane", 4],
-      "cmd-6": ["workspace::ActivatePane", 5],
-      "cmd-7": ["workspace::ActivatePane", 6],
-      "cmd-8": ["workspace::ActivatePane", 7],
-      "cmd-9": ["workspace::ActivatePane", 8],
+      "cmd-1": [
+        "workspace::ActivatePane",
+        0
+      ],
+      "cmd-2": [
+        "workspace::ActivatePane",
+        1
+      ],
+      "cmd-3": [
+        "workspace::ActivatePane",
+        2
+      ],
+      "cmd-4": [
+        "workspace::ActivatePane",
+        3
+      ],
+      "cmd-5": [
+        "workspace::ActivatePane",
+        4
+      ],
+      "cmd-6": [
+        "workspace::ActivatePane",
+        5
+      ],
+      "cmd-7": [
+        "workspace::ActivatePane",
+        6
+      ],
+      "cmd-8": [
+        "workspace::ActivatePane",
+        7
+      ],
+      "cmd-9": [
+        "workspace::ActivatePane",
+        8
+      ],
       "cmd-b": "workspace::ToggleLeftDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
-      "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
+      "cmd-shift-h": [
+        "pane::DeploySearch",
+        {
+          "replace_enabled": true
+        }
+      ],
       "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
       "ctrl-tab": "tab_switcher::Toggle",
-      "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
+      "ctrl-shift-tab": [
+        "tab_switcher::Toggle",
+        {
+          "select_last": true
+        }
+      ],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -647,7 +910,12 @@
       "cmd-n": "workspace::NewFile",
       "cmd-shift-r": "task::Spawn",
       "cmd-alt-r": "task::Rerun",
-      "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      "ctrl-alt-shift-r": [
+        "task::Spawn",
+        {
+          "reveal_target": "center"
+        }
+      ]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
@@ -820,13 +1088,38 @@
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
-      "backspace": ["project_panel::Trash", { "skip_prompt": false }],
-      "delete": ["project_panel::Trash", { "skip_prompt": false }],
-      "cmd-backspace": ["project_panel::Trash", { "skip_prompt": true }],
-      "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
+      "backspace": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "delete": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "cmd-backspace": [
+        "project_panel::Trash",
+        {
+          "skip_prompt": true
+        }
+      ],
+      "cmd-delete": [
+        "project_panel::Delete",
+        {
+          "skip_prompt": false
+        }
+      ],
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
+      "cmd-alt-backspace": [
+        "project_panel::Delete",
+        {
+          "skip_prompt": false
+        }
+      ],
       "cmd-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
@@ -867,10 +1160,30 @@
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
       "cmd-shift-enter": "git::Amend",
-      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
-      "delete": ["git::RestoreFile", { "skip_prompt": false }],
-      "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
-      "cmd-delete": ["git::RestoreFile", { "skip_prompt": true }]
+      "backspace": [
+        "git::RestoreFile",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "delete": [
+        "git::RestoreFile",
+        {
+          "skip_prompt": false
+        }
+      ],
+      "cmd-backspace": [
+        "git::RestoreFile",
+        {
+          "skip_prompt": true
+        }
+      ],
+      "cmd-delete": [
+        "git::RestoreFile",
+        {
+          "skip_prompt": true
+        }
+      ]
     }
   },
   {
@@ -960,8 +1273,18 @@
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
       "tab": "picker::ConfirmCompletion",
-      "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
-      "cmd-alt-enter": ["picker::ConfirmInput", { "secondary": true }]
+      "alt-enter": [
+        "picker::ConfirmInput",
+        {
+          "secondary": false
+        }
+      ],
+      "cmd-alt-enter": [
+        "picker::ConfirmInput",
+        {
+          "secondary": true
+        }
+      ]
     }
   },
   {
@@ -1005,24 +1328,69 @@
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences
-      "cmd-backspace": ["terminal::SendText", "\u0015"],
-      "cmd-right": ["terminal::SendText", "\u0005"],
-      "cmd-left": ["terminal::SendText", "\u0001"],
+      "cmd-backspace": [
+        "terminal::SendText",
+        "\u0015"
+      ],
+      "cmd-right": [
+        "terminal::SendText",
+        "\u0005"
+      ],
+      "cmd-left": [
+        "terminal::SendText",
+        "\u0001"
+      ],
       // Terminal.app compatibility
-      "alt-left": ["terminal::SendText", "\u001bb"],
-      "alt-right": ["terminal::SendText", "\u001bf"],
-      "alt-b": ["terminal::SendText", "\u001bb"],
-      "alt-f": ["terminal::SendText", "\u001bf"],
-      "alt-.": ["terminal::SendText", "\u001b."],
+      "alt-left": [
+        "terminal::SendText",
+        "\u001bb"
+      ],
+      "alt-right": [
+        "terminal::SendText",
+        "\u001bf"
+      ],
+      "alt-b": [
+        "terminal::SendText",
+        "\u001bb"
+      ],
+      "alt-f": [
+        "terminal::SendText",
+        "\u001bf"
+      ],
+      "alt-.": [
+        "terminal::SendText",
+        "\u001b."
+      ],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
-      "up": ["terminal::SendKeystroke", "up"],
-      "pageup": ["terminal::SendKeystroke", "pageup"],
-      "down": ["terminal::SendKeystroke", "down"],
-      "pagedown": ["terminal::SendKeystroke", "pagedown"],
-      "escape": ["terminal::SendKeystroke", "escape"],
-      "enter": ["terminal::SendKeystroke", "enter"],
-      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "up": [
+        "terminal::SendKeystroke",
+        "up"
+      ],
+      "pageup": [
+        "terminal::SendKeystroke",
+        "pageup"
+      ],
+      "down": [
+        "terminal::SendKeystroke",
+        "down"
+      ],
+      "pagedown": [
+        "terminal::SendKeystroke",
+        "pagedown"
+      ],
+      "escape": [
+        "terminal::SendKeystroke",
+        "escape"
+      ],
+      "enter": [
+        "terminal::SendKeystroke",
+        "enter"
+      ],
+      "ctrl-c": [
+        "terminal::SendKeystroke",
+        "ctrl-c"
+      ],
       "shift-pageup": "terminal::ScrollPageUp",
       "cmd-up": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",

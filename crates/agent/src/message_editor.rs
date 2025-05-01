@@ -149,6 +149,9 @@ impl MessageEditor {
                 // When context changes, reload it for token counting.
                 let _ = this.reload_context(cx);
             }),
+            cx.observe(&thread.read(cx).action_log().clone(), |_, _, cx| {
+                cx.notify()
+            }),
         ];
 
         let model_selector = cx.new(|cx| {

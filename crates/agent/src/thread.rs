@@ -1908,6 +1908,11 @@ impl Thread {
         }
 
         self.finalize_pending_checkpoint(cx);
+
+        if canceled {
+            cx.emit(ThreadEvent::CompletionCanceled);
+        }
+
         canceled
     }
 
@@ -2440,6 +2445,7 @@ pub enum ThreadEvent {
     CheckpointChanged,
     ToolConfirmationNeeded,
     CancelEditing,
+    CompletionCanceled,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}

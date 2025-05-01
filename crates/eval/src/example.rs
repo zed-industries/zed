@@ -232,7 +232,8 @@ impl ExampleContext {
                 ThreadEvent::NewRequest
                 | ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. } => {}
+                | ThreadEvent::UsePendingTools { .. }
+                | ThreadEvent::CompletionCanceled => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,

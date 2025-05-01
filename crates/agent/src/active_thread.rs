@@ -1,4 +1,3 @@
-use crate::agent_diff::AgentDiff;
 use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::MentionLink;
 use crate::thread::{
@@ -755,10 +754,6 @@ impl ActiveThread {
                     .unwrap()
             }
         });
-
-        // todo! is this the right place to do this?
-        AgentDiff::register_active_thread(&workspace, &thread, cx);
-
         let mut this = Self {
             language_registry,
             thread_store,
@@ -945,7 +940,7 @@ impl ActiveThread {
             ThreadEvent::UsageUpdated(usage) => {
                 self.last_usage = Some(*usage);
             }
-            ThreadEvent::NewRequest => {
+            ThreadEvent::NewRequest | ThreadEvent::CompletionCanceled => {
                 cx.notify();
             }
             ThreadEvent::StreamedCompletion
