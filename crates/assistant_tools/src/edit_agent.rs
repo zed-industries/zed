@@ -420,7 +420,9 @@ impl EditAgent {
         }
 
         let matched_buffer_row_count = buffer_row_end - buffer_row_start;
-        if (matched_lines as f32 / matched_buffer_row_count as f32) >= 0.8 {
+        let matched_ratio =
+            matched_lines as f32 / (matched_buffer_row_count as f32).max(query_line_count as f32);
+        if matched_ratio >= 0.8 {
             let buffer_start_ix = buffer.point_to_offset(Point::new(buffer_row_start, 0));
             let buffer_end_ix = buffer.point_to_offset(Point::new(
                 buffer_row_end - 1,
@@ -756,6 +758,35 @@ mod tests {
                 "                    editor.blink_manager.update(cx, |blink_manager, cx| {\n",
                 "                        blink_manager.enable(cx);\n",
                 "                    });",
+            ),
+            cx,
+        );
+
+        assert_location_resolution(
+            indoc! {r#"
+                let tool = cx
+                    .update(|cx| working_set.tool(&tool_name, cx))
+                    .map_err(|err| {
+                        anyhow!("Failed to look up tool '{}': {}", tool_name, err)
+                    })?;
+
+                let Some(tool) = tool else {
+                    return Err(anyhow!("Tool '{}' not found", tool_name));
+                };
+
+                let project = project.clone();
+                let action_log = action_log.clone();
+                let messages = messages.clone();
+                let tool_result = cx
+                    .update(|cx| tool.run(invocation.input, &messages, project, action_log, cx))
+                    .map_err(|err| anyhow!("Failed to start tool '{}': {}", tool_name, err))?;
+
+                tasks.push(tool_result.output);
+            "#},
+            concat!(
+                "let tool_result = cx\n",
+                "    .update(|cx| tool.run(invocation.input, &messages, project, action_log, cx))\n",
+                "    .output;",
             ),
             cx,
         );
