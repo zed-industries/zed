@@ -479,7 +479,7 @@ impl AssistantConfiguration {
                     );
                 }
 
-                if !are_tools_expanded {
+                if !are_tools_expanded || tools.is_empty() {
                     return parent;
                 }
 
