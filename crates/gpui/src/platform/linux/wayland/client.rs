@@ -558,6 +558,7 @@ impl WaylandClient {
                 alt: false,
                 function: false,
                 platform: false,
+                capslock: false,
             },
             scroll_event_received: false,
             axis_source: AxisSource::Wheel,

@@ -39,7 +39,7 @@ pub(crate) fn modifiers_from_state(state: xproto::KeyButMask) -> Modifiers {
         shift: state.contains(xproto::KeyButMask::SHIFT),
         platform: state.contains(xproto::KeyButMask::MOD4),
         function: false,
-        capslock: false, // TODO:
+        capslock: state.contains(xproto::KeyButMask::LOCK),
     }
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn modifiers_from_xinput_info(modifier_info: xinput::ModifierInfo) ->
         shift: modifier_info.effective as u16 & ModMask::SHIFT.bits() == ModMask::SHIFT.bits(),
         platform: modifier_info.effective as u16 & ModMask::M4.bits() == ModMask::M4.bits(),
         function: false,
-        capslock: false, // TODO
+        capslock: modifier_info.effective as u16 & ModMask::LOCK.bits() == ModMask::LOCK.bits(),
     }
 }
 
