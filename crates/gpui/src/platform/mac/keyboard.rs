@@ -91,19 +91,19 @@ impl MacKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for MacKeyboardMapper {
-    fn scan_code_to_key(&self, scan_code: ScanCode) -> anyhow::Result<String> {
-        if let Some(key) = scan_code.try_to_key() {
+    fn scan_code_to_key(&self, gpui_scan_code: ScanCode) -> anyhow::Result<String> {
+        if let Some(key) = gpui_scan_code.try_to_key() {
             return Ok(key);
         }
-        let Some(scan_code) = get_scan_code(scan_code) else {
-            return Err(anyhow::anyhow!("Scan code not found: {:?}", scan_code));
+        let Some(scan_code) = get_scan_code(gpui_scan_code) else {
+            return Err(anyhow::anyhow!("Scan code not found: {:?}", gpui_scan_code));
         };
         if let Some(key) = self.code_to_key.get(&scan_code) {
             Ok(key.clone())
         } else {
             Err(anyhow::anyhow!(
-                "Key not found for scan code: {:?}, scan code: {}",
-                scan_code,
+                "Key not found for input scan code: {:?}, scan code: {}",
+                gpui_scan_code,
                 scan_code
             ))
         }

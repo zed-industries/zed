@@ -312,9 +312,9 @@ fn display_keystroke(key: &str, modifiers: &Modifiers) -> String {
     display
 }
 
-fn get_virtual_key_from_scan_code(scan_code: ScanCode) -> Result<VIRTUAL_KEY> {
+fn get_virtual_key_from_scan_code(gpui_scan_code: ScanCode) -> Result<VIRTUAL_KEY> {
     // https://github.com/microsoft/node-native-keymap/blob/main/deps/chromium/dom_code_data.inc
-    let code = match scan_code {
+    let scan_code = match gpui_scan_code {
         ScanCode::A => 0x001e,
         ScanCode::B => 0x0030,
         ScanCode::C => 0x002e,
@@ -362,14 +362,14 @@ fn get_virtual_key_from_scan_code(scan_code: ScanCode) -> Result<VIRTUAL_KEY> {
         ScanCode::Comma => 0x0033,
         ScanCode::Period => 0x0034,
         ScanCode::Slash => 0x0035,
-        _ => anyhow::bail!("Unsupported scan code: {:?}", scan_code),
+        _ => anyhow::bail!("Unsupported scan code: {:?}", gpui_scan_code),
     };
-    let virtual_key = unsafe { MapVirtualKeyW(code, MAPVK_VSC_TO_VK) };
+    let virtual_key = unsafe { MapVirtualKeyW(scan_code, MAPVK_VSC_TO_VK) };
     if virtual_key == 0 {
         anyhow::bail!(
             "Failed to get virtual key from scan code: {:?}, {}",
-            scan_code,
-            code
+            gpui_scan_code,
+            scan_code
         );
     }
     Ok(VIRTUAL_KEY(virtual_key as u16))
