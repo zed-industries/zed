@@ -1900,6 +1900,7 @@ impl ActiveThread {
                                                 open_context(&context, workspace, window, cx);
                                                 cx.notify();
                                             }
+                                            cx.stop_propagation();
                                         }
                                     })),
                                 )
