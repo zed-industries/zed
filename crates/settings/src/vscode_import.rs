@@ -162,9 +162,8 @@ impl VsCodeShortcuts {
             else {
                 continue;
             };
-            if (keystroke.key.starts_with('[') && keystroke.key.ends_with(']'))
-                || keystroke.key.starts_with("oem")
-            {
+            if keystroke.key.starts_with("oem") {
+                // The oem_key will be handled after https://github.com/zed-industries/zed/pull/29144
                 skipped.push((
                     shortcut.to_string(),
                     format!("Unable to parse keystroke that using Scan Code or Virtual Key"),
@@ -289,16 +288,16 @@ mod tests {
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 2);
         let result = shortcuts.parse_shortcuts(&keyboard_mapper);
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 1);
+        // assert_eq!(
+        //     result[0],
+        //     (
+        //         "shift+[BracketRight]".to_string(),
+        //         "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
+        //     )
+        // );
         assert_eq!(
             result[0],
-            (
-                "shift+[BracketRight]".to_string(),
-                "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
-            )
-        );
-        assert_eq!(
-            result[1],
             (
                 "ctrl+shift+oem_3".to_string(),
                 "Unable to parse keystroke that using Scan Code or Virtual Key".to_string()
