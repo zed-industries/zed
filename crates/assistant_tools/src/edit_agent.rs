@@ -373,7 +373,7 @@ impl EditAgent {
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if strsim::normalized_damerau_levenshtein(query_line, buffer_line) >= 0.8 {
+                    if strsim::normalized_levenshtein(query_line, buffer_line) >= 0.8 {
                         matrix.get(row, col).cost
                     } else {
                         matrix

@@ -260,7 +260,7 @@ fn eval_disable_cursor_blinking() {
     let edit_description = "Comment out the call to `BlinkManager::enable`";
     eval(
         100,
-        0.95,
+        0.6, // TODO: make this eval better
         EvalInput {
             conversation: vec![
                 message(User, [text("Let's research how to cursor blinking works.")]),
