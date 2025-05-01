@@ -227,6 +227,18 @@ impl ConfigureContextServerModal {
         }
         let id = configuration.id.clone();
 
+        let settings_changed = context_server::ContextServerSettings::get_global(cx)
+            .context_servers
+            .get(&id)
+            .map_or(true, |config| {
+                config.settings.as_ref() != Some(&settings_value)
+            });
+
+        if !settings_changed {
+            self.complete_setup(id, cx);
+            return;
+        }
+
         configuration.waiting_for_context_server = true;
 
         let task = wait_for_context_server(&self.context_server_manager, id.clone(), cx);
@@ -236,31 +248,7 @@ impl ConfigureContextServerModal {
                 let result = task.await;
                 this.update(cx, |this, cx| match result {
                     Ok(_) => {
-                        this.context_servers_to_setup.remove(0);
-                        if this.context_servers_to_setup.is_empty() {
-                            this.workspace
-                                .update(cx, {
-                                    |workspace, cx| {
-                                        let status_toast = StatusToast::new(
-                                            format!("{} MCP configured successfully", id.clone()),
-                                            cx,
-                                            |this, _cx| {
-                                                this.icon(
-                                                    ToastIcon::new(IconName::DatabaseZap)
-                                                        .color(Color::Muted),
-                                                )
-                                                .action("Dismiss", |_, _| {})
-                                            },
-                                        );
-
-                                        workspace.toggle_status_toast(status_toast, cx);
-                                    }
-                                })
-                                .log_err();
-
-                            this.dismiss(cx);
-                        }
-                        cx.notify();
+                        this.complete_setup(id, cx);
                     }
                     Err(err) => {
                         if let Some(configuration) = this.context_servers_to_setup.get_mut(0) {
@@ -297,6 +285,34 @@ impl ConfigureContextServerModal {
                 }
             },
         );
+    }
+
+    fn complete_setup(&mut self, id: Arc<str>, cx: &mut Context<Self>) {
+        self.context_servers_to_setup.remove(0);
+        cx.notify();
+
+        if !self.context_servers_to_setup.is_empty() {
+            return;
+        }
+
+        self.workspace
+            .update(cx, {
+                |workspace, cx| {
+                    let status_toast = StatusToast::new(
+                        format!("{} MCP configured successfully", id),
+                        cx,
+                        |this, _cx| {
+                            this.icon(ToastIcon::new(IconName::DatabaseZap).color(Color::Muted))
+                                .action("Dismiss", |_, _| {})
+                        },
+                    );
+
+                    workspace.toggle_status_toast(status_toast, cx);
+                }
+            })
+            .log_err();
+
+        self.dismiss(cx);
     }
 
     fn dismiss(&self, cx: &mut Context<Self>) {
