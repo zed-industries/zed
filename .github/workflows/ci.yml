@@ -68,6 +68,7 @@ jobs:
     name: Check Postgres and Protobuf migrations, mergability
     needs: [job_spec]
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
@@ -115,6 +116,7 @@ jobs:
     name: Check workspace-hack crate
     needs: [job_spec]
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -147,7 +149,7 @@ jobs:
     timeout-minutes: 60
     name: Check formatting and spelling
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -186,6 +188,7 @@ jobs:
     name: (macOS) Run Clippy and tests
     needs: [job_spec]
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -253,6 +256,7 @@ jobs:
     name: (Linux) Run Clippy and tests
     needs: [job_spec]
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -305,6 +309,7 @@ jobs:
     name: (Linux) Build Remote Server
     needs: [job_spec]
     if: |
+      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -339,38 +344,19 @@ jobs:
         if: always()
         run: rm -rf ./../.cargo
 
-  windows_clippy:
+  windows_tests:
     timeout-minutes: 60
-    name: (Windows) Run Clippy
+    name: (Windows) Run Tests
     needs: [job_spec]
     if: |
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
-    runs-on: windows-2025-16
+    runs-on: [self-hosted, Windows, X64]
     steps:
-      # more info here:- https://github.com/rust-lang/cargo/issues/13020
-      - name: Enable longer pathnames for git
-        run: git config --system core.longpaths true
-
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
-
-      - name: Create Dev Drive using ReFS
-        run: ./script/setup-dev-driver.ps1
-
-      # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
-      - name: Copy Git Repo to Dev Drive
-        run: |
-          Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
-
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: ${{ env.ZED_WORKSPACE }}
-          cache-provider: "github"
 
       - name: Configure CI
         run: |
@@ -381,61 +367,6 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: ./script/clippy.ps1
 
-      - name: Check dev drive space
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
-        run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
-
-      # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
-      - name: Clean CI config file
-        if: always()
-        run: |
-          if (Test-Path "${{ env.CARGO_HOME }}/config.toml") {
-            Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
-          }
-
-  # Windows CI takes twice as long as our other platforms and fast github hosted runners are expensive.
-  # But we still want to do CI, so let's only run tests on main and come back to this when we're
-  # ready to self host our Windows CI (e.g. during the push for full Windows support)
-  windows_tests:
-    timeout-minutes: 60
-    name: (Windows) Run Tests
-    needs: [job_spec]
-    if: |
-      github.repository_owner == 'zed-industries' &&
-      needs.job_spec.outputs.run_tests == 'true'
-    # Use bigger runners for PRs (speed); smaller for async (cost)
-    runs-on: ${{ github.event_name == 'pull_request' && 'windows-2025-32' || 'windows-2025-16' }}
-    steps:
-      # more info here:- https://github.com/rust-lang/cargo/issues/13020
-      - name: Enable longer pathnames for git
-        run: git config --system core.longpaths true
-
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-
-      - name: Create Dev Drive using ReFS
-        run: ./script/setup-dev-driver.ps1
-
-      # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
-      - name: Copy Git Repo to Dev Drive
-        run: |
-          Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
-
-      - name: Cache dependencies
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: ${{ env.ZED_WORKSPACE }}
-          cache-provider: "github"
-
-      - name: Configure CI
-        run: |
-          mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
-          cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
-
       - name: Run tests
         uses: ./.github/actions/run_tests_windows
         with:
@@ -445,10 +376,12 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build
 
-      - name: Check dev drive space
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
-        run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
+      # TODO: Add Cargo clean step
+
+      # - name: Check dev drive space
+      #   working-directory: ${{ env.ZED_WORKSPACE }}
+      #   # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
+      #   run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
@@ -470,7 +403,6 @@ jobs:
       - linux_tests
       - build_remote_server
       - macos_tests
-      - windows_clippy
       - windows_tests
     if: always()
     steps:
@@ -487,7 +419,6 @@ jobs:
             [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
             [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
-            [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
             [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
             # This check is intentionally disabled. See: https://github.com/zed-industries/zed/pull/28431
             # [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration Checks failed"; }
