@@ -69,17 +69,21 @@ impl<T: ?Sized> From<&'_ Arc<T>> for ArcCow<'_, T> {
     }
 }
 
-impl From<String> for ArcCow<'_, str> {
-    fn from(value: String) -> Self {
-        Self::Owned(value.into())
-    }
-}
+// &str -> String
+// &str or String -> still have to allocate, too bad
+// 
 
-impl From<&String> for ArcCow<'_, str> {
-    fn from(value: &String) -> Self {
-        Self::Owned(value.clone().into())
-    }
-}
+// impl From<String> for ArcCow<'_, str> {
+//     fn from(value: String) -> Self {
+//         Self::Owned(value.into())
+//     }
+// }
+
+// impl From<&String> for ArcCow<'_, str> {
+//     fn from(value: &String) -> Self {
+//         Self::Owned(value.clone().into())
+//     }
+// }
 
 impl<'a> From<Cow<'a, str>> for ArcCow<'a, str> {
     fn from(value: Cow<'a, str>) -> Self {
