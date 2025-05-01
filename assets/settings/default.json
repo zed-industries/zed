@@ -657,6 +657,8 @@
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
+    // When enabled, the agent will stream edits.
+    "stream_edits": false,
     "default_profile": "write",
     "profiles": {
       "ask": {
@@ -671,6 +673,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "thinking": true,
           "web_search": true
@@ -834,7 +837,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -917,6 +933,24 @@
       // The minimum severity of the diagnostics to show inline.
       // Shows all diagnostics when not specified.
       "max_severity": null
+    },
+    "rust": {
+      // When enabled, Zed runs `cargo check --message-format=json`-based commands and
+      // collect cargo diagnostics instead of rust-analyzer.
+      "fetch_cargo_diagnostics": false,
+      // A command override for fetching the cargo diagnostics.
+      // First argument is the command, followed by the arguments.
+      "diagnostics_fetch_command": [
+        "cargo",
+        "check",
+        "--quiet",
+        "--workspace",
+        "--message-format=json",
+        "--all-targets",
+        "--keep-going"
+      ],
+      // Extra environment variables to pass to the diagnostics fetch command.
+      "env": {}
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file

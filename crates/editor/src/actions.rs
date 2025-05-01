@@ -308,6 +308,7 @@ actions!(
         GoToImplementation,
         GoToImplementationSplit,
         GoToNextChange,
+        GoToParentModule,
         GoToPreviousChange,
         GoToPreviousDiagnostic,
         GoToTypeDefinition,
