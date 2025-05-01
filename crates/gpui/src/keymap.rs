@@ -256,7 +256,7 @@ impl Keymap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate as gpui;
+    use crate::{self as gpui, TestKeyboardMapper};
     use gpui::{NoAction, actions};
 
     actions!(
@@ -292,6 +292,7 @@ mod tests {
 
     #[test]
     fn test_keymap_disabled() {
+        let keyboard_mapper = TestKeyboardMapper::new();
         let bindings = [
             KeyBinding::new("ctrl-a", ActionAlpha {}, Some("editor")),
             KeyBinding::new("ctrl-b", ActionAlpha {}, Some("editor")),
@@ -306,7 +307,7 @@ mod tests {
         assert!(
             keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[Keystroke::parse("ctrl-a", &keyboard_mapper).unwrap()],
                     &[KeyContext::parse("barf").unwrap()],
                 )
                 .0
@@ -315,7 +316,7 @@ mod tests {
         assert!(
             !keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[Keystroke::parse("ctrl-a", &keyboard_mapper).unwrap()],
                     &[KeyContext::parse("editor").unwrap()],
                 )
                 .0
@@ -326,7 +327,7 @@ mod tests {
         assert!(
             keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[Keystroke::parse("ctrl-a", &keyboard_mapper).unwrap()],
                     &[KeyContext::parse("editor mode=full").unwrap()],
                 )
                 .0
@@ -337,7 +338,7 @@ mod tests {
         assert!(
             keymap
                 .bindings_for_input(
-                    &[Keystroke::parse("ctrl-b").unwrap()],
+                    &[Keystroke::parse("ctrl-b", &keyboard_mapper).unwrap()],
                     &[KeyContext::parse("barf").unwrap()],
                 )
                 .0

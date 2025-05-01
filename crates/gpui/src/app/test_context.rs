@@ -3,9 +3,9 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, DrawPhase, Drawable, Element,
     Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    Platform, PlatformKeyboardMapper, Point, Render, Result, Size, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -397,14 +397,20 @@ impl TestAppContext {
         self.background_executor.run_until_parked()
     }
 
+    /// Returns the current keyboard mapper for this platform.
+    pub fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        self.test_platform.keyboard_mapper()
+    }
+
     /// simulate_keystrokes takes a space-separated list of keys to type.
     /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
     /// in Zed, this will run backspace on the current editor through the command palette.
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
+        let keyboard_mapper = self.test_platform.keyboard_mapper();
         for keystroke in keystrokes
             .split(' ')
-            .map(Keystroke::parse)
+            .map(|source| Keystroke::parse(source, keyboard_mapper.as_ref()))
             .map(Result::unwrap)
         {
             self.dispatch_keystroke(window, keystroke);
@@ -418,7 +424,12 @@ impl TestAppContext {
     /// will type abc into your current editor
     /// This will also run the background executor until it's parked.
     pub fn simulate_input(&mut self, window: AnyWindowHandle, input: &str) {
-        for keystroke in input.split("").map(Keystroke::parse).map(Result::unwrap) {
+        let keyboard_mapper = self.test_platform.keyboard_mapper();
+        for keystroke in input
+            .split("")
+            .map(|source| Keystroke::parse(source, keyboard_mapper.as_ref()))
+            .map(Result::unwrap)
+        {
             self.dispatch_keystroke(window, keystroke);
         }
 
