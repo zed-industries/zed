@@ -671,6 +671,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "thinking": true,
           "web_search": true
