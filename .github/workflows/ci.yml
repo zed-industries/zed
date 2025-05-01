@@ -358,10 +358,10 @@ jobs:
         with:
           clean: false
 
-      - name: Configure CI
-        run: |
-          mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
-          cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
+      # - name: Configure CI
+      #   run: |
+      #     mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
+      #     cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
 
       - name: cargo clippy
         working-directory: ${{ env.ZED_WORKSPACE }}
