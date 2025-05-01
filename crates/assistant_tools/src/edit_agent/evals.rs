@@ -26,6 +26,7 @@ use std::{
 use util::path;
 
 #[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_extract_handle_command_output() {
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -83,6 +84,7 @@ fn eval_extract_handle_command_output() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_delete_run_git_blame() {
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
@@ -137,6 +139,7 @@ fn eval_delete_run_git_blame() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     let input_file_path = "root/lib.rs";
     let input_file_content =
@@ -253,6 +256,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_disable_cursor_blinking() {
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
@@ -324,6 +328,7 @@ fn eval_disable_cursor_blinking() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");

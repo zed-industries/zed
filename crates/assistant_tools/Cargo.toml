@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/assistant_tools.rs"
 
+[features]
+eval = []
+
 [dependencies]
 aho-corasick.workspace = true
 anyhow.workspace = true
