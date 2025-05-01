@@ -373,7 +373,7 @@ impl EditAgent {
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if strsim::normalized_levenshtein(query_line, buffer_line) >= 0.8 {
+                    if fuzzy_eq(query_line, buffer_line) {
                         matrix.get(row, col).cost
                     } else {
                         matrix
@@ -431,6 +431,17 @@ impl EditAgent {
             None
         }
     }
+}
+
+fn fuzzy_eq(left: &str, right: &str) -> bool {
+    let min_levenshtein = left.len().abs_diff(right.len());
+    let min_normalized_levenshtein =
+        1. - (min_levenshtein as f32 / cmp::max(left.len(), right.len()) as f32);
+    if min_normalized_levenshtein < 0.8 {
+        return false;
+    }
+
+    strsim::normalized_levenshtein(left, right) >= 0.8
 }
 
 #[derive(Copy, Clone, Debug)]
