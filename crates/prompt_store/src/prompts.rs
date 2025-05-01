@@ -60,7 +60,7 @@ struct PromptTemplateContext {
 
     #[serde(flatten)]
     model: ModelContext,
-    
+
     has_tools: bool,
 }
 
