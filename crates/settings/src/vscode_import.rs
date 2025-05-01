@@ -188,23 +188,6 @@ impl VsCodeShortcuts {
         println!("=> skipped: {:#?}", skipped);
         (result, skipped)
     }
-
-    pub fn to_json(self) -> String {
-        let mut bindings = Map::new();
-        for content in self.content.into_iter() {
-            let Some(key) = content.get("key").and_then(|key| key.as_str()) else {
-                continue;
-            };
-            let Some(command) = content.get("command") else {
-                continue;
-            };
-            bindings.insert(key.to_string(), command.clone());
-        }
-        let mut first = Map::new();
-        first.insert("bindings".to_string(), serde_json::Value::Object(bindings));
-        let result = vec![first];
-        serde_json::to_string_pretty(&result).unwrap_or_default()
-    }
 }
 
 fn vscode_shortcut_command_to_zed_action(

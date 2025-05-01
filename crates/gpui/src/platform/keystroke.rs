@@ -211,12 +211,11 @@ impl Keystroke {
         if key.starts_with('[') && key.ends_with(']') {
             let scan_code = ScanCode::parse(&key).ok_or_else(error)?;
             key = mapper.scan_code_to_key(scan_code).map_err(|_| error())?;
-
-            if shift && !is_immutable_key(&key) && !is_alphabetic_key(&key) && key.len() == 1 {
-                if let Ok(shifted_key) = mapper.get_shifted_key(&key) {
-                    shift = false;
-                    key = shifted_key;
-                }
+        }
+        if shift && !is_immutable_key(&key) && !is_alphabetic_key(&key) && key.len() == 1 {
+            if let Ok(shifted_key) = mapper.get_shifted_key(&key) {
+                shift = false;
+                key = shifted_key;
             }
         }
 
@@ -568,5 +567,197 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Keystroke, Modifiers, TestKeyboardMapper};
+
+    #[test]
+    fn test_different_separators() {
+        let keyboard_mapper = TestKeyboardMapper::new();
+        assert_eq!(
+            Keystroke::parse_with_separator("ctrl-alt--", '-', &keyboard_mapper).unwrap(),
+            Keystroke::parse_with_separator("ctrl+alt+-", '+', &keyboard_mapper).unwrap(),
+        );
+        assert_eq!(
+            Keystroke::parse_with_separator("ctrl-alt-=", '-', &keyboard_mapper).unwrap(),
+            Keystroke::parse_with_separator("ctrl+alt+=", '+', &keyboard_mapper).unwrap(),
+        );
+    }
+
+    #[test]
+    fn test_parse_scan_code() {
+        let keyboard_mapper = TestKeyboardMapper::new();
+
+        for letter in 'a'..='z' {
+            let key1 = format!("[Key{}]", letter.to_uppercase());
+            let key2 = format!("[{}]", letter.to_uppercase());
+
+            let source1 = format!("{}", key1);
+            let source2 = format!("{}", key2);
+            let keystroke1 = Keystroke::parse(&source1, &keyboard_mapper).unwrap();
+            let keystroke2 = Keystroke::parse(&source2, &keyboard_mapper).unwrap();
+            assert_eq!(
+                keystroke1,
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: letter.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(keystroke1, keystroke2);
+
+            let source1 = format!("ctrl-{}", key1);
+            let source2 = format!("ctrl-{}", key2);
+            let keystroke1 = Keystroke::parse(&source1, &keyboard_mapper).unwrap();
+            let keystroke2 = Keystroke::parse(&source2, &keyboard_mapper).unwrap();
+            assert_eq!(
+                keystroke1,
+                Keystroke {
+                    modifiers: Modifiers::control(),
+                    key: letter.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(keystroke1, keystroke2);
+
+            let source1 = format!("ctrl-alt-{}", key1);
+            let source2 = format!("ctrl-alt-{}", key2);
+            let keystroke1 = Keystroke::parse(&source1, &keyboard_mapper).unwrap();
+            let keystroke2 = Keystroke::parse(&source2, &keyboard_mapper).unwrap();
+            assert_eq!(
+                keystroke1,
+                Keystroke {
+                    modifiers: Modifiers {
+                        control: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: letter.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(keystroke1, keystroke2);
+
+            let source1 = format!("ctrl-shift-{}", key1);
+            let source2 = format!("ctrl-shift-{}", key2);
+            let keystroke1 = Keystroke::parse(&source1, &keyboard_mapper).unwrap();
+            let keystroke2 = Keystroke::parse(&source2, &keyboard_mapper).unwrap();
+            assert_eq!(
+                keystroke1,
+                Keystroke {
+                    modifiers: Modifiers::control_shift(),
+                    key: letter.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(keystroke1, keystroke2);
+        }
+
+        let other_keys = [
+            ("[Backquote]", "`", "~"),
+            ("[Minus]", "-", "_"),
+            ("[Equal]", "=", "+"),
+            ("[BracketLeft]", "[", "{"),
+            ("[BracketRight]", "]", "}"),
+            ("[Backslash]", "\\", "|"),
+            ("[Semicolon]", ";", ":"),
+            ("[Quote]", "'", "\""),
+            ("[Comma]", ",", "<"),
+            ("[Period]", ".", ">"),
+            ("[Slash]", "/", "?"),
+        ];
+        for (code, key, shifted_key) in other_keys {
+            assert_eq!(
+                Keystroke::parse(&format!("{}", code), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("shift-{}", code), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: shifted_key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("shift-{}", key), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: shifted_key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("ctrl-{}", code), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers::control(),
+                    key: key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("ctrl-alt-{}", code), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers {
+                        control: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("ctrl-alt-{}", key), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers {
+                        control: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("ctrl-shift-{}", code), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers::control(),
+                    key: shifted_key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("ctrl-alt-shift-{}", code), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers {
+                        control: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: shifted_key.to_string(),
+                    key_char: None,
+                }
+            );
+            assert_eq!(
+                Keystroke::parse(&format!("ctrl-alt-shift-{}", key), &keyboard_mapper).unwrap(),
+                Keystroke {
+                    modifiers: Modifiers {
+                        control: true,
+                        alt: true,
+                        ..Default::default()
+                    },
+                    key: shifted_key.to_string(),
+                    key_char: None,
+                }
+            );
+        }
     }
 }
