@@ -6,7 +6,7 @@ use core_graphics::event::CGKeyCode;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
 use crate::{
-    PlatformKeyboardLayout, PlatformKeyboardMapper, is_alphabetic_key,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key,
     platform::mac::{LMGetKbdType, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData},
 };
 
@@ -59,18 +59,21 @@ fn get_keyboard_layout_id() -> (*mut Object, String) {
 }
 
 pub(crate) struct MacKeyboardMapper {
+    code_to_key: HashMap<u16, String>,
     key_to_code: HashMap<String, u16>,
     code_to_shifted_key: HashMap<u16, String>,
 }
 
 impl MacKeyboardMapper {
     pub(crate) fn new() -> Self {
+        let mut code_to_key = HashMap::default();
         let mut key_to_code = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
 
         for &scan_code in TYPEABLE_CODES.iter() {
             let key = chars_for_modified_key(scan_code, NO_MOD);
             if !key.is_empty() {
+                code_to_key.insert(scan_code, key.clone());
                 key_to_code.insert(key, scan_code);
             }
             let shifted_key = chars_for_modified_key(scan_code, SHIFT_MOD);
@@ -80,6 +83,7 @@ impl MacKeyboardMapper {
         }
 
         Self {
+            code_to_key,
             key_to_code,
             code_to_shifted_key,
         }
@@ -87,6 +91,24 @@ impl MacKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for MacKeyboardMapper {
+    fn scan_code_to_key(&self, scan_code: ScanCode) -> anyhow::Result<String> {
+        if let Some(key) = scan_code.try_to_key() {
+            return Ok(key);
+        }
+        let Some(scan_code) = get_scan_code(scan_code) else {
+            return Err(anyhow::anyhow!("Scan code not found: {:?}", scan_code));
+        };
+        if let Some(key) = self.code_to_key.get(&scan_code) {
+            Ok(key.clone())
+        } else {
+            Err(anyhow::anyhow!(
+                "Key not found for scan code: {:?}, scan code: {}",
+                scan_code,
+                scan_code
+            ))
+        }
+    }
+
     fn get_shifted_key(&self, key: &str) -> anyhow::Result<String> {
         if is_alphabetic_key(key) {
             return Ok(key.to_uppercase());
@@ -225,3 +247,92 @@ const TYPEABLE_CODES: &[u16] = &[
     0x002f, // . Period
     0x002c, // / Slash
 ];
+
+fn get_scan_code(scan_code: ScanCode) -> Option<u16> {
+    // https://github.com/microsoft/node-native-keymap/blob/main/deps/chromium/dom_code_data.inc
+    Some(match scan_code {
+        ScanCode::F1 => 0x007a,
+        ScanCode::F2 => 0x0078,
+        ScanCode::F3 => 0x0063,
+        ScanCode::F4 => 0x0076,
+        ScanCode::F5 => 0x0060,
+        ScanCode::F6 => 0x0061,
+        ScanCode::F7 => 0x0062,
+        ScanCode::F8 => 0x0064,
+        ScanCode::F9 => 0x0065,
+        ScanCode::F10 => 0x006d,
+        ScanCode::F11 => 0x0067,
+        ScanCode::F12 => 0x006f,
+        ScanCode::F13 => 0x0069,
+        ScanCode::F14 => 0x006b,
+        ScanCode::F15 => 0x0071,
+        ScanCode::F16 => 0x006a,
+        ScanCode::F17 => 0x0040,
+        ScanCode::F18 => 0x004f,
+        ScanCode::F19 => 0x0050,
+        ScanCode::F20 => 0x005a,
+        ScanCode::F21 | ScanCode::F22 | ScanCode::F23 | ScanCode::F24 => return None,
+        ScanCode::A => 0x0000,
+        ScanCode::B => 0x000b,
+        ScanCode::C => 0x0008,
+        ScanCode::D => 0x0002,
+        ScanCode::E => 0x000e,
+        ScanCode::F => 0x0003,
+        ScanCode::G => 0x0005,
+        ScanCode::H => 0x0004,
+        ScanCode::I => 0x0022,
+        ScanCode::J => 0x0026,
+        ScanCode::K => 0x0028,
+        ScanCode::L => 0x0025,
+        ScanCode::M => 0x002e,
+        ScanCode::N => 0x002d,
+        ScanCode::O => 0x001f,
+        ScanCode::P => 0x0023,
+        ScanCode::Q => 0x000c,
+        ScanCode::R => 0x000f,
+        ScanCode::S => 0x0001,
+        ScanCode::T => 0x0011,
+        ScanCode::U => 0x0020,
+        ScanCode::V => 0x0009,
+        ScanCode::W => 0x000d,
+        ScanCode::X => 0x0007,
+        ScanCode::Y => 0x0010,
+        ScanCode::Z => 0x0006,
+        ScanCode::Digit0 => 0x001d,
+        ScanCode::Digit1 => 0x0012,
+        ScanCode::Digit2 => 0x0013,
+        ScanCode::Digit3 => 0x0014,
+        ScanCode::Digit4 => 0x0015,
+        ScanCode::Digit5 => 0x0017,
+        ScanCode::Digit6 => 0x0016,
+        ScanCode::Digit7 => 0x001a,
+        ScanCode::Digit8 => 0x001c,
+        ScanCode::Digit9 => 0x0019,
+        ScanCode::Backquote => 0x0032,
+        ScanCode::Minus => 0x001b,
+        ScanCode::Equal => 0x0018,
+        ScanCode::BracketLeft => 0x0021,
+        ScanCode::BracketRight => 0x001e,
+        ScanCode::Backslash => 0x002a,
+        ScanCode::Semicolon => 0x0029,
+        ScanCode::Quote => 0x0027,
+        ScanCode::Comma => 0x002b,
+        ScanCode::Period => 0x002f,
+        ScanCode::Slash => 0x002c,
+        ScanCode::Left => 0x007b,
+        ScanCode::Up => 0x007e,
+        ScanCode::Right => 0x007c,
+        ScanCode::Down => 0x007d,
+        ScanCode::PageUp => 0x0074,
+        ScanCode::PageDown => 0x0079,
+        ScanCode::End => 0x0077,
+        ScanCode::Home => 0x0073,
+        ScanCode::Tab => 0x0030,
+        ScanCode::Enter => 0x0024,
+        ScanCode::Escape => 0x0035,
+        ScanCode::Space => 0x0031,
+        ScanCode::Backspace => 0x0033,
+        ScanCode::Delete => 0x0075,
+        ScanCode::Insert => 0x0072,
+    })
+}
