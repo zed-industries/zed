@@ -1059,6 +1059,17 @@ impl PromptEditor<TerminalCodegen> {
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
             editor
         });
+
+        let prompt_editor_entity = prompt_editor.downgrade();
+        prompt_editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.clone(),
+                context_store.downgrade(),
+                thread_store.clone(),
+                prompt_editor_entity,
+            ))));
+        });
+
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
