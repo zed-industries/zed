@@ -59,6 +59,12 @@ impl FeatureFlag for Assistant2FeatureFlag {
     const NAME: &'static str = "assistant2";
 }
 
+pub struct AgentStreamEditsFeatureFlag;
+
+impl FeatureFlag for AgentStreamEditsFeatureFlag {
+    const NAME: &'static str = "agent-stream-edits";
+}
+
 pub struct NewBillingFeatureFlag;
 
 impl FeatureFlag for NewBillingFeatureFlag {

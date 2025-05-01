@@ -362,12 +362,7 @@ async fn create_billing_subscription(
     let checkout_session_url = match body.product {
         Some(ProductCode::ZedPro) => {
             stripe_billing
-                .checkout_with_price(
-                    app.config.zed_pro_price_id()?,
-                    customer_id,
-                    &user.github_login,
-                    &success_url,
-                )
+                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
                 .await?
         }
         Some(ProductCode::ZedProTrial) => {
@@ -384,7 +379,6 @@ async fn create_billing_subscription(
 
             stripe_billing
                 .checkout_with_zed_pro_trial(
-                    app.config.zed_pro_price_id()?,
                     customer_id,
                     &user.github_login,
                     feature_flags,
@@ -458,6 +452,14 @@ async fn manage_billing_subscription(
         ))?
     };
 
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::error!("failed to retrieve Stripe billing object");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
+
     let customer = app
         .db
         .get_billing_customer_by_user_id(user.id)
@@ -508,8 +510,8 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id = app.config.zed_pro_price_id()?;
-            let zed_free_price_id = app.config.zed_free_price_id()?;
+            let zed_pro_price_id = stripe_billing.zed_pro_price_id().await?;
+            let zed_free_price_id = stripe_billing.zed_free_price_id().await?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
@@ -856,9 +858,11 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
-    let subscription_kind = maybe!({
-        let zed_pro_price_id = app.config.zed_pro_price_id().ok()?;
-        let zed_free_price_id = app.config.zed_free_price_id().ok()?;
+    let subscription_kind = maybe!(async {
+        let stripe_billing = app.stripe_billing.clone()?;
+
+        let zed_pro_price_id = stripe_billing.zed_pro_price_id().await.ok()?;
+        let zed_free_price_id = stripe_billing.zed_free_price_id().await.ok()?;
 
         subscription.items.data.iter().find_map(|item| {
             let price = item.price.as_ref()?;
@@ -875,7 +879,8 @@ async fn handle_customer_subscription_event(
                 None
             }
         })
-    });
+    })
+    .await;
 
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
@@ -1429,12 +1434,12 @@ async fn sync_model_request_usage_with_stripe(
 
             let model = llm_db.model_by_id(usage_meter.model_id)?;
 
-            let (price_id, meter_event_name) = match model.name.as_str() {
-                "claude-3-5-sonnet" => (&claude_3_5_sonnet.id, "claude_3_5_sonnet/requests"),
+            let (price, meter_event_name) = match model.name.as_str() {
+                "claude-3-5-sonnet" => (&claude_3_5_sonnet, "claude_3_5_sonnet/requests"),
                 "claude-3-7-sonnet" => match usage_meter.mode {
-                    CompletionMode::Normal => (&claude_3_7_sonnet.id, "claude_3_7_sonnet/requests"),
+                    CompletionMode::Normal => (&claude_3_7_sonnet, "claude_3_7_sonnet/requests"),
                     CompletionMode::Max => {
-                        (&claude_3_7_sonnet_max.id, "claude_3_7_sonnet/requests/max")
+                        (&claude_3_7_sonnet_max, "claude_3_7_sonnet/requests/max")
                     }
                 },
                 model_name => {
@@ -1443,7 +1448,7 @@ async fn sync_model_request_usage_with_stripe(
             };
 
             stripe_billing
-                .subscribe_to_price(&stripe_subscription_id, price_id)
+                .subscribe_to_price(&stripe_subscription_id, price)
                 .await?;
             stripe_billing
                 .bill_model_request_usage(

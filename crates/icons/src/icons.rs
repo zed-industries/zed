@@ -238,6 +238,7 @@ pub enum IconName {
     Undo,
     Unpin,
     Update,
+    UserCheck,
     UserGroup,
     UserRoundPen,
     Visible,

@@ -2755,18 +2755,26 @@ impl GitPanel {
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let potential_co_authors = self.potential_co_authors(cx);
+
+        let (tooltip_label, icon) = if self.add_coauthors {
+            ("Add co-authored-by", IconName::UserCheck)
+        } else {
+            ("Remove co-authored-by", IconName::Person)
+        };
+
         if potential_co_authors.is_empty() {
             None
         } else {
             Some(
-                IconButton::new("co-authors", IconName::Person)
+                IconButton::new("co-authors", icon)
                     .shape(ui::IconButtonShape::Square)
                     .icon_color(Color::Disabled)
                     .selected_icon_color(Color::Selected)
                     .toggle_state(self.add_coauthors)
                     .tooltip(move |_, cx| {
                         let title = format!(
-                            "Add co-authored-by:{}{}",
+                            "{}:{}{}",
+                            tooltip_label,
                             if potential_co_authors.len() == 1 {
                                 ""
                             } else {

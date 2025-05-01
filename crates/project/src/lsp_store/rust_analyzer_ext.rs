@@ -5,6 +5,7 @@ use lsp::LanguageServer;
 use crate::{LanguageServerPromptRequest, LspStore, LspStoreEvent};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
+pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
 
 /// Experimental: Informs the end user about the state of the server
 ///

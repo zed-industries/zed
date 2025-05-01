@@ -99,7 +99,7 @@ pub enum DirenvSettings {
     Direct,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
     /// Whether or not to include warning diagnostics
     #[serde(default = "true_value")]
@@ -108,6 +108,18 @@ pub struct DiagnosticsSettings {
     /// Settings for showing inline diagnostics
     #[serde(default)]
     pub inline: InlineDiagnosticsSettings,
+
+    /// Configuration, related to Rust language diagnostics.
+    #[serde(default)]
+    pub cargo: Option<CargoDiagnosticsSettings>,
+}
+
+impl DiagnosticsSettings {
+    pub fn fetch_cargo_diagnostics(&self) -> bool {
+        self.cargo.as_ref().map_or(false, |cargo_diagnostics| {
+            cargo_diagnostics.fetch_cargo_diagnostics
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -139,6 +151,41 @@ pub struct InlineDiagnosticsSettings {
 
     #[serde(default)]
     pub max_severity: Option<DiagnosticSeverity>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CargoDiagnosticsSettings {
+    /// When enabled, Zed runs `cargo check --message-format=json`-based commands and
+    /// collect cargo diagnostics instead of rust-analyzer.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub fetch_cargo_diagnostics: bool,
+
+    /// A command override for fetching the cargo diagnostics.
+    /// First argument is the command, followed by the arguments.
+    ///
+    /// Default: ["cargo", "check", "--quiet", "--workspace", "--message-format=json", "--all-targets", "--keep-going"]
+    #[serde(default = "default_diagnostics_fetch_command")]
+    pub diagnostics_fetch_command: Vec<String>,
+
+    /// Extra environment variables to pass to the diagnostics fetch command.
+    ///
+    /// Default: {}
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+fn default_diagnostics_fetch_command() -> Vec<String> {
+    vec![
+        "cargo".to_string(),
+        "check".to_string(),
+        "--quiet".to_string(),
+        "--workspace".to_string(),
+        "--message-format=json".to_string(),
+        "--all-targets".to_string(),
+        "--keep-going".to_string(),
+    ]
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]

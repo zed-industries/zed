@@ -247,6 +247,20 @@ impl LanguageServerTree {
         self.languages.adapter_for_name(name)
     }
 
+    pub fn server_id_for_name(&self, name: &LanguageServerName) -> Option<LanguageServerId> {
+        self.instances
+            .values()
+            .flat_map(|instance| instance.roots.values())
+            .flatten()
+            .find_map(|(server_name, (data, _))| {
+                if server_name == name {
+                    data.id.get().copied()
+                } else {
+                    None
+                }
+            })
+    }
+
     fn adapters_for_language(
         &self,
         settings_location: SettingsLocation,
