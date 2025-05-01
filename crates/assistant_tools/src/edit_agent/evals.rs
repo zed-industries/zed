@@ -17,7 +17,12 @@ use project::Project;
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
-use std::{cmp::Reverse, io::Write as _, sync::mpsc};
+use std::{
+    cmp::Reverse,
+    fmt::{self, Display},
+    io::Write as _,
+    sync::mpsc,
+};
 use util::path;
 
 #[test]
@@ -628,9 +633,9 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         let mut failed_evals = failed_evals.into_iter().collect::<Vec<_>>();
         failed_evals.sort_by_key(|(_, evals)| Reverse(evals.len()));
         for (_buffer_output, failed_evals) in failed_evals {
-            let eval = failed_evals.first().unwrap();
+            let eval_output = failed_evals.first().unwrap();
             println!("Eval failed {} times", failed_evals.len());
-            println!("{:#?}", eval);
+            println!("{}", eval_output);
         }
 
         panic!(
@@ -642,8 +647,8 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mismatched_tag_ratio =
         cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
     if mismatched_tag_ratio > 0.02 {
-        for eval in eval_outputs {
-            println!("{:#?}", eval);
+        for eval_output in eval_outputs {
+            println!("{}", eval_output);
         }
         panic!("Too many mismatched tags: {:?}", cumulative_parser_metrics);
     }
@@ -659,12 +664,31 @@ fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
     tx.send(output).unwrap();
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct EvalOutput {
     assertion: EvalAssertionResult,
     buffer_text: String,
     edit_output: EditAgentOutput,
-    _diff: String,
+    diff: String,
+}
+
+impl Display for EvalOutput {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        writeln!(f, "Score: {:?}", self.assertion.score)?;
+        if let Some(message) = self.assertion.message.as_ref() {
+            writeln!(f, "Message: {}", message)?;
+        }
+
+        writeln!(f, "Diff:\n{}", self.diff)?;
+
+        writeln!(
+            f,
+            "Parser Metrics:\n{:#?}",
+            self.edit_output._parser_metrics
+        )?;
+        writeln!(f, "Raw Edits:\n{}", self.edit_output._raw_edits)?;
+        Ok(())
+    }
 }
 
 fn report_progress(evaluated_count: usize, iterations: usize) {
@@ -779,7 +803,7 @@ impl EditAgentTest {
 
         Ok(EvalOutput {
             assertion,
-            _diff: actual_diff,
+            diff: actual_diff,
             buffer_text,
             edit_output,
         })
