@@ -37,7 +37,7 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp,
+    cmp::{self, Ordering},
     ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
@@ -480,6 +480,7 @@ impl ProjectDiagnosticsEditor {
                                                     .binary_search_by(|probe| {
                                                         probe.range.start.cmp(&diagnostic.range.start)
                                                             .then(probe.range.end.cmp(&diagnostic.range.end))
+                                                            .then(Ordering::Greater)
                                                     })
                                                     .unwrap_or_else(|i| i);
                                                 file_diagnostics.insert(i, diagnostic);
@@ -779,6 +780,7 @@ impl ProjectDiagnosticsEditor {
                                 .start
                                 .cmp(&item.initial_range.start)
                                 .then(probe.initial_range.end.cmp(&item.initial_range.end))
+                                .then(Ordering::Greater)
                         })
                         .unwrap_or_else(|i| i);
                     blocks.insert(i, item);
@@ -801,6 +803,9 @@ impl ProjectDiagnosticsEditor {
                             .start
                             .cmp(&excerpt_range.start)
                             .then(probe.context.end.cmp(&excerpt_range.end))
+                            .then(probe.primary.start.cmp(&b.initial_range.start))
+                            .then(probe.primary.end.cmp(&b.initial_range.end))
+                            .then(cmp::Ordering::Greater)
                     })
                     .unwrap_or_else(|i| i);
                 excerpt_ranges.insert(
