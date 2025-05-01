@@ -440,19 +440,25 @@ pub fn vscode_settings_file() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     let rel_path = "Code/User/settings.json";
     #[cfg(target_os = "macos")]
-    return LOGS_DIR.get_or_init(|| {
-        home_dir()
-            .join("Library/Application Support")
-            .join(rel_path)
-    });
+    {
+        LOGS_DIR.get_or_init(|| {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        })
+    }
     #[cfg(target_os = "windows")]
-    return LOGS_DIR.get_or_init(|| {
-        dirs::config_dir()
-            .expect("failed to determine RoamingAppData directory")
-            .join(rel_path)
-    });
-    #[cfg(not(any(target_os = "macis", target_os = "windows")))]
-    return LOGS_DIR.get_or_init(|| config_dir().join(rel_path));
+    {
+        LOGS_DIR.get_or_init(|| {
+            dirs::config_dir()
+                .expect("failed to determine RoamingAppData directory")
+                .join(rel_path)
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        LOGS_DIR.get_or_init(|| config_dir().join(rel_path))
+    }
 }
 
 /// Returns the path to the vscode user keymap file.
@@ -476,7 +482,7 @@ pub fn vscode_shortcuts_file() -> &'static PathBuf {
                 .join(rel_path)
         })
     }
-    #[cfg(not(any(target_os = "macis", target_os = "windows")))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         RESULT.get_or_init(|| config_dir().join(rel_path))
     }
