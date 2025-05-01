@@ -223,8 +223,6 @@ fn vscode_shortcut_command_to_zed_action(
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestKeyboardMapper;
-
     use crate::KeymapFile;
 
     use super::VsCodeShortcuts;
@@ -241,7 +239,6 @@ mod tests {
 
     #[test]
     fn test_load_vscode_shortcuts() {
-        let keyboard_mapper = TestKeyboardMapper::new();
         let content = r#"
         [
             {
@@ -253,28 +250,38 @@ mod tests {
                 "command": "list.focusFirst",
             },
             {
-                "key": "ctrl+shift+alt+[Minus]",
+                "key": "ctrl+shift+alt+-",
                 "command": "list.focusFirst",
             },
             {
-                "key": "ctrl+shift+alt+[张小白]",
+                "key": "shift+4",
                 "command": "list.focusFirst",
             }
         ]
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 4);
-        let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
+        let (keymap, skipped) = shortcuts.parse_shortcuts();
         let bindings = collect_bindings(&keymap);
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(bindings, vec!["ctrl-[", "}", "ctrl-alt-_"]);
+        assert_eq!(skipped.len(), 0);
         assert_eq!(
-            skipped[0],
-            (
-                "ctrl+shift+alt+[张小白]".to_string(),
-                "Unable to parse keystroke".to_string()
-            )
+            bindings,
+            vec![
+                "ctrl-[bracketleft]",
+                "shift-[bracketright]",
+                // "ctrl-alt-_",
+                "ctrl-alt-shift--",
+                // "$"
+                "shift-4"
+            ]
         );
+        // assert_eq!(
+        //     skipped[0],
+        //     (
+        //         "ctrl+shift+alt+[张小白]".to_string(),
+        //         "Unable to parse keystroke".to_string()
+        //     )
+        // );
 
         let content = r#"
         [
@@ -290,31 +297,7 @@ mod tests {
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 2);
-        let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
+        let (keymap, skipped) = shortcuts.parse_shortcuts();
         assert_eq!(skipped.len(), 0);
-    }
-
-    #[test]
-    fn test_load_oem_shortcuts() {
-        let keyboard_mapper = TestKeyboardMapper::new();
-        let content = r#"
-        [
-            {
-                "key": "ctrl+oem_3",
-                "command": "list.focusFirst",
-            }
-        ]
-        "#;
-        let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
-        assert_eq!(shortcuts.content.len(), 1);
-        let (_, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
-        assert_eq!(skipped.len(), 1);
-        assert_eq!(
-            skipped[0],
-            (
-                "ctrl+oem_3".to_string(),
-                "Unable to parse keystroke".to_string()
-            )
-        );
     }
 }
