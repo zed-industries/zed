@@ -17,7 +17,7 @@ if ($env:CARGO)
     $Cargo = "cargo"
 } else
 {
-    $Cargo = "$env:USERPROFILE\.cargo\bin\cargo.exe"
+    Write-Error "Could not find cargo in path." -ErrorAction Stop
 }
 
 if ($needAddWorkspace)
