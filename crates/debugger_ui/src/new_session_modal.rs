@@ -8,8 +8,8 @@ use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, TextStyle,
-    WeakEntity,
+    App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    Subscription, TextStyle, WeakEntity,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
@@ -657,6 +657,8 @@ impl ModalView for NewSessionModal {}
 
 // This module makes sure that the modes setup the correct subscriptions whenever they're created
 mod session_modes {
+    use std::rc::Rc;
+
     use super::*;
 
     #[derive(Clone)]
@@ -706,10 +708,10 @@ mod session_modes {
     }
 
     #[derive(Clone)]
-    #[non_exhaustive]
     pub(super) struct AttachMode {
         pub(super) definition: DebugTaskDefinition,
         pub(super) attach_picker: Entity<AttachModal>,
+        _subscription: Rc<Subscription>,
     }
 
     impl AttachMode {
@@ -734,9 +736,14 @@ mod session_modes {
                 modal
             });
 
+            let subscription = cx.subscribe(&attach_picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            });
+
             cx.new(|_| Self {
                 definition,
                 attach_picker,
+                _subscription: Rc::new(subscription),
             })
         }
         pub(super) fn debug_task(&self) -> task::AttachRequest {
@@ -774,10 +781,6 @@ mod session_modes {
 
     impl PickerDelegate for DebugScenarioDelegate {
         type ListItem = ui::ListItem;
-
-        fn should_dismiss(&self) -> bool {
-            false
-        }
 
         fn match_count(&self) -> usize {
             self.matches.len()
