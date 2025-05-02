@@ -69,7 +69,14 @@ pub struct State {
 }
 
 #[derive(Debug, Default)]
-pub struct Cache(HashMap<CacheKey, Shared<Task<Option<CreateCacheResponse>>>>);
+pub struct Cache(HashMap<CacheKey, Shared<Task<Option<CacheEntry>>>>);
+
+#[derive(Debug, Clone)]
+pub struct CacheEntry {
+    pub name: CacheName,
+    pub expire_time: UtcDateTime,
+    pub drop_on_expire: Shared<Task<()>>,
+}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct CacheKey(u64);
@@ -90,7 +97,7 @@ impl CacheKey {
 }
 
 impl Cache {
-    fn get_unexpired(&self, key: &CacheKey, now: UtcDateTime) -> Option<Shared<Task<Option<CreateCacheResponse>>>> {
+    fn get_unexpired(&self, key: &CacheKey, now: UtcDateTime) -> Option<Shared<Task<Option<CacheEntry>>>> {
         let cache_task = self.0.get(key)?;
         match cache_task.clone().now_or_never() {
             Some(Some(created_cache)) => {
@@ -348,25 +355,23 @@ impl GoogleLanguageModel {
         &self,
         request: google_ai::CreateCacheRequest,
         cx: &AsyncApp,
-    ) -> Task<Option<CreateCacheResponse>> {
+    ) -> BoxFuture<'static, Result<CreateCacheResponse>> {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            log::error!("App state dropped");
-            return Task::ready(None);
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let Some(api_key) = api_key else {
-            log::error!("Missing Google API key");
-            return Task::ready(None);
+            return future::ready(Err(anyhow!("Missing Google API key"))).boxed();
         };
 
-        cx.background_spawn(async move {
-            google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request).await.log_err()
-        })
+        async move {
+            google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request).await
+        }.boxed()
     }
 }
 
@@ -486,20 +491,44 @@ impl LanguageModel for GoogleLanguageModel {
         } else {
             None
         };
-        if let Some((request, new_cache_key)) =
-        create_cache_request.zip(content_cache_keys.last().copied())
+        if let Some((request, cache_key)) =
+            create_cache_request.zip(content_cache_keys.last().copied())
         {
-            self.cache.lock().0.insert(new_cache_key, self.create_cache(request, cx).shared());
+            let create_cache_future = self.create_cache(request, cx);
+            let cache = self.cache.clone();
+            let background_executor = cx.background_executor();
+            let task = cx.background_spawn(
+                async move {
+                    if let Some(created_cache) = create_cache_future.await.log_err() {
+                        let now = UtcDateTime::now();
+                        let Some(remaining_time) = (created_cache.expire_time - now).try_into().ok()?;
+                        let cache_expired = background_executor.timer(remaining_time);
+                        let drop_on_expire = background_executor.spawn(async move {
+                            cache_expired.await;
+                            cache.lock().0.remove(&cache_key);
+                        }).shared();
+                        Some(CacheEntry {
+                            name: response.name,
+                            expire_time: response.expire_time,
+                            drop_on_expire,
+                        })
+                    } else {
+                        None
+                    }
+                }
+            );
+            self.cache.lock().0.insert(cache_key, task.shared());
         }
 
         // todo! Check speed and cost
         //
         // todo! GC
         //
-        // todo! Retry generate content request in the case that cache is expired.
+        // todo! Retry generate content request in the case that the cache is expired.
         //
         // todo! Stop trying to cache if the responses indicate it doesn't support caching.
-        let now = UtcDateTime::now();
+        //
+        // todo! Check what happens if a full request matches a cache. Update the cache expiry time in this case?
         // todo! why is mutex guard being held across await point?! This should be use of
         // background_spawn instead.
         let request = cx.foreground_executor().spawn({
@@ -508,6 +537,7 @@ impl LanguageModel for GoogleLanguageModel {
                 // TODO: nicer way to do this than mutation? Can a loop be used in expression position?
                 let mut prefix_len = 0;
                 let mut found_cache_entry = None;
+                let now = UtcDateTime::now();
                 for (ix, key) in content_cache_keys.iter().enumerate().rev() {
                     if let Some(task) = cache.lock().get_unexpired(&key, now) {
                         if let Some(cache_entry) = task.await {
