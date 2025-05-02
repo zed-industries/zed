@@ -1,7 +1,3 @@
-mod batch_tool;
-mod code_action_tool;
-mod code_symbols_tool;
-mod contents_tool;
 mod copy_path_tool;
 mod create_directory_tool;
 mod create_file_tool;
@@ -17,11 +13,9 @@ mod move_path_tool;
 mod now_tool;
 mod open_tool;
 mod read_file_tool;
-mod rename_tool;
 mod replace;
 mod schema;
 mod streaming_edit_file_tool;
-mod symbol_info_tool;
 mod templates;
 mod terminal_tool;
 mod thinking_tool;
@@ -43,10 +37,6 @@ use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
 
-use crate::batch_tool::BatchTool;
-use crate::code_action_tool::CodeActionTool;
-use crate::code_symbols_tool::CodeSymbolsTool;
-use crate::contents_tool::ContentsTool;
 use crate::create_directory_tool::CreateDirectoryTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
@@ -56,9 +46,7 @@ use crate::grep_tool::GrepTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::read_file_tool::ReadFileTool;
-use crate::rename_tool::RenameTool;
 use crate::streaming_edit_file_tool::StreamingEditFileTool;
-use crate::symbol_info_tool::SymbolInfoTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use create_file_tool::{CreateFileTool, CreateFileToolInput};
@@ -73,23 +61,17 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(TerminalTool);
-    registry.register_tool(BatchTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
-    registry.register_tool(SymbolInfoTool);
-    registry.register_tool(CodeActionTool);
     registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);
     registry.register_tool(ListDirectoryTool);
     registry.register_tool(NowTool);
     registry.register_tool(OpenTool);
-    registry.register_tool(CodeSymbolsTool);
-    registry.register_tool(ContentsTool);
     registry.register_tool(FindPathTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(GrepTool);
-    registry.register_tool(RenameTool);
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
 
