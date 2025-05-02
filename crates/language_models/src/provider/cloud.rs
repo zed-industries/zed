@@ -9,11 +9,12 @@ use futures::{
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
-    ModelRequestLimitReachedError, QueueState, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, CloudModel, CompletionRequestStatus, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
+    LanguageModelKnownError, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
+    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -905,7 +906,7 @@ impl LanguageModel for CloudLanguageModel {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CloudCompletionEvent<T> {
-    Queue(QueueState),
+    System(CompletionRequestStatus),
     Event(T),
 }
 
@@ -925,7 +926,7 @@ where
                 Err(error) => {
                     vec![Err(LanguageModelCompletionError::Other(error))]
                 }
-                Ok(CloudCompletionEvent::Queue(event)) => {
+                Ok(CloudCompletionEvent::System(event)) => {
                     vec![Ok(LanguageModelCompletionEvent::QueueUpdate(event))]
                 }
                 Ok(CloudCompletionEvent::Event(event)) => map_callback(event),

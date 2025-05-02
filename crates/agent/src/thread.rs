@@ -1491,10 +1491,17 @@ impl Thread {
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
                                     completion.queue_state = match queue_event {
-                                        language_model::QueueState::Queued { position } => {
-                                            QueueState::Queued { position }
+                                        language_model::CompletionRequestStatus::Queued {
+                                            position,
+                                        } => QueueState::Queued { position },
+                                        language_model::CompletionRequestStatus::Started => {
+                                            QueueState::Started
                                         }
-                                        language_model::QueueState::Started => QueueState::Started,
+                                        language_model::CompletionRequestStatus::Error {
+                                            code, message
+                                        } => {
+                                            return Err(anyhow!("completion request failed. code: {code}, message: {message}"));
+                                        }
                                     }
                                 }
                             }

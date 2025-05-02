@@ -64,17 +64,18 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: usize,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-pub enum QueueState {
+pub enum CompletionRequestStatus {
     Queued { position: usize },
     Started,
+    Error { code: String, message: String },
 }
 
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
-    QueueUpdate(QueueState),
+    QueueUpdate(CompletionRequestStatus),
     Stop(StopReason),
     Text(String),
     Thinking {
