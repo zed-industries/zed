@@ -40,8 +40,8 @@ impl CreaseSnapshot {
         }
     }
 
-    pub fn creases(&self) -> impl Iterator<Item = &Crease<Anchor>> {
-        self.creases.iter().map(|item| &item.crease)
+    pub fn creases(&self) -> impl Iterator<Item = (CreaseId, &Crease<Anchor>)> {
+        self.creases.iter().map(|item| (item.id, &item.crease))
     }
 
     /// Returns the first Crease starting on the specified buffer row.

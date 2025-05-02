@@ -40,7 +40,7 @@ use uuid::Uuid;
 use zed_llm_client::CompletionMode;
 
 use crate::ThreadStore;
-use crate::context::{AgentContext, ContextLoadResult, LoadedContext};
+use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
     SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
@@ -97,6 +97,15 @@ impl MessageId {
     }
 }
 
+/// Stored information that can be used to resurrect a context crease when creating an editor for a past message.
+#[derive(Clone, Debug)]
+pub struct MessageCrease {
+    pub range: Range<usize>,
+    pub metadata: CreaseMetadata,
+    /// None for a deserialized message, Some otherwise.
+    pub context: Option<AgentContextHandle>,
+}
+
 /// A message in a [`Thread`].
 #[derive(Debug, Clone)]
 pub struct Message {
@@ -104,7 +113,7 @@ pub struct Message {
     pub role: Role,
     pub segments: Vec<MessageSegment>,
     pub loaded_context: LoadedContext,
-    pub creases: Vec<(Range<usize>, CreaseMetadata)>,
+    pub creases: Vec<MessageCrease>,
 }
 
 impl Message {
@@ -470,14 +479,13 @@ impl Thread {
                     creases: message
                         .creases
                         .into_iter()
-                        .map(|crease| {
-                            (
-                                crease.start..crease.end,
-                                CreaseMetadata {
-                                    icon_path: crease.icon_path,
-                                    label: crease.label,
-                                },
-                            )
+                        .map(|crease| MessageCrease {
+                            range: crease.start..crease.end,
+                            metadata: CreaseMetadata {
+                                icon_path: crease.icon_path,
+                                label: crease.label,
+                            },
+                            context: None,
                         })
                         .collect(),
                 })
@@ -833,7 +841,7 @@ impl Thread {
         text: impl Into<String>,
         loaded_context: ContextLoadResult,
         git_checkpoint: Option<GitStoreCheckpoint>,
-        creases: Vec<(Range<usize>, CreaseMetadata)>,
+        creases: Vec<MessageCrease>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         if !loaded_context.referenced_buffers.is_empty() {
@@ -883,7 +891,7 @@ impl Thread {
         role: Role,
         segments: Vec<MessageSegment>,
         loaded_context: LoadedContext,
-        creases: Vec<(Range<usize>, CreaseMetadata)>,
+        creases: Vec<MessageCrease>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -1015,11 +1023,11 @@ impl Thread {
                         creases: message
                             .creases
                             .iter()
-                            .map(|(range, crease)| SerializedCrease {
-                                start: range.start,
-                                end: range.end,
-                                icon_path: crease.icon_path.clone(),
-                                label: crease.label.clone(),
+                            .map(|crease| SerializedCrease {
+                                start: crease.range.start,
+                                end: crease.range.end,
+                                icon_path: crease.metadata.icon_path.clone(),
+                                label: crease.metadata.label.clone(),
                             })
                             .collect(),
                     })

@@ -253,7 +253,7 @@ impl<T: 'static> PromptEditor<T> {
                     .snapshot(cx)
                     .crease_snapshot
                     .creases()
-                    .filter_map(|crease| {
+                    .filter_map(|(_, crease)| {
                         Some((
                             crease.range().to_offset(&snapshot),
                             crease.metadata()?.clone(),
@@ -261,6 +261,7 @@ impl<T: 'static> PromptEditor<T> {
                     })
                     .collect::<Vec<_>>()
             })
+            // FIXME
         });
 
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);

@@ -1039,6 +1039,7 @@ impl Hash for AgentContextKey {
     }
 }
 
+#[derive(Default)]
 pub struct ContextCreasesAddon {
     creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
     _subscription: Option<Subscription>,
@@ -1096,9 +1097,8 @@ impl ContextCreasesAddon {
         ))
     }
 
-    pub fn clear(&mut self) {
-        self.creases.clear();
-        self._subscription = None;
+    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
+        self.creases
     }
 }
 

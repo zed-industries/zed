@@ -1,10 +1,10 @@
-use crate::context::{AgentContextHandle, RULES_ICON};
+use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink, crease_for_mention};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
-    ThreadFeedback,
+    LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
+    ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -17,7 +17,6 @@ use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
-use editor::display_map::CreaseMetadata;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
@@ -39,7 +38,6 @@ use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, update_settings_file};
 use std::ffi::OsStr;
-use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1242,7 +1240,7 @@ impl ActiveThread {
         &mut self,
         message_id: MessageId,
         message_segments: &[MessageSegment],
-        creases: &[(Range<usize>, CreaseMetadata)],
+        message_creases: &[MessageCrease],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1265,21 +1263,34 @@ impl ActiveThread {
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
 
             let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-            let creases = creases
+            let creases = message_creases
                 .iter()
-                .map(|(range, metadata)| {
-                    let start = buffer_snapshot.anchor_after(range.start);
-                    let end = buffer_snapshot.anchor_before(range.end);
+                .map(|crease| {
+                    let start = buffer_snapshot.anchor_after(crease.range.start);
+                    let end = buffer_snapshot.anchor_before(crease.range.end);
                     crease_for_mention(
-                        metadata.label.clone(),
-                        metadata.icon_path.clone(),
+                        crease.metadata.label.clone(),
+                        crease.metadata.icon_path.clone(),
                         start..end,
                         cx.weak_entity(),
                     )
                 })
                 .collect::<Vec<_>>();
-            editor.insert_creases(creases.clone(), cx);
+            let ids = editor.insert_creases(creases.clone(), cx);
             editor.fold_creases(creases, false, window, cx);
+            if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+                for (crease, id) in message_creases.iter().zip(ids) {
+                    if let Some(context) = crease.context.as_ref() {
+                        let key = AgentContextKey(context.clone());
+                        addon.add_creases(
+                            &self.context_store,
+                            key,
+                            vec![(id, crease.metadata.label.clone())],
+                            cx,
+                        );
+                    }
+                }
+            }
         });
         let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::BufferEdited => {

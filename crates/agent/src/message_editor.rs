@@ -6,7 +6,7 @@ use crate::context::{ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::AnimatedLabel;
 use buffer_diff::BufferDiff;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
@@ -39,7 +39,7 @@ use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{Thread, TokenUsageRatio};
+use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
@@ -297,23 +297,46 @@ impl MessageEditor {
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
             let text = editor.text(cx);
+            let mut contexts_by_crease_id = editor
+                .addon_mut::<ContextCreasesAddon>()
+                .map(std::mem::take)
+                .unwrap_or_default()
+                .into_inner()
+                .into_iter()
+                .flat_map(|(key, creases)| {
+                    let context = key.0;
+                    creases
+                        .into_iter()
+                        .map(move |(id, _)| (id, context.clone()))
+                })
+                .collect::<HashMap<_, _>>();
+            // Filter the addon's list of creases based on what the editor reports,
+            // since the addon might have removed creases in it.
             let creases = editor.display_map.update(cx, |display_map, cx| {
                 display_map
                     .snapshot(cx)
                     .crease_snapshot
                     .creases()
-                    .filter_map(|crease| {
+                    .filter_map(|(id, crease)| {
                         Some((
-                            crease.range().to_offset(&buffer_snapshot),
-                            crease.metadata()?.clone(),
+                            id,
+                            (
+                                crease.range().to_offset(&buffer_snapshot),
+                                crease.metadata()?.clone(),
+                            ),
                         ))
                     })
-                    .collect::<Vec<_>>()
+                    .map(|(id, (range, metadata))| {
+                        let context = contexts_by_crease_id.remove(&id);
+                        MessageCrease {
+                            range,
+                            metadata,
+                            context,
+                        }
+                    })
+                    .collect()
             });
             editor.clear(window, cx);
-            if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
-                addon.clear();
-            }
             (text, creases)
         });
 
