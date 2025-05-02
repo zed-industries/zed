@@ -57,9 +57,11 @@ use crate::{
 };
 
 pub fn init(cx: &mut App) {
+    // todo!("remove?")
     cx.set_global(GlobalDebugAccountState(DebugAccountState::default()));
 
-    GlobalDebugAccountState::update_global(cx, |store, cx| {
+    // todo!("remove")
+    GlobalDebugAccountState::update_global(cx, |store, _| {
         store.set_enabled(true);
         store.set_plan(zed_llm_client::Plan::ZedPro);
         store.set_custom_prompt_usage(RequestUsage {
@@ -293,6 +295,7 @@ impl ActiveView {
 
 /// Debug only: Used for testing various account states
 // todo!("Remove before merging, or put behind a flag or argument")
+#[allow(unused, dead_code)]
 #[derive(Clone, Debug)]
 pub struct DebugAccountState {
     pub enabled: bool,
@@ -304,6 +307,7 @@ pub struct DebugAccountState {
     pub custom_edit_prediction_usage: UsageLimit,
 }
 
+#[allow(unused, dead_code)]
 impl DebugAccountState {
     pub fn enabled(&self) -> bool {
         self.enabled
@@ -370,7 +374,7 @@ impl Default for DebugAccountState {
 }
 
 impl DebugAccountState {
-    pub fn get_global(cx: &App) -> &DebugAccountState {
+    pub fn _get_global(cx: &App) -> &DebugAccountState {
         &cx.global::<GlobalDebugAccountState>().0
     }
 }
