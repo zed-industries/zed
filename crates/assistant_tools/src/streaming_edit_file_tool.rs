@@ -205,7 +205,7 @@ impl Tool for StreamingEditFileTool {
             let mut hallucinated_old_text = false;
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {
+                    EditAgentOutputEvent::Edited { position } => {
                         if let Some(card) = card_clone.as_ref() {
                             let new_snapshot =
                                 buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;

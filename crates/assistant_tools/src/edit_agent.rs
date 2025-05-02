@@ -14,7 +14,7 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{AppContext, AsyncApp, Entity, SharedString, Task};
-use language::{Bias, Buffer, BufferSnapshot, LineIndent, Point};
+use language::{Anchor, Bias, Buffer, BufferSnapshot, LineIndent, Point};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role,
@@ -45,7 +45,7 @@ impl Template for EditFilePromptTemplate {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditAgentOutputEvent {
-    Edited,
+    Edited { position: Anchor },
     OldTextNotFound(SharedString),
 }
 
@@ -139,7 +139,9 @@ impl EditAgent {
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
                 })?;
                 output_events_tx
-                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .unbounded_send(EditAgentOutputEvent::Edited {
+                        position: Anchor::MAX,
+                    })
                     .ok();
             }
 
@@ -275,14 +277,15 @@ impl EditAgent {
                         match op {
                             CharOperation::Insert { text } => {
                                 let edit_start = snapshot.anchor_after(edit_start);
-                                edits_tx.unbounded_send((edit_start..edit_start, text))?;
+                                edits_tx
+                                    .unbounded_send((edit_start..edit_start, Arc::from(text)))?;
                             }
                             CharOperation::Delete { bytes } => {
                                 let edit_end = edit_start + bytes;
                                 let edit_range = snapshot.anchor_after(edit_start)
                                     ..snapshot.anchor_before(edit_end);
                                 edit_start = edit_end;
-                                edits_tx.unbounded_send((edit_range, String::new()))?;
+                                edits_tx.unbounded_send((edit_range, Arc::from("")))?;
                             }
                             CharOperation::Keep { bytes } => edit_start += bytes,
                         }
@@ -296,16 +299,32 @@ impl EditAgent {
             // TODO: group all edits into one transaction
             let mut edits_rx = edits_rx.ready_chunks(32);
             while let Some(edits) = edits_rx.next().await {
+                if edits.is_empty() {
+                    continue;
+                }
+
                 // Edit the buffer and report edits to the action log as part of the
                 // same effect cycle, otherwise the edit will be reported as if the
                 // user made it.
-                cx.update(|cx| {
-                    buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+                let max_edit_end = cx.update(|cx| {
+                    let max_edit_end = buffer.update(cx, |buffer, cx| {
+                        buffer.edit(edits.iter().cloned(), None, cx);
+                        let max_edit_end = buffer
+                            .summaries_for_anchors::<Point, _>(
+                                edits.iter().map(|(range, _)| &range.end),
+                            )
+                            .max()
+                            .unwrap();
+                        buffer.anchor_before(max_edit_end)
+                    });
                     self.action_log
-                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
+                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                    max_edit_end
                 })?;
                 output_events
-                    .unbounded_send(EditAgentOutputEvent::Edited)
+                    .unbounded_send(EditAgentOutputEvent::Edited {
+                        position: max_edit_end,
+                    })
                     .ok();
             }
 
@@ -803,7 +822,12 @@ mod tests {
 
         chunks_tx.unbounded_send("<new_text>abX").unwrap();
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_eq!(
+            drain_events(&mut events),
+            [EditAgentOutputEvent::Edited {
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)))
+            }]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXc\ndef\nghi"
@@ -811,7 +835,12 @@ mod tests {
 
         chunks_tx.unbounded_send("cY").unwrap();
         cx.run_until_parked();
-        assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
+        assert_eq!(
+            drain_events(&mut events),
+            [EditAgentOutputEvent::Edited {
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            }]
+        );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi"
@@ -863,7 +892,9 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
-            vec![EditAgentOutputEvent::Edited]
+            vec![EditAgentOutputEvent::Edited {
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
+            }]
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
