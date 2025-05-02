@@ -4,8 +4,9 @@ use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use extension::{
-    CodeLabel, Command, Completion, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate,
-    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    CodeLabel, Command, Completion, ContextServerConfiguration, ExtensionHostProxy,
+    KeyValueStoreDelegate, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
+    SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -300,6 +301,33 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| anyhow!("{err}"))?;
                 anyhow::Ok(command.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn context_server_configuration(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Option<ContextServerConfiguration>> {
+        self.call(|extension, store| {
+            async move {
+                let project_resource = store.data_mut().table().push(project)?;
+                let Some(configuration) = extension
+                    .call_context_server_configuration(
+                        store,
+                        context_server_id.clone(),
+                        project_resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?
+                else {
+                    return Ok(None);
+                };
+
+                Ok(Some(configuration.try_into()?))
             }
             .boxed()
         })

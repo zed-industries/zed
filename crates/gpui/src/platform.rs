@@ -1,4 +1,5 @@
 mod app_menu;
+mod keyboard;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -63,6 +64,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use keyboard::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -76,7 +78,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::TestScreenCaptureSource;
+pub use test::{TestDispatcher, TestScreenCaptureSource};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -1678,12 +1680,4 @@ impl From<String> for ClipboardString {
             metadata: None,
         }
     }
-}
-
-/// A trait for platform-specific keyboard layouts
-pub trait PlatformKeyboardLayout {
-    /// Get the keyboard layout ID, which should be unique to the layout
-    fn id(&self) -> &str;
-    /// Get the keyboard layout display name
-    fn name(&self) -> &str;
 }

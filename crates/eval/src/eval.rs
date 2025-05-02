@@ -52,10 +52,10 @@ struct Args {
     #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
     languages: Vec<String>,
     /// How many times to run each example.
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value = "8")]
     repetitions: usize,
     /// Maximum number of examples to run concurrently.
-    #[arg(long, default_value = "10")]
+    #[arg(long, default_value = "4")]
     concurrency: usize,
 }
 
@@ -169,11 +169,14 @@ fn main() {
                     continue;
                 }
 
-                if meta.language_server.map_or(false, |language| {
-                    !languages.contains(&language.file_extension)
-                }) {
-                    skipped.push(meta.name);
-                    continue;
+                if let Some(language) = meta.language_server {
+                    if !languages.contains(&language.file_extension) {
+                        panic!(
+                            "Eval for {:?} could not be run because no language server was found for extension {:?}",
+                            meta.name,
+                            language.file_extension
+                        );
+                    }
                 }
 
                 // TODO: This creates a worktree per repetition. Ideally these examples should
@@ -420,12 +423,18 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
-    assistant_tools::init(client.http_client(), cx);
     context_server::init(cx);
     prompt_store::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
-    agent::init(fs.clone(), client.clone(), prompt_builder.clone(), cx);
+    agent::init(
+        fs.clone(),
+        client.clone(),
+        prompt_builder.clone(),
+        languages.clone(),
+        cx,
+    );
+    assistant_tools::init(client.http_client(), cx);
 
     SettingsStore::update_global(cx, |store, cx| {
         store.set_user_settings(include_str!("../runner_settings.json"), cx)

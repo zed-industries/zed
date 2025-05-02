@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::AnimatedLabel;
+use crate::ui::{AgentPreview, AnimatedLabel};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -42,10 +42,11 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, Chat, ChatMode, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
-    ToggleContextPicker, ToggleProfileSelector,
+    ActiveThread, AgentDiff, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
+    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 
+#[derive(RegisterComponent)]
 pub struct MessageEditor {
     thread: Entity<Thread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
@@ -69,6 +70,56 @@ pub struct MessageEditor {
 
 const MAX_EDITOR_LINES: usize = 8;
 
+pub(crate) fn create_editor(
+    workspace: WeakEntity<Workspace>,
+    context_store: WeakEntity<ContextStore>,
+    thread_store: WeakEntity<ThreadStore>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    let language = Language::new(
+        language::LanguageConfig {
+            completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
+            ..Default::default()
+        },
+        None,
+    );
+
+    let editor = cx.new(|cx| {
+        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let mut editor = Editor::new(
+            editor::EditorMode::AutoHeight {
+                max_lines: MAX_EDITOR_LINES,
+            },
+            buffer,
+            None,
+            window,
+            cx,
+        );
+        editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
+        editor.set_show_indent_guides(false, cx);
+        editor.set_soft_wrap();
+        editor.set_context_menu_options(ContextMenuOptions {
+            min_entries_visible: 12,
+            max_entries_visible: 12,
+            placement: Some(ContextMenuPlacement::Above),
+        });
+        editor
+    });
+
+    let editor_entity = editor.downgrade();
+    editor.update(cx, |editor, _| {
+        editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            workspace,
+            context_store,
+            Some(thread_store),
+            editor_entity,
+        ))));
+    });
+    editor
+}
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -83,46 +134,13 @@ impl MessageEditor {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let language = Language::new(
-            language::LanguageConfig {
-                completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
-                ..Default::default()
-            },
-            None,
+        let editor = create_editor(
+            workspace.clone(),
+            context_store.downgrade(),
+            thread_store.clone(),
+            window,
+            cx,
         );
-
-        let editor = cx.new(|cx| {
-            let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
-            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-            let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
-                    max_lines: MAX_EDITOR_LINES,
-                },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
-            editor.set_show_indent_guides(false, cx);
-            editor.set_soft_wrap();
-            editor.set_context_menu_options(ContextMenuOptions {
-                min_entries_visible: 12,
-                max_entries_visible: 12,
-                placement: Some(ContextMenuPlacement::Above),
-            });
-            editor
-        });
-
-        let editor_entity = editor.downgrade();
-        editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
-                workspace.clone(),
-                context_store.downgrade(),
-                Some(thread_store.clone()),
-                editor_entity,
-            ))));
-        });
 
         let context_strip = cx.new(|cx| {
             ContextStrip::new(
@@ -187,10 +205,6 @@ impl MessageEditor {
 
     pub fn context_store(&self) -> &Entity<ContextStore> {
         &self.context_store
-    }
-
-    fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.notify();
     }
 
     pub fn expand_message_editor(
@@ -415,12 +429,13 @@ impl MessageEditor {
         Some(
             IconButton::new("max-mode", IconName::ZedMaxMode)
                 .icon_size(IconSize::Small)
-                .toggle_state(active_completion_mode == Some(CompletionMode::Max))
+                .icon_color(Color::Muted)
+                .toggle_state(active_completion_mode == CompletionMode::Max)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_completion_mode(match active_completion_mode {
-                            Some(CompletionMode::Max) => Some(CompletionMode::Normal),
-                            Some(CompletionMode::Normal) | None => Some(CompletionMode::Max),
+                            CompletionMode::Max => CompletionMode::Normal,
+                            CompletionMode::Normal => CompletionMode::Max,
                         });
                     });
                 }))
@@ -482,7 +497,6 @@ impl MessageEditor {
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::toggle_chat_mode))
             .on_action(cx.listener(Self::expand_message_editor))
             .capture_action(cx.listener(Self::paste))
             .gap_2()
@@ -1041,7 +1055,7 @@ impl MessageEditor {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
                 let new_context = this.context_store.read_with(cx, |context_store, cx| {
-                    context_store.new_context_for_thread(this.thread.read(cx))
+                    context_store.new_context_for_thread(this.thread.read(cx), None)
                 });
                 load_context(new_context, &this.project, &this.prompt_store, cx)
             }) else {
@@ -1189,3 +1203,53 @@ impl Render for MessageEditor {
             })
     }
 }
+
+impl Component for MessageEditor {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+}
+
+impl AgentPreview for MessageEditor {
+    fn agent_preview(
+        workspace: WeakEntity<Workspace>,
+        active_thread: Entity<ActiveThread>,
+        thread_store: WeakEntity<ThreadStore>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if let Some(workspace_entity) = workspace.upgrade() {
+            let fs = workspace_entity.read(cx).app_state().fs.clone();
+            let weak_project = workspace_entity.read(cx).project().clone().downgrade();
+            let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
+            let thread = active_thread.read(cx).thread().clone();
+
+            let example_message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    fs,
+                    workspace,
+                    context_store,
+                    None,
+                    thread_store,
+                    thread,
+                    window,
+                    cx,
+                )
+            });
+
+            Some(
+                v_flex()
+                    .gap_4()
+                    .children(vec![single_example(
+                        "Default",
+                        example_message_editor.clone().into_any_element(),
+                    )])
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+}
+
+register_agent_preview!(MessageEditor);

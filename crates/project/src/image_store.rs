@@ -217,9 +217,9 @@ pub fn is_image_file(project: &Entity<Project>, path: &ProjectPath, cx: &App) ->
             .worktree_for_id(path.worktree_id, cx)?
             .read(cx)
             .abs_path();
-        worktree_abs_path
+        path.path
             .extension()
-            .or_else(|| path.path.extension())
+            .or_else(|| worktree_abs_path.extension())
             .and_then(OsStr::to_str)
             .map(str::to_lowercase)
     });

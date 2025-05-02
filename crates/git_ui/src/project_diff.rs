@@ -1099,7 +1099,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             v_flex()
                                 .child(Headline::new(ahead_string).size(HeadlineSize::Small))
                                 .child(
-                                    Label::new(format!("Push your changes to {}", branch.name))
+                                    Label::new(format!("Push your changes to {}", branch.name()))
                                         .color(Color::Muted),
                                 ),
                         )
@@ -1113,7 +1113,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             v_flex()
                                 .child(Headline::new("Publish Branch").size(HeadlineSize::Small))
                                 .child(
-                                    Label::new(format!("Create {} on remote", branch.name))
+                                    Label::new(format!("Create {} on remote", branch.name()))
                                         .color(Color::Muted),
                                 ),
                         )
@@ -1183,7 +1183,7 @@ mod preview {
             fn branch(upstream: Option<UpstreamTracking>) -> Branch {
                 Branch {
                     is_head: true,
-                    name: "some-branch".into(),
+                    ref_name: "some-branch".into(),
                     upstream: upstream.map(|tracking| Upstream {
                         ref_name: "origin/some-branch".into(),
                         tracking,

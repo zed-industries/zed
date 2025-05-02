@@ -1663,6 +1663,33 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         "Second stacktrace request handler was not called"
     );
 
+    client
+        .fake_event(dap::messages::Events::Continued(dap::ContinuedEvent {
+            thread_id: 0,
+            all_threads_continued: Some(true),
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    second_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    main_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
     // Clean up
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {

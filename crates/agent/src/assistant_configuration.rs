@@ -1,16 +1,18 @@
 mod add_context_server_modal;
+mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
-use context_server::manager::ContextServerManager;
+use context_server::manager::{ContextServer, ContextServerManager, ContextServerStatus};
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription,
+    Action, Animation, AnimationExt as _, AnyView, App, Entity, EventEmitter, FocusHandle,
+    Focusable, ScrollHandle, Subscription, pulsating_between,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use settings::{Settings, update_settings_file};
@@ -22,6 +24,7 @@ use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
 
 pub(crate) use add_context_server_modal::AddContextServerModal;
+pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::AddContextServer;
@@ -254,10 +257,12 @@ impl AssistantConfiguration {
             )
     }
 
-    fn render_context_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_context_servers_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let context_servers = self.context_server_manager.read(cx).all_servers().clone();
-        let tools_by_source = self.tools.read(cx).tools_by_source(cx);
-        let empty = Vec::new();
 
         const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
 
@@ -272,136 +277,11 @@ impl AssistantConfiguration {
                     .child(Headline::new("Model Context Protocol (MCP) Servers"))
                     .child(Label::new(SUBHEADING).color(Color::Muted)),
             )
-            .children(context_servers.into_iter().map(|context_server| {
-                let is_running = context_server.client().is_some();
-                let are_tools_expanded = self
-                    .expanded_context_server_tools
-                    .get(&context_server.id())
-                    .copied()
-                    .unwrap_or_default();
-
-                let tools = tools_by_source
-                    .get(&ToolSource::ContextServer {
-                        id: context_server.id().into(),
-                    })
-                    .unwrap_or_else(|| &empty);
-                let tool_count = tools.len();
-
-                v_flex()
-                    .id(SharedString::from(context_server.id()))
-                    .border_1()
-                    .rounded_md()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().background.opacity(0.25))
-                    .child(
-                        h_flex()
-                            .p_1()
-                            .justify_between()
-                            .when(are_tools_expanded && tool_count > 1, |element| {
-                                element
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                            })
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Disclosure::new("tool-list-disclosure", are_tools_expanded)
-                                            .disabled(tool_count == 0)
-                                            .on_click(cx.listener({
-                                                let context_server_id = context_server.id();
-                                                move |this, _event, _window, _cx| {
-                                                    let is_open = this
-                                                        .expanded_context_server_tools
-                                                        .entry(context_server_id.clone())
-                                                        .or_insert(false);
-
-                                                    *is_open = !*is_open;
-                                                }
-                                            })),
-                                    )
-                                    .child(Indicator::dot().color(if is_running {
-                                        Color::Success
-                                    } else {
-                                        Color::Error
-                                    }))
-                                    .child(Label::new(context_server.id()))
-                                    .child(
-                                        Label::new(format!("{tool_count} tools"))
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                    ),
-                            )
-                            .child(
-                                Switch::new("context-server-switch", is_running.into())
-                                    .color(SwitchColor::Accent)
-                                    .on_click({
-                                        let context_server_manager =
-                                            self.context_server_manager.clone();
-                                        let context_server = context_server.clone();
-                                        move |state, _window, cx| match state {
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => {
-                                                context_server_manager.update(cx, |this, cx| {
-                                                    this.stop_server(context_server.clone(), cx)
-                                                        .log_err();
-                                                });
-                                            }
-                                            ToggleState::Selected => {
-                                                cx.spawn({
-                                                    let context_server_manager =
-                                                        context_server_manager.clone();
-                                                    let context_server = context_server.clone();
-                                                    async move |cx| {
-                                                        if let Some(start_server_task) =
-                                                            context_server_manager
-                                                                .update(cx, |this, cx| {
-                                                                    this.start_server(
-                                                                        context_server,
-                                                                        cx,
-                                                                    )
-                                                                })
-                                                                .log_err()
-                                                        {
-                                                            start_server_task.await.log_err();
-                                                        }
-                                                    }
-                                                })
-                                                .detach();
-                                            }
-                                        }
-                                    }),
-                            ),
-                    )
-                    .map(|parent| {
-                        if !are_tools_expanded {
-                            return parent;
-                        }
-
-                        parent.child(v_flex().py_1p5().px_1().gap_1().children(
-                            tools.into_iter().enumerate().map(|(ix, tool)| {
-                                h_flex()
-                                    .id(("tool-item", ix))
-                                    .px_1()
-                                    .gap_2()
-                                    .justify_between()
-                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                    .rounded_sm()
-                                    .child(
-                                        Label::new(tool.name())
-                                            .buffer_font(cx)
-                                            .size(LabelSize::Small),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::Info)
-                                            .size(IconSize::Small)
-                                            .color(Color::Ignored),
-                                    )
-                                    .tooltip(Tooltip::text(tool.description()))
-                            }),
-                        ))
-                    })
-            }))
+            .children(
+                context_servers
+                    .into_iter()
+                    .map(|context_server| self.render_context_server(context_server, window, cx)),
+            )
             .child(
                 h_flex()
                     .justify_between()
@@ -429,7 +309,7 @@ impl AssistantConfiguration {
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)
                             .full_width()
-                            .icon(IconName::DatabaseZap)
+                            .icon(IconName::Hammer)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {
@@ -447,10 +327,214 @@ impl AssistantConfiguration {
                     ),
             )
     }
+
+    fn render_context_server(
+        &self,
+        context_server: Arc<ContextServer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl use<> + IntoElement {
+        let tools_by_source = self.tools.read(cx).tools_by_source(cx);
+        let server_status = self
+            .context_server_manager
+            .read(cx)
+            .status_for_server(&context_server.id());
+
+        let is_running = matches!(server_status, Some(ContextServerStatus::Running));
+
+        let error = if let Some(ContextServerStatus::Error(error)) = server_status.clone() {
+            Some(error)
+        } else {
+            None
+        };
+
+        let are_tools_expanded = self
+            .expanded_context_server_tools
+            .get(&context_server.id())
+            .copied()
+            .unwrap_or_default();
+
+        let tools = tools_by_source
+            .get(&ToolSource::ContextServer {
+                id: context_server.id().into(),
+            })
+            .map_or([].as_slice(), |tools| tools.as_slice());
+        let tool_count = tools.len();
+
+        let border_color = cx.theme().colors().border.opacity(0.6);
+
+        v_flex()
+            .id(SharedString::from(context_server.id()))
+            .border_1()
+            .rounded_md()
+            .border_color(border_color)
+            .bg(cx.theme().colors().background.opacity(0.2))
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .p_1()
+                    .justify_between()
+                    .when(
+                        error.is_some() || are_tools_expanded && tool_count > 1,
+                        |element| element.border_b_1().border_color(border_color),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Disclosure::new(
+                                    "tool-list-disclosure",
+                                    are_tools_expanded || error.is_some(),
+                                )
+                                .disabled(tool_count == 0)
+                                .on_click(cx.listener({
+                                    let context_server_id = context_server.id();
+                                    move |this, _event, _window, _cx| {
+                                        let is_open = this
+                                            .expanded_context_server_tools
+                                            .entry(context_server_id.clone())
+                                            .or_insert(false);
+
+                                        *is_open = !*is_open;
+                                    }
+                                })),
+                            )
+                            .child(match server_status {
+                                Some(ContextServerStatus::Starting) => {
+                                    let color = Color::Success.color(cx);
+                                    Indicator::dot()
+                                        .color(Color::Success)
+                                        .with_animation(
+                                            SharedString::from(format!(
+                                                "{}-starting",
+                                                context_server.id(),
+                                            )),
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 1.)),
+                                            move |this, delta| {
+                                                this.color(color.alpha(delta).into())
+                                            },
+                                        )
+                                        .into_any_element()
+                                }
+                                Some(ContextServerStatus::Running) => {
+                                    Indicator::dot().color(Color::Success).into_any_element()
+                                }
+                                Some(ContextServerStatus::Error(_)) => {
+                                    Indicator::dot().color(Color::Error).into_any_element()
+                                }
+                                None => Indicator::dot().color(Color::Muted).into_any_element(),
+                            })
+                            .child(Label::new(context_server.id()).ml_0p5())
+                            .when(is_running, |this| {
+                                this.child(
+                                    Label::new(if tool_count == 1 {
+                                        SharedString::from("1 tool")
+                                    } else {
+                                        SharedString::from(format!("{} tools", tool_count))
+                                    })
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                                )
+                            }),
+                    )
+                    .child(
+                        Switch::new("context-server-switch", is_running.into())
+                            .color(SwitchColor::Accent)
+                            .on_click({
+                                let context_server_manager = self.context_server_manager.clone();
+                                let context_server = context_server.clone();
+                                move |state, _window, cx| match state {
+                                    ToggleState::Unselected | ToggleState::Indeterminate => {
+                                        context_server_manager.update(cx, |this, cx| {
+                                            this.stop_server(context_server.clone(), cx).log_err();
+                                        });
+                                    }
+                                    ToggleState::Selected => {
+                                        cx.spawn({
+                                            let context_server_manager =
+                                                context_server_manager.clone();
+                                            let context_server = context_server.clone();
+                                            async move |cx| {
+                                                if let Some(start_server_task) =
+                                                    context_server_manager
+                                                        .update(cx, |this, cx| {
+                                                            this.start_server(context_server, cx)
+                                                        })
+                                                        .log_err()
+                                                {
+                                                    start_server_task.await.log_err();
+                                                }
+                                            }
+                                        })
+                                        .detach();
+                                    }
+                                }
+                            }),
+                    ),
+            )
+            .map(|parent| {
+                if let Some(error) = error {
+                    return parent.child(
+                        h_flex()
+                            .p_2()
+                            .gap_2()
+                            .items_start()
+                            .child(
+                                h_flex()
+                                    .flex_none()
+                                    .h(window.line_height() / 1.6_f32)
+                                    .justify_center()
+                                    .child(
+                                        Icon::new(IconName::XCircle)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Error),
+                                    ),
+                            )
+                            .child(
+                                div().w_full().child(
+                                    Label::new(error)
+                                        .buffer_font(cx)
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                ),
+                            ),
+                    );
+                }
+
+                if !are_tools_expanded || tools.is_empty() {
+                    return parent;
+                }
+
+                parent.child(v_flex().py_1p5().px_1().gap_1().children(
+                    tools.into_iter().enumerate().map(|(ix, tool)| {
+                        h_flex()
+                            .id(("tool-item", ix))
+                            .px_1()
+                            .gap_2()
+                            .justify_between()
+                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                            .rounded_sm()
+                            .child(
+                                Label::new(tool.name())
+                                    .buffer_font(cx)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::Small)
+                                    .color(Color::Ignored),
+                            )
+                            .tooltip(Tooltip::text(tool.description()))
+                    }),
+                ))
+            })
+    }
 }
 
 impl Render for AssistantConfiguration {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("assistant-configuration")
             .key_context("AgentConfiguration")
@@ -467,7 +551,7 @@ impl Render for AssistantConfiguration {
                     .overflow_y_scroll()
                     .child(self.render_command_permission(cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
-                    .child(self.render_context_servers_section(cx))
+                    .child(self.render_context_servers_section(window, cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_provider_configuration_section(cx)),
             )
