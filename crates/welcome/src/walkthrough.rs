@@ -2,14 +2,17 @@ use client::telemetry::Telemetry;
 
 use fs::Fs;
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
-    ListState, ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior, ListState,
+    ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
 use persistence::WALKTHROUGH_DB;
 use settings::SettingsStore;
+use std::collections::BTreeMap;
+use std::convert::identity;
 use std::sync::Arc;
 use theme::ThemeRegistry;
 use theme::ThemeSettings;
+use ui::Checkbox;
 use ui::prelude::*;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
@@ -18,6 +21,7 @@ use workspace::{
 };
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
+use crate::recent_projects;
 use crate::welcome_ui::theme_preview::ThemePreviewTile;
 use crate::welcome_ui::transparent_tabs::TransparentTabs;
 
@@ -35,10 +39,10 @@ pub fn init(cx: &mut App) {
 
 enum WalkthroughStep {
     ThemeStep { tab_selection: Entity<usize> },
-    SettingsStep,
+    SettingsStep { tab_selection: Entity<usize> },
     AiIntegrations,
     DataSharing,
-    OpenProject,
+    OpenProject { tab_selection: Entity<usize> },
 }
 
 pub struct Walkthrough {
@@ -100,7 +104,9 @@ impl Walkthrough {
                 WalkthroughStep::SettingsStep,
                 WalkthroughStep::AiIntegrations,
                 WalkthroughStep::DataSharing,
-                WalkthroughStep::OpenProject,
+                WalkthroughStep::OpenProject {
+                    tab_selection: cx.new(|_| 0),
+                },
             ];
             let steps_len = steps.len();
             Walkthrough {
@@ -137,10 +143,14 @@ impl Walkthrough {
             WalkthroughStep::ThemeStep { tab_selection } => {
                 self.render_theme_step(tab_selection, window, cx)
             }
-            WalkthroughStep::SettingsStep => self.render_settings_step(window, cx),
+            WalkthroughStep::SettingsStep { tab_selection } => {
+                self.render_settings_step(tab_selection, window, cx)
+            }
             WalkthroughStep::AiIntegrations => self.render_ai_integrations_step(window, cx),
             WalkthroughStep::DataSharing => self.render_data_sharing_step(window, cx),
-            WalkthroughStep::OpenProject => self.render_open_project_step(window, cx),
+            WalkthroughStep::OpenProject { tab_selection } => {
+                self.render_open_project_step(tab_selection, window, cx)
+            }
         }
     }
 
@@ -201,22 +211,32 @@ impl Walkthrough {
 
     fn render_settings_step(
         &self,
+        selected_tab: Entity<usize>,
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         v_flex()
             .items_center()
             .justify_center()
-            .child(h_flex().children([
-                "VS Code",
-                "Atom",
-                "Sublime",
-                "Jetbrains",
-                "Text Mate",
-                "Emacs (beta)",
-            ]))
-            .child("vim mode checkbox")
-            .child("browse extensions")
+            .child({
+                let mut tabs = TransparentTabs::new(selected_tab);
+                for keymap in [
+                    "VS Code",
+                    "Atom",
+                    "Sublime",
+                    "Jetbrains",
+                    "Text Mate",
+                    "Emacs (beta)",
+                ] {
+                    tabs = tabs.tab(keymap, |_, _| todo!("set keymap setting"));
+                }
+                tabs
+            })
+            .child(
+                Checkbox::new("vim-mode", todo!("current setting"))
+                    .on_click(|state, _, _| todo!("set setting")),
+            )
+            .child(Button::new("extensions", "Browse extensions"))
             .when(cfg!(macos), |this| {
                 this.child(
                     h_flex()
@@ -235,7 +255,12 @@ impl Walkthrough {
                     )
                 },
             )
-            .child(h_flex().children(["open settings", "open keymap", "open config docs"]))
+            .child(h_flex().children([
+                // TODO: on click action dispatchers
+                Button::new("open-settings", "open settings"),
+                Button::new("open-keymap", "open keymap"),
+                Button::new("open-settings-docs", "open config docs"),
+            ]))
             .into_any()
     }
 
@@ -253,19 +278,29 @@ impl Walkthrough {
                     .tab("Dark", {
                         let fs = fs.clone();
                         move |window, cx| {
-                            v_flex()
-                                .children(theme_preview_tile("One Dark", &fs, window, cx))
-                                .children(theme_preview_tile("Ayu Dark", &fs, window, cx))
-                                .children(theme_preview_tile("Gruvbox Dark", &fs, window, cx))
+                            v_flex().children(
+                                [
+                                    theme_preview_tile("One Dark", &fs, window, cx),
+                                    theme_preview_tile("Ayu Dark", &fs, window, cx),
+                                    theme_preview_tile("Gruvbox Dark", &fs, window, cx),
+                                ]
+                                .into_iter()
+                                .filter_map(identity),
+                            )
                         }
                     })
                     .tab("Light", {
                         let fs = fs.clone();
                         move |window, cx| {
-                            v_flex()
-                                .children(theme_preview_tile("One Light", &fs, window, cx))
-                                .children(theme_preview_tile("Ayu Light", &fs, window, cx))
-                                .children(theme_preview_tile("Gruvbox Light", &fs, window, cx))
+                            v_flex().children(
+                                [
+                                    theme_preview_tile("One Light", &fs, window, cx),
+                                    theme_preview_tile("Ayu Light", &fs, window, cx),
+                                    theme_preview_tile("Gruvbox Light", &fs, window, cx),
+                                ]
+                                .into_iter()
+                                .filter_map(identity),
+                            )
                         }
                     })
                     // TODO: picking a theme in the system tab should set both your light and dark themes
@@ -278,21 +313,20 @@ impl Walkthrough {
                                 gpui::WindowAppearance::Dark
                                 | gpui::WindowAppearance::VibrantDark => "Dark",
                             };
-                            v_flex()
-                                .child(
-                                    theme_preview_tile(&format!("One {current}"), &fs, window, cx)
-                                )
-                                .child(
-                                    theme_preview_tile(&format!("Ayu {current}"), &fs, window, cx)
-                                )
-                                .child(
+                            v_flex().children(
+                                [
+                                    theme_preview_tile(&format!("One {current}"), &fs, window, cx),
+                                    theme_preview_tile(&format!("Ayu {current}"), &fs, window, cx),
                                     theme_preview_tile(
                                         &format!("Gruvbox {current}"),
                                         &fs,
                                         window,
                                         cx,
-                                    )
-                                )
+                                    ),
+                                ]
+                                .into_iter()
+                                .filter_map(identity),
+                            )
                         }
                     }),
             )
@@ -332,9 +366,29 @@ impl Walkthrough {
 
     fn render_open_project_step(
         &self,
+        tab_selection: Entity<usize>,
         _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
+        cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
+        let mut recents = BTreeMap::new();
+        let fs = todo!();
+        if let Some(projects) = recent_projects::get_vscode_projects(fs).await {
+            if !projects.is_empty() {
+                recents.insert("vscode", projects);
+            }
+        }
+        if let Some(projects) = recent_projects::get_neovim_projects(fs).await {
+            if !projects.is_empty() {
+                recents.insert("neovim", projects);
+            }
+        }
+        let project_list = |projects| div();
+        if !recents.is_empty() {
+            let mut tabs = TransparentTabs::new(tab_selection.clone());
+            for (name, projects) in recents.into_iter() {
+                tabs = tabs.tab(name, |_, _| project_list(projects))
+            }
+        }
         div().size_20().bg(gpui::red()).into_any()
     }
 }

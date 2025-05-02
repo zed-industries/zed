@@ -1,46 +1,61 @@
-// nvim: nvim --headless +oldfiles +exit
-// vscode: jq -r .folder Code/User/workspaceStorage/*/workspace.json
-// or maybe .backupWorkspaces.folders[].folderUri from Code/User/globalStorage/storage.json
-// sublime: jq -r .folder_history <Sublime\ Text/Local/Auto\ Save\ Session.sublime_session
-// rust-rover: ??? JetBrains/RustRover20*/workspace/*.xml
-
 use std::{
-    collections::HashSet,
+    collections::BTreeSet,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
+    time::{Duration, SystemTime},
 };
 
 use fs::Fs;
 use serde_json::Value;
-use smol::stream::StreamExt;
-use time::OffsetDateTime;
+use smol::stream::{self, StreamExt};
 
-pub struct RecentProject {
-    path: PathBuf,
-    last_opened_or_changed: Option<OffsetDateTime>,
-}
+// don't show projects you haven't used it the last 100 days
+const PROJECT_MTIME_CUTOFF: Duration = Duration::from_secs(100 * 24 * 60 * 60);
 
-async fn mtime_for_project(root: &Path) -> Option<OffsetDateTime> {
-    todo!()
+async fn filter_old_files(paths: Vec<PathBuf>, fs: &dyn Fs) -> Option<Vec<PathBuf>> {
+    let now = SystemTime::now();
+    let with_mtimes: Option<Vec<(SystemTime, PathBuf)>> = stream::iter(paths.into_iter())
+        .filter_map(async |path| {
+            (
+                fs.metadata(&path).await.ok()?.mtime.timestamp_for_user(),
+                path,
+            )
+        })
+        .collect();
+    // paths.into_iter()
+    // .filter_map(|path| std::fs::metadata(&path).ok()?.mtime())
+
+    with_mtimes
+        .into_iter()
+        .filter(|(mtime, path)| {
+            if let Ok(dur) = now.duration_since(mtime) {
+                dur < PROJECT_MTIME_CUTOFF
+            } else {
+                false
+            }
+        })
+        .map(|(mtime, path)| path)
+        .collect()
+
+    // TODO: use this for the ones that aren't ordered
 }
 
 async fn dir_contains_project(path: &Path, fs: &dyn Fs) -> bool {
-    const ROOT_PROJECT_FILES: [&'static str; 2] = [".git", "Cargo.lock"]; // TODO: add more
     let Ok(mut paths) = fs.read_dir(path).await else {
         return false;
     };
-    while let Some(path) = paths.next().await {
-        // if ROOT_PROJECT_FILES.contains(path) {
-        //     return true;
-        // }
+    while let Some(Ok(path)) = paths.next().await {
+        if Some(path) == PathBuf::from_str(".git").ok() {
+            return true;
+        }
     }
     false
 }
 
 // returns a list of project roots. ignores any file paths that aren't inside the user's home directory
-async fn projects_for_paths(files: &[PathBuf], fs: Arc<dyn Fs>) -> HashSet<PathBuf> {
-    let mut known_roots = HashSet::new();
+async fn projects_for_paths(files: &[PathBuf], fs: &dyn Fs) -> Vec<PathBuf> {
+    let mut known_roots = BTreeSet::new();
     let stop_at = paths::home_dir();
     for path in files {
         while let Some(parent) = path.parent() {
@@ -50,50 +65,55 @@ async fn projects_for_paths(files: &[PathBuf], fs: Arc<dyn Fs>) -> HashSet<PathB
             if known_roots.contains(parent) {
                 continue;
             }
-            if dir_contains_project(parent, fs.as_ref()).await {
+            if dir_contains_project(parent, fs).await {
                 known_roots.insert(parent.to_path_buf());
             }
         }
     }
-    known_roots
+    known_roots.into_iter().collect()
 }
 
-pub async fn get_vscode_projects(fs: Arc<dyn Fs>) -> Option<Vec<RecentProject>> {
+// jq -r .folder Code/User/workspaceStorage/*/workspace.json
+// or maybe .backupWorkspaces.folders[].folderUri from Code/User/globalStorage/storage.json
+pub async fn get_vscode_projects(fs: Arc<dyn Fs>) -> Option<Vec<PathBuf>> {
     let path = paths::vscode_data_dir().join("User/globalStorage/storage.json");
-    let content = fs.load(paths::vscode_settings_file()).await.ok()?;
-    let storage = serde_json::from_str::<Value>(&content).ok()?;
-    // util::json_get_path(storage, "backupWorkspaces.folders")
-    //     .and_then(|v| v.as_array())
-    //     .and_then(|arr| {
-    //         arr.iter()
-    //             .map(|v| v.as_object()?.get("folderUri")?.strip_prefix("file://"))
-    //     })
-    //     .collect()
-    None
+    let content = fs.load(&path).await.ok()?;
+    let value = serde_json::from_str::<Value>(&content).ok()?;
+    let projects = util::json_get_path(&value, "backupWorkspaces.folders")?
+        .as_array()?
+        .iter()
+        .map(|v| {
+            Some(
+                PathBuf::from_str(
+                    v.as_object()?
+                        .get("folderUri")?
+                        .as_str()?
+                        .strip_prefix("file://")?,
+                )
+                .ok()?,
+            )
+        })
+        .collect::<Option<Vec<_>>>()?;
+    filter_old_files(projects, fs.as_ref()).await
 }
 
-pub async fn get_neovim_projects(fs: Arc<dyn Fs>) -> Option<Vec<RecentProject>> {
+// nvim --headless +oldfiles +exit
+pub async fn get_neovim_projects(fs: Arc<dyn Fs>) -> Option<Vec<PathBuf>> {
     const MAX_OLDFILES: usize = 100;
     let output = util::command::new_std_command("nvim")
         .args(["--headless", "-u", "NONE", "+oldfiles", "+exit"])
         .output()
         .ok()?
         .stderr;
-    let files = String::from_utf8(output)
+    let paths = String::from_utf8(output)
         .ok()?
         .lines()
         .take(MAX_OLDFILES)
         .map(|s| s.split(": ").last().and_then(|s| PathBuf::from_str(s).ok()))
         .collect::<Option<Vec<PathBuf>>>()?;
-    Some(
-        projects_for_paths(&files, fs)
-            .await
-            .into_iter()
-            .map(|p| RecentProject {
-                path: p,
-                last_opened_or_changed: None,
-                // last_opened_or_changed: mtime_for_project(p).await,
-            })
-            .collect(),
-    )
+    let projects = projects_for_paths(&paths, fs.as_ref()).await;
+    filter_old_files(projects, fs.as_ref()).await
 }
+
+// sublime: jq -r .folder_history <Sublime\ Text/Local/Auto\ Save\ Session.sublime_session
+// rust-rover: ??? JetBrains/RustRover20*/workspace/*.xml
