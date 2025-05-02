@@ -1824,6 +1824,8 @@ async fn test_active_call_events(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    executor.run_until_parked();
+
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
@@ -2900,7 +2902,7 @@ async fn test_git_branch_name(
                 .read(cx)
                 .branch
                 .as_ref()
-                .map(|branch| branch.name.to_string()),
+                .map(|branch| branch.name().to_owned()),
             branch_name
         )
     }
@@ -6862,7 +6864,7 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(branches_b, branches_set);
@@ -6893,7 +6895,7 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.name, branches[2]);
+    assert_eq!(host_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -6931,5 +6933,5 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.name, "totally-new-branch");
+    assert_eq!(host_branch.name(), "totally-new-branch");
 }

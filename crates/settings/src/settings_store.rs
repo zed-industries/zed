@@ -5,9 +5,7 @@ use fs::Fs;
 use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
-use paths::{
-    EDITORCONFIG_NAME, debug_task_file_name, local_settings_file_relative_path, task_file_name,
-};
+use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -217,14 +215,9 @@ impl FromStr for Editorconfig {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LocalSettingsKind {
     Settings,
-    Tasks(TaskKind),
+    Tasks,
     Editorconfig,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum TaskKind {
     Debug,
-    Script,
 }
 
 impl Global for SettingsStore {}
@@ -264,16 +257,6 @@ trait AnySettingValue: 'static + Send + Sync {
 }
 
 struct DeserializedSetting(Box<dyn Any>);
-
-impl TaskKind {
-    /// Returns a file path of a task configuration file of this kind within the given directory.
-    pub fn config_in_dir(&self, dir: &Path) -> PathBuf {
-        dir.join(match self {
-            Self::Debug => debug_task_file_name(),
-            Self::Script => task_file_name(),
-        })
-    }
-}
 
 impl SettingsStore {
     pub fn new(cx: &App) -> Self {
@@ -684,10 +667,17 @@ impl SettingsStore {
                 .map(|content| content.trim())
                 .filter(|content| !content.is_empty()),
         ) {
-            (LocalSettingsKind::Tasks(task_kind), _) => {
+            (LocalSettingsKind::Tasks, _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
-                    path: task_kind.config_in_dir(&directory_path),
+                    path: directory_path.join(task_file_name()),
+                });
+            }
+            (LocalSettingsKind::Debug, _) => {
+                return Err(InvalidSettingsError::Debug {
+                    message: "Attempted to submit debugger config into the settings store"
+                        .to_string(),
+                    path: directory_path.join(task_file_name()),
                 });
             }
             (LocalSettingsKind::Settings, None) => {
@@ -1085,6 +1075,7 @@ pub enum InvalidSettingsError {
     DefaultSettings { message: String },
     Editorconfig { path: PathBuf, message: String },
     Tasks { path: PathBuf, message: String },
+    Debug { path: PathBuf, message: String },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1095,7 +1086,8 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::ServerSettings { message }
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
-            | InvalidSettingsError::Editorconfig { message, .. } => {
+            | InvalidSettingsError::Editorconfig { message, .. }
+            | InvalidSettingsError::Debug { message, .. } => {
                 write!(f, "{message}")
             }
         }

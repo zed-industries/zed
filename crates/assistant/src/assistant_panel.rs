@@ -33,6 +33,7 @@ use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
 
 use std::ops::Range;
+use std::path::Path;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
@@ -476,7 +477,7 @@ impl AssistantPanel {
                         {
                             return;
                         }
-                        context.custom_summary(new_summary, cx)
+                        context.set_custom_summary(new_summary, cx)
                     });
                 });
             }
@@ -1080,7 +1081,7 @@ impl AssistantPanel {
 
     pub fn open_saved_context(
         &mut self,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1391,7 +1392,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {

@@ -193,8 +193,8 @@ pub fn init(
             None,
             extension_host_proxy,
             fs,
-            client.http_client().clone(),
-            client.http_client().clone(),
+            client.http_client(),
+            client.http_client(),
             Some(client.telemetry().clone()),
             node_runtime,
             cx,
@@ -429,6 +429,13 @@ impl ExtensionStore {
             .extensions
             .values()
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
+    }
+
+    pub fn extension_manifest_for_id(&self, extension_id: &str) -> Option<&Arc<ExtensionManifest>> {
+        self.extension_index
+            .extensions
+            .get(extension_id)
+            .map(|extension| &extension.manifest)
     }
 
     /// Returns the names of themes provided by extensions.
@@ -744,8 +751,18 @@ impl ExtensionStore {
             .await;
 
             if let ExtensionOperation::Install = operation {
-                this.update( cx, |_, cx| {
-                    cx.emit(Event::ExtensionInstalled(extension_id));
+                this.update( cx, |this, cx| {
+                    cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                    if let Some(events) = ExtensionEvents::try_global(cx) {
+                        if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                            events.update(cx, |this, cx| {
+                                this.emit(
+                                    extension::Event::ExtensionInstalled(manifest.clone()),
+                                    cx,
+                                )
+                            });
+                        }
+                    }
                 })
                 .ok();
             }
@@ -935,6 +952,17 @@ impl ExtensionStore {
                 .await?;
 
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
+            this.update(cx, |this, cx| {
+                cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
+
             Ok(())
         })
     }

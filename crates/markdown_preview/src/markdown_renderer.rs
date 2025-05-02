@@ -139,7 +139,6 @@ pub fn render_parsed_markdown(
             .map(|block| render_markdown_block(block, &mut cx)),
     )
 }
-
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
     use ParsedMarkdownElement::*;
     match block {

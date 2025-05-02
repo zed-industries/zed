@@ -267,7 +267,7 @@ impl ContextPicker {
                         context_picker.update(cx, |this, cx| this.select_entry(entry, window, cx))
                     })
             }))
-            .keep_open_on_confirm()
+            .keep_open_on_confirm(true)
         });
 
         cx.subscribe(&menu, move |_, _, _: &DismissEvent, cx| {
@@ -388,7 +388,7 @@ impl ContextPicker {
                 ContextMenuItem::custom_entry(
                     move |_window, cx| {
                         render_file_context_entry(
-                            ElementId::NamedInteger("ctx-recent".into(), ix),
+                            ElementId::named_usize("ctx-recent", ix),
                             worktree_id,
                             &path,
                             &path_prefix,

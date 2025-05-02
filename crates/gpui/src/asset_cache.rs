@@ -1,5 +1,5 @@
 use crate::{App, SharedString, SharedUri};
-use futures::Future;
+use futures::{Future, TryFutureExt};
 
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
@@ -51,14 +51,17 @@ pub trait Asset: 'static {
     ) -> impl Future<Output = Self::Output> + Send + 'static;
 }
 
-/// An asset Loader that logs whatever passes through it
+/// An asset Loader which logs the [`Err`] variant of a [`Result`] during loading
 pub enum AssetLogger<T> {
     #[doc(hidden)]
     _Phantom(PhantomData<T>, &'static dyn crate::seal::Sealed),
 }
 
-impl<R: Clone + Send, E: Clone + Send + std::error::Error, T: Asset<Output = Result<R, E>>> Asset
-    for AssetLogger<T>
+impl<T, R, E> Asset for AssetLogger<T>
+where
+    T: Asset<Output = Result<R, E>>,
+    R: Clone + Send,
+    E: Clone + Send + std::fmt::Display,
 {
     type Source = T::Source;
 
@@ -69,10 +72,7 @@ impl<R: Clone + Send, E: Clone + Send + std::error::Error, T: Asset<Output = Res
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let load = T::load(source, cx);
-        async {
-            load.await
-                .inspect_err(|e| log::error!("Failed to load asset: {}", e))
-        }
+        load.inspect_err(|e| log::error!("Failed to load asset: {}", e))
     }
 }
 

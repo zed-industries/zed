@@ -708,7 +708,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
         let thread_store = self.thread_store.clone();
         let editor = self.editor.clone();
-        let http_client = workspace.read(cx).client().http_client().clone();
+        let http_client = workspace.read(cx).client().http_client();
 
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
@@ -1044,6 +1044,10 @@ mod tests {
 
         fn include_in_nav_history() -> bool {
             false
+        }
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
         }
     }
 
