@@ -2141,6 +2141,14 @@ impl Buffer {
         self.edit([(0..self.len(), text)], None, cx)
     }
 
+    /// Appends the given text to the end of the buffer.
+    pub fn append<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
+    where
+        T: Into<Arc<str>>,
+    {
+        self.edit([(self.len()..self.len(), text)], None, cx)
+    }
+
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
     /// delete, and a string of text to insert at that location.
     ///
