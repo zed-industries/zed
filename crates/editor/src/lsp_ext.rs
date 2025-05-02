@@ -76,7 +76,7 @@ where
 }
 
 async fn lsp_task_context(
-    project: Entity<Project>,
+    project: &Entity<Project>,
     buffer: Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Option<TaskContext> {
@@ -137,7 +137,7 @@ pub fn lsp_tasks(
                 let id_base = source_kind.to_id_base();
                 let mut new_lsp_tasks = Vec::new();
                 for buffer in buffers {
-                    let lsp_buffer_context = lsp_task_context(project.clone(), buffer.clone(), cx)
+                    let lsp_buffer_context = lsp_task_context(&project, buffer.clone(), cx)
                         .await
                         .unwrap_or_default();
 
