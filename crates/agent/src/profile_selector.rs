@@ -147,6 +147,7 @@ impl Render for ProfileSelector {
         let icon = match profile_id.as_str() {
             "write" => IconName::Pencil,
             "ask" => IconName::MessageBubbles,
+            "manual" => IconName::MessageBubblesDashed,
             _ => IconName::UserRoundPen,
         };
 
