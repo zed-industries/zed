@@ -16,7 +16,7 @@ use crate::{
         ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MinimapThumbBorder,
+        CurrentLineHighlight, DoubleClickInMultibuffer, MinimapThumb, MinimapThumbBorder,
         MultiCursorModifier, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics,
         ShowMinimap, ShowScrollbar,
     },
@@ -7169,9 +7169,9 @@ impl Element for EditorElement {
                         .read_with(cx, |editor, _| editor.minimap().is_some())
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Never => None,
-                            ShowMinimap::Always => Some(px(settings.minimap.width)),
+                            ShowMinimap::Always => Some(MinimapLayout::MINIMAP_WIDTH),
                             ShowMinimap::Auto => {
-                                scrollbars_shown.then_some(px(settings.minimap.width))
+                                scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH)
                             }
                         })
                         .flatten()
@@ -8729,6 +8729,7 @@ struct MinimapLayout {
 }
 
 impl MinimapLayout {
+    const MINIMAP_WIDTH: Pixels = px(100.);
     /// Calculates the scroll top offset the minimap editor has to have based on the
     /// current scroll progress.
     fn calculate_minimap_top_offset(

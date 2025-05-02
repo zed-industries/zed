@@ -122,7 +122,6 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub highlight_current_line: bool,
-    pub width: f32,
 }
 
 impl Minimap {
@@ -533,11 +532,6 @@ pub struct MinimapContent {
     ///
     /// Default: false
     pub highlight_current_line: Option<bool>,
-
-    /// The width of the minimap in pixels.
-    ///
-    /// Default: 100
-    pub width: Option<f32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
