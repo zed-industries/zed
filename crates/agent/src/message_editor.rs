@@ -468,7 +468,7 @@ impl MessageEditor {
                         Plan::ZedProTrial => "Zed Pro (Trial)",
                         Plan::Free => "Zed Free",
                     };
-                    (Color::Info, message)
+                    (Color::Muted, message)
                 }
             };
 
@@ -477,9 +477,19 @@ impl MessageEditor {
                 UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
             };
 
-            let indicator = Indicator::dot()
-                .color(severity_color)
-                .border_color(Color::Custom(cx.theme().colors().editor_background));
+            let indicator = div()
+                .size(px(13.))
+                .flex_none()
+                .border(px(2.))
+                .p(px(2.))
+                .border_color(severity_color.color(cx).opacity(0.32))
+                .rounded_full()
+                .child(
+                    div()
+                        .rounded_full()
+                        .size_full()
+                        .bg(severity_color.color(cx)),
+                );
 
             return Some(
                 ButtonLike::new("usage-indicator")

@@ -15,6 +15,7 @@ use assistant_tool::ToolWorkingSet;
 
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
+use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -60,6 +61,11 @@ pub fn init(cx: &mut App) {
 
     GlobalDebugAccountState::update_global(cx, |store, cx| {
         store.set_enabled(true);
+        store.set_plan(zed_llm_client::Plan::ZedPro);
+        store.set_custom_prompt_usage(RequestUsage {
+            limit: UsageLimit::Limited(500),
+            amount: 487,
+        });
     });
 
     cx.observe_new(
@@ -2014,7 +2020,13 @@ impl AssistantPanel {
     }
 
     fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let plan = self
+        if !cx.has_flag::<NewBillingFeatureFlag>() {
+            return None;
+        }
+
+        let debug_account = cx.debug_account().clone();
+
+        let mut plan = self
             .user_store
             .read(cx)
             .current_plan()
@@ -2024,7 +2036,15 @@ impl AssistantPanel {
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
             .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
+
+        let mut usage = self.thread.read(cx).last_usage();
+
+        if debug_account.enabled() {
+            plan = debug_account.plan.clone();
+            usage = Some(debug_account.custom_prompt_usage.clone());
+        }
+
+        let usage = usage?;
 
         Some(UsageBanner::new(plan, usage).into_any_element())
     }
