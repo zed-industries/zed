@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, builtin_profiles};
+use assistant_settings::{
+    AgentProfile, AgentProfileId, AssistantSettings, GroupedAgentProfiles, builtin_profiles,
+};
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
-use indexmap::IndexMap;
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
@@ -15,7 +16,7 @@ use util::ResultExt as _;
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
-    profiles: GroupedProfiles,
+    profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
@@ -35,7 +36,7 @@ impl ProfileSelector {
         });
 
         Self {
-            profiles: GroupedProfiles::load_from_settings(cx),
+            profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
             fs,
             thread_store,
             focus_handle,
@@ -49,7 +50,7 @@ impl ProfileSelector {
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        self.profiles = GroupedProfiles::load_from_settings(cx);
+        self.profiles = GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx));
     }
 
     fn build_context_menu(

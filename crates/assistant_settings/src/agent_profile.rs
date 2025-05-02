@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{App, SharedString};
+use gpui::SharedString;
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,9 +24,7 @@ pub struct GroupedAgentProfiles {
 }
 
 impl GroupedAgentProfiles {
-    pub fn load_from_settings(cx: &App) -> Self {
-        let settings = crateAssistant::get_global(cx);
-
+    pub fn from_settings(settings: &crate::AssistantSettings) -> Self {
         let mut builtin = IndexMap::default();
         let mut custom = IndexMap::default();
 

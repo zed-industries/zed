@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;
@@ -44,17 +44,24 @@ impl Mode {
     pub fn choose_profile(_window: &mut Window, cx: &mut Context<ManageProfilesModal>) -> Self {
         let settings = AssistantSettings::get_global(cx);
 
-        let mut profiles = settings.profiles.clone();
-        profiles.sort_unstable_by(|_, a, _, b| a.name.cmp(&b.name));
+        let mut builtin_profiles = Vec::new();
+        let mut custom_profiles = Vec::new();
 
-        let profiles = profiles
-            .into_iter()
-            .map(|(id, profile)| ProfileEntry {
-                id,
-                name: profile.name,
+        for (profile_id, profile) in settings.profiles.iter() {
+            let entry = ProfileEntry {
+                id: profile_id.clone(),
+                name: profile.name.clone(),
                 navigation: NavigableEntry::focusable(cx),
-            })
-            .collect::<Vec<_>>();
+            };
+            if builtin_profiles::is_builtin(profile_id) {
+                builtin_profiles.push(entry);
+            } else {
+                custom_profiles.push(entry);
+            }
+        }
+
+        builtin_profiles.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        custom_profiles.sort_unstable_by(|a, b| a.name.cmp(&b.name));
 
         Self::ChooseProfile(ChooseProfileMode {
             builtin_profiles,
@@ -73,7 +80,7 @@ struct ProfileEntry {
 
 #[derive(Clone)]
 pub struct ChooseProfileMode {
-    builtin_profiles: Vec<AgentProfile>,
+    builtin_profiles: Vec<ProfileEntry>,
     custom_profiles: Vec<ProfileEntry>,
     add_new_profile: NavigableEntry,
 }
@@ -350,6 +357,51 @@ impl Focusable for ManageProfilesModal {
 impl EventEmitter<DismissEvent> for ManageProfilesModal {}
 
 impl ManageProfilesModal {
+    fn render_profile(
+        &self,
+        profile: &ProfileEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        div()
+            .id(SharedString::from(format!("profile-{}", profile.id)))
+            .track_focus(&profile.navigation.focus_handle)
+            .on_action({
+                let profile_id = profile.id.clone();
+                cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                    this.view_profile(profile_id.clone(), window, cx);
+                })
+            })
+            .child(
+                ListItem::new(SharedString::from(format!("profile-{}", profile.id)))
+                    .toggle_state(profile.navigation.focus_handle.contains_focused(window, cx))
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .child(Label::new(profile.name.clone()))
+                    .end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Customize")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .children(KeyBinding::for_action_in(
+                                &menu::Confirm,
+                                &self.focus_handle,
+                                window,
+                                cx,
+                            )),
+                    )
+                    .on_click({
+                        let profile_id = profile.id.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.view_profile(profile_id.clone(), window, cx);
+                        })
+                    }),
+            )
+    }
+
     fn render_choose_profile(
         &mut self,
         mode: ChooseProfileMode,
@@ -365,53 +417,26 @@ impl ManageProfilesModal {
                     v_flex()
                         .pb_1()
                         .child(ListSeparator)
-                        .children(mode.profiles.iter().map(|profile| {
-                            div()
-                                .id(SharedString::from(format!("profile-{}", profile.id)))
-                                .track_focus(&profile.navigation.focus_handle)
-                                .on_action({
-                                    let profile_id = profile.id.clone();
-                                    cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                        this.view_profile(profile_id.clone(), window, cx);
-                                    })
-                                })
+                        .children(
+                            mode.builtin_profiles
+                                .iter()
+                                .map(|profile| self.render_profile(profile, window, cx)),
+                        )
+                        .when(!mode.custom_profiles.is_empty(), |this| {
+                            this.child(ListSeparator)
                                 .child(
-                                    ListItem::new(SharedString::from(format!(
-                                        "profile-{}",
-                                        profile.id
-                                    )))
-                                    .toggle_state(
-                                        profile
-                                            .navigation
-                                            .focus_handle
-                                            .contains_focused(window, cx),
-                                    )
-                                    .inset(true)
-                                    .spacing(ListItemSpacing::Sparse)
-                                    .child(Label::new(profile.name.clone()))
-                                    .end_slot(
-                                        h_flex()
-                                            .gap_1()
-                                            .child(
-                                                Label::new("Customize")
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .children(KeyBinding::for_action_in(
-                                                &menu::Confirm,
-                                                &self.focus_handle,
-                                                window,
-                                                cx,
-                                            )),
-                                    )
-                                    .on_click({
-                                        let profile_id = profile.id.clone();
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.view_profile(profile_id.clone(), window, cx);
-                                        })
-                                    }),
+                                    div().pl_2().pb_1().child(
+                                        Label::new("Custom Profiles")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
                                 )
-                        }))
+                                .children(
+                                    mode.custom_profiles
+                                        .iter()
+                                        .map(|profile| self.render_profile(profile, window, cx)),
+                                )
+                        })
                         .child(ListSeparator)
                         .child(
                             div()
@@ -442,7 +467,10 @@ impl ManageProfilesModal {
                 .into_any_element(),
         )
         .map(|mut navigable| {
-            for profile in mode.profiles {
+            for profile in mode.builtin_profiles {
+                navigable = navigable.entry(profile.navigation);
+            }
+            for profile in mode.custom_profiles {
                 navigable = navigable.entry(profile.navigation);
             }
 
