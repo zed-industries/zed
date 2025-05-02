@@ -320,6 +320,13 @@ fn default_completion_mode(cx: &App) -> CompletionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum QueueState {
+    Sending,
+    Queued { position: usize },
+    Started,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -623,6 +630,12 @@ impl Thread {
 
     pub fn is_generating(&self) -> bool {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
+    }
+
+    pub fn queue_state(&self) -> Option<QueueState> {
+        self.pending_completions
+            .first()
+            .map(|pending_completion| pending_completion.queue_state)
     }
 
     pub fn tools(&self) -> &Entity<ToolWorkingSet> {
@@ -1470,6 +1483,20 @@ impl Thread {
                                     });
                                 }
                             }
+                            LanguageModelCompletionEvent::QueueUpdate(queue_event) => {
+                                if let Some(completion) = thread
+                                    .pending_completions
+                                    .iter_mut()
+                                    .find(|completion| completion.id == pending_completion_id)
+                                {
+                                    completion.queue_state = match queue_event {
+                                        language_model::QueueState::Queued { position } => {
+                                            QueueState::Queued { position }
+                                        }
+                                        language_model::QueueState::Started => QueueState::Started,
+                                    }
+                                }
+                            }
                         }
 
                         thread.touch_updated_at();
@@ -1590,6 +1617,7 @@ impl Thread {
 
         self.pending_completions.push(PendingCompletion {
             id: pending_completion_id,
+            queue_state: QueueState::Sending,
             _task: task,
         });
     }
@@ -2499,6 +2527,7 @@ impl EventEmitter<ThreadEvent> for Thread {}
 
 struct PendingCompletion {
     id: usize,
+    queue_state: QueueState,
     _task: Task<()>,
 }
 
