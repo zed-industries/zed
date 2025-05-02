@@ -1,10 +1,10 @@
-/// Configuration for a context server.
+/// Configuration for context server setup and installation.
 #[derive(Debug, Clone)]
 pub struct ContextServerConfiguration {
-    /// Installation instructions for the user.
+    /// Installation instructions in Markdown format.
     pub installation_instructions: String,
-    /// Default settings for the context server.
-    pub default_settings: String,
-    /// JSON schema describing server settings.
+    /// JSON schema for settings validation.
     pub settings_schema: serde_json::Value,
+    /// Default settings template.
+    pub default_settings: String,
 }
