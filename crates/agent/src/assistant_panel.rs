@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::ops::{Deref, DerefMut, Range};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,8 +18,9 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -38,6 +39,7 @@ use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
+use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -54,6 +56,12 @@ use crate::{
 };
 
 pub fn init(cx: &mut App) {
+    cx.set_global(GlobalDebugAccountState(DebugAccountState::default()));
+
+    GlobalDebugAccountState::update_global(cx, |store, cx| {
+        store.set_enabled(true);
+    });
+
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
@@ -274,6 +282,116 @@ impl ActiveView {
             title_editor: editor,
             _subscriptions: subscriptions,
         }
+    }
+}
+
+/// Debug only: Used for testing various account states
+// todo!("Remove before merging, or put behind a flag or argument")
+#[derive(Clone, Debug)]
+pub struct DebugAccountState {
+    pub enabled: bool,
+    pub trial_expired: bool,
+    pub plan: Plan,
+    pub custom_prompt_usage: UsageLimit,
+    pub usage_based_billing_enabled: bool,
+    pub monthly_spending_cap: i32,
+    pub custom_edit_prediction_usage: UsageLimit,
+}
+
+impl DebugAccountState {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) -> &mut Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub fn set_trial_expired(&mut self, trial_expired: bool) -> &mut Self {
+        self.trial_expired = trial_expired;
+        self
+    }
+
+    pub fn set_plan(&mut self, plan: Plan) -> &mut Self {
+        self.plan = plan;
+        self
+    }
+
+    pub fn set_custom_prompt_usage(&mut self, custom_prompt_usage: UsageLimit) -> &mut Self {
+        self.custom_prompt_usage = custom_prompt_usage;
+        self
+    }
+
+    pub fn set_usage_based_billing_enabled(
+        &mut self,
+        usage_based_billing_enabled: bool,
+    ) -> &mut Self {
+        self.usage_based_billing_enabled = usage_based_billing_enabled;
+        self
+    }
+
+    pub fn set_monthly_spending_cap(&mut self, monthly_spending_cap: i32) -> &mut Self {
+        self.monthly_spending_cap = monthly_spending_cap;
+        self
+    }
+
+    pub fn set_custom_edit_prediction_usage(
+        &mut self,
+        custom_edit_prediction_usage: UsageLimit,
+    ) -> &mut Self {
+        self.custom_edit_prediction_usage = custom_edit_prediction_usage;
+        self
+    }
+}
+
+impl Default for DebugAccountState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            trial_expired: false,
+            plan: Plan::Free,
+            custom_prompt_usage: UsageLimit::Unlimited,
+            usage_based_billing_enabled: false,
+            // $50.00
+            monthly_spending_cap: 5000,
+            custom_edit_prediction_usage: UsageLimit::Unlimited,
+        }
+    }
+}
+
+impl DebugAccountState {
+    pub fn get_global(cx: &App) -> &DebugAccountState {
+        &cx.global::<GlobalDebugAccountState>().0
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct GlobalDebugAccountState(pub DebugAccountState);
+
+impl Global for GlobalDebugAccountState {}
+
+impl Deref for GlobalDebugAccountState {
+    type Target = DebugAccountState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for GlobalDebugAccountState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+pub trait DebugAccount {
+    fn debug_account(&self) -> &DebugAccountState;
+}
+
+impl DebugAccount for App {
+    fn debug_account(&self) -> &DebugAccountState {
+        &self.global::<GlobalDebugAccountState>().0
     }
 }
 

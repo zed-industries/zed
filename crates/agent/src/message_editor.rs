@@ -30,7 +30,7 @@ use prompt_store::PromptStore;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{ButtonLike, Disclosure, Indicator, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 use zed_llm_client::CompletionMode;
@@ -413,6 +413,27 @@ impl MessageEditor {
         }
     }
 
+    fn render_usage_indicator(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        if !cx.has_flag::<NewBillingFeatureFlag>() {
+            return None;
+        }
+
+        let usage_color = Color::Error;
+
+        Some(
+            ButtonLike::new("usage-indicator")
+                .child(
+                    Indicator::dot()
+                        .color(usage_color)
+                        .border_color(Color::Custom(cx.theme().colors().editor_background)),
+                )
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    cx.notify();
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !cx.has_flag::<NewBillingFeatureFlag>() {
             return None;
@@ -602,6 +623,7 @@ impl MessageEditor {
                                             }),
                                         )
                                     })
+                                    .children(self.render_usage_indicator(cx))
                                     .children(self.render_max_mode_toggle(cx))
                                     .child(self.model_selector.clone())
                                     .map({
