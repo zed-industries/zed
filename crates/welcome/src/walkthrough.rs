@@ -19,9 +19,8 @@ use workspace::{
     item::{Item, ItemEvent},
     register_serializable_item,
 };
-use zed_actions::{ExtensionCategoryFilter, Extensions};
+use zed_actions::{ExtensionCategoryFilter, Extensions, OpenKeymap, OpenSettings};
 
-use crate::recent_projects;
 use crate::welcome_ui::theme_preview::ThemePreviewTile;
 use crate::welcome_ui::transparent_tabs::TransparentTabs;
 
@@ -39,7 +38,7 @@ pub fn init(cx: &mut App) {
 
 enum WalkthroughStep {
     ThemeStep { tab_selection: Entity<usize> },
-    SettingsStep { tab_selection: Entity<usize> },
+    SettingsStep,
     AiIntegrations,
     DataSharing,
     OpenProject { tab_selection: Entity<usize> },
@@ -143,9 +142,7 @@ impl Walkthrough {
             WalkthroughStep::ThemeStep { tab_selection } => {
                 self.render_theme_step(tab_selection, window, cx)
             }
-            WalkthroughStep::SettingsStep { tab_selection } => {
-                self.render_settings_step(tab_selection, window, cx)
-            }
+            WalkthroughStep::SettingsStep => self.render_settings_step(window, cx),
             WalkthroughStep::AiIntegrations => self.render_ai_integrations_step(window, cx),
             WalkthroughStep::DataSharing => self.render_data_sharing_step(window, cx),
             WalkthroughStep::OpenProject { tab_selection } => {
@@ -181,7 +178,7 @@ impl Walkthrough {
                 cx,
             ),
 
-            WalkthroughStep::OpenProject => self.checkbox_section(
+            WalkthroughStep::OpenProject { .. } => self.checkbox_section(
                 ix,
                 "Open a Project",
                 "Pick a recent project you had open in another editor",
@@ -211,36 +208,42 @@ impl Walkthrough {
 
     fn render_settings_step(
         &self,
-        selected_tab: Entity<usize>,
-        _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
+        window: &mut Window,
+        cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         v_flex()
             .items_center()
             .justify_center()
-            .child({
-                let mut tabs = TransparentTabs::new(selected_tab);
-                for keymap in [
-                    "VS Code",
-                    "Atom",
-                    "Sublime",
-                    "Jetbrains",
-                    "Text Mate",
-                    "Emacs (beta)",
-                ] {
-                    tabs = tabs.tab(keymap, |_, _| todo!("set keymap setting"));
-                }
-                tabs
-            })
             .child(
-                Checkbox::new("vim-mode", todo!("current setting"))
-                    .on_click(|state, _, _| todo!("set setting")),
+                h_flex().children(
+                    [
+                        "VS Code",
+                        "Atom",
+                        "Sublime",
+                        "Jetbrains",
+                        "Text Mate",
+                        "Emacs (beta)",
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, name)| {
+                        Button::new(i, name)
+                        // TODO: styling from transparent_tabs and on-click from theme previews
+                    }),
+                ),
+            )
+            .child(
+                Checkbox::new("vim-mode", false.into()) // TODO: current setting
+                    .on_click(|state, _, _| {
+                        // TODO: set setting
+                    }),
             )
             .child(Button::new("extensions", "Browse extensions"))
             .when(cfg!(macos), |this| {
                 this.child(
                     h_flex()
                         .child(Button::new("install-cli", "Install cli"))
+                        // TODO: install on-click
                         .child("Install a `zed` binary that\ncan be run from the command line"),
                 )
             })
@@ -257,9 +260,27 @@ impl Walkthrough {
             )
             .child(h_flex().children([
                 // TODO: on click action dispatchers
-                Button::new("open-settings", "open settings"),
-                Button::new("open-keymap", "open keymap"),
-                Button::new("open-settings-docs", "open config docs"),
+                Button::new("open-settings", "open settings").on_click(cx.listener(
+                    |this, _, window, cx| {
+                        this.workspace
+                            .update(cx, |_workspace, cx| {
+                                window.dispatch_action(Box::new(OpenSettings), cx)
+                            })
+                            .ok();
+                    },
+                )),
+                Button::new("open-keymap", "open keymap").on_click(cx.listener(
+                    |this, _, window, cx| {
+                        this.workspace
+                            .update(cx, |_workspace, cx| {
+                                window.dispatch_action(Box::new(OpenKeymap), cx)
+                            })
+                            .ok();
+                    },
+                )),
+                Button::new("open-settings-docs", "open config docs").on_click(|_, _window, cx| {
+                    cx.open_url("https://zed.dev/docs/configuring-zed");
+                }),
             ]))
             .into_any()
     }
@@ -366,30 +387,34 @@ impl Walkthrough {
 
     fn render_open_project_step(
         &self,
-        tab_selection: Entity<usize>,
+        tab_selection: &Entity<usize>,
         _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        let mut recents = BTreeMap::new();
-        let fs = todo!();
-        if let Some(projects) = recent_projects::get_vscode_projects(fs).await {
-            if !projects.is_empty() {
-                recents.insert("vscode", projects);
-            }
-        }
-        if let Some(projects) = recent_projects::get_neovim_projects(fs).await {
-            if !projects.is_empty() {
-                recents.insert("neovim", projects);
-            }
-        }
-        let project_list = |projects| div();
-        if !recents.is_empty() {
-            let mut tabs = TransparentTabs::new(tab_selection.clone());
-            for (name, projects) in recents.into_iter() {
-                tabs = tabs.tab(name, |_, _| project_list(projects))
-            }
-        }
-        div().size_20().bg(gpui::red()).into_any()
+        // let mut recents = BTreeMap::new();
+        // let fs = todo!();
+        // if let Some(projects) = recent_projects::get_vscode_projects(fs).await {
+        //     if !projects.is_empty() {
+        //         recents.insert("vscode", projects);
+        //     }
+        // }
+        // if let Some(projects) = recent_projects::get_neovim_projects(fs).await {
+        //     if !projects.is_empty() {
+        //         recents.insert("neovim", projects);
+        //     }
+        // }
+        // let project_list = |projects| div();
+        // if !recents.is_empty() {
+        //     let mut tabs = TransparentTabs::new(tab_selection.clone());
+        //     for (name, projects) in recents.into_iter() {
+        //         tabs = tabs.tab(name, |_, _| project_list(projects))
+        //     }
+        //     tabs.into_any_element()
+        // } else {
+        //     "No Recent projects found".into_any()
+        // }
+        // TODO: add "open project", "connect to remote host", and "new file" buttons
+        "".into_any()
     }
 }
 

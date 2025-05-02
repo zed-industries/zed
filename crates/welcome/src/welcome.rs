@@ -23,7 +23,7 @@ pub use multibuffer_hint::*;
 mod base_keymap_picker;
 mod base_keymap_setting;
 mod multibuffer_hint;
-mod recent_projects;
+// mod recent_projects;
 mod walkthrough;
 mod welcome_ui;
 
