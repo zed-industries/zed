@@ -19,9 +19,28 @@ pub struct ToolPicker {
     picker: Entity<Picker<ToolPickerDelegate>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ToolPickerMode {
+    BuiltinTools,
+    McpTools,
+}
+
 impl ToolPicker {
-    pub fn new(delegate: ToolPickerDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn builtin_tools(
+        delegate: ToolPickerDelegate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        Self { picker }
+    }
+
+    pub fn mcp_tools(
+        delegate: ToolPickerDelegate,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let picker = cx.new(|cx| Picker::list(delegate, window, cx).modal(false));
         Self { picker }
     }
 }
@@ -41,24 +60,40 @@ impl Render for ToolPicker {
 }
 
 #[derive(Debug, Clone)]
-pub struct ToolEntry {
-    pub name: Arc<str>,
-    pub source: ToolSource,
+pub enum PickerItem {
+    Tool {
+        server_id: Option<Arc<str>>,
+        name: Arc<str>,
+    },
+    ContextServer {
+        server_id: Arc<str>,
+    },
+}
+
+impl PickerItem {
+    pub fn name(&self) -> &str {
+        match self {
+            PickerItem::ContextServer { server_id, .. } => server_id.as_ref(),
+            PickerItem::Tool { name, .. } => name.as_ref(),
+        }
+    }
 }
 
 pub struct ToolPickerDelegate {
     tool_picker: WeakEntity<ToolPicker>,
     thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
-    tools: Vec<ToolEntry>,
+    items: Vec<PickerItem>,
     profile_id: AgentProfileId,
     profile: AgentProfile,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    mode: ToolPickerMode,
 }
 
 impl ToolPickerDelegate {
     pub fn new(
+        mode: ToolPickerMode,
         fs: Arc<dyn Fs>,
         tool_set: Entity<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
@@ -66,30 +101,57 @@ impl ToolPickerDelegate {
         profile: AgentProfile,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
-        let mut tool_entries = Vec::new();
-
-        for (source, tools) in tool_set.read(cx).tools_by_source(cx) {
-            tool_entries.extend(tools.into_iter().map(|tool| ToolEntry {
-                name: tool.name().into(),
-                source: source.clone(),
-            }));
-        }
+        let items = Self::resolve_items(mode, &tool_set, cx);
 
         Self {
             tool_picker: cx.entity().downgrade(),
             thread_store,
             fs,
-            tools: tool_entries,
+            items,
             profile_id,
             profile,
             matches: Vec::new(),
             selected_index: 0,
+            mode,
         }
+    }
+
+    fn resolve_items(
+        mode: ToolPickerMode,
+        tool_set: &Entity<ToolWorkingSet>,
+        cx: &mut App,
+    ) -> Vec<PickerItem> {
+        let mut items = Vec::new();
+        for (source, tools) in tool_set.read(cx).tools_by_source(cx) {
+            match source {
+                ToolSource::Native => {
+                    if mode == ToolPickerMode::BuiltinTools {
+                        items.extend(tools.into_iter().map(|tool| PickerItem::Tool {
+                            name: tool.name().into(),
+                            server_id: None,
+                        }));
+                    }
+                }
+                ToolSource::ContextServer { id } => {
+                    if mode == ToolPickerMode::McpTools {
+                        let server_id: Arc<str> = id.clone().into();
+                        items.push(PickerItem::ContextServer {
+                            server_id: server_id.clone(),
+                        });
+                        items.extend(tools.into_iter().map(|tool| PickerItem::Tool {
+                            name: tool.name().into(),
+                            server_id: Some(server_id.clone()),
+                        }));
+                    }
+                }
+            }
+        }
+        items
     }
 }
 
 impl PickerDelegate for ToolPickerDelegate {
-    type ListItem = ListItem;
+    type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -108,8 +170,26 @@ impl PickerDelegate for ToolPickerDelegate {
         self.selected_index = ix;
     }
 
+    fn can_select(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        let item_match = &self.matches[ix];
+        let item = &self.items[item_match.candidate_id];
+        match item {
+            PickerItem::Tool { .. } => true,
+            PickerItem::ContextServer { .. } => false,
+        }
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search tools…".into()
+        match self.mode {
+            ToolPickerMode::BuiltinTools => "Search built-in tools…",
+            ToolPickerMode::McpTools => "Search MCP servers…",
+        }
+        .into()
     }
 
     fn update_matches(
@@ -120,10 +200,10 @@ impl PickerDelegate for ToolPickerDelegate {
     ) -> Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self
-            .tools
+            .items
             .iter()
             .enumerate()
-            .map(|(id, profile)| StringMatchCandidate::new(id, profile.name.as_ref()))
+            .map(|(id, item)| StringMatchCandidate::new(id, item.name()))
             .collect::<Vec<_>>();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -168,24 +248,21 @@ impl PickerDelegate for ToolPickerDelegate {
         }
 
         let candidate_id = self.matches[self.selected_index].candidate_id;
-        let tool = &self.tools[candidate_id];
+        let item = &self.items[candidate_id];
 
-        let is_enabled = match &tool.source {
-            ToolSource::Native => {
-                let is_enabled = self.profile.tools.entry(tool.name.clone()).or_default();
-                *is_enabled = !*is_enabled;
-                *is_enabled
-            }
-            ToolSource::ContextServer { id } => {
-                let preset = self
-                    .profile
-                    .context_servers
-                    .entry(id.clone().into())
-                    .or_default();
-                let is_enabled = preset.tools.entry(tool.name.clone()).or_default();
-                *is_enabled = !*is_enabled;
-                *is_enabled
-            }
+        let PickerItem::Tool {
+            name: tool_name,
+            server_id,
+        } = item
+        else {
+            return;
+        };
+
+        let is_currently_enabled = if let Some(server_id) = server_id.clone() {
+            let preset = self.profile.context_servers.entry(server_id).or_default();
+            *preset.tools.entry(tool_name.clone()).or_default()
+        } else {
+            *self.profile.tools.entry(tool_name.clone()).or_default()
         };
 
         let active_profile_id = &AssistantSettings::get_global(cx).default_profile;
@@ -200,7 +277,9 @@ impl PickerDelegate for ToolPickerDelegate {
         update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
             let default_profile = self.profile.clone();
-            let tool = tool.clone();
+            let server_id = server_id.clone();
+            let tool_name = tool_name.clone();
+
             move |settings: &mut AssistantSettingsContent, _cx| {
                 settings
                     .v2_setting(|v2_settings| {
@@ -228,17 +307,11 @@ impl PickerDelegate for ToolPickerDelegate {
                                         .collect(),
                                 });
 
-                        match tool.source {
-                            ToolSource::Native => {
-                                *profile.tools.entry(tool.name).or_default() = is_enabled;
-                            }
-                            ToolSource::ContextServer { id } => {
-                                let preset = profile
-                                    .context_servers
-                                    .entry(id.clone().into())
-                                    .or_default();
-                                *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
-                            }
+                        if let Some(server_id) = server_id {
+                            let preset = profile.context_servers.entry(server_id).or_default();
+                            *preset.tools.entry(tool_name).or_default() = !is_currently_enabled;
+                        } else {
+                            *profile.tools.entry(tool_name).or_default() = !is_currently_enabled;
                         }
 
                         Ok(())
@@ -259,45 +332,58 @@ impl PickerDelegate for ToolPickerDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let tool_match = &self.matches[ix];
-        let tool = &self.tools[tool_match.candidate_id];
+        let item_match = &self.matches[ix];
+        let item = &self.items[item_match.candidate_id];
 
-        let is_enabled = match &tool.source {
-            ToolSource::Native => self.profile.tools.get(&tool.name).copied().unwrap_or(false),
-            ToolSource::ContextServer { id } => self
-                .profile
-                .context_servers
-                .get(id.as_ref())
-                .and_then(|preset| preset.tools.get(&tool.name))
-                .copied()
-                .unwrap_or(self.profile.enable_all_context_servers),
-        };
+        match item {
+            PickerItem::ContextServer { server_id, .. } => Some(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .when(ix > 1, |this| {
+                        this.mt_1()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
+                    .child(
+                        Label::new(server_id)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element(),
+            ),
+            PickerItem::Tool { name, server_id } => {
+                let is_enabled = if let Some(server_id) = server_id {
+                    self.profile
+                        .context_servers
+                        .get(server_id.as_ref())
+                        .and_then(|preset| preset.tools.get(name))
+                        .copied()
+                        .unwrap_or(self.profile.enable_all_context_servers)
+                } else {
+                    self.profile.tools.get(name).copied().unwrap_or(false)
+                };
 
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .gap_2()
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
                         .child(HighlightedLabel::new(
-                            tool_match.string.clone(),
-                            tool_match.positions.clone(),
+                            item_match.string.clone(),
+                            item_match.positions.clone(),
                         ))
-                        .map(|parent| match &tool.source {
-                            ToolSource::Native => parent,
-                            ToolSource::ContextServer { id } => parent
-                                .child(Label::new(id).size(LabelSize::XSmall).color(Color::Muted)),
-                        }),
+                        .end_slot::<Icon>(is_enabled.then(|| {
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success)
+                        }))
+                        .into_any_element(),
                 )
-                .end_slot::<Icon>(is_enabled.then(|| {
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Success)
-                })),
-        )
+            }
+        }
     }
 }
