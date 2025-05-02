@@ -27,7 +27,9 @@ use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
 use crate::llm::db::subscription_usage_meter::CompletionMode;
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT,
+};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{AppState, Cents, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
@@ -1257,8 +1259,21 @@ async fn get_current_usage(
         SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
     };
 
+    let feature_flags = app.db.get_user_flags(user.id).await?;
+    let has_extended_trial = feature_flags
+        .iter()
+        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+
     let model_requests_limit = match plan.model_requests_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == zed_llm_client::Plan::ZedProTrial && has_extended_trial {
+                1_000
+            } else {
+                limit
+            };
+
+            Some(limit)
+        }
         zed_llm_client::UsageLimit::Unlimited => None,
     };
     let edit_prediction_limit = match plan.edit_predictions_limit() {
