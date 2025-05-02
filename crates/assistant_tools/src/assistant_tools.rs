@@ -34,7 +34,7 @@ use assistant_settings::AssistantSettings;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
 use feature_flags::{AgentStreamEditsFeatureFlag, FeatureFlagAppExt};
-use gpui::App;
+use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
@@ -101,24 +101,29 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     cx.observe_global::<SettingsStore>(register_edit_file_tool)
         .detach();
 
+    register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
         move |registry, event, cx| match event {
             language_model::Event::DefaultModelChanged => {
-                let using_zed_provider = registry
-                    .read(cx)
-                    .default_model()
-                    .map_or(false, |default| default.is_provided_by_zed());
-                if using_zed_provider {
-                    ToolRegistry::global(cx).register_tool(WebSearchTool);
-                } else {
-                    ToolRegistry::global(cx).unregister_tool(WebSearchTool);
-                }
+                register_web_search_tool(&registry, cx);
             }
             _ => {}
         },
     )
     .detach();
+}
+
+fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
+    let using_zed_provider = registry
+        .read(cx)
+        .default_model()
+        .map_or(false, |default| default.is_provided_by_zed());
+    if using_zed_provider {
+        ToolRegistry::global(cx).register_tool(WebSearchTool);
+    } else {
+        ToolRegistry::global(cx).unregister_tool(WebSearchTool);
+    }
 }
 
 fn register_edit_file_tool(cx: &mut App) {
