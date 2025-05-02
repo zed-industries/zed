@@ -97,7 +97,7 @@ impl Keystroke {
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(
         source: &str,
-        mapper: &dyn PlatformKeyboardMapper,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystroke = Keystroke::parse_keystroke_components(source, '-')?;
         // Create error once for reuse
@@ -111,20 +111,11 @@ impl Keystroke {
         }
         if keystroke.key.starts_with('[') && keystroke.key.ends_with(']') {
             let scan_code = ScanCode::parse(&keystroke.key).ok_or_else(error)?;
-            keystroke.key = mapper.scan_code_to_key(scan_code).map_err(|_| error())?;
+            keystroke.key = keyboard_mapper
+                .scan_code_to_key(scan_code)
+                .map_err(|_| error())?;
         }
-        if keystroke.modifiers.shift
-            && !is_immutable_key(&keystroke.key)
-            && !is_alphabetic_key(&keystroke.key)
-            && keystroke.key.len() == 1
-        {
-            if let Ok(shifted_key) = mapper.get_shifted_key(&keystroke.key) {
-                keystroke.modifiers.shift = false;
-                keystroke.key = shifted_key;
-            }
-        }
-
-        Ok(keystroke)
+        Ok(keystroke.to_gpui_style(keyboard_mapper))
     }
 
     /// Parses a keystroke string representation into a `Keystroke` struct using a specified separator character.
@@ -232,6 +223,22 @@ impl Keystroke {
             key,
             key_char,
         })
+    }
+
+    /// Converts this keystroke to a GPUI style keystroke.
+    /// For example, `ctrl-shift-[` becomes `ctrl-{`, `ctrl-shift-=` becomes `ctrl-+`.
+    pub fn to_gpui_style(mut self, keyboard_mapper: &dyn PlatformKeyboardMapper) -> Keystroke {
+        if self.modifiers.shift
+            && !is_immutable_key(&self.key)
+            && !is_alphabetic_key(&self.key)
+            && self.key.len() == 1
+        {
+            if let Ok(shifted_key) = keyboard_mapper.get_shifted_key(&self.key) {
+                self.modifiers.shift = false;
+                self.key = shifted_key;
+            }
+        }
+        self
     }
 
     /// Produces a representation of this key that Parse can understand.

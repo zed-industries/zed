@@ -136,6 +136,14 @@ impl VsCodeShortcuts {
             {
                 "key": "ctrl+shift+=",
                 "command": "menu::SelectFirst",
+            },
+            {
+                "key": "ctrl+shift+[BracketLeft]",
+                "command": "menu::SelectFirst",
+            },
+            {
+                "key": "ctrl+shift+oem_3",
+                "command": "menu::SelectFirst",
             }
         ]
         "#;
@@ -147,14 +155,20 @@ impl VsCodeShortcuts {
         })
     }
 
-    pub fn parse_shortcuts(&self) -> (KeymapFile, Vec<(String, String)>) {
+    pub fn parse_shortcuts(
+        &self,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) -> (KeymapFile, Vec<(String, String)>) {
         let mut result = KeymapFile::default();
         let mut skipped = Vec::new();
         for content in self.content.iter() {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
-            let Some(keystroke) = Keystroke::parse_keystroke_components(shortcut, '+').ok() else {
+            let Some(keystroke) = Keystroke::parse_keystroke_components(shortcut, '+')
+                .ok()
+                .map(|keystroke| keystroke.to_gpui_style(keyboard_mapper))
+            else {
                 skipped.push((
                     shortcut.to_string(),
                     "Unable to parse keystroke".to_string(),
@@ -223,6 +237,8 @@ fn vscode_shortcut_command_to_zed_action(
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestKeyboardMapper;
+
     use crate::KeymapFile;
 
     use super::VsCodeShortcuts;
@@ -239,6 +255,7 @@ mod tests {
 
     #[test]
     fn test_load_vscode_shortcuts() {
+        let keyboard_mapper = TestKeyboardMapper::new();
         let content = r#"
         [
             {
@@ -261,7 +278,7 @@ mod tests {
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 4);
-        let (keymap, skipped) = shortcuts.parse_shortcuts();
+        let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
         let bindings = collect_bindings(&keymap);
         assert_eq!(skipped.len(), 0);
         assert_eq!(
@@ -269,10 +286,8 @@ mod tests {
             vec![
                 "ctrl-[bracketleft]",
                 "shift-[bracketright]",
-                // "ctrl-alt-_",
-                "ctrl-alt-shift--",
-                // "$"
-                "shift-4"
+                "ctrl-alt-_",
+                "$"
             ]
         );
         // assert_eq!(
@@ -297,7 +312,7 @@ mod tests {
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
         assert_eq!(shortcuts.content.len(), 2);
-        let (keymap, skipped) = shortcuts.parse_shortcuts();
+        let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
         assert_eq!(skipped.len(), 0);
     }
 }
