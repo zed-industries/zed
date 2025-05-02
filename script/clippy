@@ -10,7 +10,7 @@ set -x
 "${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings
 
 # If local, run cargo machete too.
-if [[ ! -v GITHUB_ACTIONS ]]; then
+if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
     which cargo-machete >/dev/null 2>&1 || exit 0
     cargo machete
 fi
