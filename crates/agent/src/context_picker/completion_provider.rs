@@ -1005,7 +1005,7 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{AnchorRangeExt, MultiBuffer};
+    use editor::AnchorRangeExt;
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
