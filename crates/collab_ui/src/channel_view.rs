@@ -22,7 +22,7 @@ use std::{
 };
 use ui::prelude::*;
 use util::ResultExt;
-use workspace::item::TabContentParams;
+use workspace::{CollaboratorId, item::TabContentParams};
 use workspace::{
     ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ItemHandle},
@@ -656,13 +656,12 @@ impl FollowableItem for ChannelView {
 
     fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_leader_id(leader_peer_id, window, cx)
-        })
+        self.editor
+            .update(cx, |editor, cx| editor.set_leader_id(leader_id, window, cx))
     }
 
     fn is_project_item(&self, _window: &Window, _cx: &App) -> bool {

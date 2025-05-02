@@ -3980,11 +3980,13 @@ impl Workspace {
 
     pub fn unfollow(
         &mut self,
-        leader_id: CollaboratorId,
+        leader_id: impl Into<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         cx.notify();
+
+        let leader_id = leader_id.into();
         let state = self.follower_states.remove(&leader_id)?;
         for (_, item) in state.items_by_leader_view_id {
             item.view.set_leader_id(None, window, cx);
@@ -4006,8 +4008,8 @@ impl Workspace {
         Some(())
     }
 
-    pub fn is_being_followed(&self, id: CollaboratorId) -> bool {
-        self.follower_states.contains_key(&id)
+    pub fn is_being_followed(&self, id: impl Into<CollaboratorId>) -> bool {
+        self.follower_states.contains_key(&id.into())
     }
 
     fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

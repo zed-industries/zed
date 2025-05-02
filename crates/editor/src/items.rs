@@ -23,7 +23,7 @@ use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
-use rpc::proto::{self, PeerId, update_view};
+use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -39,7 +39,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -172,12 +172,12 @@ impl FollowableItem for Editor {
 
     fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leader_peer_id = leader_peer_id;
-        if self.leader_peer_id.is_some() {
+        self.leader_id = leader_id;
+        if self.leader_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
