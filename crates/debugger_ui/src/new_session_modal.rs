@@ -13,8 +13,9 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
+use session_modes::{AttachMode, DebugScenarioDelegate, LaunchMode};
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest, TaskContext};
+use task::{DebugScenario, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -123,7 +124,7 @@ impl NewSessionModal {
 
     fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(debugger) = self.debugger.as_ref() else {
-            // todo: show in UI.
+            // todo(debugger): show in UI.
             log::error!("No debugger selected");
             return;
         };
@@ -141,10 +142,19 @@ impl NewSessionModal {
         };
 
         let debug_panel = self.debug_panel.clone();
+        let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |this, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
+
+            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+
             debug_panel.update_in(cx, |debug_panel, window, cx| {
-                debug_panel.start_session(config, TaskContext::default(), None, window, cx)
+                debug_panel.start_session(config, task_context, None, window, cx)
             })?;
             this.update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -312,94 +322,6 @@ impl NewSessionModal {
     }
 }
 
-#[derive(Clone)]
-struct LaunchMode {
-    program: Entity<Editor>,
-    cwd: Entity<Editor>,
-}
-
-impl LaunchMode {
-    fn new(
-        past_launch_config: Option<LaunchRequest>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        let (past_program, past_cwd) = past_launch_config
-            .map(|config| (Some(config.program), config.cwd))
-            .unwrap_or_else(|| (None, None));
-
-        let program = cx.new(|cx| Editor::single_line(window, cx));
-        program.update(cx, |this, cx| {
-            this.set_placeholder_text("Program path", cx);
-
-            if let Some(past_program) = past_program {
-                this.set_text(past_program, window, cx);
-            };
-        });
-        let cwd = cx.new(|cx| Editor::single_line(window, cx));
-        cwd.update(cx, |this, cx| {
-            this.set_placeholder_text("Working Directory", cx);
-            if let Some(past_cwd) = past_cwd {
-                this.set_text(past_cwd.to_string_lossy(), window, cx);
-            };
-        });
-        cx.new(|_| Self { program, cwd })
-    }
-
-    fn debug_task(&self, cx: &App) -> task::LaunchRequest {
-        let path = self.cwd.read(cx).text(cx);
-        task::LaunchRequest {
-            program: self.program.read(cx).text(cx),
-            cwd: path.is_empty().not().then(|| PathBuf::from(path)),
-            args: Default::default(),
-            env: Default::default(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct AttachMode {
-    definition: DebugTaskDefinition,
-    attach_picker: Entity<AttachModal>,
-}
-
-impl AttachMode {
-    fn new(
-        debugger: Option<SharedString>,
-        workspace: Entity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<NewSessionModal>,
-    ) -> Entity<Self> {
-        let definition = DebugTaskDefinition {
-            adapter: debugger.clone().unwrap_or_default(),
-            label: "Attach New Session Setup".into(),
-            request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
-            initialize_args: None,
-            tcp_connection: None,
-            stop_on_entry: Some(false),
-        };
-        let attach_picker = cx.new(|cx| {
-            let modal = AttachModal::new(definition.clone(), workspace, false, window, cx);
-            window.focus(&modal.focus_handle(cx));
-
-            modal
-        });
-
-        cx.subscribe(&attach_picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        })
-        .detach();
-
-        cx.new(|_| Self {
-            definition,
-            attach_picker,
-        })
-    }
-    fn debug_task(&self) -> task::AttachRequest {
-        task::AttachRequest { process_id: None }
-    }
-}
-
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 static SELECT_SCENARIO_LABEL: SharedString = SharedString::new_static("Select Profile");
 
@@ -461,6 +383,23 @@ impl NewSessionMode {
 
         picker.focus_handle(cx).focus(window);
         NewSessionMode::Scenario(picker)
+    }
+
+    fn attach(
+        debugger: Option<SharedString>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<NewSessionModal>,
+    ) -> Self {
+        Self::Attach(AttachMode::new(debugger, workspace, window, cx))
+    }
+
+    fn launch(
+        past_launch_config: Option<LaunchRequest>,
+        window: &mut Window,
+        cx: &mut Context<NewSessionModal>,
+    ) -> Self {
+        Self::Launch(LaunchMode::new(past_launch_config, window, cx))
     }
 }
 
@@ -526,23 +465,6 @@ impl RenderOnce for NewSessionMode {
     }
 }
 
-impl NewSessionMode {
-    fn attach(
-        debugger: Option<SharedString>,
-        workspace: Entity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<NewSessionModal>,
-    ) -> Self {
-        Self::Attach(AttachMode::new(debugger, workspace, window, cx))
-    }
-    fn launch(
-        past_launch_config: Option<LaunchRequest>,
-        window: &mut Window,
-        cx: &mut Context<NewSessionModal>,
-    ) -> Self {
-        Self::Launch(LaunchMode::new(past_launch_config, window, cx))
-    }
-}
 fn render_editor(editor: &Entity<Editor>, window: &mut Window, cx: &App) -> impl IntoElement {
     let settings = ThemeSettings::get_global(cx);
     let theme = cx.theme();
@@ -733,216 +655,315 @@ impl Focusable for NewSessionModal {
 
 impl ModalView for NewSessionModal {}
 
-struct DebugScenarioDelegate {
-    task_store: Entity<TaskStore>,
-    candidates: Option<Vec<(TaskSourceKind, DebugScenario)>>,
-    selected_index: usize,
-    matches: Vec<StringMatch>,
-    prompt: String,
-    debug_panel: WeakEntity<DebugPanel>,
-    workspace: WeakEntity<Workspace>,
-}
+// This module makes sure that the modes setup the correct subscriptions whenever they're created
+mod session_modes {
+    use super::*;
 
-impl DebugScenarioDelegate {
-    fn new(
-        debug_panel: WeakEntity<DebugPanel>,
-        workspace: WeakEntity<Workspace>,
-        task_store: Entity<TaskStore>,
-    ) -> Self {
-        Self {
-            task_store,
-            candidates: None,
-            selected_index: 0,
-            matches: Vec::new(),
-            prompt: String::new(),
-            debug_panel,
-            workspace,
+    #[derive(Clone)]
+    #[non_exhaustive]
+    pub(super) struct LaunchMode {
+        pub(super) program: Entity<Editor>,
+        pub(super) cwd: Entity<Editor>,
+    }
+
+    impl LaunchMode {
+        pub(super) fn new(
+            past_launch_config: Option<LaunchRequest>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Entity<Self> {
+            let (past_program, past_cwd) = past_launch_config
+                .map(|config| (Some(config.program), config.cwd))
+                .unwrap_or_else(|| (None, None));
+
+            let program = cx.new(|cx| Editor::single_line(window, cx));
+            program.update(cx, |this, cx| {
+                this.set_placeholder_text("Program path", cx);
+
+                if let Some(past_program) = past_program {
+                    this.set_text(past_program, window, cx);
+                };
+            });
+            let cwd = cx.new(|cx| Editor::single_line(window, cx));
+            cwd.update(cx, |this, cx| {
+                this.set_placeholder_text("Working Directory", cx);
+                if let Some(past_cwd) = past_cwd {
+                    this.set_text(past_cwd.to_string_lossy(), window, cx);
+                };
+            });
+            cx.new(|_| Self { program, cwd })
+        }
+
+        pub(super) fn debug_task(&self, cx: &App) -> task::LaunchRequest {
+            let path = self.cwd.read(cx).text(cx);
+            task::LaunchRequest {
+                program: self.program.read(cx).text(cx),
+                cwd: path.is_empty().not().then(|| PathBuf::from(path)),
+                args: Default::default(),
+                env: Default::default(),
+            }
         }
     }
-}
 
-impl PickerDelegate for DebugScenarioDelegate {
-    type ListItem = ui::ListItem;
-
-    fn match_count(&self) -> usize {
-        self.matches.len()
+    #[derive(Clone)]
+    #[non_exhaustive]
+    pub(super) struct AttachMode {
+        pub(super) definition: DebugTaskDefinition,
+        pub(super) attach_picker: Entity<AttachModal>,
     }
 
-    fn selected_index(&self) -> usize {
-        self.selected_index
+    impl AttachMode {
+        pub(super) fn new(
+            debugger: Option<SharedString>,
+            workspace: Entity<Workspace>,
+            window: &mut Window,
+            cx: &mut Context<NewSessionModal>,
+        ) -> Entity<Self> {
+            let definition = DebugTaskDefinition {
+                adapter: debugger.clone().unwrap_or_default(),
+                label: "Attach New Session Setup".into(),
+                request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
+                initialize_args: None,
+                tcp_connection: None,
+                stop_on_entry: Some(false),
+            };
+            let attach_picker = cx.new(|cx| {
+                let modal = AttachModal::new(definition.clone(), workspace, false, window, cx);
+                window.focus(&modal.focus_handle(cx));
+
+                modal
+            });
+
+            cx.new(|_| Self {
+                definition,
+                attach_picker,
+            })
+        }
+        pub(super) fn debug_task(&self) -> task::AttachRequest {
+            task::AttachRequest { process_id: None }
+        }
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<picker::Picker<Self>>,
-    ) {
-        self.selected_index = ix;
+    pub(super) struct DebugScenarioDelegate {
+        task_store: Entity<TaskStore>,
+        candidates: Option<Vec<(TaskSourceKind, DebugScenario)>>,
+        selected_index: usize,
+        matches: Vec<StringMatch>,
+        prompt: String,
+        debug_panel: WeakEntity<DebugPanel>,
+        workspace: WeakEntity<Workspace>,
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
-        "".into()
+    impl DebugScenarioDelegate {
+        pub(super) fn new(
+            debug_panel: WeakEntity<DebugPanel>,
+            workspace: WeakEntity<Workspace>,
+            task_store: Entity<TaskStore>,
+        ) -> Self {
+            Self {
+                task_store,
+                candidates: None,
+                selected_index: 0,
+                matches: Vec::new(),
+                prompt: String::new(),
+                debug_panel,
+                workspace,
+            }
+        }
     }
 
-    fn update_matches(
-        &mut self,
-        query: String,
-        window: &mut Window,
-        cx: &mut Context<picker::Picker<Self>>,
-    ) -> gpui::Task<()> {
-        let candidates: Vec<_> = match &self.candidates {
-            Some(candidates) => candidates
-                .into_iter()
-                .enumerate()
-                .map(|(index, (_, candidate))| {
-                    StringMatchCandidate::new(index, &candidate.label.to_string())
-                })
-                .collect(),
-            None => {
-                let worktree_ids: Vec<_> = self
-                    .workspace
-                    .update(cx, |this, cx| {
-                        this.visible_worktrees(cx)
-                            .map(|tree| tree.read(cx).id())
-                            .collect()
-                    })
-                    .ok()
-                    .unwrap_or_default();
+    impl PickerDelegate for DebugScenarioDelegate {
+        type ListItem = ui::ListItem;
 
-                let scenarios: Vec<_> = self
-                    .task_store
-                    .read(cx)
-                    .task_inventory()
-                    .map(|item| item.read(cx).list_debug_scenarios(worktree_ids.into_iter()))
-                    .unwrap_or_default();
+        fn should_dismiss(&self) -> bool {
+            false
+        }
 
-                self.candidates = Some(scenarios.clone());
+        fn match_count(&self) -> usize {
+            self.matches.len()
+        }
 
-                scenarios
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<picker::Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
+            "".into()
+        }
+
+        fn update_matches(
+            &mut self,
+            query: String,
+            window: &mut Window,
+            cx: &mut Context<picker::Picker<Self>>,
+        ) -> gpui::Task<()> {
+            let candidates: Vec<_> = match &self.candidates {
+                Some(candidates) => candidates
                     .into_iter()
                     .enumerate()
                     .map(|(index, (_, candidate))| {
                         StringMatchCandidate::new(index, &candidate.label.to_string())
                     })
-                    .collect()
-            }
-        };
+                    .collect(),
+                None => {
+                    let worktree_ids: Vec<_> = self
+                        .workspace
+                        .update(cx, |this, cx| {
+                            this.visible_worktrees(cx)
+                                .map(|tree| tree.read(cx).id())
+                                .collect()
+                        })
+                        .ok()
+                        .unwrap_or_default();
 
-        cx.spawn_in(window, async move |picker, cx| {
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                true,
-                1000,
-                &Default::default(),
-                cx.background_executor().clone(),
-            )
-            .await;
+                    let scenarios: Vec<_> = self
+                        .task_store
+                        .read(cx)
+                        .task_inventory()
+                        .map(|item| item.read(cx).list_debug_scenarios(worktree_ids.into_iter()))
+                        .unwrap_or_default();
 
-            picker
-                .update(cx, |picker, _| {
-                    let delegate = &mut picker.delegate;
+                    self.candidates = Some(scenarios.clone());
 
-                    delegate.matches = matches;
-                    delegate.prompt = query;
+                    scenarios
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (_, candidate))| {
+                            StringMatchCandidate::new(index, &candidate.label.to_string())
+                        })
+                        .collect()
+                }
+            };
 
-                    if delegate.matches.is_empty() {
-                        delegate.selected_index = 0;
-                    } else {
-                        delegate.selected_index =
-                            delegate.selected_index.min(delegate.matches.len() - 1);
-                    }
+            cx.spawn_in(window, async move |picker, cx| {
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    true,
+                    1000,
+                    &Default::default(),
+                    cx.background_executor().clone(),
+                )
+                .await;
+
+                picker
+                    .update(cx, |picker, _| {
+                        let delegate = &mut picker.delegate;
+
+                        delegate.matches = matches;
+                        delegate.prompt = query;
+
+                        if delegate.matches.is_empty() {
+                            delegate.selected_index = 0;
+                        } else {
+                            delegate.selected_index =
+                                delegate.selected_index.min(delegate.matches.len() - 1);
+                        }
+                    })
+                    .log_err();
+            })
+        }
+
+        fn confirm(
+            &mut self,
+            _: bool,
+            window: &mut Window,
+            cx: &mut Context<picker::Picker<Self>>,
+        ) {
+            let debug_scenario =
+                self.matches
+                    .get(self.selected_index())
+                    .and_then(|match_candidate| {
+                        self.candidates
+                            .as_ref()
+                            .map(|candidates| candidates[match_candidate.candidate_id].clone())
+                    });
+
+            let Some((task_source_kind, debug_scenario)) = debug_scenario else {
+                return;
+            };
+
+            let task_context = if let TaskSourceKind::Worktree {
+                id: worktree_id,
+                directory_in_worktree: _,
+                id_base: _,
+            } = task_source_kind
+            {
+                let workspace = self.workspace.clone();
+
+                cx.spawn_in(window, async move |_, cx| {
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            tasks_ui::task_contexts(workspace, window, cx)
+                        })
+                        .ok()?
+                        .await
+                        .task_context_for_worktree_id(worktree_id)
+                        .cloned()
                 })
-                .log_err();
-        })
-    }
+            } else {
+                gpui::Task::ready(None)
+            };
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
-        let debug_scenario = self
-            .matches
-            .get(self.selected_index())
-            .and_then(|match_candidate| {
-                self.candidates
-                    .as_ref()
-                    .map(|candidates| candidates[match_candidate.candidate_id].clone())
-            });
+            cx.spawn_in(window, async move |this, cx| {
+                let task_context = task_context.await.unwrap_or_default();
 
-        let Some((task_source_kind, debug_scenario)) = debug_scenario else {
-            return;
-        };
+                this.update_in(cx, |this, window, cx| {
+                    this.delegate
+                        .debug_panel
+                        .update(cx, |panel, cx| {
+                            panel.start_session(debug_scenario, task_context, None, window, cx);
+                        })
+                        .ok();
 
-        let task_context = if let TaskSourceKind::Worktree {
-            id: worktree_id,
-            directory_in_worktree: _,
-            id_base: _,
-        } = task_source_kind
-        {
-            let workspace = self.workspace.clone();
-
-            cx.spawn_in(window, async move |_, cx| {
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        tasks_ui::task_contexts(workspace, window, cx)
-                    })
-                    .ok()?
-                    .await
-                    .task_context_for_worktree_id(worktree_id)
-                    .cloned()
+                    cx.emit(DismissEvent);
+                })
+                .ok();
             })
-        } else {
-            gpui::Task::ready(None)
-        };
+            .detach();
+        }
 
-        cx.spawn_in(window, async move |this, cx| {
-            let task_context = task_context.await.unwrap_or_default();
+        fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
+            cx.emit(DismissEvent);
+        }
 
-            this.update_in(cx, |this, window, cx| {
-                this.delegate
-                    .debug_panel
-                    .update(cx, |panel, cx| {
-                        panel.start_session(debug_scenario, task_context, None, window, cx);
-                    })
-                    .ok();
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            window: &mut Window,
+            cx: &mut Context<picker::Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            let hit = &self.matches[ix];
 
-                cx.emit(DismissEvent);
-            })
-            .ok();
-        })
-        .detach();
-    }
+            let highlighted_location = HighlightedMatch {
+                text: hit.string.clone(),
+                highlight_positions: hit.positions.clone(),
+                char_count: hit.string.chars().count(),
+                color: Color::Default,
+            };
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
-        cx.emit(DismissEvent);
-    }
+            let icon = Icon::new(IconName::FileTree)
+                .color(Color::Muted)
+                .size(ui::IconSize::Small);
 
-    fn render_match(
-        &self,
-        ix: usize,
-        selected: bool,
-        window: &mut Window,
-        cx: &mut Context<picker::Picker<Self>>,
-    ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
-
-        let highlighted_location = HighlightedMatch {
-            text: hit.string.clone(),
-            highlight_positions: hit.positions.clone(),
-            char_count: hit.string.chars().count(),
-            color: Color::Default,
-        };
-
-        let icon = Icon::new(IconName::Settings)
-            .color(Color::Muted)
-            .size(ui::IconSize::Small);
-
-        Some(
-            ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
-                .inset(true)
-                .start_slot::<Icon>(icon)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(highlighted_location.render(window, cx)),
-        )
+            Some(
+                ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
+                    .inset(true)
+                    .start_slot::<Icon>(icon)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(highlighted_location.render(window, cx)),
+            )
+        }
     }
 }
