@@ -21,6 +21,8 @@ mod dap_logger;
 #[cfg(test)]
 mod debugger_panel;
 #[cfg(test)]
+mod inline_values;
+#[cfg(test)]
 mod module_list;
 #[cfg(test)]
 mod stack_frame_list;

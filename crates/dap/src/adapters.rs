@@ -586,4 +586,25 @@ impl DebugAdapter for FakeAdapter {
     ) -> Result<DebugAdapterBinary> {
         unimplemented!("get installed binary");
     }
+
+    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
+        Some(Box::new(FakeInlineValueProvider))
+    }
+}
+
+struct FakeInlineValueProvider;
+
+impl InlineValueProvider for FakeInlineValueProvider {
+    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
+        variables
+            .into_iter()
+            .map(|(variable, range)| {
+                lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
+                    range,
+                    variable_name: Some(variable),
+                    case_sensitive_lookup: true,
+                })
+            })
+            .collect()
+    }
 }

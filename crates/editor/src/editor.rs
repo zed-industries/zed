@@ -4328,6 +4328,16 @@ impl Editor {
         self.inline_value_cache.enabled
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inline_value_inlays(&self, cx: &App) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .filter(|inlay| matches!(inlay.id, InlayId::DebuggerValue(_)))
+            .cloned()
+            .collect()
+    }
+
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
         if self.semantics_provider.is_none() || !self.mode.is_full() {
             return;
@@ -17670,7 +17680,7 @@ impl Editor {
         }
     }
 
-    fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
         };
