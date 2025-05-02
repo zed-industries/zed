@@ -445,6 +445,331 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         "workbench.action.debug.stop" => {
             action = ActionType::String("debugger::Stop");
         }
+        // crates/zed/src/zed.rs
+        // Missing:
+        // DebugElements, Hide, HideOthers, Minimize, OpenDefaultSettings, OpenProjectSettings, OpenProjectTasks, OpenProjectDebugTasks,
+        // OpenTasks, OpenDebugTasks, ResetDatabase, ShowAll, Zoom, TestPanic,
+        "workbench.action.toggleFullScreen" => {
+            action = ActionType::String("zed::ToggleFullScreen");
+        }
+        // crates/zeta/src/init.rs
+        // Missing: All
+
+        // crates/editor/src/actions.rs
+        // Missing:
+        // ComposeCompletion, ConfirmCompletion, DeleteToBeginningOfLine, ExpandExcerpts, ExpandExcerptsDown, ExpandExcerptsUp, HandleInput,
+        // MoveUpByLines, SelectDownByLines, SelectUpByLines, SpawnNearestTask, AcceptEditPrediction, AcceptPartialCopilotSuggestion,
+        // AcceptPartialEditPrediction, ApplyAllDiffHunks, ApplyDiffHunk, Cancel, CancelLanguageServerWork, ConfirmCompletionInsert,
+        // ConfirmCompletionReplace, ContextMenuFirst, ContextMenuLast, ContextMenuNext, ContextMenuPrevious, ConvertToKebabCase,
+        // ConvertToLowerCamelCase, ConvertToLowerCase, ConvertToOppositeCase, ConvertToSnakeCase, ConvertToTitleCase, ConvertToUpperCamelCase,
+        // ConvertToUpperCase, ConvertToRot13, ConvertToRot47, CopyAndTrim, CopyFileLocation, CopyHighlightJson, CopyFileName,
+        // CopyFileNameWithoutExtension, CopyPermalinkToLine, CutToEndOfLine, DeleteToEndOfLine, DeleteToNextSubwordEnd,
+        // DeleteToPreviousSubwordStart, DisplayCursorNames, DuplicateSelection, ExpandMacroRecursively, FindNextMatch, FindPreviousMatch,
+        // FoldFunctionBodies, FoldSelectedRanges, ToggleFoldRecursive, FormatSelections, GoToDeclarationSplit, GoToDiagnostic, GoToHunk,
+        // GoToPreviousHunk, GoToImplementationSplit, GoToNextChange, GoToPreviousChange, GoToPreviousDiagnostic, GoToTypeDefinitionSplit,
+        // HalfPageDown, HalfPageUp, InsertUuidV4, InsertUuidV7, KillRingCut, KillRingYank, MoveToEndOfParagraph, MoveToStartOfParagraph,
+        // MoveToStartOfExcerpt, MoveToStartOfNextExcerpt, MoveToEndOfExcerpt, MoveToEndOfPreviousExcerpt, Newline, NextEditPrediction,
+        // NextScreen, OpenContextMenu, OpenExcerpts, OpenExcerptsSplit, OpenProposedChangesEditor, OpenDocs, OpenPermalinkToLine,
+        // OpenSelectionsInMultibuffer, OpenUrl, AutoIndent, PreviousEditPrediction, RedoSelection, RestartLanguageServer, ReverseLines,
+        //
+        "acceptSelectedCodeAction" => {
+            // TODO: is this the right action?
+            action = ActionType::String("editor::ConfirmCodeAction");
+            context = Some("Editor && showing_code_actions");
+        }
+        "deleteWordLeft" => {
+            action = ActionType::String("editor::DeleteToPreviousWordStart");
+            context = Some("Editor");
+        }
+        "deleteWordRight" => {
+            action = ActionType::String("editor::DeleteToNextWordEnd");
+            context = Some("Editor");
+        }
+        "cursorPageDown" => {
+            action = ActionType::String("editor::MovePageDown");
+            context = Some("Editor");
+        }
+        "cursorPageUp" => {
+            action = ActionType::String("editor::MovePageUp");
+            context = Some("Editor");
+        }
+        "cursorHome" => {
+            action = ActionType::Other(
+                r#"["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }]"#,
+            );
+            context = Some("Editor");
+        }
+        "cursorEnd" => {
+            action =
+                ActionType::Other(r#"["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }]"#);
+            context = Some("Editor");
+        }
+        "editor.action.addSelectionToNextFindMatch" => {
+            action = ActionType::Other(r#"["editor::SelectNext", { "replace_newest": false }]"#);
+            context = Some("Editor");
+        }
+        "editor.action.moveSelectionToNextFindMatch" => {
+            action = ActionType::Other(r#"["editor::SelectNext", { "replace_newest": true }]"#);
+            context = Some("Editor");
+        }
+        "editor.action.addSelectionToPreviousFindMatch" => {
+            action =
+                ActionType::Other(r#"["editor::SelectPrevious", { "replace_newest": false }]"#);
+            context = Some("Editor");
+        }
+        "editor.action.moveSelectionToPreviousFindMatch" => {
+            action = ActionType::Other(r#"["editor::SelectPrevious", { "replace_newest": true }]"#);
+            context = Some("Editor");
+        }
+        "cursorHomeSelect" => {
+            action = ActionType::Other(
+                r#"["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }]"#,
+            );
+            context = Some("Editor");
+        }
+        "cursorEndSelect" => {
+            action = ActionType::Other(
+                r#"["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }]"#,
+            );
+            context = Some("Editor");
+        }
+        "editor.action.triggerSuggest" => {
+            action = ActionType::String("editor::ShowCompletions");
+            context = Some("Editor");
+        }
+        "editor.action.quickFix" => {
+            action = ActionType::String("editor::ToggleCodeActions");
+            context = Some("Editor");
+        }
+        "editor.action.commentLine" => {
+            action = ActionType::String("editor::ToggleComments");
+            context = Some("Editor");
+        }
+        "editor.foldLevel1" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 1]"#);
+            context = Some("Editor");
+        }
+        "editor.foldLevel2" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 2]"#);
+            context = Some("Editor");
+        }
+        "editor.foldLevel3" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 3]"#);
+            context = Some("Editor");
+        }
+        "editor.foldLevel4" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 4]"#);
+            context = Some("Editor");
+        }
+        "editor.foldLevel5" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 5]"#);
+            context = Some("Editor");
+        }
+        "editor.foldLevel6" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 6]"#);
+            context = Some("Editor");
+        }
+        "editor.foldLevel7" => {
+            action = ActionType::Other(r#"["editor::FoldAtLevel", 7]"#);
+            context = Some("Editor");
+        }
+        "editor.action.insertCursorAbove" => {
+            action = ActionType::String("editor::AddSelectionAbove");
+            context = Some("Editor");
+        }
+        "editor.action.insertCursorBelow" => {
+            action = ActionType::String("editor::AddSelectionBelow");
+            context = Some("Editor");
+        }
+        "deleteLeft" => {
+            action = ActionType::String("editor::Backspace");
+            context = Some("Editor");
+        }
+        "acceptRenameInput" => {
+            action = ActionType::String("editor::ConfirmRename");
+            context = Some("Editor && renaming");
+        }
+        "editor.action.clipboardCopyAction" => {
+            action = ActionType::String("editor::Copy");
+            context = Some("Editor");
+        }
+        "editor.action.clipboardCutAction" => {
+            action = ActionType::String("editor::Cut");
+            context = Some("Editor");
+        }
+        "deleteRight" => {
+            action = ActionType::String("editor::Delete");
+            context = Some("Editor");
+        }
+        "editor.action.deleteLines" => {
+            action = ActionType::String("editor::DeleteLine");
+            context = Some("Editor");
+        }
+        "editor.action.copyLinesDownAction" => {
+            action = ActionType::String("editor::DuplicateLineDown");
+            context = Some("Editor");
+        }
+        "editor.action.copyLinesUpAction" => {
+            action = ActionType::String("editor::DuplicateLineUp");
+            context = Some("Editor");
+        }
+        "references-view.findReferences" => {
+            action = ActionType::String("editor::FindAllReferences");
+            context = Some("Editor");
+        }
+        "editor.fold" => {
+            action = ActionType::String("editor::Fold");
+            context = Some("Editor");
+        }
+        "editor.foldAll" => {
+            action = ActionType::String("editor::FoldAll");
+            context = Some("Editor");
+        }
+        "editor.foldRecursively" => {
+            action = ActionType::String("editor::FoldRecursive");
+            context = Some("Editor");
+        }
+        "editor.toggleFold" => {
+            action = ActionType::String("editor::ToggleFold");
+            context = Some("Editor");
+        }
+        "editor.action.formatDocument" => {
+            action = ActionType::String("editor::Format");
+            context = Some("Editor");
+        }
+        "editor.action.goToDeclaration" => {
+            action = ActionType::String("editor::GoToDeclaration");
+            context = Some("Editor && !menu");
+        }
+        "editor.action.revealDefinition" => {
+            action = ActionType::String("editor::GoToDefinition");
+            context = Some("Editor");
+        }
+        "editor.action.peekDefinition" => {
+            action = ActionType::String("editor::GoToDefinitionSplit");
+            context = Some("Editor");
+        }
+        "editor.action.goToImplementation" => {
+            action = ActionType::String("editor::GoToImplementation");
+            context = Some("Editor");
+        }
+        "editor.action.revealDefinition" => {
+            action = ActionType::String("editor::GoToTypeDefinition");
+            context = Some("Editor");
+        }
+        "editor.action.showHover" => {
+            action = ActionType::String("editor::Hover");
+            context = Some("Editor");
+        }
+        "editor.action.indentLines" => {
+            action = ActionType::String("editor::Indent");
+            context = Some("Editor");
+        }
+        "editor.action.joinLines" => {
+            action = ActionType::String("editor::JoinLines");
+            context = Some("Editor");
+        }
+        "deleteAllRight" => {
+            action = ActionType::String("editor::KillRingCut");
+            context = Some("Editor");
+        }
+        "scrollLineDown" => {
+            action = ActionType::String("editor::LineDown");
+            context = Some("Editor");
+        }
+        "scrollLineUp" => {
+            action = ActionType::String("editor::LineUp");
+            context = Some("Editor");
+        }
+        "cursorDown" => {
+            action = ActionType::String("editor::MoveDown");
+            context = Some("Editor");
+        }
+        "cursorUp" => {
+            action = ActionType::String("editor::MoveUp");
+            context = Some("Editor");
+        }
+        "cursorLeft" => {
+            action = ActionType::String("editor::MoveLeft");
+            context = Some("Editor");
+        }
+        "cursorRight" => {
+            action = ActionType::String("editor::MoveRight");
+            context = Some("Editor");
+        }
+        "cursorTop" => {
+            action = ActionType::String("editor::MoveToBeginning");
+            context = Some("Editor");
+        }
+        "editor.action.jumpToBracket" => {
+            action = ActionType::String("editor::MoveToEnclosingBracket");
+            context = Some("Editor");
+        }
+        "cursorBottom" => {
+            action = ActionType::String("editor::MoveToEnd");
+            context = Some("Editor");
+        }
+        "cursorWordPartRight" => {
+            action = ActionType::String("editor::MoveToNextSubwordEnd");
+            context = Some("Editor");
+        }
+        "cursorWordEndRight" => {
+            action = ActionType::String("editor::MoveToNextWordEnd");
+            context = Some("Editor");
+        }
+        "cursorWordPartLeft" => {
+            action = ActionType::String("editor::MoveToPreviousSubwordStart");
+            context = Some("Editor");
+        }
+        "cursorWordLeft" => {
+            action = ActionType::String("editor::MoveToPreviousWordStart");
+            context = Some("Editor");
+        }
+        "cursorUp" => {
+            action = ActionType::String("editor::MoveUp");
+            context = Some("Editor");
+        }
+        "editor.action.insertLineBefore" => {
+            action = ActionType::String("editor::NewlineAbove");
+            context = Some("Editor && mode == full");
+        }
+        "editor.action.insertLineAfter" => {
+            action = ActionType::String("editor::NewlineBelow");
+            context = Some("Editor && mode == full");
+        }
+        "editor.action.organizeImports" => {
+            action = ActionType::String("editor::OrganizeImports");
+            context = Some("Editor");
+        }
+        "editor.action.outdentLines" => {
+            action = ActionType::String("editor::Outdent");
+            context = Some("Editor");
+        }
+        "scrollPageDown" => {
+            action = ActionType::String("editor::PageDown");
+            context = Some("Editor");
+        }
+        "scrollPageUp" => {
+            action = ActionType::String("editor::PageUp");
+            context = Some("Editor");
+        }
+        "editor.action.clipboardPasteAction" => {
+            action = ActionType::String("editor::Paste");
+            context = Some("Editor");
+        }
+        "redo" => {
+            action = ActionType::String("editor::Redo");
+            context = Some("Editor");
+        }
+        "editor.action.rename" => {
+            action = ActionType::String("editor::Rename");
+            context = Some("Editor");
+        }
+        "workbench.action.files.revealActiveFileInWindows" => {
+            action = ActionType::String("editor::RevealInFileManager");
+            context = Some("Editor");
+        }
+
         _ => return None,
     }
     Some((action, context))
