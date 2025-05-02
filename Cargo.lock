@@ -7817,6 +7817,7 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "parking_lot",
  "partial-json-fixer",
  "project",
  "proto",

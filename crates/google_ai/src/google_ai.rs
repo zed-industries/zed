@@ -338,7 +338,7 @@ pub struct PromptFeedback {
     pub block_reason_message: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -524,7 +524,7 @@ pub struct CacheBaseRef<'a> {
     pub tool_config: &'a Option<ToolConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCacheResponse {
     pub name: CacheName,

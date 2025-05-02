@@ -35,6 +35,7 @@ use theme::ThemeSettings;
 use time::UtcDateTime;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
+use parking_lot::Mutex;
 
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
@@ -64,15 +65,11 @@ pub struct GoogleLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
-    cache: HashMap<CacheKey, Shared<Task<CacheEntry>>>,
     _subscription: Subscription,
 }
 
-#[derive(Clone)]
-pub struct CacheEntry {
-    pub name: CacheName,
-    pub expire_time: UtcDateTime,
-}
+#[derive(Debug, Default)]
+pub struct Cache(HashMap<CacheKey, Shared<Task<Option<CreateCacheResponse>>>>);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct CacheKey(u64);
@@ -89,6 +86,30 @@ impl CacheKey {
         predecessor.0.hash(&mut hasher);
         message.hash(&mut hasher);
         Self(hasher.finish())
+    }
+}
+
+impl Cache {
+    fn get_unexpired(&self, key: &CacheKey, now: UtcDateTime) -> Option<Shared<Task<Option<CreateCacheResponse>>>> {
+        let cache_task = self.0.get(key)?;
+        match cache_task.clone().now_or_never() {
+            Some(Some(created_cache)) => {
+                // todo! subtract some time from expiry time
+                if created_cache.expire_time > now {
+                    Some(cache_task.clone())
+                } else {
+                    None
+                }
+            }
+            Some(None) => {
+                // Cache creation failed
+                None
+            }
+            None => {
+                // Caching task pending, so use it.
+                Some(cache_task.clone())
+            }
+        }
     }
 }
 
@@ -179,7 +200,6 @@ impl GoogleLanguageModelProvider {
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
-            cache: Default::default(),
         });
 
         Self { http_client, state }
@@ -190,6 +210,7 @@ impl GoogleLanguageModelProvider {
             id: LanguageModelId::from(model.id().to_string()),
             model,
             state: self.state.clone(),
+            cache: Mutex::new(Cache::default()).into(),
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         })
@@ -258,6 +279,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     state: self.state.clone(),
+                    cache: Mutex::new(Cache::default()).into(),
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -287,6 +309,7 @@ pub struct GoogleLanguageModel {
     id: LanguageModelId,
     model: google_ai::Model,
     state: gpui::Entity<State>,
+    cache: Arc<Mutex<Cache>>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -326,23 +349,25 @@ impl GoogleLanguageModel {
         &self,
         request: google_ai::CreateCacheRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<CreateCacheResponse>> {
+    ) -> Task<Option<CreateCacheResponse>> {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+            log::error!("App state dropped");
+            return Task::ready(None);
         };
 
-        async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
-            let request =
-                google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.context("failed to create cache")
-        }
-        .boxed()
+        let Some(api_key) = api_key else {
+            log::error!("Missing Google API key");
+            return Task::ready(None);
+        };
+
+        cx.background_spawn(async move {
+            google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request).await.log_err()
+        })
     }
 }
 
@@ -415,7 +440,7 @@ impl LanguageModel for GoogleLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &mut AsyncApp,
+        cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
@@ -449,35 +474,6 @@ impl LanguageModel for GoogleLanguageModel {
             })
             .collect::<Vec<_>>();
 
-        let now = UtcDateTime::now();
-        let cache_prefix_len_and_task = self
-            .state
-            .read_with(cx, |state, _cx| {
-                content_cache_keys
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find_map(|(ix, cache_key)| {
-                        state
-                            .cache
-                            .get(cache_key)
-                            // todo! subtract some time from expiry time
-                            .and_then(|cache_task| {
-                                if let Some(cache_entry) = cache_task.clone().now_or_never() {
-                                    if cache_entry.expire_time > now {
-                                        Some((ix + 1, cache_task.clone()))
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    Some((ix + 1, cache_task.clone()))
-                                }
-                            })
-                    })
-            })
-            .ok()
-            .flatten();
-
         let create_cache_request = if is_last_message_cached {
             Some(CreateCacheRequest {
                 // todo! Configuration
@@ -491,33 +487,50 @@ impl LanguageModel for GoogleLanguageModel {
         } else {
             None
         };
+        if let Some((request, new_cache_key)) =
+        create_cache_request.zip(content_cache_keys.last().copied())
+        {
+            self.cache.lock().0.insert(new_cache_key, self.create_cache(request, cx).shared());
+        }
 
-        let request = async move {
-            if let Some((prefix_len, cache_task)) = cache_prefix_len_and_task {
-                let cache_entry = cache_task.await;
-                request.cached_content = Some(cache_entry.name);
-                request.contents.drain(..prefix_len);
-                request.system_instruction = None;
-                request.tools = None;
-                request.tool_config = None;
-            }
-            request
-        };
+        // todo! How to handle tasks that result in error?
+        //
+        // todo! predetermine names?
+        //
+        // todo! Check speed and cost
+        //
+        // todo! GC
+        //
+        // todo! Retry generate content request in the case that cache is expired.
+        let now = UtcDateTime::now();
+        // todo! why is mutex guard being held across await point?! This should be use of
+        // background_spawn instead.
+        let request = cx.foreground_executor().spawn({
+            let cache = self.cache.clone();
+            async move {
+                // TODO: nicer way to do this than mutation? Can a loop be used in expression position?
+                let mut prefix_len = 0;
+                let mut found_cache_entry = None;
+                for (ix, key) in content_cache_keys.iter().enumerate().rev() {
+                    if let Some(task) = cache.lock().get_unexpired(&key, now) {
+                        if let Some(cache_entry) = task.await {
+                            prefix_len = ix + 1;
+                            found_cache_entry = Some(cache_entry);
+                            break;
+                        }
+                    }
+                }
+                if let Some(found_cache_entry) = found_cache_entry {
+                    request.cached_content = Some(found_cache_entry.name);
+                    request.contents.drain(..prefix_len);
+                    request.system_instruction = None;
+                    request.tools = None;
+                    request.tool_config = None;
+                }
+                request
+        }});
 
         let stream_request = self.stream_completion(request, cx);
-        if let Some((request, new_cache_key)) =
-            create_cache_request.zip(content_cache_keys.last().copied())
-        {
-            let request = self.create_cache(request, cx);
-            let create_task = cx.background_spawn(async move {
-                let response = request.await;
-            });
-            self.state
-                .update(cx, |state, _cx| {
-                    state.cache.insert(new_cache_key, create_task.shared());
-                })
-                .ok();
-        }
 
         // todo! two requests in request_limiter?
         let future = self.request_limiter.stream(async move {

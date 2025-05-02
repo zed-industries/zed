@@ -38,6 +38,7 @@ menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+parking_lot.workspace = true
 partial-json-fixer.workspace = true
 project.workspace = true
 proto.workspace = true
