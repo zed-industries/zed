@@ -301,6 +301,14 @@ pub enum TokenUsageRatio {
     Exceeded,
 }
 
+fn default_completion_mode(cx: &App) -> CompletionMode {
+    if cx.is_staff() {
+        CompletionMode::Max
+    } else {
+        CompletionMode::Normal
+    }
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -310,7 +318,7 @@ pub struct Thread {
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
-    completion_mode: Option<CompletionMode>,
+    completion_mode: CompletionMode,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -366,7 +374,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: None,
+            completion_mode: default_completion_mode(cx),
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -440,7 +448,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: None,
+            completion_mode: default_completion_mode(cx),
             messages: serialized
                 .messages
                 .into_iter()
@@ -569,11 +577,11 @@ impl Thread {
         }
     }
 
-    pub fn completion_mode(&self) -> Option<CompletionMode> {
+    pub fn completion_mode(&self) -> CompletionMode {
         self.completion_mode
     }
 
-    pub fn set_completion_mode(&mut self, mode: Option<CompletionMode>) {
+    pub fn set_completion_mode(&mut self, mode: CompletionMode) {
         self.completion_mode = mode;
     }
 
@@ -1152,9 +1160,9 @@ impl Thread {
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
-            self.completion_mode
+            Some(self.completion_mode)
         } else {
-            None
+            Some(CompletionMode::Normal)
         };
 
         request

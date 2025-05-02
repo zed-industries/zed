@@ -7,6 +7,7 @@ use crate::{
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::{Result, anyhow};
+use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::DebugRequest;
 use dap::{
@@ -26,6 +27,7 @@ use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::any::TypeId;
+use std::path::PathBuf;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::SplitDirection;
@@ -403,7 +405,6 @@ impl DebugPanel {
     pub fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-
         task_context: TaskContext,
         buffer: Option<Entity<Buffer>>,
         window: &Window,
@@ -424,8 +425,60 @@ impl DebugPanel {
                 stop_on_entry,
             } = scenario;
             let request = if let Some(mut request) = request {
-                // Resolve task variables within the request.
-                if let DebugRequest::Launch(_) = &mut request {}
+                if let DebugRequest::Launch(launch_config) = &mut request {
+                    let mut variable_names = HashMap::default();
+                    let mut substituted_variables = HashSet::default();
+                    let task_variables = task_context
+                        .task_variables
+                        .iter()
+                        .map(|(key, value)| {
+                            let key_string = key.to_string();
+                            if !variable_names.contains_key(&key_string) {
+                                variable_names.insert(key_string.clone(), key.clone());
+                            }
+                            (key_string, value.as_str())
+                        })
+                        .collect::<HashMap<_, _>>();
+
+                    let cwd = launch_config
+                        .cwd
+                        .as_ref()
+                        .and_then(|cwd| cwd.to_str())
+                        .and_then(|cwd| {
+                            task::substitute_all_template_variables_in_str(
+                                cwd,
+                                &task_variables,
+                                &variable_names,
+                                &mut substituted_variables,
+                            )
+                        });
+
+                    if let Some(cwd) = cwd {
+                        launch_config.cwd = Some(PathBuf::from(cwd))
+                    }
+
+                    if let Some(program) = task::substitute_all_template_variables_in_str(
+                        &launch_config.program,
+                        &task_variables,
+                        &variable_names,
+                        &mut substituted_variables,
+                    ) {
+                        launch_config.program = program;
+                    }
+
+                    for arg in launch_config.args.iter_mut() {
+                        if let Some(substituted_arg) =
+                            task::substitute_all_template_variables_in_str(
+                                &arg,
+                                &task_variables,
+                                &variable_names,
+                                &mut substituted_variables,
+                            )
+                        {
+                            *arg = substituted_arg;
+                        }
+                    }
+                }
 
                 request
             } else if let Some(build) = build {
@@ -944,6 +997,7 @@ impl DebugPanel {
                                                     past_debug_definition,
                                                     weak_panel,
                                                     workspace,
+                                                    None,
                                                     window,
                                                     cx,
                                                 )
