@@ -192,6 +192,7 @@ pub enum IconName {
     RotateCw,
     Route,
     Save,
+    Scissors,
     Screen,
     SearchCode,
     SearchSelection,
