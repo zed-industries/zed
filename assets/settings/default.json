@@ -934,7 +934,7 @@
       // Shows all diagnostics when not specified.
       "max_severity": null
     },
-    "rust": {
+    "cargo": {
       // When enabled, Zed disables rust-analyzer's check on save and starts to query
       // Cargo diagnostics separately.
       "fetch_cargo_diagnostics": false
