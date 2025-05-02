@@ -688,9 +688,7 @@ pub(crate) fn insert_crease_for_mention(
     editor_entity.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, crease_start) else {
-            return None;
-        };
+        let start = snapshot.anchor_in_excerpt(excerpt_id, crease_start)?;
 
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);

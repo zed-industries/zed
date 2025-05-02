@@ -247,9 +247,7 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
-        let existing_creases = self
-            .editor
-            .update(cx, |editor, cx| extract_message_creases(editor, cx));
+        let existing_creases = self.editor.update(cx, extract_message_creases);
 
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
