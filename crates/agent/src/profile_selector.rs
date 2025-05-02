@@ -95,10 +95,8 @@ impl ProfileSelector {
                     menu.item(self.menu_entry_for_profile(profile_id.clone(), profile, settings));
             }
 
-            menu = menu.separator();
-
             if !self.custom_profiles.is_empty() {
-                menu = menu.header("Custom Profiles");
+                menu = menu.separator().header("Custom Profiles");
                 for (profile_id, profile) in self.custom_profiles.iter() {
                     menu = menu.item(self.menu_entry_for_profile(
                         profile_id.clone(),
@@ -107,18 +105,6 @@ impl ProfileSelector {
                     ));
                 }
             }
-
-            menu = menu.separator();
-            menu = menu.header("Customize Current Profile");
-            menu = menu.item(ContextMenuEntry::new("Tools…").handler({
-                let profile_id = settings.default_profile.clone();
-                move |window, cx| {
-                    window.dispatch_action(
-                        ManageProfiles::customize_tools(profile_id.clone()).boxed_clone(),
-                        cx,
-                    );
-                }
-            }));
 
             menu = menu.separator();
             menu = menu.item(ContextMenuEntry::new("Configure Profiles…").handler(
