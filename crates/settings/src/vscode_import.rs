@@ -183,11 +183,12 @@ impl VsCodeShortcuts {
                 .and_then(|when| when.as_str())
                 .unwrap_or_default()
                 .to_string();
-            // TODO: vscode_shortcut_command_to_zed_action
-            let Ok(action) = serde_json_lenient::from_str(&format!(r#""{}""#, command)) else {
+            let (action, _) = vscode_shortcut_command_to_zed_action(command, Some(&context))
+                .unwrap_or((ActionType::String(command), None));
+            let Ok(action) = serde_json_lenient::from_str(&action.to_string()) else {
                 skipped.push((
                     shortcut.to_string(),
-                    format!("Unable to parse command: {}", command),
+                    format!("Unable to parse command: {}, action: {:?}", command, action),
                 ));
                 continue;
             };
@@ -199,40 +200,220 @@ impl VsCodeShortcuts {
     }
 }
 
-fn vscode_shortcut_command_to_zed_action(
-    command: &str,
-    when: Option<&str>,
-) -> Option<(String, Option<String>)> {
+#[derive(Debug)]
+enum ActionType<'t> {
+    String(&'t str),
+    Other(&'t str),
+}
+
+impl ActionType<'_> {
+    fn to_string(&self) -> String {
+        match self {
+            ActionType::String(s) => format!("\"{}\"", s),
+            ActionType::Other(s) => s.to_string(),
+        }
+    }
+}
+
+fn vscode_shortcut_command_to_zed_action<'t, 's>(
+    command: &'t str,
+    when: Option<&'s str>,
+) -> Option<(ActionType<'t>, Option<&'s str>)> {
+    let action;
     let mut context = None;
-    let action = match command {
+    match command {
+        // crates/menu/src/menu.rs
+        // Missing:
+        // SecondaryConfirm, Restart, EndSlot
         "list.focusFirst" | "list.focusAnyFirst" => {
-            context = Some("menu".to_string());
-            "menu::SelectFirst"
+            action = ActionType::String("menu::SelectFirst");
+            context = Some("menu");
         }
         "list.focusLast" | "list.focusAnyLast" => {
-            context = Some("menu".to_string());
-            "menu::SelectLast"
+            action = ActionType::String("menu::SelectLast");
+            context = Some("menu");
         }
         "list.focusUp" | "list.focusAnyUp" => {
-            context = Some("menu".to_string());
-            "menu::SelectPrevious"
+            action = ActionType::String("menu::SelectPrevious");
+            context = Some("menu");
         }
         "list.focusDown" | "list.focusAnyDown" => {
-            context = Some("menu".to_string());
-            "menu::SelectNext"
+            action = ActionType::String("menu::SelectNext");
+            context = Some("menu");
         }
         "list.select" => {
-            context = Some("menu".to_string());
-            "menu::Confirm"
+            action = ActionType::String("menu::Confirm");
+            context = Some("menu");
         }
         "list.clear" => {
-            context = Some("menu".to_string());
-            "menu::Cancel"
+            action = ActionType::String("menu::Cancel");
+            context = Some("menu");
         }
-        // menu::SecondaryConfirm, Restart
+        // crates/picker/src/picker.rs
+        // Missing:
+        // ConfirmCompletion, ConfirmInput. What's the secondary setting?
+
+        // crates/workspace/src/workspace.rs
+        // Missing:
+        // ActivateNextPane, ActivatePreviousPane, ActivateNextWindow, ActivatePreviousWindow, ClearAllNotifications, CloseAllDocks,
+        // Feedback, FollowNextCollaborator, MoveFocusedPanelToNextPosition, NewCenterTerminal, NewFileSplitVertical, NewFileSplitHorizontal,
+        // OpenInTerminal, OpenComponentPreview, ReloadActiveItem, ShutdownDebugAdapters, ToggleCenteredLayout, ToggleZoom, Unfollow, Welcome,
+        // RestoreBanner, CloseInactiveTabsAndPanes, MoveItemToPane, MoveItemToPaneInDirection, OpenTerminal, Reload, SendKeystrokes,
+        // SwapPaneLeft, SwapPaneRight, SwapPaneUp, SwapPaneDown
+        "addRootFolder" => {
+            // https://github.com/microsoft/vscode/blob/e9daa2e0f3dd86459eea57aac3f5f181d065c06d/src/vs/workbench/browser/actions/workspaceCommands.ts#L28
+            action = ActionType::String("workspace::AddFolderToProject");
+        }
+        "workbench.action.closeWindow" => {
+            action = ActionType::String("workspace::CloseWindow");
+        }
+        "workbench.action.files.newUntitledFile" => {
+            action = ActionType::String("workspace::NewFile");
+        }
+        "workbench.view.search" => {
+            action = ActionType::String("workspace::NewSearch");
+        }
+        "workbench.action.terminal.new" => {
+            action = ActionType::String("workspace::NewTerminal");
+        }
+        "workbench.action.newWindow" => {
+            action = ActionType::String("workspace::NewWindow");
+        }
+        "workbench.action.files.openFolder" => {
+            action = ActionType::String("workspace::Open");
+        }
+        "workbench.action.files.openFile" => {
+            action = ActionType::String("workspace::OpenFiles");
+        }
+        "workbench.action.files.saveAs" => {
+            action = ActionType::String("workspace::SaveAs");
+        }
+        "workbench.action.files.saveWithoutFormatting" => {
+            action = ActionType::String("workspace::SaveWithoutFormat");
+        }
+        "workbench.action.togglePanel" => {
+            action = ActionType::String("workspace::ToggleBottomDock");
+            context = Some("Workspace");
+        }
+        "workbench.action.toggleSidebarVisibility" => {
+            action = ActionType::String("workspace::ToggleLeftDock");
+            context = Some("Workspace");
+        }
+        "workbench.action.toggleAuxiliaryBar" => {
+            action = ActionType::String("workspace::ToggleRightDock");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex1" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 0]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex2" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 1]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex3" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 2]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex4" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 3]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex5" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 4]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex6" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 5]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex7" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 6]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex8" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 7]");
+            context = Some("Workspace");
+        }
+        "workbench.action.openEditorAtIndex9" => {
+            action = ActionType::Other("[\"workspace::ActivatePane\", 8]");
+            context = Some("Workspace");
+        }
+        "workbench.action.closeAllEditors" => {
+            action = ActionType::String("workspace::CloseAllItemsAndPanes");
+            context = Some("Pane");
+        }
+        "workbench.action.files.save" => {
+            action = ActionType::String("workspace::Save");
+            context = Some("Workspace");
+        }
+        "saveAll" => {
+            action = ActionType::String("workspace::SaveAll");
+            context = Some("Workspace");
+        }
+        "workbench.action.focusLeftGroup" => {
+            action = ActionType::String("workspace::ActivatePaneLeft");
+            context = Some("Workspace");
+        }
+        "workbench.action.focusRightGroup" => {
+            action = ActionType::String("workspace::ActivatePaneRight");
+            context = Some("Workspace");
+        }
+        "workbench.action.focusAboveGroup" => {
+            action = ActionType::String("workspace::ActivatePaneUp");
+            context = Some("Workspace");
+        }
+        "workbench.action.focusBelowGroup" => {
+            action = ActionType::String("workspace::ActivatePaneDown");
+            context = Some("Workspace");
+        }
+        // crates/zed_actions/src/lib.rs
+        // Missing:
+        // OpenBrowser, OpenZedUrl, OpenAccountSettings, OpenServerSettings, About, OpenLicenses, OpenTelemetryLog, DecreaseUiFontSize,
+        // IncreaseUiFontSize, ResetUiFontSize, workspace::CopyPath, workspace::CopyRelativePath, workspace::CopyFileName, git::*,
+        // feadback::*, icon_theme_selector::Toggle, agent::OpenConfiguration, assistant::*, assistant::InlineAssist, projects::OpenRemote,
+        // task::*, outline::*, zed_predict_onboarding::*, git_onboarding::*,
+        "workbench.action.openSettings" => {
+            action = ActionType::String("zed::OpenSettings");
+        }
+        "workbench.action.openDefaultKeybindingsFile" => {
+            action = ActionType::String("zed::OpenDefaultKeymap");
+        }
+        "workbench.action.quit" => {
+            action = ActionType::String("zed::Quit");
+        }
+        "workbench.action.openGlobalKeybindings" => {
+            action = ActionType::String("zed::OpenKeymap");
+            context = Some("Workspace");
+        }
+        "workbench.view.extensions" => {
+            action = ActionType::String("zed::OpenExtensions");
+            context = Some("Workspace");
+        }
+        "workbench.action.zoomOut" => {
+            action = ActionType::Other(r#"["zed::DecreaseBufferFontSize", { "persist": false }]"#);
+        }
+        "workbench.action.zoomIn" => {
+            action = ActionType::Other(r#"["zed::IncreaseBufferFontSize", { "persist": false }]"#);
+        }
+        "workbench.action.zoomReset" => {
+            action = ActionType::Other(r#"["zed::ResetBufferFontSize", { "persist": false }]"#);
+        }
+        "workbench.action.showCommands" => {
+            action = ActionType::String("command_palette::Toggle");
+            context = Some("Workspace");
+        }
+        "workbench.action.selectTheme" => {
+            action = ActionType::String("theme_selector::Toggle");
+            context = Some("Workspace");
+        }
+        "workbench.action.openRecent" => {
+            action = ActionType::String("projects::OpenRecent");
+            context = Some("Workspace");
+        }
         _ => return None,
-    };
-    Some((action.to_string(), context))
+    }
+    Some((action, context))
 }
 
 #[cfg(test)]
@@ -241,7 +422,7 @@ mod tests {
 
     use crate::KeymapFile;
 
-    use super::VsCodeShortcuts;
+    use super::{VsCodeShortcuts, vscode_shortcut_command_to_zed_action};
 
     fn collect_bindings(keymap: &KeymapFile) -> Vec<String> {
         let mut result = Vec::new();
@@ -276,7 +457,7 @@ mod tests {
             },
             {
                 "key": "shift+oem_3",
-                "command": "list.focusFirst",
+                "command": "workbench.action.openEditorAtIndex1",
             }
         ]
         "#;
