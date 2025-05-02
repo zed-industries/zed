@@ -309,6 +309,13 @@ fn default_completion_mode(cx: &App) -> CompletionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum QueueState {
+    Sending,
+    Queued { position: usize },
+    Started,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -326,7 +333,6 @@ pub struct Thread {
     checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
-    queue_position: Option<usize>,
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Entity<ToolWorkingSet>,
@@ -383,7 +389,6 @@ impl Thread {
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
-            queue_position: None,
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
@@ -483,7 +488,6 @@ impl Thread {
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
-            queue_position: None,
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             project: project.clone(),
@@ -605,8 +609,10 @@ impl Thread {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
     }
 
-    pub fn queue_position(&self) -> Option<usize> {
-        self.queue_position
+    pub fn queue_state(&self) -> Option<QueueState> {
+        self.pending_completions
+            .first()
+            .map(|pending_completion| pending_completion.queue_state)
     }
 
     pub fn tools(&self) -> &Entity<ToolWorkingSet> {
@@ -1266,7 +1272,6 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
-        self.queue_position.take();
         let pending_completion_id = post_inc(&mut self.completion_count);
         let mut request_callback_parameters = if self.request_callback.is_some() {
             Some((request.clone(), Vec::new()))
@@ -1299,37 +1304,6 @@ impl Thread {
                 }
 
                 let mut request_assistant_message_id = None;
-
-                // TODO remove
-                thread
-                    .update(cx, |thread, _cx| {
-                        thread.queue_position = Some(5);
-                    })
-                    .ok();
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(2))
-                    .await;
-                thread
-                    .update(cx, |thread, _cx| {
-                        thread.queue_position = Some(4);
-                    })
-                    .ok();
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(2))
-                    .await;
-                thread
-                    .update(cx, |thread, _cx| {
-                        thread.queue_position = Some(3);
-                    })
-                    .ok();
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(2))
-                    .await;
-                thread
-                    .update(cx, |thread, _cx| {
-                        thread.queue_position.take();
-                    })
-                    .ok();
 
                 while let Some(event) = events.next().await {
                     if let Some((_, response_events)) = request_callback_parameters.as_mut() {
@@ -1466,8 +1440,19 @@ impl Thread {
                                     });
                                 }
                             }
-                            LanguageModelCompletionEvent::QueueUpdate { position } => {
-                                thread.queue_position = Some(position);
+                            LanguageModelCompletionEvent::QueueUpdate(queue_event) => {
+                                if let Some(completion) = thread
+                                    .pending_completions
+                                    .iter_mut()
+                                    .find(|completion| completion.id == pending_completion_id)
+                                {
+                                    completion.queue_state = match queue_event {
+                                        language_model::QueueState::Queued { position } => {
+                                            QueueState::Queued { position }
+                                        }
+                                        language_model::QueueState::Started => QueueState::Started,
+                                    }
+                                }
                             }
                         }
 
@@ -1504,7 +1489,6 @@ impl Thread {
 
             thread
                 .update(cx, |thread, cx| {
-                    thread.queue_position.take();
                     thread.finalize_pending_checkpoint(cx);
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
@@ -1590,6 +1574,7 @@ impl Thread {
 
         self.pending_completions.push(PendingCompletion {
             id: pending_completion_id,
+            queue_state: QueueState::Sending,
             _task: task,
         });
     }
@@ -2499,6 +2484,7 @@ impl EventEmitter<ThreadEvent> for Thread {}
 
 struct PendingCompletion {
     id: usize,
+    queue_state: QueueState,
     _task: Task<()>,
 }
 

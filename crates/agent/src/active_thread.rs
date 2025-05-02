@@ -3,7 +3,7 @@ use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
+    LastRestoreCheckpoint, MessageId, MessageSegment, QueueState, Thread, ThreadError, ThreadEvent,
     ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
@@ -1729,17 +1729,27 @@ impl ActiveThread {
 
         let show_feedback = thread.is_turn_end(ix);
 
-        let generating_label = if let Some(queue_position) = thread.queue_position() {
-            Some(format!("Queue position: {}", queue_position).into_any_element())
-        } else if is_generating && is_last_message {
-            Some(
-                AnimatedLabel::new("Generating")
-                    .size(LabelSize::Small)
-                    .into_any_element(),
-            )
-        } else {
-            None
-        };
+        let generating_label = is_last_message
+            .then(|| match (thread.queue_state(), is_generating) {
+                (Some(QueueState::Sending), _) => Some(
+                    AnimatedLabel::new("Sending")
+                        .size(LabelSize::Small)
+                        .into_any_element(),
+                ),
+                (Some(QueueState::Queued { position }), _) => Some(
+                    Label::new(format!("Queue position: {position}"))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .into_any_element(),
+                ),
+                (_, true) => Some(
+                    AnimatedLabel::new("Generating")
+                        .size(LabelSize::Small)
+                        .into_any_element(),
+                ),
+                _ => None,
+            })
+            .flatten();
 
         let editing_message_state = self
             .editing_message

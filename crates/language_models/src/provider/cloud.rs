@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
-    ModelRequestLimitReachedError, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    ModelRequestLimitReachedError, QueueState, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -905,7 +905,7 @@ impl LanguageModel for CloudLanguageModel {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CloudCompletionEvent<T> {
-    Queue { position: usize },
+    Queue(QueueState),
     Event(T),
 }
 
@@ -925,8 +925,8 @@ where
                 Err(error) => {
                     vec![Err(LanguageModelCompletionError::Other(error))]
                 }
-                Ok(CloudCompletionEvent::Queue { position }) => {
-                    vec![Ok(LanguageModelCompletionEvent::QueueUpdate { position })]
+                Ok(CloudCompletionEvent::Queue(event)) => {
+                    vec![Ok(LanguageModelCompletionEvent::QueueUpdate(event))]
                 }
                 Ok(CloudCompletionEvent::Event(event)) => map_callback(event),
             })
