@@ -1208,6 +1208,12 @@ impl Component for MessageEditor {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
     }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "The composer experience of the Agent Panel. This interface handles context, composing messages, switching profiles, models and more.",
+        )
+    }
 }
 
 impl AgentPreview for MessageEditor {
@@ -1224,7 +1230,7 @@ impl AgentPreview for MessageEditor {
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
             let thread = active_thread.read(cx).thread().clone();
 
-            let example_message_editor = cx.new(|cx| {
+            let default_message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     fs,
                     workspace,
@@ -1241,8 +1247,15 @@ impl AgentPreview for MessageEditor {
                 v_flex()
                     .gap_4()
                     .children(vec![single_example(
-                        "Default",
-                        example_message_editor.clone().into_any_element(),
+                        "Default Messsage Editor",
+                        div()
+                            .w(px(540.))
+                            .pt_12()
+                            .bg(cx.theme().colors().panel_background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(default_message_editor.clone())
+                            .into_any_element(),
                     )])
                     .into_any_element(),
             )
