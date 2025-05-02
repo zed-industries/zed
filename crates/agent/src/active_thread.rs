@@ -4,8 +4,8 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::insert_message_creases;
 use crate::thread::{
-    LastRestoreCheckpoint, MessageCrease, QueueState,MessageId, MessageSegment, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback,
+    LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, QueueState, Thread,
+    ThreadError, ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
