@@ -411,6 +411,40 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
             action = ActionType::String("projects::OpenRecent");
             context = Some("Workspace");
         }
+        // crates/debugger_ui/src/debugger_ui.rs
+        // Missing:
+        // ToggleIgnoreBreakpoints, ClearAllBreakpoints, CreateDebuggingSession, FocusConsole, FocusVariables, FocusBreakpointList,
+        // FocusFrames, FocusModules, FocusLoadedSources, FocusTerminal,
+        "workbench.action.debug.start" => {
+            action = ActionType::String("debugger::Start");
+        }
+        "workbench.action.debug.continue" => {
+            action = ActionType::String("debugger::Continue");
+        }
+        "workbench.action.debug.disconnect" => {
+            action = ActionType::String("debugger::Disconnect");
+        }
+        "workbench.action.debug.pause" => {
+            action = ActionType::String("debugger::Pause");
+        }
+        "workbench.action.debug.restart" => {
+            action = ActionType::String("debugger::Restart");
+        }
+        "workbench.action.debug.stepInto" => {
+            action = ActionType::String("debugger::StepInto");
+        }
+        "workbench.action.debug.stepOver" => {
+            action = ActionType::String("debugger::StepOver");
+        }
+        "workbench.action.debug.stepOut" => {
+            action = ActionType::String("debugger::StepOut");
+        }
+        "workbench.action.debug.stepBack" => {
+            action = ActionType::String("debugger::StepBack");
+        }
+        "workbench.action.debug.stop" => {
+            action = ActionType::String("debugger::Stop");
+        }
         _ => return None,
     }
     Some((action, context))
