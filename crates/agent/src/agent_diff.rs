@@ -2,6 +2,7 @@ use crate::{
     Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel,
 };
 use anyhow::Result;
+use assistant_settings::AssistantSettings;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -18,6 +19,7 @@ use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
 use language_model::StopReason;
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
+use settings::{Settings, SettingsStore};
 use std::{
     any::{Any, TypeId},
     collections::hash_map::Entry,
@@ -1151,10 +1153,10 @@ impl Render for AgentDiffToolbar {
     }
 }
 
-#[derive(Default)]
 pub struct AgentDiff {
     reviewing_editors: HashMap<WeakEntity<Editor>, EditorState>,
     workspace_threads: HashMap<WeakEntity<Workspace>, WorkspaceThread>,
+    _settings_subscription: Subscription,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1180,11 +1182,33 @@ impl AgentDiff {
         cx.try_global::<AgentDiffGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
-                let entity = cx.new(|_cx| Self::default());
+                let entity = cx.new(|cx| Self::new(cx));
                 let global = AgentDiffGlobal(entity.clone());
                 cx.set_global(global);
                 entity.clone()
             })
+    }
+
+    fn new(cx: &mut Context<Self>) -> Self {
+        let mut was_active = AssistantSettings::get_global(cx).single_file_review;
+        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_active = AssistantSettings::get_global(cx).single_file_review;
+
+            if was_active != is_active {
+                let workspaces = this.workspace_threads.keys().cloned().collect::<Vec<_>>();
+                for workspace in workspaces {
+                    this.update_reviewing_editors(&workspace, cx);
+                }
+            }
+
+            was_active = is_active;
+        });
+
+        Self {
+            reviewing_editors: HashMap::default(),
+            workspace_threads: HashMap::default(),
+            _settings_subscription: settings_subscription,
+        }
     }
 
     pub fn set_active_thread(
@@ -1409,6 +1433,15 @@ impl AgentDiff {
         workspace: &WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) {
+        if !AssistantSettings::get_global(cx).single_file_review {
+            for (editor, _) in self.reviewing_editors.drain() {
+                editor
+                    .update(cx, |editor, cx| editor.reset_diff_source(cx))
+                    .ok();
+            }
+            return;
+        }
+
         let Some(workspace_thread) = self.workspace_threads.get_mut(workspace) else {
             return;
         };
