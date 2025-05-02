@@ -322,9 +322,9 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(
-            &serde_json::json!({ "model": model }),
-        )?))?;
+        .body(AsyncBody::from(
+            serde_json::json!({ "model": model }).to_string(),
+        ))?;
 
     let mut response = client.send(request).await?;
     let mut body = String::new();
@@ -349,12 +349,13 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(
-            &serde_json::json!({
+        .body(AsyncBody::from(
+            serde_json::json!({
                 "model": model,
                 "keep_alive": "15m",
-            }),
-        )?))?;
+            })
+            .to_string(),
+        ))?;
 
     let mut response = client.send(request).await?;
 
