@@ -684,6 +684,7 @@
         "enable_all_context_servers": true,
         "tools": {
           "copy_path": true,
+          "create_directory": true,
           "create_file": true,
           "delete_path": true,
           "diagnostics": true,
