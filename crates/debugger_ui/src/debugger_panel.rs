@@ -6,7 +6,7 @@ use crate::{
     persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::DebugRequest;
 use dap::{
@@ -447,7 +447,7 @@ impl DebugPanel {
                     workspace.spawn_in_terminal(task.resolved.clone(), window, cx)
                 })?;
 
-                let exit_status = run_build.await?;
+                let exit_status = run_build.await.transpose()?.context("task cancelled")?;
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
