@@ -20,13 +20,14 @@ impl Example for Planets {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(format!(
+        cx.push_user_message(
             r#"
             Make a plain JavaScript web page which renders an animated 3D solar system.
             Let me drag to rotate the camera around.
             Do not use npm.
             "#
-        ));
+            .to_string(),
+        );
 
         let response = cx.run_to_end().await?;
         let mut open_tool_uses = 0;
@@ -63,9 +64,9 @@ impl Example for Planets {
             },
             JudgeAssertion {
                 id: "plain JavaScript".to_string(),
-                description: format!(
+                description:
                     "The code base uses plain JavaScript and no npm, along with HTML and CSS."
-                ),
+                        .to_string(),
             },
         ]
     }
