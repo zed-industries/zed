@@ -18,9 +18,6 @@ if ($env:CARGO)
 } elseif (Get-Command "cargo" -ErrorAction SilentlyContinue)
 {
     $Cargo = "cargo"
-} elseif (Test-Path "C:\Users\Administrator\.cargo\bin\cargo.exe")
-{
-    $Cargo = "C:\Users\Administrator\.cargo\bin\cargo.exe"
 } else
 {
     Write-Error "Could not find cargo in path." -ErrorAction Stop

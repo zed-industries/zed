@@ -356,18 +356,16 @@ jobs:
       - name: Path Setup
         run: |
           @(
-            "C:\Windows\system32",
-            "C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0",
-            "C:\Windows\System32\OpenSSH\",
-            "C:\Program Files\CMake\bin",
-            "C:\Program Files\Git\cmd",
-            "C:\Users\Administrator\.cargo\bin",
-            "C:\Users\Administrator\.dotnet\tools"
+            "C:\Users\Administrator\.dotnet\tools",
           ) | ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
+
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Rustup
+        run: script/install-rustup.ps1
 
       # - name: Configure CI
       #   run: |
