@@ -23,7 +23,7 @@ use gpui::{
     pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -291,8 +291,8 @@ impl ActiveView {
 pub struct DebugAccountState {
     pub enabled: bool,
     pub trial_expired: bool,
-    pub plan: Plan,
-    pub custom_prompt_usage: UsageLimit,
+    pub plan: zed_llm_client::Plan,
+    pub custom_prompt_usage: RequestUsage,
     pub usage_based_billing_enabled: bool,
     pub monthly_spending_cap: i32,
     pub custom_edit_prediction_usage: UsageLimit,
@@ -313,12 +313,12 @@ impl DebugAccountState {
         self
     }
 
-    pub fn set_plan(&mut self, plan: Plan) -> &mut Self {
+    pub fn set_plan(&mut self, plan: zed_llm_client::Plan) -> &mut Self {
         self.plan = plan;
         self
     }
 
-    pub fn set_custom_prompt_usage(&mut self, custom_prompt_usage: UsageLimit) -> &mut Self {
+    pub fn set_custom_prompt_usage(&mut self, custom_prompt_usage: RequestUsage) -> &mut Self {
         self.custom_prompt_usage = custom_prompt_usage;
         self
     }
@@ -350,8 +350,11 @@ impl Default for DebugAccountState {
         Self {
             enabled: false,
             trial_expired: false,
-            plan: Plan::Free,
-            custom_prompt_usage: UsageLimit::Unlimited,
+            plan: zed_llm_client::Plan::Free,
+            custom_prompt_usage: RequestUsage {
+                limit: UsageLimit::Unlimited,
+                amount: 0,
+            },
             usage_based_billing_enabled: false,
             // $50.00
             monthly_spending_cap: 5000,
