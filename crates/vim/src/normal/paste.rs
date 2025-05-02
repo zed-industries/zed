@@ -124,7 +124,17 @@ impl Vim {
                     }
 
                     let display_range = if !selection.is_empty() {
-                        selection.start..selection.end
+                        if vim.mode == Mode::HelixNormal {
+                            // Helix doesn't replace the selection while pasting
+                            let point = if before {
+                                selection.start
+                            } else {
+                                selection.end
+                            };
+                            point..point
+                        } else {
+                            selection.start..selection.end
+                        }
                     } else if line_mode {
                         let point = if before {
                             movement::line_beginning(&display_map, selection.start, false)
