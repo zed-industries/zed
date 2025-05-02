@@ -1045,6 +1045,11 @@ impl PromptEditor<TerminalCodegen> {
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
             editor
         });
 
