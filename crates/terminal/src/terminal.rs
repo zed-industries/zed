@@ -46,7 +46,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{ResultExt, paths::home_dir, truncate_and_trailoff};
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -1858,8 +1858,7 @@ impl Terminal {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx
-                    .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
+                return cx.spawn(async move |_| completion_receiver.recv().await.ok().flatten());
             } else if let Ok(status) = task.completion_rx.try_recv() {
                 return Task::ready(status);
             }

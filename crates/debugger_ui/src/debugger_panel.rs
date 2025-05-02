@@ -3,7 +3,7 @@ use crate::{
     StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
@@ -547,7 +547,10 @@ impl DebugPanel {
         cx.background_spawn(async move {
             match terminal_task {
                 Ok(pid_task) => match pid_task.await {
-                    Ok(Some(pid)) => sender.send(Ok(pid.as_u32())).await?,
+                    Ok(Some(pid)) => sender
+                        .send(Ok(pid.as_u32()))
+                        .await
+                        .context("task cancelled")?,
                     Ok(None) => {
                         sender
                             .send(Err(anyhow!(
