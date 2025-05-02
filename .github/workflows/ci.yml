@@ -356,7 +356,7 @@ jobs:
       - name: Path Setup
         run: |
           @(
-            "C:\Users\Administrator\.dotnet\tools",
+            "C:\Users\Administrator\.dotnet\tools"
           ) | ForEach-Object { $_ | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
 
       - name: Checkout repo
