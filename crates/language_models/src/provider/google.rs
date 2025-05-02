@@ -267,7 +267,6 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    caching: model.caching,
                 },
             );
         }
@@ -493,15 +492,13 @@ impl LanguageModel for GoogleLanguageModel {
             self.cache.lock().0.insert(new_cache_key, self.create_cache(request, cx).shared());
         }
 
-        // todo! How to handle tasks that result in error?
-        //
-        // todo! predetermine names?
-        //
         // todo! Check speed and cost
         //
         // todo! GC
         //
         // todo! Retry generate content request in the case that cache is expired.
+        //
+        // todo! Stop trying to cache if the responses indicate it doesn't support caching.
         let now = UtcDateTime::now();
         // todo! why is mutex guard being held across await point?! This should be use of
         // background_spawn instead.

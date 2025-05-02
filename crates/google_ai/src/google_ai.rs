@@ -739,7 +739,6 @@ pub enum Model {
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: usize,
-        caching: bool,
     },
 }
 
@@ -807,35 +806,6 @@ impl Model {
             Model::Gemini25ProPreview0325 => ONE_MILLION,
             Model::Gemini25FlashPreview0417 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
-        }
-    }
-
-    // todo! From a blog post:
-    //
-    // > Context caching only works with stable models with fixed versions. (Think
-    // “gemini-1.5-pro-001”, not just “gemini-1.5-pro”).
-    //
-    // Is this still true?
-    pub fn caching(&self) -> bool {
-        match self {
-            Model::Gemini15Pro => true,
-            Model::Gemini15Flash => true,
-            Model::Gemini20Pro => true,
-            Model::Gemini20Flash => true,
-            // TODO: Check again whether this now supports caching (note it's replaced by
-            // Gemini25FlashPreview0417).
-            Model::Gemini20FlashThinking => false,
-            // todo! https://ai.google.dev/gemini-api/docs/pricing#gemini-2.0-flash-lite says "Not
-            // available" for this, but
-            // https://ai.google.dev/gemini-api/docs/models#gemini-2.0-flash-lite says caching is
-            // supported.
-            Model::Gemini20FlashLite => true,
-            Model::Gemini25ProExp0325 => true,
-            Model::Gemini25ProPreview0325 => true,
-            // TODO: Check again whether this now supports caching
-            // (https://ai.google.dev/gemini-api/docs/pricing says "Coming soon!")
-            Model::Gemini25FlashPreview0417 => false,
-            Model::Custom { caching, .. } => *caching,
         }
     }
 }
