@@ -1453,83 +1453,98 @@ impl AgentDiff {
         let action_log = thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let mut no_longer_reviewing = self.reviewing_editors.clone();
+        let mut unaffected = self.reviewing_editors.clone();
 
         for (buffer, diff_handle) in changed_buffers {
             if buffer.read(cx).file().is_none() {
                 continue;
             }
 
-            if let Some(buffer_editors) =
-                workspace_thread.singleton_editors.get(&buffer.downgrade())
-            {
-                for (weak_editor, _) in buffer_editors {
-                    let Some(editor) = weak_editor.upgrade() else {
-                        continue;
-                    };
+            let Some(buffer_editors) = workspace_thread.singleton_editors.get(&buffer.downgrade())
+            else {
+                continue;
+            };
 
-                    let multibuffer = editor.read(cx).buffer().clone();
-                    multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.add_diff(diff_handle.clone(), cx);
+            for (weak_editor, _) in buffer_editors {
+                let Some(editor) = weak_editor.upgrade() else {
+                    continue;
+                };
+
+                let multibuffer = editor.read(cx).buffer().clone();
+                multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer.add_diff(diff_handle.clone(), cx);
+                });
+
+                let new_state = if thread.read(cx).is_generating() {
+                    EditorState::Generating
+                } else {
+                    EditorState::Reviewing
+                };
+
+                let previous_state = self
+                    .reviewing_editors
+                    .insert(weak_editor.clone(), new_state.clone());
+
+                if previous_state.is_none() {
+                    editor.update(cx, |editor, cx| {
+                        editor.start_temporary_diff_override();
+                        editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
+                        editor.set_expand_all_diff_hunks(cx);
+                        editor.register_addon(EditorAgentDiffAddon);
                     });
+                } else {
+                    unaffected.remove(&weak_editor);
+                }
 
-                    let new_state = if thread.read(cx).is_generating() {
-                        EditorState::Generating
-                    } else {
-                        EditorState::Reviewing
-                    };
-
-                    let previous_state = self
-                        .reviewing_editors
-                        .insert(weak_editor.clone(), new_state.clone());
-
-                    if previous_state.is_none() {
-                        editor.update(cx, |editor, cx| {
-                            editor.start_temporary_diff_override();
-                            editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
-                            editor.set_expand_all_diff_hunks(cx);
-                            editor.register_addon(EditorAgentDiffAddon);
+                if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
+                    if let Some(workspace) = workspace.upgrade() {
+                        let workspace_id = workspace.entity_id();
+                        let workspace_window = cx.windows().iter().find_map(|w| {
+                            w.downcast::<Workspace>().and_then(|window_workspace| {
+                                if window_workspace
+                                    .entity(cx)
+                                    .map_or(false, |entity| entity.entity_id() == workspace_id)
+                                {
+                                    Some(window_workspace)
+                                } else {
+                                    None
+                                }
+                            })
                         });
-                    } else {
-                        no_longer_reviewing.remove(&weak_editor);
-                    }
 
-                    if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
-                        if let Some(workspace) = workspace.upgrade() {
-                            let workspace_id = workspace.entity_id();
-                            let workspace_window = cx.windows().iter().find_map(|w| {
-                                w.downcast::<Workspace>().and_then(|window_workspace| {
-                                    if window_workspace
-                                        .entity(cx)
-                                        .map_or(false, |entity| entity.entity_id() == workspace_id)
-                                    {
-                                        Some(window_workspace)
-                                    } else {
-                                        None
-                                    }
+                        if let Some(workspace_window) = workspace_window {
+                            workspace_window
+                                .update(cx, |_, window, cx| {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.go_to_next_hunk(&GoToHunk, window, cx);
+                                    });
                                 })
-                            });
-
-                            if let Some(workspace_window) = workspace_window {
-                                workspace_window
-                                    .update(cx, |_, window, cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.go_to_next_hunk(&GoToHunk, window, cx);
-                                        });
-                                    })
-                                    .log_err();
-                            }
+                                .log_err();
                         }
                     }
                 }
             }
         }
 
-        for (editor, _) in no_longer_reviewing {
-            editor
-                .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
-                .ok();
-            self.reviewing_editors.remove(&editor);
+        // Remove editors from this workspace that are no longer under review
+        for (editor, _) in unaffected {
+            // Note: We could avoid this check by storing `reviewing_editors` by Workspace,
+            // but that would add another lookup in `AgentDiff::editor_state`
+            // which gets called much more frequently.
+            let in_workspace = editor
+                .read_with(cx, |editor, _cx| editor.workspace())
+                .ok()
+                .flatten()
+                .map_or(false, |editor_workspace| {
+                    editor_workspace.entity_id() == workspace.entity_id()
+                });
+
+            if in_workspace {
+                editor
+                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .ok();
+                self.reviewing_editors.remove(&editor);
+            }
         }
 
         cx.notify();
