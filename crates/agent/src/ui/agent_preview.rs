@@ -3,7 +3,7 @@ use component::ComponentId;
 use gpui::{App, Entity, WeakEntity};
 use linkme::distributed_slice;
 use std::sync::OnceLock;
-use ui::{AnyElement, Component, Window};
+use ui::{AnyElement, Component, ComponentScope, Window};
 use workspace::Workspace;
 
 use crate::{ActiveThread, ThreadStore};
@@ -22,27 +22,20 @@ pub type PreviewFn = fn(
 pub static __ALL_AGENT_PREVIEWS: [fn() -> (ComponentId, PreviewFn)] = [..];
 
 /// Trait that must be implemented by components that provide agent previews.
-pub trait AgentPreview: Component {
-    /// Get the ID for this component
-    ///
-    /// Eventually this will move to the component trait.
-    fn id() -> ComponentId
-    where
-        Self: Sized,
-    {
-        ComponentId(Self::name())
+pub trait AgentPreview: Component + Sized {
+    #[allow(unused)] // We can't know this is used due to the distributed slice
+    fn scope(&self) -> ComponentScope {
+        ComponentScope::Agent
     }
 
     /// Static method to create a preview for this component type
-    fn create_preview(
+    fn agent_preview(
         workspace: WeakEntity<Workspace>,
         active_thread: Entity<ActiveThread>,
         thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement>
-    where
-        Self: Sized;
+    ) -> Option<AnyElement>;
 }
 
 /// Register an agent preview for the given component type
@@ -55,8 +48,8 @@ macro_rules! register_agent_preview {
             $crate::ui::agent_preview::PreviewFn,
         ) = || {
             (
-                <$type as $crate::ui::agent_preview::AgentPreview>::id(),
-                <$type as $crate::ui::agent_preview::AgentPreview>::create_preview,
+                <$type as component::Component>::id(),
+                <$type as $crate::ui::agent_preview::AgentPreview>::agent_preview,
             )
         };
     };
