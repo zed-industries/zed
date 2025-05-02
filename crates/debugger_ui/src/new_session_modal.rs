@@ -332,18 +332,6 @@ enum NewSessionMode {
     Attach(Entity<AttachMode>),
 }
 
-impl std::fmt::Display for NewSessionMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mode = match self {
-            NewSessionMode::Launch(_) => "launch".to_owned(),
-            NewSessionMode::Attach(_) => "attach".to_owned(),
-            NewSessionMode::Scenario(_) => "scenario picker".to_owned(),
-        };
-
-        write!(f, "{}", mode)
-    }
-}
-
 impl NewSessionMode {
     fn debug_task(&self, cx: &App) -> Option<DebugRequest> {
         match self {
@@ -400,6 +388,36 @@ impl NewSessionMode {
         cx: &mut Context<NewSessionModal>,
     ) -> Self {
         Self::Launch(LaunchMode::new(past_launch_config, window, cx))
+    }
+
+    fn has_match(&self, cx: &App) -> bool {
+        match self {
+            NewSessionMode::Scenario(picker) => picker.read(cx).delegate.match_count() > 0,
+            NewSessionMode::Attach(picker) => {
+                picker
+                    .read(cx)
+                    .attach_picker
+                    .read(cx)
+                    .picker
+                    .read(cx)
+                    .delegate
+                    .match_count()
+                    > 0
+            }
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for NewSessionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mode = match self {
+            NewSessionMode::Launch(_) => "launch".to_owned(),
+            NewSessionMode::Attach(_) => "attach".to_owned(),
+            NewSessionMode::Scenario(_) => "scenario picker".to_owned(),
+        };
+
+        write!(f, "{}", mode)
     }
 }
 
@@ -636,10 +654,21 @@ impl Render for NewSessionModal {
                             })
                             .child(
                                 Button::new("debugger-spawn", "Start")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.start_new_session(window, cx);
+                                    .on_click(cx.listener(|this, _, window, cx| match &this.mode {
+                                        NewSessionMode::Scenario(picker) => {
+                                            picker.update(cx, |picker, cx| {
+                                                picker.delegate.confirm(true, window, cx)
+                                            })
+                                        }
+                                        _ => this.start_new_session(window, cx),
                                     }))
-                                    .disabled(self.debugger.is_none()),
+                                    .disabled(match self.mode {
+                                        NewSessionMode::Scenario(_) => !self.mode.has_match(cx),
+                                        NewSessionMode::Attach(_) => {
+                                            self.debugger.is_none() || !self.mode.has_match(cx)
+                                        }
+                                        NewSessionMode::Launch(_) => self.debugger.is_none(),
+                                    }),
                             ),
                     ),
             )
