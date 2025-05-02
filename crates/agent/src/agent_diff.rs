@@ -5,7 +5,7 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
-    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+    Direction, Editor, EditorEvent, MultiBuffer, MultiBufferSnapshot, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -13,10 +13,11 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext, Empty, Entity, EventEmitter, FocusHandle,
     Focusable, Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
+
 use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
 use language_model::StopReason;
 use multi_buffer::PathKey;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectItem, ProjectPath};
 use std::{
     any::{Any, TypeId},
     collections::hash_map::Entry,
@@ -251,21 +252,31 @@ impl AgentDiffPane {
     }
 
     fn keep(&mut self, _: &Keep, window: &mut Window, cx: &mut Context<Self>) {
-        keep_edits_in_selection(&self.editor, &self.thread, window, cx);
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            keep_edits_in_selection(editor, &snapshot, &self.thread, window, cx);
+        });
     }
 
     fn reject(&mut self, _: &Reject, window: &mut Window, cx: &mut Context<Self>) {
-        reject_edits_in_selection(&self.editor, &self.thread, window, cx);
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_selection(editor, &snapshot, &self.thread, window, cx);
+        });
     }
 
     fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
-        reject_edits_in_ranges(
-            &self.editor,
-            &self.thread,
-            vec![editor::Anchor::min()..editor::Anchor::max()],
-            window,
-            cx,
-        );
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_ranges(
+                editor,
+                &snapshot,
+                &self.thread,
+                vec![editor::Anchor::min()..editor::Anchor::max()],
+                window,
+                cx,
+            );
+        });
     }
 
     fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
@@ -275,54 +286,53 @@ impl AgentDiffPane {
 }
 
 fn keep_edits_in_selection(
-    editor: &Entity<Editor>,
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
     thread: &Entity<Thread>,
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<Editor>,
 ) {
     let ranges = editor
-        .read(cx)
         .selections
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
 
-    keep_edits_in_ranges(&editor, &thread, ranges, window, cx);
+    keep_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
 }
 
 fn reject_edits_in_selection(
-    editor: &Entity<Editor>,
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
     thread: &Entity<Thread>,
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<Editor>,
 ) {
     let ranges = editor
-        .read(cx)
         .selections
         .disjoint_anchor_ranges()
         .collect::<Vec<_>>();
-    reject_edits_in_ranges(&editor, &thread, ranges, window, cx);
+    reject_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
 }
 
 fn keep_edits_in_ranges(
-    editor: &Entity<Editor>,
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
     thread: &Entity<Thread>,
     ranges: Vec<Range<editor::Anchor>>,
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<Editor>,
 ) {
     if thread.read(cx).is_generating() {
         return;
     }
 
-    let multibuffer = editor.read(cx).buffer().clone();
-    let snapshot = multibuffer.read(cx).snapshot(cx);
     let diff_hunks_in_ranges = editor
-        .read(cx)
-        .diff_hunks_in_ranges(&ranges, &snapshot)
+        .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
 
-    update_editor_selection(&editor, &diff_hunks_in_ranges, window, cx);
+    update_editor_selection(editor, buffer_snapshot, &diff_hunks_in_ranges, window, cx);
 
+    let multibuffer = editor.buffer().clone();
     for hunk in &diff_hunks_in_ranges {
         let buffer = multibuffer.read(cx).buffer(hunk.buffer_id);
         if let Some(buffer) = buffer {
@@ -334,24 +344,24 @@ fn keep_edits_in_ranges(
 }
 
 fn reject_edits_in_ranges(
-    editor: &Entity<Editor>,
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
     thread: &Entity<Thread>,
     ranges: Vec<Range<editor::Anchor>>,
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<Editor>,
 ) {
     if thread.read(cx).is_generating() {
         return;
     }
 
-    let multibuffer = editor.read(cx).buffer().clone();
-    let snapshot = multibuffer.read(cx).snapshot(cx);
     let diff_hunks_in_ranges = editor
-        .read(cx)
-        .diff_hunks_in_ranges(&ranges, &snapshot)
+        .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
 
-    update_editor_selection(editor, &diff_hunks_in_ranges, window, cx);
+    update_editor_selection(editor, buffer_snapshot, &diff_hunks_in_ranges, window, cx);
+
+    let multibuffer = editor.buffer().clone();
 
     let mut ranges_by_buffer = HashMap::default();
     for hunk in &diff_hunks_in_ranges {
@@ -374,14 +384,13 @@ fn reject_edits_in_ranges(
 }
 
 fn update_editor_selection(
-    editor: &Entity<Editor>,
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
     diff_hunks: &[multi_buffer::MultiBufferDiffHunk],
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<Editor>,
 ) {
-    let newest_cursor = editor.update(cx, |editor, cx| {
-        editor.selections.newest::<Point>(cx).head()
-    });
+    let newest_cursor = editor.selections.newest::<Point>(cx).head();
 
     if !diff_hunks.iter().any(|hunk| {
         hunk.row_range
@@ -391,15 +400,15 @@ fn update_editor_selection(
     }
 
     let target_hunk = {
-        let editor = editor.read(cx);
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-
         diff_hunks
             .last()
             .and_then(|last_kept_hunk| {
                 let last_kept_hunk_end = last_kept_hunk.multi_buffer_range().end;
                 editor
-                    .diff_hunks_in_ranges(&[last_kept_hunk_end..editor::Anchor::max()], &snapshot)
+                    .diff_hunks_in_ranges(
+                        &[last_kept_hunk_end..editor::Anchor::max()],
+                        buffer_snapshot,
+                    )
                     .skip(1)
                     .next()
             })
@@ -409,19 +418,17 @@ fn update_editor_selection(
                 editor
                     .diff_hunks_in_ranges(
                         &[editor::Anchor::min()..first_kept_hunk_start],
-                        &snapshot,
+                        buffer_snapshot,
                     )
                     .next()
             })
     };
 
     if let Some(target_hunk) = target_hunk {
-        editor.update(cx, |editor, cx| {
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
-                let next_hunk_start = target_hunk.multi_buffer_range().start;
-                selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
-            })
-        });
+        editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+            let next_hunk_start = target_hunk.multi_buffer_range().start;
+            selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
+        })
     }
 }
 
@@ -728,13 +735,17 @@ fn render_diff_hunk_controls(
                     let editor = editor.clone();
                     let thread = thread.clone();
                     move |_event, window, cx| {
-                        reject_edits_in_ranges(
-                            &editor,
-                            &thread,
-                            vec![hunk_range.start..hunk_range.start],
-                            window,
-                            cx,
-                        );
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            reject_edits_in_ranges(
+                                editor,
+                                &snapshot,
+                                &thread,
+                                vec![hunk_range.start..hunk_range.start],
+                                window,
+                                cx,
+                            );
+                        })
                     }
                 }),
             Button::new(("keep", row as u64), "Keep")
@@ -746,13 +757,17 @@ fn render_diff_hunk_controls(
                     let editor = editor.clone();
                     let thread = thread.clone();
                     move |_event, window, cx| {
-                        keep_edits_in_ranges(
-                            &editor,
-                            &thread,
-                            vec![hunk_range.start..hunk_range.start],
-                            window,
-                            cx,
-                        );
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            keep_edits_in_ranges(
+                                editor,
+                                &snapshot,
+                                &thread,
+                                vec![hunk_range.start..hunk_range.start],
+                                window,
+                                cx,
+                            );
+                        });
                     }
                 }),
         ])
@@ -1241,10 +1256,22 @@ impl AgentDiff {
         let editors = workspace.update(cx, |workspace, cx| {
             let agent_diff = agent_diff.clone();
 
-            workspace.register_action(Self::workspace_action(Self::keep, agent_diff.clone()));
-            workspace.register_action(Self::workspace_action(Self::reject, agent_diff.clone()));
-            workspace.register_action(Self::workspace_action(Self::keep_all, agent_diff.clone()));
-            workspace.register_action(Self::workspace_action(Self::reject_all, agent_diff.clone()));
+            workspace.register_action(Self::workspace_editor_review_action(
+                Self::keep,
+                agent_diff.clone(),
+            ));
+            workspace.register_action(Self::workspace_editor_review_action(
+                Self::reject,
+                agent_diff.clone(),
+            ));
+            workspace.register_action(Self::workspace_editor_review_action(
+                Self::keep_all_in_editor,
+                agent_diff.clone(),
+            ));
+            workspace.register_action(Self::workspace_editor_review_action(
+                Self::reject_all_in_editor,
+                agent_diff.clone(),
+            ));
 
             workspace.items_of_type(cx).collect::<Vec<_>>()
         });
@@ -1489,36 +1516,46 @@ impl AgentDiff {
         AgentDiffPane::deploy(thread, workspace.downgrade(), window, cx).log_err();
     }
 
-    fn keep_all(
+    fn keep_all_in_editor(
         _: &KeepAll,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        keep_edits_in_ranges(
-            editor,
-            thread,
-            vec![editor::Anchor::min()..editor::Anchor::max()],
-            window,
-            cx,
-        )
+    ) -> bool {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            keep_edits_in_ranges(
+                editor,
+                &snapshot,
+                thread,
+                vec![editor::Anchor::min()..editor::Anchor::max()],
+                window,
+                cx,
+            );
+        });
+        true
     }
 
-    fn reject_all(
+    fn reject_all_in_editor(
         _: &RejectAll,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        reject_edits_in_ranges(
-            editor,
-            thread,
-            vec![editor::Anchor::min()..editor::Anchor::max()],
-            window,
-            cx,
-        )
+    ) -> bool {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_ranges(
+                editor,
+                &snapshot,
+                thread,
+                vec![editor::Anchor::min()..editor::Anchor::max()],
+                window,
+                cx,
+            );
+        });
+        true
     }
 
     fn keep(
@@ -1527,8 +1564,12 @@ impl AgentDiff {
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        keep_edits_in_selection(editor, thread, window, cx)
+    ) -> bool {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            keep_edits_in_selection(editor, &snapshot, thread, window, cx);
+            Self::has_at_most_one_diff_hunk(&snapshot)
+        })
     }
 
     fn reject(
@@ -1537,12 +1578,25 @@ impl AgentDiff {
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        reject_edits_in_selection(editor, thread, window, cx)
+    ) -> bool {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_selection(editor, &snapshot, thread, window, cx);
+            Self::has_at_most_one_diff_hunk(&snapshot)
+        })
     }
 
-    fn workspace_action<T>(
-        f: impl Fn(&T, &Entity<Editor>, &Entity<Thread>, &mut Window, &mut App),
+    fn has_at_most_one_diff_hunk(snapshot: &MultiBufferSnapshot) -> bool {
+        for (i, _) in snapshot.diff_hunks().enumerate() {
+            if i > 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn workspace_editor_review_action<T>(
+        review: impl Fn(&T, &Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> bool,
         this: Entity<Self>,
     ) -> impl Fn(&mut Workspace, &T, &mut Window, &mut Context<Workspace>) {
         move |workspace, action, window, cx| {
@@ -1570,7 +1624,26 @@ impl AgentDiff {
                 return cx.propagate();
             };
 
-            f(action, &editor, &thread, window, cx);
+            let all_done = review(action, &editor, &thread, window, cx);
+
+            if all_done {
+                if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                    let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
+
+                    let mut keys = changed_buffers.keys().cycle();
+                    keys.find(|k| *k == &curr_buffer);
+                    let next_project_path = keys
+                        .next()
+                        .filter(|k| *k != &curr_buffer)
+                        .and_then(|after| after.read(cx).project_path(cx));
+
+                    if let Some(path) = next_project_path {
+                        workspace
+                            .open_path(path, None, true, window, cx)
+                            .detach_and_log_err(cx);
+                    }
+                }
+            }
         }
     }
 }
@@ -1737,7 +1810,17 @@ mod tests {
                 .read(cx)
                 .read(cx)
                 .anchor_before(Point::new(7, 0));
-            keep_edits_in_ranges(&editor, &thread, vec![position..position], window, cx)
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                keep_edits_in_ranges(
+                    editor,
+                    &snapshot,
+                    &thread,
+                    vec![position..position],
+                    window,
+                    cx,
+                )
+            });
         });
         cx.run_until_parked();
         assert_eq!(
