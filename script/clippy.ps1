@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+Write-Host "Your PATH entries:"
+$env:Path -split ";" | ForEach-Object { Write-Host "  $_" }
+
 $needAddWorkspace = $false
 if ($args -notcontains "-p" -and $args -notcontains "--package")
 {
