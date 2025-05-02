@@ -92,13 +92,3 @@ We do not plan to deprecate text threads, but it should be noted that if you wan
 ## Errors and Debugging
 
 - Opening the thread as markdown
-
-
-
-
-
-
-TODO:
-
-- Check all links
-- Redirects for old docs
