@@ -10,18 +10,29 @@ Check [the Configuration page](./configuration.md) for more details about how to
 
 ## Overview
 
-Start a conversation ...
+After you've configured some LLM providers, you're ready to start working with the agent panel.
 
-- Messages
-- Editing messages
-- Zoom
-- Checkpoints
+Pick the appropriate tool profile for your task and start a conversation by sending a message via the message editor.
+If you need extra room to type, you can you can expand the message editor via ({#kb agent::ExpandMessageEditor}).
+
+Past messages in the conversation history can be edited.
+Both the included context and text itself can be removed or altered.
+Editing a past message will cause all history after to be removed and new history to start forming.
+
+If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the agent panel surfaces the fact that edits have been applied.
+You can click the dropdown to see which files have been changed or click `Review Changes` to open a multi-buffer to review them.
+Reviewing includes the option to accept or reject each edit, or accept or reject all edits.
+
+You'll also notice that the agent panel will start to use checkpoints as it alters the contents of your project. You can revert to these checkpoints to undo both changes to the project and the associated history in the agent panel, up to the checkpoint.
+
+You can swap between recent threads via the Panel Menu, or view all historical conversations with the `View All` option from within the same menu.
+
+
 - Tool cards
   - Edit tool card
   - Terminal tool card
 - Feedback and rating
   - Cross link it to "model improvement"
-- Nav and thread history
 
 ## Adding Context
 
