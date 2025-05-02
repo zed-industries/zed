@@ -99,7 +99,11 @@ impl State {
                     }
                 });
 
-            let mut ollama_models = futures::future::join_all(tasks)
+            // Rate-limit capability fetches
+            // since there is an arbitrary number of models available
+            let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
+                .buffer_unordered(5)
+                .collect::<Vec<Result<_>>>()
                 .await
                 .into_iter()
                 .collect::<Result<Vec<_>>>()?;
