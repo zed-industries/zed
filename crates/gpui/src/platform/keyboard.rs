@@ -61,8 +61,7 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
     }
 }
 
-/// TODO:
-pub fn is_immutable_key(key: &str) -> bool {
+pub(crate) fn is_immutable_key(key: &str) -> bool {
     matches!(
         key,
         "f1" | "f2"
@@ -117,8 +116,7 @@ pub fn is_immutable_key(key: &str) -> bool {
     )
 }
 
-/// TODO:
-pub fn is_alphabetic_key(key: &str) -> bool {
+pub(crate) fn is_alphabetic_key(key: &str) -> bool {
     matches!(
         key,
         "a" | "b"

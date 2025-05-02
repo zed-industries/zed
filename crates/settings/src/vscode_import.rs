@@ -1,7 +1,7 @@
 use anyhow::Result;
 use collections::IndexMap;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Keystroke, PlatformKeyboardMapper, is_alphabetic_key};
+use gpui::{AsyncWindowContext, Keystroke, PlatformKeyboardMapper};
 use serde_json::{Map, Value};
 use util::ResultExt;
 
@@ -167,7 +167,7 @@ impl VsCodeShortcuts {
             };
             let Some(keystroke) = Keystroke::parse_keystroke_components(shortcut, '+')
                 .ok()
-                .map(|keystroke| keystroke.to_gpui_style(keyboard_mapper))
+                .map(|keystroke| keystroke.into_gpui_style(keyboard_mapper))
             else {
                 skipped.push((
                     shortcut.to_string(),
@@ -273,11 +273,15 @@ mod tests {
             {
                 "key": "shift+4",
                 "command": "list.focusFirst",
+            },
+            {
+                "key": "shift+oem_3",
+                "command": "list.focusFirst",
             }
         ]
         "#;
         let shortcuts = VsCodeShortcuts::from_str(content).unwrap();
-        assert_eq!(shortcuts.content.len(), 4);
+        assert_eq!(shortcuts.content.len(), 5);
         let (keymap, skipped) = shortcuts.parse_shortcuts(&keyboard_mapper);
         let bindings = collect_bindings(&keymap);
         assert_eq!(skipped.len(), 0);
@@ -287,7 +291,8 @@ mod tests {
                 "ctrl-[bracketleft]",
                 "shift-[bracketright]",
                 "ctrl-alt-_",
-                "$"
+                "$",
+                "shift-oem_3"
             ]
         );
         // assert_eq!(
