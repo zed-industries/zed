@@ -322,7 +322,7 @@ impl GitRepository for FakeGitRepository {
                 .iter()
                 .map(|branch_name| Branch {
                     is_head: Some(branch_name) == current_branch.as_ref(),
-                    name: branch_name.into(),
+                    ref_name: branch_name.into(),
                     most_recent_commit: None,
                     upstream: None,
                 })
