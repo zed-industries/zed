@@ -8,3 +8,8 @@ fi
 
 set -x
 "${CARGO:-cargo}" clippy "$@" --release --all-targets --all-features -- --deny warnings
+
+# If local, run cargo machete too.
+if [[ ! -v GITHUB_ACTIONS ]]; then
+    "${CARGO:-cargo}" machete
+fi
