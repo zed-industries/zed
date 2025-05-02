@@ -650,13 +650,10 @@ impl AnthropicEventMapper {
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
-            futures::stream::iter(
-                match event {
-                    Ok(event) => self.map_event(event),
-                    Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
-                }
-                .into_iter(),
-            )
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
         })
     }
 
