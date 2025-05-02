@@ -1211,7 +1211,7 @@ impl Component for MessageEditor {
 }
 
 impl AgentPreview for MessageEditor {
-    fn create_preview(
+    fn agent_preview(
         workspace: WeakEntity<Workspace>,
         active_thread: Entity<ActiveThread>,
         thread_store: WeakEntity<ThreadStore>,
