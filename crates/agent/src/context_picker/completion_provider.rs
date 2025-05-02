@@ -237,6 +237,7 @@ pub struct ContextPickerCompletionProvider {
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     editor: WeakEntity<Editor>,
+    exclude_buffer: Option<Entity<Buffer>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -245,12 +246,14 @@ impl ContextPickerCompletionProvider {
         context_store: WeakEntity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         editor: WeakEntity<Editor>,
+        exclude_buffer: Option<Entity<Buffer>>,
     ) -> Self {
         Self {
             workspace,
             context_store,
             thread_store,
             editor,
+            exclude_buffer,
         }
     }
 
@@ -740,6 +743,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             context_store.clone(),
             thread_store.clone(),
             workspace.clone(),
+            self.exclude_buffer.clone(),
             cx,
         );
 
@@ -1216,6 +1220,7 @@ mod tests {
                 context_store.downgrade(),
                 None,
                 editor_entity,
+                None,
             ))));
         });
 

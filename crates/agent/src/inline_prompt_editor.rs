@@ -850,6 +850,7 @@ impl PromptEditor<BufferCodegen> {
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let codegen_buffer = codegen.read(cx).buffer(cx).read(cx).as_singleton();
         let mode = PromptEditorMode::Buffer {
             id,
             codegen,
@@ -881,6 +882,7 @@ impl PromptEditor<BufferCodegen> {
 
             editor
         });
+
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
@@ -888,6 +890,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.downgrade(),
                 thread_store.clone(),
                 prompt_editor_entity,
+                codegen_buffer,
             ))));
         });
 
@@ -1052,6 +1055,7 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.downgrade(),
                 thread_store.clone(),
                 prompt_editor_entity,
+                None,
             ))));
         });
 

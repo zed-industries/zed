@@ -116,6 +116,7 @@ pub(crate) fn create_editor(
             context_store,
             Some(thread_store),
             editor_entity,
+            None,
         ))));
     });
     editor
