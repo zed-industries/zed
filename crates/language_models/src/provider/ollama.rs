@@ -74,30 +74,35 @@ impl State {
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-        let http_client = self.http_client.clone();
+        let http_client = Arc::clone(&self.http_client);
         let api_url = settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
-            let mut ollama_models: Vec<ollama::Model> = Vec::with_capacity(models.len());
-
-            for model in models {
+            let tasks = models
+                .into_iter()
                 // Since there is no metadata from the Ollama API
                 // indicating which models are embedding models,
                 // simply filter out models with "-embed" in their name
-                if model.name.contains("-embed") {
-                    continue;
-                }
+                .filter(|model| !model.name.contains("-embed"))
+                .map(|model| {
+                    let http_client = Arc::clone(&http_client);
+                    let api_url = api_url.clone();
+                    async move {
+                        let name = model.name.as_str();
+                        let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
+                        let ollama_model =
+                            ollama::Model::new(name, None, None, capabilities.supports_tools());
+                        Ok(ollama_model)
+                    }
+                });
 
-                let name = model.name.as_str();
-                // TODO: Explore fetching model capabilities in parallel
-                let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
-                let ollama_model =
-                    ollama::Model::new(name, None, None, capabilities.supports_tools());
-                ollama_models.push(ollama_model);
-            }
+            let mut ollama_models = futures::future::join_all(tasks)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?;
 
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
