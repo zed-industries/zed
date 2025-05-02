@@ -19,6 +19,7 @@ use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role,
 };
+use project::{AgentLocation, Project};
 use serde::Serialize;
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
@@ -59,17 +60,20 @@ pub struct EditAgentOutput {
 pub struct EditAgent {
     model: Arc<dyn LanguageModel>,
     action_log: Entity<ActionLog>,
+    project: Entity<Project>,
     templates: Arc<Templates>,
 }
 
 impl EditAgent {
     pub fn new(
         model: Arc<dyn LanguageModel>,
+        project: Entity<Project>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
     ) -> Self {
         EditAgent {
             model,
+            project,
             action_log,
             templates,
         }
@@ -123,9 +127,8 @@ impl EditAgent {
             let output = this
                 .replace_text_with_chunks_internal(buffer, edit_chunks, output_events_tx, cx)
                 .await;
-            // todo!()
-            // project
-            //     .update(cx, |log, cx| log.set_agent_location(None, cx))?;
+            this.project
+                .update(cx, |project, cx| project.set_agent_location(None, cx))?;
             output
         });
         (task, output_events_rx)
@@ -142,14 +145,15 @@ impl EditAgent {
             buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
             self.action_log.update(cx, |log, cx| {
                 log.buffer_edited(buffer.clone(), cx);
-                // todo!()
-                // project.set_agent_location(
-                //     Some(AgentLocation {
-                //         buffer: buffer.downgrade(),
-                //         position: language::Anchor::MAX,
-                //     }),
-                //     cx,
-                // );
+            });
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: language::Anchor::MAX,
+                    }),
+                    cx,
+                )
             });
             output_events_tx
                 .unbounded_send(EditAgentOutputEvent::Edited)
@@ -163,16 +167,16 @@ impl EditAgent {
             raw_edits.push_str(&chunk);
             cx.update(|cx| {
                 buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
-                self.action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), cx);
-                    // todo!()
-                    // log.set_agent_location(
-                    //     Some(AgentLocation {
-                    //         buffer: buffer.downgrade(),
-                    //         position: language::Anchor::MAX,
-                    //     }),
-                    //     cx,
-                    // );
+                self.action_log
+                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::MAX,
+                        }),
+                        cx,
+                    )
                 });
             })?;
             output_events_tx
@@ -234,9 +238,8 @@ impl EditAgent {
             let output = this
                 .apply_edits_internal(buffer, edit_chunks, output_events_tx, &mut cx)
                 .await;
-            // todo!()
-            // this.action_log
-            //     .update(cx, |log, cx| log.set_agent_location(None, cx))?;
+            this.project
+                .update(cx, |project, cx| project.set_agent_location(None, cx))?;
             output
         });
         (task, output_events_rx)
@@ -353,16 +356,16 @@ impl EditAgent {
                             .unwrap();
                         buffer.anchor_before(max_edit_end)
                     });
-                    self.action_log.update(cx, |log, cx| {
-                        log.buffer_edited(buffer.clone(), cx);
-                        // todo!()
-                        // log.set_agent_location(
-                        //     Some(AgentLocation {
-                        //         buffer: buffer.downgrade(),
-                        //         position: max_edit_end,
-                        //     }),
-                        //     cx,
-                        // );
+                    self.action_log
+                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                    self.project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position: max_edit_end,
+                            }),
+                            cx,
+                        );
                     });
                 })?;
                 output_events
@@ -1386,8 +1389,8 @@ mod tests {
         cx.update(Project::init_settings);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let action_log = cx.new(|_| ActionLog::new(project));
-        EditAgent::new(model, action_log, Templates::new())
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        EditAgent::new(model, project, action_log, Templates::new())
     }
 
     fn drain_events(

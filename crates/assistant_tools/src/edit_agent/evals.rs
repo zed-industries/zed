@@ -967,7 +967,7 @@ impl EditAgentTest {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
-            agent: EditAgent::new(agent_model, action_log, Templates::new()),
+            agent: EditAgent::new(agent_model, project.clone(), action_log, Templates::new()),
             project,
             judge_model,
         }
