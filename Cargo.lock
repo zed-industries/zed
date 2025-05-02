@@ -79,7 +79,6 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
- "indexmap",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
