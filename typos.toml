@@ -46,6 +46,8 @@ extend-exclude = [
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
     "crates/eval/src/examples/",
+    # typos-cli doesn't understand our `vˇariable` markup
+    "crates/editor/src/hover_links.rs"
 ]
 
 [default]
@@ -63,6 +65,8 @@ extend-ignore-re = [
     # macOS version
     "Big Sur",
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
-    "#fof"
+    "#fof",
+    # Stropped version of reserved keyword `type`
+    "typ"
 ]
 check-filename = true
