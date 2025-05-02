@@ -5,15 +5,20 @@ pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
 
-use std::{any::Any, ops::ControlFlow, sync::Arc, time::Duration};
+use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
 
 use super::DebugPanelItemEvent;
+use anyhow::{Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
-use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
+use dap::{
+    Capabilities, RunInTerminalRequestArguments, Thread, client::SessionId,
+    debugger_settings::DebuggerSettings,
+};
+use futures::{SinkExt, channel::mpsc};
 use gpui::{
     Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     NoAction, Pixels, Point, Subscription, Task, WeakEntity,
@@ -23,8 +28,10 @@ use module_list::ModuleList;
 use project::{
     Project,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+    terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
+use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use terminal_view::TerminalView;
@@ -32,7 +39,7 @@ use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
     DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
     Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, VisibleOnHover, Window, div, h_flex, v_flex,
+    Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -181,7 +188,7 @@ impl Render for SubView {
                 cx.notify();
             }))
             .size_full()
-            // Add border uncoditionally to prevent layout shifts on focus changes.
+            // Add border unconditionally to prevent layout shifts on focus changes.
             .border_1()
             .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
                 el.border_color(cx.theme().colors().pane_focused_border)
@@ -559,6 +566,9 @@ impl RunningState {
                             this.remove_pane_item(DebuggerPaneItem::LoadedSources, window, cx);
                         }
                     }
+                    SessionEvent::RunInTerminal { request, sender } => this
+                        .handle_run_in_terminal(request, sender.clone(), window, cx)
+                        .detach_and_log_err(cx),
 
                     _ => {}
                 }
@@ -655,6 +665,111 @@ impl RunningState {
 
     pub(crate) fn has_pane_at_position(&self, position: Point<Pixels>) -> bool {
         self.panes.pane_at_pixel_position(position).is_some()
+    }
+
+    fn handle_run_in_terminal(
+        &self,
+        request: &RunInTerminalRequestArguments,
+        mut sender: mpsc::Sender<Result<u32>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let running = cx.entity();
+        let Ok(project) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.project().clone())
+        else {
+            return Task::ready(Err(anyhow!("no workspace")));
+        };
+        let session = self.session.read(cx);
+
+        let cwd = Some(&request.cwd)
+            .filter(|cwd| cwd.len() > 0)
+            .map(PathBuf::from)
+            .or_else(|| session.binary().cwd.clone());
+
+        let mut args = request.args.clone();
+
+        // Handle special case for NodeJS debug adapter
+        // If only the Node binary path is provided, we set the command to None
+        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+        // This allows the NodeJS debug client to attach correctly
+        let command = if args.len() > 1 {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+
+        let mut envs: HashMap<String, String> = Default::default();
+        if let Some(Value::Object(env)) = &request.env {
+            for (key, value) in env {
+                let value_str = match (key.as_str(), value) {
+                    (_, Value::String(value)) => value,
+                    _ => continue,
+                };
+
+                envs.insert(key.clone(), value_str.clone());
+            }
+        }
+
+        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
+        let kind = if let Some(command) = command {
+            let title = request.title.clone().unwrap_or(command.clone());
+            TerminalKind::Task(task::SpawnInTerminal {
+                id: task::TaskId("debug".to_string()),
+                full_label: title.clone(),
+                label: title.clone(),
+                command: command.clone(),
+                args,
+                command_label: title.clone(),
+                cwd,
+                env: envs,
+                use_new_terminal: true,
+                allow_concurrent_runs: true,
+                reveal: task::RevealStrategy::NoFocus,
+                reveal_target: task::RevealTarget::Dock,
+                hide: task::HideStrategy::Never,
+                shell,
+                show_summary: false,
+                show_command: false,
+                show_rerun: false,
+            })
+        } else {
+            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
+        };
+
+        let workspace = self.workspace.clone();
+        let weak_project = project.downgrade();
+
+        let terminal_task = project.update(cx, |project, cx| {
+            project.create_terminal(kind, window.window_handle(), cx)
+        });
+        let terminal_task = cx.spawn_in(window, async move |_, cx| {
+            let terminal = terminal_task.await?;
+
+            let terminal_view = cx.new_window_entity(|window, cx| {
+                TerminalView::new(terminal.clone(), workspace, None, weak_project, window, cx)
+            })?;
+
+            running.update_in(cx, |running, window, cx| {
+                running.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
+                running.debug_terminal.update(cx, |debug_terminal, cx| {
+                    debug_terminal.terminal = Some(terminal_view);
+                    cx.notify();
+                });
+            })?;
+
+            terminal.read_with(cx, |terminal, _| {
+                terminal
+                    .pty_info
+                    .pid()
+                    .map(|pid| pid.as_u32())
+                    .ok_or_else(|| anyhow!("Terminal was spawned but PID was not available"))
+            })?
+        });
+
+        cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })
     }
 
     fn create_sub_view(

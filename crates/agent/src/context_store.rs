@@ -8,6 +8,7 @@ use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, Image, SharedString, Task, WeakEntity};
 use language::Buffer;
 use language_model::LanguageModelImage;
+use project::image_store::is_image_file;
 use project::{Project, ProjectItem, ProjectPath, Symbol};
 use prompt_store::UserPromptId;
 use ref_cast::RefCast as _;
@@ -20,7 +21,7 @@ use crate::context::{
     SymbolContextHandle, ThreadContextHandle,
 };
 use crate::context_strip::SuggestedContext;
-use crate::thread::{Thread, ThreadId};
+use crate::thread::{MessageId, Thread, ThreadId};
 
 pub struct ContextStore {
     project: WeakEntity<Project>,
@@ -53,9 +54,14 @@ impl ContextStore {
         self.context_thread_ids.clear();
     }
 
-    pub fn new_context_for_thread(&self, thread: &Thread) -> Vec<AgentContextHandle> {
+    pub fn new_context_for_thread(
+        &self,
+        thread: &Thread,
+        exclude_messages_from_id: Option<MessageId>,
+    ) -> Vec<AgentContextHandle> {
         let existing_context = thread
             .messages()
+            .take_while(|message| exclude_messages_from_id.is_none_or(|id| message.id != id))
             .flat_map(|message| {
                 message
                     .loaded_context
@@ -81,15 +87,19 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        cx.spawn(async move |this, cx| {
-            let open_buffer_task = project.update(cx, |project, cx| {
-                project.open_buffer(project_path.clone(), cx)
-            })?;
-            let buffer = open_buffer_task.await?;
-            this.update(cx, |this, cx| {
-                this.add_file_from_buffer(&project_path, buffer, remove_if_exists, cx)
+        if is_image_file(&project, &project_path, cx) {
+            self.add_image_from_path(project_path, remove_if_exists, cx)
+        } else {
+            cx.spawn(async move |this, cx| {
+                let open_buffer_task = project.update(cx, |project, cx| {
+                    project.open_buffer(project_path.clone(), cx)
+                })?;
+                let buffer = open_buffer_task.await?;
+                this.update(cx, |this, cx| {
+                    this.add_file_from_buffer(&project_path, buffer, remove_if_exists, cx)
+                })
             })
-        })
+        }
     }
 
     pub fn add_file_from_buffer(
@@ -233,13 +243,55 @@ impl ContextStore {
         self.insert_context(context, cx);
     }
 
-    pub fn add_image(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
+    pub fn add_image_from_path(
+        &mut self,
+        project_path: ProjectPath,
+        remove_if_exists: bool,
+        cx: &mut Context<ContextStore>,
+    ) -> Task<Result<()>> {
+        let project = self.project.clone();
+        cx.spawn(async move |this, cx| {
+            let open_image_task = project.update(cx, |project, cx| {
+                project.open_image(project_path.clone(), cx)
+            })?;
+            let image_item = open_image_task.await?;
+            let image = image_item.read_with(cx, |image_item, _| image_item.image.clone())?;
+            this.update(cx, |this, cx| {
+                this.insert_image(
+                    Some(image_item.read(cx).project_path(cx)),
+                    image,
+                    remove_if_exists,
+                    cx,
+                );
+            })
+        })
+    }
+
+    pub fn add_image_instance(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
+        self.insert_image(None, image, false, cx);
+    }
+
+    fn insert_image(
+        &mut self,
+        project_path: Option<ProjectPath>,
+        image: Arc<Image>,
+        remove_if_exists: bool,
+        cx: &mut Context<ContextStore>,
+    ) {
         let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
         let context = AgentContextHandle::Image(ImageContext {
+            project_path,
             original_image: image,
             image_task,
             context_id: self.next_context_id.post_inc(),
         });
+        if self.has_context(&context) {
+            if remove_if_exists {
+                self.remove_context(&context, cx);
+                return;
+            }
+        }
+
         self.insert_context(context, cx);
     }
 
@@ -340,6 +392,9 @@ impl ContextStore {
             AgentContextHandle::File(file_context) => {
                 FileInclusion::check_file(file_context, path, cx)
             }
+            AgentContextHandle::Image(image_context) => {
+                FileInclusion::check_image(image_context, path)
+            }
             AgentContextHandle::Directory(directory_context) => {
                 FileInclusion::check_directory(directory_context, path, project, cx)
             }
@@ -428,6 +483,15 @@ impl FileInclusion {
     fn check_file(file_context: &FileContextHandle, path: &ProjectPath, cx: &App) -> Option<Self> {
         let file_path = file_context.buffer.read(cx).project_path(cx)?;
         if path == &file_path {
+            Some(FileInclusion::Direct)
+        } else {
+            None
+        }
+    }
+
+    fn check_image(image_context: &ImageContext, path: &ProjectPath) -> Option<Self> {
+        let image_path = image_context.project_path.as_ref()?;
+        if path == image_path {
             Some(FileInclusion::Direct)
         } else {
             None

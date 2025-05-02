@@ -1,7 +1,3 @@
-mod base_keymap_picker;
-mod base_keymap_setting;
-mod multibuffer_hint;
-
 use client::{TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
@@ -23,6 +19,11 @@ use workspace::{
 
 pub use base_keymap_setting::BaseKeymap;
 pub use multibuffer_hint::*;
+
+mod base_keymap_picker;
+mod base_keymap_setting;
+mod multibuffer_hint;
+mod welcome_ui;
 
 actions!(welcome, [ResetHints]);
 

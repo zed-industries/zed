@@ -4,8 +4,10 @@ pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod serde;
+pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod time;
 
 use anyhow::Result;
 use futures::Future;

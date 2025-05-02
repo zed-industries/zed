@@ -588,7 +588,9 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                self.cancel(&menu::Cancel, window, cx);
+                if self.is_modal {
+                    self.cancel(&menu::Cancel, window, cx);
+                }
             }
             _ => {}
         }

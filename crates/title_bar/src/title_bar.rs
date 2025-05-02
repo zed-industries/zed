@@ -518,7 +518,7 @@ impl TitleBar {
             let repo = repository.read(cx);
             repo.branch
                 .as_ref()
-                .map(|branch| branch.name.clone())
+                .map(|branch| branch.name())
                 .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {

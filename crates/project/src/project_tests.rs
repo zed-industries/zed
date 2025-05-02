@@ -8296,7 +8296,10 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             ".git": {
                 "worktrees": {
                     "some-worktree": {
-                        "commondir": "../..\n"
+                        "commondir": "../..\n",
+                        // For is_git_dir
+                        "HEAD": "",
+                        "config": ""
                     }
                 },
                 "modules": {
