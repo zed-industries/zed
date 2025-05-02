@@ -529,6 +529,7 @@ impl InlineAssistant {
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
+                render_in_minimap: false,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -543,6 +544,7 @@ impl InlineAssistant {
                         .into_any_element()
                 }),
                 priority: 0,
+                render_in_minimap: false,
             },
         ];
 
@@ -1313,6 +1315,7 @@ impl InlineAssistant {
                             .into_any_element()
                     }),
                     priority: 0,
+                    render_in_minimap: false,
                 });
             }
 

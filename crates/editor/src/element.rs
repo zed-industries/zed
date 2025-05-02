@@ -2980,18 +2980,22 @@ impl EditorElement {
 
                 div()
                     .size_full()
-                    .child(custom.render(&mut BlockContext {
-                        window,
-                        app: cx,
-                        anchor_x,
-                        margins: &margins,
-                        line_height,
-                        em_width,
-                        block_id,
-                        selected,
-                        max_width: text_hitbox.size.width.max(*scroll_width),
-                        editor_style: &self.style,
-                    }))
+                    .children(
+                        (!snapshot.mode.is_minimap() || custom.render_in_minimap).then(|| {
+                            custom.render(&mut BlockContext {
+                                window,
+                                app: cx,
+                                anchor_x,
+                                margins: &margins,
+                                line_height,
+                                em_width,
+                                block_id,
+                                selected,
+                                max_width: text_hitbox.size.width.max(*scroll_width),
+                                editor_style: &self.style,
+                            })
+                        }),
+                    )
                     .into_any()
             }
 
@@ -3322,10 +3326,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<(Vec<BlockLayout>, HashMap<DisplayRow, bool>), HashMap<CustomBlockId, u32>> {
-        if snapshot.mode.is_minimap() {
-            return Ok((Vec::new(), HashMap::default()));
-        }
-
         let (fixed_blocks, non_fixed_blocks) = snapshot
             .blocks_in_range(rows.clone())
             .partition::<Vec<_>, _>(|(_, block)| block.style() == BlockStyle::Fixed);
@@ -9403,6 +9403,7 @@ mod tests {
                         height: Some(3),
                         render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     }],
                     None,
                     cx,

@@ -296,6 +296,7 @@ fn conflicts_updated(
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
             }),
             priority: 0,
+            render_in_minimap: true,
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
