@@ -2029,74 +2029,78 @@ impl ActiveThread {
 
         v_flex()
             .w_full()
-            .when_some(checkpoint, |parent, checkpoint| {
-                let mut is_pending = false;
-                let mut error = None;
-                if let Some(last_restore_checkpoint) =
-                    self.thread.read(cx).last_restore_checkpoint()
-                {
-                    if last_restore_checkpoint.message_id() == message_id {
-                        match last_restore_checkpoint {
-                            LastRestoreCheckpoint::Pending { .. } => is_pending = true,
-                            LastRestoreCheckpoint::Error { error: err, .. } => {
-                                error = Some(err.clone());
+            .map(|parent| {
+                if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                    let mut is_pending = false;
+                    let mut error = None;
+                    if let Some(last_restore_checkpoint) =
+                        self.thread.read(cx).last_restore_checkpoint()
+                    {
+                        if last_restore_checkpoint.message_id() == message_id {
+                            match last_restore_checkpoint {
+                                LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+                                LastRestoreCheckpoint::Error { error: err, .. } => {
+                                    error = Some(err.clone());
+                                }
                             }
                         }
                     }
-                }
 
-                let restore_checkpoint_button =
-                    Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                        .icon(if error.is_some() {
-                            IconName::XCircle
-                        } else {
-                            IconName::Undo
-                        })
-                        .icon_size(IconSize::XSmall)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(if error.is_some() {
-                            Some(Color::Error)
-                        } else {
-                            None
-                        })
-                        .label_size(LabelSize::XSmall)
-                        .disabled(is_pending)
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.thread.update(cx, |thread, cx| {
-                                thread
-                                    .restore_checkpoint(checkpoint.clone(), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }));
+                    let restore_checkpoint_button =
+                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                            .icon(if error.is_some() {
+                                IconName::XCircle
+                            } else {
+                                IconName::Undo
+                            })
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(if error.is_some() {
+                                Some(Color::Error)
+                            } else {
+                                None
+                            })
+                            .label_size(LabelSize::XSmall)
+                            .disabled(is_pending)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }));
 
-                let restore_checkpoint_button = if is_pending {
-                    restore_checkpoint_button
-                        .with_animation(
-                            ("pulsating-restore-checkpoint-button", ix),
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.6, 1.)),
-                            |label, delta| label.alpha(delta),
-                        )
-                        .into_any_element()
-                } else if let Some(error) = error {
-                    restore_checkpoint_button
-                        .tooltip(Tooltip::text(error.to_string()))
-                        .into_any_element()
+                    let restore_checkpoint_button = if is_pending {
+                        restore_checkpoint_button
+                            .with_animation(
+                                ("pulsating-restore-checkpoint-button", ix),
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.6, 1.)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else if let Some(error) = error {
+                        restore_checkpoint_button
+                            .tooltip(Tooltip::text(error.to_string()))
+                            .into_any_element()
+                    } else {
+                        restore_checkpoint_button.into_any_element()
+                    };
+
+                    parent.child(
+                        h_flex()
+                            .pt_2p5()
+                            .px_2p5()
+                            .w_full()
+                            .gap_1()
+                            .child(ui::Divider::horizontal())
+                            .child(restore_checkpoint_button)
+                            .child(ui::Divider::horizontal()),
+                    )
                 } else {
-                    restore_checkpoint_button.into_any_element()
-                };
-
-                parent.child(
-                    h_flex()
-                        .pt_2p5()
-                        .px_2p5()
-                        .w_full()
-                        .gap_1()
-                        .child(ui::Divider::horizontal())
-                        .child(restore_checkpoint_button)
-                        .child(ui::Divider::horizontal()),
-                )
+                    parent
+                }
             })
             .when(is_first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
