@@ -2371,6 +2371,7 @@ impl AssistantContext {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::QueueUpdate { .. } => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;

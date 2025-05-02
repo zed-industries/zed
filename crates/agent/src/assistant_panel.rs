@@ -3,6 +3,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use db::kvp::KEY_VALUE_STORE;
+use serde::{Deserialize, Serialize};
+
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AssistantContext, AssistantPanelDelegate, ConfigurationError, ContextEditor, ContextEvent,
@@ -52,6 +55,13 @@ use crate::{
     NewContext, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
     ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
+
+const AGENT_PANEL_KEY: &str = "agent_panel";
+
+#[derive(Serialize, Deserialize)]
+struct SerializedAssistantPanel {
+    width: Option<Pixels>,
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -302,9 +312,22 @@ pub struct AssistantPanel {
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    pending_serialization: Option<Task<Result<()>>>,
 }
 
 impl AssistantPanel {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
+        let width = self.width;
+        self.pending_serialization = Some(cx.background_spawn(async move {
+            KEY_VALUE_STORE
+                .write_kvp(
+                    AGENT_PANEL_KEY.into(),
+                    serde_json::to_string(&SerializedAssistantPanel { width })?,
+                )
+                .await?;
+            anyhow::Ok(())
+        }));
+    }
     pub fn load(
         workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
@@ -343,8 +366,19 @@ impl AssistantPanel {
                 })?
                 .await?;
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                cx.new(|cx| {
+            let serialized_panel = if let Some(panel) = cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(AGENT_PANEL_KEY) })
+                .await
+                .log_err()
+                .flatten()
+            {
+                Some(serde_json::from_str::<SerializedAssistantPanel>(&panel)?)
+            } else {
+                None
+            };
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let panel = cx.new(|cx| {
                     Self::new(
                         workspace,
                         thread_store,
@@ -353,8 +387,17 @@ impl AssistantPanel {
                         window,
                         cx,
                     )
-                })
-            })
+                });
+                if let Some(serialized_panel) = serialized_panel {
+                    panel.update(cx, |panel, cx| {
+                        panel.width = serialized_panel.width.map(|w| w.round());
+                        cx.notify();
+                    });
+                }
+                panel
+            })?;
+
+            Ok(panel)
         })
     }
 
@@ -586,6 +629,7 @@ impl AssistantPanel {
             assistant_navigation_menu: None,
             width: None,
             height: None,
+            pending_serialization: None,
         }
     }
 
@@ -1209,6 +1253,7 @@ impl Panel for AssistantPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
+        self.serialize(cx);
         cx.notify();
     }
 
