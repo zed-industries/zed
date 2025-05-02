@@ -56,7 +56,7 @@ use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
-    future::try_join_all,
+    future::{Shared, try_join_all},
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -1603,6 +1603,17 @@ impl Project {
 
     pub fn cli_environment(&self, cx: &App) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
+    }
+
+    pub fn buffer_environment<'a>(
+        &'a self,
+        buffer: &Entity<Buffer>,
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &'a mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_buffer_environment(&buffer, &worktree_store, cx)
+        })
     }
 
     pub fn shell_environment_errors<'a>(
@@ -4748,42 +4759,6 @@ impl Project {
         })
     }
 
-    pub fn language_server_with_name(
-        &self,
-        name: &str,
-        cx: &App,
-    ) -> Task<Option<LanguageServerId>> {
-        if self.is_local() {
-            Task::ready(self.lsp_store.read(cx).language_server_with_name(name, cx))
-        } else if let Some(project_id) = self.remote_id() {
-            let request = self.client.request(proto::LanguageServerIdForName {
-                project_id,
-                buffer_id: None,
-                name: name.to_string(),
-            });
-            cx.background_spawn(async move {
-                let response = request.await.log_err()?;
-                response.server_id.map(LanguageServerId::from_proto)
-            })
-        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-            let request =
-                ssh_client
-                    .read(cx)
-                    .proto_client()
-                    .request(proto::LanguageServerIdForName {
-                        project_id: SSH_PROJECT_ID,
-                        buffer_id: None,
-                        name: name.to_string(),
-                    });
-            cx.background_spawn(async move {
-                let response = request.await.log_err()?;
-                response.server_id.map(LanguageServerId::from_proto)
-            })
-        } else {
-            Task::ready(None)
-        }
-    }
-
     pub fn language_server_id_for_name(
         &self,
         buffer: &Buffer,
@@ -4805,7 +4780,7 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::LanguageServerIdForName {
                 project_id,
-                buffer_id: Some(buffer.remote_id().to_proto()),
+                buffer_id: buffer.remote_id().to_proto(),
                 name: name.to_string(),
             });
             cx.background_spawn(async move {
@@ -4819,7 +4794,7 @@ impl Project {
                     .proto_client()
                     .request(proto::LanguageServerIdForName {
                         project_id: SSH_PROJECT_ID,
-                        buffer_id: Some(buffer.remote_id().to_proto()),
+                        buffer_id: buffer.remote_id().to_proto(),
                         name: name.to_string(),
                     });
             cx.background_spawn(async move {

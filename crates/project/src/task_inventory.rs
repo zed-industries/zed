@@ -179,6 +179,14 @@ impl TaskContexts {
             })
             .copied()
     }
+
+    pub fn task_context_for_worktree_id(&self, worktree_id: WorktreeId) -> Option<&TaskContext> {
+        self.active_worktree_context
+            .iter()
+            .chain(self.other_worktree_contexts.iter())
+            .find(|(id, _)| *id == worktree_id)
+            .map(|(_, context)| context)
+    }
 }
 
 impl TaskSourceKind {
@@ -206,13 +214,15 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
-    pub fn list_debug_scenarios(&self, worktree: Option<WorktreeId>) -> Vec<DebugScenario> {
+    pub fn list_debug_scenarios(
+        &self,
+        worktrees: impl Iterator<Item = WorktreeId>,
+    ) -> Vec<(TaskSourceKind, DebugScenario)> {
         let global_scenarios = self.global_debug_scenarios_from_settings();
-        let worktree_scenarios = self.worktree_scenarios_from_settings(worktree);
 
-        worktree_scenarios
+        worktrees
+            .flat_map(|tree_id| self.worktree_scenarios_from_settings(Some(tree_id)))
             .chain(global_scenarios)
-            .map(|(_, scenario)| scenario)
             .collect()
     }
 

@@ -216,9 +216,10 @@ impl RenderOnce for ContextPill {
                     })
                     .when_some(on_click.as_ref(), |element, on_click| {
                         let on_click = on_click.clone();
-                        element
-                            .cursor_pointer()
-                            .on_click(move |event, window, cx| on_click(event, window, cx))
+                        element.cursor_pointer().on_click(move |event, window, cx| {
+                            on_click(event, window, cx);
+                            cx.stop_propagation();
+                        })
                     })
                     .into_any_element()
             }
@@ -254,7 +255,10 @@ impl RenderOnce for ContextPill {
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
-                    element.on_click(move |event, window, cx| on_click(event, window, cx))
+                    element.on_click(move |event, window, cx| {
+                        on_click(event, window, cx);
+                        cx.stop_propagation();
+                    })
                 })
                 .into_any(),
         }

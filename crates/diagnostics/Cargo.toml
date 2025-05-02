@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-cargo_metadata.workspace = true
 collections.workspace = true
 component.workspace = true
 ctor.workspace = true
@@ -23,7 +22,6 @@ env_logger.workspace = true
 futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-itertools.workspace = true
 language.workspace = true
 linkme.workspace = true
 log.workspace = true
@@ -34,7 +32,6 @@ rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
 text.workspace = true
 theme.workspace = true
 ui.workspace = true

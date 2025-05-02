@@ -8,6 +8,7 @@ use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
+    lsp_store,
     manifest_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ManifestTree},
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
@@ -3396,7 +3397,7 @@ pub struct LanguageServerStatus {
     pub name: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
-    pub progress_tokens: HashSet<String>,
+    progress_tokens: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -3449,8 +3450,14 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
 
+        client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
+        client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
+        client.add_entity_request_handler(Self::handle_lsp_ext_clear_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<lsp_ext_command::GoToParentModule>,
+        );
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::GetLspRunnables>,
         );
@@ -6236,13 +6243,6 @@ impl LspStore {
         })
     }
 
-    pub fn language_server_with_name(&self, name: &str, cx: &App) -> Option<LanguageServerId> {
-        self.as_local()?
-            .lsp_tree
-            .read(cx)
-            .server_id_for_name(&LanguageServerName::from(name))
-    }
-
     pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
@@ -7028,37 +7028,26 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerIdForNameResponse> {
         let name = &envelope.payload.name;
-        match envelope.payload.buffer_id {
-            Some(buffer_id) => {
-                let buffer_id = BufferId::new(buffer_id)?;
-                lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
-                        let server_id = buffer.update(cx, |buffer, cx| {
-                            lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .find_map(|(adapter, server)| {
-                                    if adapter.name.0.as_ref() == name {
-                                        Some(server.server_id())
-                                    } else {
-                                        None
-                                    }
-                                })
-                        });
-                        Ok(server_id)
-                    })?
-                    .map(|server_id| proto::LanguageServerIdForNameResponse {
-                        server_id: server_id.map(|id| id.to_proto()),
-                    })
-            }
-            None => lsp_store.update(&mut cx, |lsp_store, cx| {
-                proto::LanguageServerIdForNameResponse {
-                    server_id: lsp_store
-                        .language_server_with_name(name, cx)
-                        .map(|id| id.to_proto()),
-                }
-            }),
-        }
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
+                let server_id = buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .language_servers_for_local_buffer(buffer, cx)
+                        .find_map(|(adapter, server)| {
+                            if adapter.name.0.as_ref() == name {
+                                Some(server.server_id())
+                            } else {
+                                None
+                            }
+                        })
+                });
+                Ok(server_id)
+            })?
+            .map(|server_id| proto::LanguageServerIdForNameResponse {
+                server_id: server_id.map(|id| id.to_proto()),
+            })
     }
 
     async fn handle_rename_project_entry(
@@ -7280,6 +7269,77 @@ impl LspStore {
                 message,
             ));
         })
+    }
+
+    async fn handle_lsp_ext_cancel_flycheck(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspExtCancelFlycheck>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        lsp_store.update(&mut cx, |lsp_store, _| {
+            if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                server
+                    .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
+                    .context("handling lsp ext cancel flycheck")
+            } else {
+                anyhow::Ok(())
+            }
+        })??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_lsp_ext_run_flycheck(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspExtRunFlycheck>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                let text_document = if envelope.payload.current_file_only {
+                    let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+                    lsp_store
+                        .buffer_store()
+                        .read(cx)
+                        .get(buffer_id)
+                        .and_then(|buffer| Some(buffer.read(cx).file()?.as_local()?.abs_path(cx)))
+                        .map(|path| make_text_document_identifier(&path))
+                        .transpose()?
+                } else {
+                    None
+                };
+                server
+                    .notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                        &lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
+                    )
+                    .context("handling lsp ext run flycheck")
+            } else {
+                anyhow::Ok(())
+            }
+        })??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_lsp_ext_clear_flycheck(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspExtClearFlycheck>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        lsp_store.update(&mut cx, |lsp_store, _| {
+            if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                server
+                    .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
+                    .context("handling lsp ext clear flycheck")
+            } else {
+                anyhow::Ok(())
+            }
+        })??;
+
+        Ok(proto::Ack {})
     }
 
     pub fn disk_based_diagnostics_started(
@@ -7534,7 +7594,7 @@ impl LspStore {
         }
     }
 
-    pub fn on_lsp_progress(
+    fn on_lsp_progress(
         &mut self,
         progress: lsp::ProgressParams,
         language_server_id: LanguageServerId,
@@ -8130,7 +8190,7 @@ impl LspStore {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
-                env.get_buffer_environment(buffer.clone(), self.worktree_store.clone(), cx)
+                env.get_buffer_environment(&buffer, &self.worktree_store, cx)
             })
         } else {
             Task::ready(None).shared()

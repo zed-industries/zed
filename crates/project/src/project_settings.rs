@@ -129,7 +129,7 @@ pub struct InlineDiagnosticsSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
-    /// Whether to only show the inline diaganostics after a delay after the
+    /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
@@ -155,37 +155,12 @@ pub struct InlineDiagnosticsSettings {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CargoDiagnosticsSettings {
-    /// When enabled, Zed runs `cargo check --message-format=json`-based commands and
-    /// collect cargo diagnostics instead of rust-analyzer.
+    /// When enabled, Zed disables rust-analyzer's check on save and starts to query
+    /// Cargo diagnostics separately.
     ///
     /// Default: false
     #[serde(default)]
     pub fetch_cargo_diagnostics: bool,
-
-    /// A command override for fetching the cargo diagnostics.
-    /// First argument is the command, followed by the arguments.
-    ///
-    /// Default: ["cargo", "check", "--quiet", "--workspace", "--message-format=json", "--all-targets", "--keep-going"]
-    #[serde(default = "default_diagnostics_fetch_command")]
-    pub diagnostics_fetch_command: Vec<String>,
-
-    /// Extra environment variables to pass to the diagnostics fetch command.
-    ///
-    /// Default: {}
-    #[serde(default)]
-    pub env: HashMap<String, String>,
-}
-
-fn default_diagnostics_fetch_command() -> Vec<String> {
-    vec![
-        "cargo".to_string(),
-        "check".to_string(),
-        "--quiet".to_string(),
-        "--workspace".to_string(),
-        "--message-format=json".to_string(),
-        "--all-targets".to_string(),
-        "--keep-going".to_string(),
-    ]
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]

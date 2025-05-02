@@ -5,18 +5,19 @@ use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language, proto::serialize_anchor};
 use multi_buffer::MultiBuffer;
 use project::{
+    ProjectItem,
     lsp_command::location_link_from_proto,
     lsp_store::{
         lsp_ext_command::{DocsUrls, ExpandMacro, ExpandedMacro},
-        rust_analyzer_ext::RUST_ANALYZER_NAME,
+        rust_analyzer_ext::{RUST_ANALYZER_NAME, cancel_flycheck, clear_flycheck, run_flycheck},
     },
 };
 use rpc::proto;
 use text::ToPointUtf16;
 
 use crate::{
-    Editor, ExpandMacroRecursively, GoToParentModule, GotoDefinitionKind, OpenDocs,
-    element::register_action, hover_links::HoverLink,
+    CancelFlycheck, ClearFlycheck, Editor, ExpandMacroRecursively, GoToParentModule,
+    GotoDefinitionKind, OpenDocs, RunFlycheck, element::register_action, hover_links::HoverLink,
     lsp_ext::find_specific_language_server_in_selection,
 };
 
@@ -37,6 +38,9 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         register_action(&editor, window, go_to_parent_module);
         register_action(&editor, window, expand_macro_recursively);
         register_action(&editor, window, open_docs);
+        register_action(&editor, window, cancel_flycheck_action);
+        register_action(&editor, window, run_flycheck_action);
+        register_action(&editor, window, clear_flycheck_action);
     }
 }
 
@@ -299,4 +303,88 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         })
     })
     .detach_and_log_err(cx);
+}
+
+fn cancel_flycheck_action(
+    editor: &mut Editor,
+    _: &CancelFlycheck,
+    _: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let Some(buffer_id) = editor
+        .selections
+        .disjoint_anchors()
+        .iter()
+        .find_map(|selection| {
+            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let project = project.read(cx);
+            let entry_id = project
+                .buffer_for_id(buffer_id, cx)?
+                .read(cx)
+                .entry_id(cx)?;
+            project.path_for_entry(entry_id, cx)
+        })
+    else {
+        return;
+    };
+    cancel_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
+}
+
+fn run_flycheck_action(
+    editor: &mut Editor,
+    _: &RunFlycheck,
+    _: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let Some(buffer_id) = editor
+        .selections
+        .disjoint_anchors()
+        .iter()
+        .find_map(|selection| {
+            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let project = project.read(cx);
+            let entry_id = project
+                .buffer_for_id(buffer_id, cx)?
+                .read(cx)
+                .entry_id(cx)?;
+            project.path_for_entry(entry_id, cx)
+        })
+    else {
+        return;
+    };
+    run_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
+}
+
+fn clear_flycheck_action(
+    editor: &mut Editor,
+    _: &ClearFlycheck,
+    _: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let Some(buffer_id) = editor
+        .selections
+        .disjoint_anchors()
+        .iter()
+        .find_map(|selection| {
+            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let project = project.read(cx);
+            let entry_id = project
+                .buffer_for_id(buffer_id, cx)?
+                .read(cx)
+                .entry_id(cx)?;
+            project.path_for_entry(entry_id, cx)
+        })
+    else {
+        return;
+    };
+    clear_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }

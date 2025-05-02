@@ -83,15 +83,6 @@ pub enum DebugArgsRequest {
     Attach(AttachRequest),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// The type of task modal to spawn
-pub enum TaskModal {
-    /// Show regular tasks
-    ScriptModal,
-    /// Show debug tasks
-    DebugModal,
-}
-
 /// What to do with the terminal pane and tab, after the command was started.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -302,7 +293,7 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn substitute_all_template_variables_in_str<A: AsRef<str>>(
+pub fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
