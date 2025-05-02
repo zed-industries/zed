@@ -15,13 +15,20 @@ use util::ResultExt as _;
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
 
 mod builtin_profiles {
-    pub const WRITE: &str = "Write";
-    pub const ASK: &str = "Ask";
-    pub const MANUAL: &str = "Manual";
+    use assistant_settings::AgentProfileId;
+
+    pub const WRITE: &str = "write";
+    pub const ASK: &str = "ask";
+    pub const MANUAL: &str = "manual";
+
+    pub fn is_builtin(profile_id: &AgentProfileId) -> bool {
+        profile_id.as_str() == WRITE || profile_id.as_str() == ASK || profile_id.as_str() == MANUAL
+    }
 }
 
 pub struct ProfileSelector {
-    profiles: IndexMap<AgentProfileId, AgentProfile>,
+    builtin_profiles: IndexMap<AgentProfileId, AgentProfile>,
+    custom_profiles: IndexMap<AgentProfileId, AgentProfile>,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
@@ -41,7 +48,8 @@ impl ProfileSelector {
         });
 
         let mut this = Self {
-            profiles: IndexMap::default(),
+            builtin_profiles: IndexMap::default(),
+            custom_profiles: IndexMap::default(),
             fs,
             thread_store,
             focus_handle,
@@ -60,7 +68,19 @@ impl ProfileSelector {
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
         let settings = AssistantSettings::get_global(cx);
 
-        self.profiles = settings.profiles.clone();
+        let mut custom_profiles = IndexMap::default();
+        let mut builtin_profiles = IndexMap::default();
+
+        for (profile_id, profile) in settings.profiles.clone() {
+            if builtin_profiles::is_builtin(&profile_id) {
+                builtin_profiles.insert(profile_id, profile);
+            } else {
+                custom_profiles.insert(profile_id, profile);
+            }
+        }
+
+        self.builtin_profiles = builtin_profiles;
+        self.custom_profiles = custom_profiles;
     }
 
     fn build_context_menu(
@@ -70,45 +90,22 @@ impl ProfileSelector {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AssistantSettings::get_global(cx);
-            let icon_position = IconPosition::End;
+            for (profile_id, profile) in self.builtin_profiles.iter() {
+                menu =
+                    menu.item(self.menu_entry_for_profile(profile_id.clone(), profile, settings));
+            }
 
-            menu = menu.header("Profiles");
-            for (profile_id, profile) in self.profiles.clone() {
-                let documentation = match profile.name.to_lowercase().as_str() {
-                    builtin_profiles::WRITE => Some("Get help to write anything."),
-                    builtin_profiles::ASK => Some("Chat about your codebase."),
-                    builtin_profiles::MANUAL => Some("Chat about anything; no tools."),
-                    _ => None,
-                };
+            menu = menu.separator();
 
-                let entry = ContextMenuEntry::new(profile.name.clone())
-                    .toggleable(icon_position, profile_id == settings.default_profile);
-
-                let entry = if let Some(doc_text) = documentation {
-                    entry.documentation_aside(move |_| Label::new(doc_text).into_any_element())
-                } else {
-                    entry
-                };
-
-                menu = menu.item(entry.handler({
-                    let fs = self.fs.clone();
-                    let thread_store = self.thread_store.clone();
-                    let profile_id = profile_id.clone();
-                    move |_window, cx| {
-                        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-                            let profile_id = profile_id.clone();
-                            move |settings, _cx| {
-                                settings.set_profile(profile_id.clone());
-                            }
-                        });
-
-                        thread_store
-                            .update(cx, |this, cx| {
-                                this.load_profile_by_id(profile_id.clone(), cx);
-                            })
-                            .log_err();
-                    }
-                }));
+            if !self.custom_profiles.is_empty() {
+                menu = menu.header("Custom Profiles");
+                for (profile_id, profile) in self.custom_profiles.iter() {
+                    menu = menu.item(self.menu_entry_for_profile(
+                        profile_id.clone(),
+                        profile,
+                        settings,
+                    ));
+                }
             }
 
             menu = menu.separator();
@@ -131,6 +128,49 @@ impl ProfileSelector {
             ));
 
             menu
+        })
+    }
+
+    fn menu_entry_for_profile(
+        &self,
+        profile_id: AgentProfileId,
+        profile: &AgentProfile,
+        settings: &AssistantSettings,
+    ) -> ContextMenuEntry {
+        let documentation = match profile.name.to_lowercase().as_str() {
+            builtin_profiles::WRITE => Some("Get help to write anything."),
+            builtin_profiles::ASK => Some("Chat about your codebase."),
+            builtin_profiles::MANUAL => Some("Chat about anything with no tools."),
+            _ => None,
+        };
+
+        let entry = ContextMenuEntry::new(profile.name.clone())
+            .toggleable(IconPosition::End, profile_id == settings.default_profile);
+
+        let entry = if let Some(doc_text) = documentation {
+            entry.documentation_aside(move |_| Label::new(doc_text).into_any_element())
+        } else {
+            entry
+        };
+
+        entry.handler({
+            let fs = self.fs.clone();
+            let thread_store = self.thread_store.clone();
+            let profile_id = profile_id.clone();
+            move |_window, cx| {
+                update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+                    let profile_id = profile_id.clone();
+                    move |settings, _cx| {
+                        settings.set_profile(profile_id.clone());
+                    }
+                });
+
+                thread_store
+                    .update(cx, |this, cx| {
+                        this.load_profile_by_id(profile_id.clone(), cx);
+                    })
+                    .log_err();
+            }
         })
     }
 }
