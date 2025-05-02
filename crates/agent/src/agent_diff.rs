@@ -1182,7 +1182,7 @@ impl AgentDiff {
         cx.try_global::<AgentDiffGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
-                let entity = cx.new(|cx| Self::new(cx));
+                let entity = cx.new(Self::new);
                 let global = AgentDiffGlobal(entity.clone());
                 cx.set_global(global);
                 entity.clone()
@@ -1991,7 +1991,6 @@ mod tests {
                 buffer
                     .edit([(Point::new(2, 1)..Point::new(2, 2), "H")], None, cx)
                     .unwrap();
-                dbg!(buffer.text());
             });
             action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
         });
