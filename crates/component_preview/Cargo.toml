@@ -30,7 +30,6 @@ prompt_store.workspace = true
 serde.workspace = true
 ui.workspace = true
 ui_input.workspace = true
-util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 assistant_tool.workspace = true
