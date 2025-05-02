@@ -1036,7 +1036,7 @@ impl InputHandler for TerminalInputHandler {
         cx: &mut App,
     ) {
         self.terminal.update(cx, |terminal, _| {
-            terminal.input(text.into());
+            terminal.input(text);
         });
 
         self.workspace

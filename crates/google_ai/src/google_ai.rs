@@ -76,12 +76,10 @@ pub async fn count_tokens(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
+    model_id: &str,
     request: CountTokensRequest,
 ) -> Result<CountTokensResponse> {
-    let uri = format!(
-        "{}/v1beta/models/gemini-pro:countTokens?key={}",
-        api_url, api_key
-    );
+    let uri = format!("{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",);
     let request = serde_json::to_string(&request)?;
 
     let request_builder = HttpRequest::builder()
@@ -124,8 +122,11 @@ pub struct GenerateContentRequest {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
     pub contents: Vec<Content>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<SystemInstruction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
@@ -136,19 +137,27 @@ pub struct GenerateContentRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates: Option<Vec<GenerateContentCandidate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_feedback: Option<PromptFeedback>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_metadata: Option<UsageMetadata>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentCandidate {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
     pub content: Content,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_ratings: Option<Vec<SafetyRating>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub citation_metadata: Option<CitationMetadata>,
 }
 
@@ -216,9 +225,13 @@ pub struct FunctionResponsePart {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationSource {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
 }
 
@@ -231,30 +244,44 @@ pub struct CitationMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptFeedback {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
     pub safety_ratings: Vec<SafetyRating>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason_message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_content_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_use_prompt_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thoughts_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_token_count: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
 }
 
@@ -292,16 +319,13 @@ pub enum HarmCategory {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HarmBlockThreshold {
     #[serde(rename = "HARM_BLOCK_THRESHOLD_UNSPECIFIED")]
     Unspecified,
-    #[serde(rename = "BLOCK_LOW_AND_ABOVE")]
     BlockLowAndAbove,
-    #[serde(rename = "BLOCK_MEDIUM_AND_ABOVE")]
     BlockMediumAndAbove,
-    #[serde(rename = "BLOCK_ONLY_HIGH")]
     BlockOnlyHigh,
-    #[serde(rename = "BLOCK_NONE")]
     BlockNone,
 }
 
@@ -451,16 +475,18 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
+        const ONE_MILLION: usize = 1_048_576;
+        const TWO_MILLION: usize = 2_097_152;
         match self {
-            Model::Gemini15Pro => 2_000_000,
-            Model::Gemini15Flash => 1_000_000,
-            Model::Gemini20Pro => 2_000_000,
-            Model::Gemini20Flash => 1_000_000,
-            Model::Gemini20FlashThinking => 1_000_000,
-            Model::Gemini20FlashLite => 1_000_000,
-            Model::Gemini25ProExp0325 => 1_000_000,
-            Model::Gemini25ProPreview0325 => 1_000_000,
-            Model::Gemini25FlashPreview0417 => 1_000_000,
+            Model::Gemini15Pro => TWO_MILLION,
+            Model::Gemini15Flash => ONE_MILLION,
+            Model::Gemini20Pro => TWO_MILLION,
+            Model::Gemini20Flash => ONE_MILLION,
+            Model::Gemini20FlashThinking => ONE_MILLION,
+            Model::Gemini20FlashLite => ONE_MILLION,
+            Model::Gemini25ProExp0325 => ONE_MILLION,
+            Model::Gemini25ProPreview0325 => ONE_MILLION,
+            Model::Gemini25FlashPreview0417 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }

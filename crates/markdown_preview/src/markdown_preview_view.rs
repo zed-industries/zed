@@ -7,8 +7,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
-    list,
+    IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
+    WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -30,6 +30,7 @@ const REPARSE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub struct MarkdownPreviewView {
     workspace: WeakEntity<Workspace>,
+    image_cache: Entity<RetainAllImageCache>,
     active_editor: Option<EditorState>,
     focus_handle: FocusHandle,
     contents: Option<ParsedMarkdown>,
@@ -264,6 +265,7 @@ impl MarkdownPreviewView {
                 tab_content_text,
                 language_registry,
                 parsing_markdown_task: None,
+                image_cache: RetainAllImageCache::new(cx),
             };
 
             this.set_editor(active_editor, window, cx);
@@ -506,7 +508,9 @@ impl Render for MarkdownPreviewView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
+
         v_flex()
+            .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))

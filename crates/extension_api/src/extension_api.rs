@@ -18,6 +18,7 @@ pub use wit::{
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
     make_file_executable,
+    zed::extension::context_server::ContextServerConfiguration,
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
@@ -159,6 +160,15 @@ pub trait Extension: Send + Sync {
         Err("`context_server_command` not implemented".to_string())
     }
 
+    /// Returns the configuration options for the specified context server.
+    fn context_server_configuration(
+        &mut self,
+        _context_server_id: &ContextServerId,
+        _project: &Project,
+    ) -> Result<Option<ContextServerConfiguration>> {
+        Ok(None)
+    }
+
     /// Returns a list of package names as suggestions to be included in the
     /// search results of the `/docs` slash command.
     ///
@@ -218,7 +228,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.4.0",
+        path: "./wit/since_v0.5.0",
     });
 }
 
@@ -340,6 +350,14 @@ impl wit::Guest for Component {
     ) -> Result<wit::Command> {
         let context_server_id = ContextServerId(context_server_id);
         extension().context_server_command(&context_server_id, project)
+    }
+
+    fn context_server_configuration(
+        context_server_id: String,
+        project: &Project,
+    ) -> Result<Option<ContextServerConfiguration>, String> {
+        let context_server_id = ContextServerId(context_server_id);
+        extension().context_server_configuration(&context_server_id, project)
     }
 
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {

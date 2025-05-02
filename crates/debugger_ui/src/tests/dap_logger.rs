@@ -5,6 +5,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::Project;
 use serde_json::json;
 use std::cell::OnceCell;
+use util::path;
 
 #[gpui::test]
 async fn test_dap_logger_captures_all_session_rpc_messages(
@@ -28,7 +29,7 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
     // Create a filesystem with a simple project
     let fs = project::FakeFs::new(executor.clone());
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"
         }),
@@ -42,7 +43,7 @@ async fn test_dap_logger_captures_all_session_rpc_messages(
         "log_store shouldn't contain any session IDs before any sessions were created"
     );
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);

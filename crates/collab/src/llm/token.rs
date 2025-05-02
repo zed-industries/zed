@@ -1,7 +1,9 @@
 use crate::Cents;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::db::{billing_subscription, user};
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT,
+};
 use crate::{Config, db::billing_preference};
 use anyhow::{Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
@@ -30,7 +32,11 @@ pub struct LlmTokenClaims {
     pub has_llm_subscription: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
+    #[serde(default)]
+    pub use_new_billing: bool,
     pub plan: Plan,
+    #[serde(default)]
+    pub has_extended_trial: bool,
     #[serde(default)]
     pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
     #[serde(default)]
@@ -86,6 +92,7 @@ impl LlmTokenClaims {
             custom_llm_monthly_allowance_in_cents: user
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
+            use_new_billing: feature_flags.iter().any(|flag| flag == "new-billing"),
             plan: subscription
                 .as_ref()
                 .and_then(|subscription| subscription.kind)
@@ -94,6 +101,9 @@ impl LlmTokenClaims {
                     SubscriptionKind::ZedPro => Plan::ZedPro,
                     SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
                 }),
+            has_extended_trial: feature_flags
+                .iter()
+                .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG),
             subscription_period: maybe!({
                 let subscription = subscription?;
                 let period_start_at = subscription.current_period_start_at()?;

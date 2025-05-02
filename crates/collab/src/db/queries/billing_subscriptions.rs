@@ -191,6 +191,38 @@ impl Database {
         .await
     }
 
+    pub async fn get_active_zed_pro_billing_subscriptions(
+        &self,
+        user_ids: HashSet<UserId>,
+    ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
+        self.transaction(|tx| {
+            let user_ids = user_ids.clone();
+            async move {
+                let mut rows = billing_subscription::Entity::find()
+                    .inner_join(billing_customer::Entity)
+                    .select_also(billing_customer::Entity)
+                    .filter(billing_customer::Column::UserId.is_in(user_ids))
+                    .filter(
+                        billing_subscription::Column::StripeSubscriptionStatus
+                            .eq(StripeSubscriptionStatus::Active),
+                    )
+                    .filter(billing_subscription::Column::Kind.eq(SubscriptionKind::ZedPro))
+                    .order_by_asc(billing_subscription::Column::Id)
+                    .stream(&*tx)
+                    .await?;
+
+                let mut subscriptions = HashMap::default();
+                while let Some(row) = rows.next().await {
+                    if let (subscription, Some(customer)) = row? {
+                        subscriptions.insert(customer.user_id, (customer, subscription));
+                    }
+                }
+                Ok(subscriptions)
+            }
+        })
+        .await
+    }
+
     /// Returns whether the user has an active billing subscription.
     pub async fn has_active_billing_subscription(&self, user_id: UserId) -> Result<bool> {
         Ok(self.count_active_billing_subscriptions(user_id).await? > 0)
