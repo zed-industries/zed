@@ -6243,13 +6243,6 @@ impl LspStore {
         })
     }
 
-    pub fn language_server_with_name(&self, name: &str, cx: &App) -> Option<LanguageServerId> {
-        self.as_local()?
-            .lsp_tree
-            .read(cx)
-            .server_id_for_name(&LanguageServerName::from(name))
-    }
-
     pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
@@ -7035,37 +7028,26 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerIdForNameResponse> {
         let name = &envelope.payload.name;
-        match envelope.payload.buffer_id {
-            Some(buffer_id) => {
-                let buffer_id = BufferId::new(buffer_id)?;
-                lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
-                        let server_id = buffer.update(cx, |buffer, cx| {
-                            lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .find_map(|(adapter, server)| {
-                                    if adapter.name.0.as_ref() == name {
-                                        Some(server.server_id())
-                                    } else {
-                                        None
-                                    }
-                                })
-                        });
-                        Ok(server_id)
-                    })?
-                    .map(|server_id| proto::LanguageServerIdForNameResponse {
-                        server_id: server_id.map(|id| id.to_proto()),
-                    })
-            }
-            None => lsp_store.update(&mut cx, |lsp_store, cx| {
-                proto::LanguageServerIdForNameResponse {
-                    server_id: lsp_store
-                        .language_server_with_name(name, cx)
-                        .map(|id| id.to_proto()),
-                }
-            }),
-        }
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
+                let server_id = buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .language_servers_for_local_buffer(buffer, cx)
+                        .find_map(|(adapter, server)| {
+                            if adapter.name.0.as_ref() == name {
+                                Some(server.server_id())
+                            } else {
+                                None
+                            }
+                        })
+                });
+                Ok(server_id)
+            })?
+            .map(|server_id| proto::LanguageServerIdForNameResponse {
+                server_id: server_id.map(|id| id.to_proto()),
+            })
     }
 
     async fn handle_rename_project_entry(

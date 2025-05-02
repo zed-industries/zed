@@ -5,6 +5,7 @@ use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language, proto::serialize_anchor};
 use multi_buffer::MultiBuffer;
 use project::{
+    ProjectItem,
     lsp_command::location_link_from_proto,
     lsp_store::{
         lsp_ext_command::{DocsUrls, ExpandMacro, ExpandedMacro},
@@ -317,11 +318,19 @@ fn cancel_flycheck_action(
         .selections
         .disjoint_anchors()
         .iter()
-        .find_map(|selection| selection.start.buffer_id.or(selection.end.buffer_id))
+        .find_map(|selection| {
+            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let project = project.read(cx);
+            let entry_id = project
+                .buffer_for_id(buffer_id, cx)?
+                .read(cx)
+                .entry_id(cx)?;
+            project.path_for_entry(entry_id, cx)
+        })
     else {
         return;
     };
-    cancel_flycheck(project, buffer_id, cx).detach_and_log_err(cx);
+    cancel_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }
 
 fn run_flycheck_action(
@@ -337,11 +346,19 @@ fn run_flycheck_action(
         .selections
         .disjoint_anchors()
         .iter()
-        .find_map(|selection| selection.start.buffer_id.or(selection.end.buffer_id))
+        .find_map(|selection| {
+            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let project = project.read(cx);
+            let entry_id = project
+                .buffer_for_id(buffer_id, cx)?
+                .read(cx)
+                .entry_id(cx)?;
+            project.path_for_entry(entry_id, cx)
+        })
     else {
         return;
     };
-    run_flycheck(project, buffer_id, cx).detach_and_log_err(cx);
+    run_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }
 
 fn clear_flycheck_action(
@@ -357,9 +374,17 @@ fn clear_flycheck_action(
         .selections
         .disjoint_anchors()
         .iter()
-        .find_map(|selection| selection.start.buffer_id.or(selection.end.buffer_id))
+        .find_map(|selection| {
+            let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
+            let project = project.read(cx);
+            let entry_id = project
+                .buffer_for_id(buffer_id, cx)?
+                .read(cx)
+                .entry_id(cx)?;
+            project.path_for_entry(entry_id, cx)
+        })
     else {
         return;
     };
-    clear_flycheck(project, buffer_id, cx).detach_and_log_err(cx);
+    clear_flycheck(project.clone(), buffer_id, cx).detach_and_log_err(cx);
 }

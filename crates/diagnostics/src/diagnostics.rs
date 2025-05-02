@@ -23,7 +23,7 @@ use gpui::{
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
-use lsp::{DiagnosticSeverity, LanguageServerId};
+use lsp::DiagnosticSeverity;
 use project::{
     DiagnosticSummary, Project, ProjectPath,
     lsp_store::rust_analyzer_ext::{cancel_flycheck, run_flycheck},
@@ -81,8 +81,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
 struct CargoDiagnosticsFetchState {
     fetch_task: Option<Task<()>>,
     cancel_task: Option<Task<()>>,
-    rust_analyzer: Option<LanguageServerId>,
-    diagnostic_sources: Vec<BufferId>,
+    diagnostic_sources: Arc<Vec<ProjectPath>>,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -251,8 +250,7 @@ impl ProjectDiagnosticsEditor {
             cargo_diagnostics_fetch: CargoDiagnosticsFetchState {
                 fetch_task: None,
                 cancel_task: None,
-                rust_analyzer: None,
-                diagnostic_sources: Vec::new(),
+                diagnostic_sources: Arc::new(Vec::new()),
             },
             _subscription: project_event_subscription,
         };
@@ -378,28 +376,29 @@ impl ProjectDiagnosticsEditor {
         if cargo_diagnostics_sources.is_empty() {
             self.update_all_excerpts(window, cx);
         } else {
-            self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), window, cx);
+            self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), cx);
         }
     }
 
     fn fetch_cargo_diagnostics(
         &mut self,
-        diagnostics_sources: Arc<Vec<BufferId>>,
-        window: &mut Window,
+        diagnostics_sources: Arc<Vec<ProjectPath>>,
         cx: &mut Context<Self>,
     ) {
-        if diagnostics_sources.is_empty() {
+        let project = self.project.clone();
+        self.cargo_diagnostics_fetch.cancel_task = None;
+        self.cargo_diagnostics_fetch.fetch_task = None;
+        self.cargo_diagnostics_fetch.diagnostic_sources = diagnostics_sources.clone();
+        if self.cargo_diagnostics_fetch.diagnostic_sources.is_empty() {
             return;
         }
 
-        let project = self.project.clone();
-        self.cargo_diagnostics_fetch.cancel_task = None;
-        self.cargo_diagnostics_fetch.fetch_task = Some(cx.spawn(async move |_, cx| {
+        self.cargo_diagnostics_fetch.fetch_task = Some(cx.spawn(async move |editor, cx| {
             let mut fetch_tasks = Vec::new();
-            for buffer_id in diagnostics_sources.iter().copied() {
+            for buffer_path in diagnostics_sources.iter().cloned() {
                 if cx
-                    .update(|_, cx| {
-                        fetch_tasks.push(run_flycheck(&project, buffer_id, cx));
+                    .update(|cx| {
+                        fetch_tasks.push(run_flycheck(project.clone(), buffer_path, cx));
                     })
                     .is_err()
                 {
@@ -408,20 +407,26 @@ impl ProjectDiagnosticsEditor {
             }
 
             let _ = join_all(fetch_tasks).await;
+            editor
+                .update(cx, |editor, _| {
+                    editor.cargo_diagnostics_fetch.fetch_task = None;
+                })
+                .ok();
         }));
     }
 
     fn stop_cargo_diagnostics_fetch(&mut self, cx: &mut App) {
         self.cargo_diagnostics_fetch.fetch_task = None;
         let mut cancel_gasks = Vec::new();
-        if let Some(rust_analyzer_server_id) = self.cargo_diagnostics_fetch.rust_analyzer {
-            for buffer_id in self.cargo_diagnostics_fetch.diagnostic_sources.drain(..) {
-                cancel_gasks.push(cancel_flycheck(&self.project, buffer_id, cx));
-            }
+        for buffer_path in std::mem::take(&mut self.cargo_diagnostics_fetch.diagnostic_sources)
+            .iter()
+            .cloned()
+        {
+            cancel_gasks.push(cancel_flycheck(self.project.clone(), buffer_path, cx));
         }
 
         self.cargo_diagnostics_fetch.cancel_task = Some(cx.background_spawn(async move {
-            let _ = join_all(cancel_gasks).await.join(sep);
+            let _ = join_all(cancel_gasks).await;
             log::info!("Finished fetching cargo diagnostics");
         }));
     }
@@ -653,7 +658,7 @@ impl ProjectDiagnosticsEditor {
         })
     }
 
-    pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<BufferId> {
+    pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
         let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
             .diagnostics
             .fetch_cargo_diagnostics();
@@ -664,14 +669,15 @@ impl ProjectDiagnosticsEditor {
             .read(cx)
             .worktrees(cx)
             .filter_map(|worktree| {
-                let cargo_toml_entry = worktree.read(cx).entry_for_path("Cargo.toml")?;
-                let project = self.project.read(cx);
-                let project_path = project.path_for_entry(cargo_toml_entry.id, cx)?;
-                project
-                    .buffer_store()
-                    .read(cx)
-                    .buffer_id_for_project_path(&project_path)
-                    .copied()
+                let _cargo_toml_entry = worktree.read(cx).entry_for_path("Cargo.toml")?;
+                let rust_file_entry = worktree.read(cx).entries(false, 0).find(|entry| {
+                    entry
+                        .path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some("rs")
+                })?;
+                self.project.read(cx).path_for_entry(rust_file_entry.id, cx)
             })
             .collect()
     }

@@ -706,7 +706,7 @@ message LspResponse {
 
 message LanguageServerIdForName {
     uint64 project_id = 1;
-    optional uint64 buffer_id = 2;
+    uint64 buffer_id = 2;
     string name = 3;
 }
 

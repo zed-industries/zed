@@ -90,7 +90,6 @@ impl Render for ToolbarControls {
                                             if fetch_cargo_diagnostics {
                                                 diagnostics.fetch_cargo_diagnostics(
                                                     cargo_diagnostics_sources,
-                                                    window,
                                                     cx,
                                                 );
                                             } else {
