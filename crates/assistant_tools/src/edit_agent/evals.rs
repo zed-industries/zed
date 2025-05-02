@@ -4,10 +4,11 @@ use crate::{
     streaming_edit_file_tool::StreamingEditFileToolInput,
 };
 use Role::*;
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
+use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext};
 use indoc::indoc;
 use language_model::{
@@ -79,7 +80,7 @@ fn eval_extract_handle_command_output() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::AssertEqual(output_file_content.into()),
+            assertion: EvalAssertion::assert_eq(output_file_content),
         },
     );
 }
@@ -135,7 +136,7 @@ fn eval_delete_run_git_blame() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::AssertEqual(output_file_content.into()),
+            assertion: EvalAssertion::assert_eq(output_file_content),
         },
     );
 }
@@ -250,7 +251,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::JudgeDiff(indoc! {"
+            assertion: EvalAssertion::judge_diff(indoc! {"
                 - The compile_parser_to_wasm method has been changed to use wasi-sdk
                 - ureq is used to download the SDK for current platform and architecture
             "}),
@@ -326,7 +327,7 @@ fn eval_disable_cursor_blinking() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::AssertEqual(output_file_content.into()),
+            assertion: EvalAssertion::assert_eq(output_file_content),
         },
     );
 }
@@ -516,7 +517,7 @@ fn eval_from_pixels_constructor() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::JudgeDiff(indoc! {"
+            assertion: EvalAssertion::assert_eq(indoc! {"
                 - The diff contains a new `from_pixels` constructor
                 - The diff contains new tests for the `from_pixels` constructor
             "}),
@@ -594,7 +595,7 @@ fn eval_zode() {
             input_path: input_file_path.into(),
             input_content: None,
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::AssertEqual("".to_string()),
+            assertion: EvalAssertion::assert_eq("".to_string()),
         },
     );
 }
@@ -659,6 +660,130 @@ struct EvalInput {
     assertion: EvalAssertion,
 }
 
+#[derive(Clone)]
+struct EvalSample {
+    text: String,
+    edit_output: EditAgentOutput,
+    diff: String,
+}
+
+trait AssertionFn: 'static + Send + Sync {
+    fn assert<'a>(
+        &'a self,
+        sample: &'a EvalSample,
+        judge_model: Arc<dyn LanguageModel>,
+        cx: &'a mut TestAppContext,
+    ) -> LocalBoxFuture<'a, Result<EvalAssertionOutcome>>;
+}
+
+impl<F> AssertionFn for F
+where
+    F: 'static
+        + Send
+        + Sync
+        + AsyncFn(
+            &EvalSample,
+            Arc<dyn LanguageModel>,
+            &mut TestAppContext,
+        ) -> Result<EvalAssertionOutcome>,
+{
+    fn assert<'a>(
+        &'a self,
+        sample: &'a EvalSample,
+        judge_model: Arc<dyn LanguageModel>,
+        cx: &'a mut TestAppContext,
+    ) -> LocalBoxFuture<'a, Result<EvalAssertionOutcome>> {
+        (self)(sample, judge_model, cx).boxed_local()
+    }
+}
+
+#[derive(Clone)]
+struct EvalAssertion(Arc<dyn AssertionFn>);
+
+impl EvalAssertion {
+    fn new<F>(f: F) -> Self
+    where
+        F: 'static
+            + Send
+            + Sync
+            + AsyncFn(
+                &EvalSample,
+                Arc<dyn LanguageModel>,
+                &mut TestAppContext,
+            ) -> Result<EvalAssertionOutcome>,
+    {
+        EvalAssertion(Arc::new(f))
+    }
+
+    fn assert_eq(expected: impl Into<String>) -> Self {
+        let expected = expected.into();
+        Self::new(async move |sample, _judge, _cx| {
+            Ok(EvalAssertionOutcome {
+                score: if strip_empty_lines(&sample.text) == strip_empty_lines(&expected) {
+                    100
+                } else {
+                    0
+                },
+                message: None,
+            })
+        })
+    }
+
+    fn judge_diff(assertions: &'static str) -> Self {
+        Self::new(async move |sample, judge, cx| {
+            let prompt = DiffJudgeTemplate {
+                diff: sample.diff.clone(),
+                assertions,
+            }
+            .render(&Templates::new())
+            .unwrap();
+
+            let request = LanguageModelRequest {
+                messages: vec![LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![prompt.into()],
+                    cache: false,
+                }],
+                ..Default::default()
+            };
+            let mut response = judge
+                .stream_completion_text(request, &cx.to_async())
+                .await?;
+            let mut output = String::new();
+            while let Some(chunk) = response.stream.next().await {
+                let chunk = chunk?;
+                output.push_str(&chunk);
+            }
+
+            // Parse the score from the response
+            let re = regex::Regex::new(r"<score>(\d+)</score>").unwrap();
+            if let Some(captures) = re.captures(&output) {
+                if let Some(score_match) = captures.get(1) {
+                    let score = score_match.as_str().parse().unwrap_or(0);
+                    return Ok(EvalAssertionOutcome {
+                        score,
+                        message: Some(output),
+                    });
+                }
+            }
+
+            Err(anyhow!(
+                "No score found in response. Raw output: {}",
+                output
+            ))
+        })
+    }
+
+    async fn run(
+        &self,
+        input: &EvalSample,
+        judge_model: Arc<dyn LanguageModel>,
+        cx: &mut TestAppContext,
+    ) -> Result<EvalAssertionOutcome> {
+        self.0.assert(input, judge_model, cx).await
+    }
+}
+
 fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut evaluated_count = 0;
     report_progress(evaluated_count, iterations);
@@ -686,12 +811,12 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     while let Ok(output) = rx.recv() {
         match output {
             Ok(output) => {
-                cumulative_parser_metrics += output.edit_output._parser_metrics.clone();
+                cumulative_parser_metrics += output.sample.edit_output._parser_metrics.clone();
                 eval_outputs.push(output.clone());
                 if output.assertion.score < 80 {
                     failed_count += 1;
                     failed_evals
-                        .entry(output.buffer_text.clone())
+                        .entry(output.sample.text.clone())
                         .or_insert(Vec::new())
                         .push(output);
                 }
@@ -751,10 +876,8 @@ fn run_eval(eval: EvalInput, tx: mpsc::Sender<Result<EvalOutput>>) {
 
 #[derive(Clone)]
 struct EvalOutput {
-    assertion: EvalAssertionResult,
-    buffer_text: String,
-    edit_output: EditAgentOutput,
-    diff: String,
+    sample: EvalSample,
+    assertion: EvalAssertionOutcome,
 }
 
 impl Display for EvalOutput {
@@ -764,14 +887,14 @@ impl Display for EvalOutput {
             writeln!(f, "Message: {}", message)?;
         }
 
-        writeln!(f, "Diff:\n{}", self.diff)?;
+        writeln!(f, "Diff:\n{}", self.sample.diff)?;
 
         writeln!(
             f,
             "Parser Metrics:\n{:#?}",
-            self.edit_output._parser_metrics
+            self.sample.edit_output._parser_metrics
         )?;
-        writeln!(f, "Raw Edits:\n{}", self.edit_output._raw_edits)?;
+        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output._raw_edits)?;
         Ok(())
     }
 }
@@ -877,88 +1000,25 @@ impl EditAgentTest {
         };
 
         let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
-        let actual_diff = language::unified_diff(
-            eval.input_content.as_deref().unwrap_or_default(),
-            &buffer_text,
-        );
-        let assertion = match eval.assertion {
-            EvalAssertion::AssertEqual(expected_output) => EvalAssertionResult {
-                score: if strip_empty_lines(&buffer_text) == strip_empty_lines(&expected_output) {
-                    100
-                } else {
-                    0
-                },
-                message: None,
-            },
-            EvalAssertion::JudgeDiff(assertions) => self
-                .judge_diff(&actual_diff, assertions, &cx.to_async())
-                .await
-                .context("failed comparing diffs")?,
-        };
-
-        Ok(EvalOutput {
-            assertion,
-            diff: actual_diff,
-            buffer_text,
+        let sample = EvalSample {
             edit_output,
-        })
-    }
-
-    async fn judge_diff(
-        &self,
-        diff: &str,
-        assertions: &'static str,
-        cx: &AsyncApp,
-    ) -> Result<EvalAssertionResult> {
-        let prompt = DiffJudgeTemplate {
-            diff: diff.to_string(),
-            assertions,
-        }
-        .render(&self.agent.templates)
-        .unwrap();
-
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![prompt.into()],
-                cache: false,
-            }],
-            ..Default::default()
+            diff: language::unified_diff(
+                eval.input_content.as_deref().unwrap_or_default(),
+                &buffer_text,
+            ),
+            text: buffer_text,
         };
-        let mut response = self.judge_model.stream_completion_text(request, cx).await?;
-        let mut output = String::new();
-        while let Some(chunk) = response.stream.next().await {
-            let chunk = chunk?;
-            output.push_str(&chunk);
-        }
+        let assertion = eval
+            .assertion
+            .run(&sample, self.judge_model.clone(), cx)
+            .await?;
 
-        // Parse the score from the response
-        let re = regex::Regex::new(r"<score>(\d+)</score>").unwrap();
-        if let Some(captures) = re.captures(&output) {
-            if let Some(score_match) = captures.get(1) {
-                let score = score_match.as_str().parse().unwrap_or(0);
-                return Ok(EvalAssertionResult {
-                    score,
-                    message: Some(output),
-                });
-            }
-        }
-
-        Err(anyhow!(
-            "No score found in response. Raw output: {}",
-            output
-        ))
+        Ok(EvalOutput { assertion, sample })
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-enum EvalAssertion {
-    AssertEqual(String),
-    JudgeDiff(&'static str),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct EvalAssertionResult {
+struct EvalAssertionOutcome {
     score: usize,
     message: Option<String>,
 }
