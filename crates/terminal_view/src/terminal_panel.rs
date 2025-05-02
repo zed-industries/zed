@@ -483,7 +483,7 @@ impl TerminalPanel {
         task: &SpawnInTerminal,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Terminal>>> {
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let Ok(is_local) = self
             .workspace
             .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
@@ -552,12 +552,12 @@ impl TerminalPanel {
         cx.spawn(async move |_, _| rx.await?)
     }
 
-    pub fn spawn_in_new_terminal(
+    fn spawn_in_new_terminal(
         &mut self,
         spawn_task: SpawnInTerminal,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Terminal>>> {
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
         let reveal_target = spawn_task.reveal_target;
         let kind = TerminalKind::Task(spawn_task);
@@ -652,7 +652,7 @@ impl TerminalPanel {
         kind: TerminalKind,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Task<Result<Entity<Terminal>>> {
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         if !is_enabled_in_workspace(workspace, cx) {
             return Task::ready(Err(anyhow!(
                 "terminal not yet supported for remote projects"
@@ -680,7 +680,7 @@ impl TerminalPanel {
                 });
                 workspace.add_item_to_active_pane(Box::new(terminal_view), None, true, window, cx);
             })?;
-            Ok(terminal)
+            Ok(terminal.downgrade())
         })
     }
 
@@ -690,7 +690,7 @@ impl TerminalPanel {
         reveal_strategy: RevealStrategy,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Terminal>>> {
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
@@ -735,11 +735,12 @@ impl TerminalPanel {
                     pane.add_item(terminal_view, true, focus, None, window, cx);
                 });
 
-                Ok(terminal)
+                Ok(terminal.downgrade())
             })?;
-            terminal_panel.update(cx, |this, cx| {
-                this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
-                this.serialize(cx)
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.pending_terminals_to_add =
+                    terminal_panel.pending_terminals_to_add.saturating_sub(1);
+                terminal_panel.serialize(cx)
             })?;
             result
         })
@@ -802,7 +803,7 @@ impl TerminalPanel {
         terminal_to_replace: Entity<TerminalView>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Terminal>>> {
+    ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
         let reveal_target = spawn_task.reveal_target;
         let window_handle = window.window_handle();
@@ -884,7 +885,7 @@ impl TerminalPanel {
                 RevealStrategy::Never => {}
             }
 
-            Ok(new_terminal)
+            Ok(new_terminal.downgrade())
         })
     }
 
