@@ -11,5 +11,6 @@ set -x
 
 # If local, run cargo machete too.
 if [[ ! -v GITHUB_ACTIONS ]]; then
-    "${CARGO:-cargo}" machete
+    which cargo-machete >/dev/null 2>&1 || exit 0
+    cargo machete
 fi
