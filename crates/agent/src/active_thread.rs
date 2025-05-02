@@ -2115,9 +2115,7 @@ impl ActiveThread {
                         .mb_4()
                         .ml_4()
                         .py_1p5()
-                        .when_some(loading_dots, |this, loading_dots| {
-                            this.child(loading_dots)
-                        }),
+                        .when_some(loading_dots, |this, loading_dots| this.child(loading_dots)),
                 )
             })
             .when(show_feedback, move |parent| {
