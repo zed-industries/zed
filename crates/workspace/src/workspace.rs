@@ -470,7 +470,7 @@ struct ProjectItemRegistry {
 impl ProjectItemRegistry {
     fn register<T: ProjectItem>(&mut self) {
         self.build_project_item_fns_by_type.insert(
-            TypeId::of::<T>(),
+            TypeId::of::<T::Item>(),
             |item, project, pane, window, cx| {
                 let item = item.downcast().unwrap();
                 Box::new(cx.new(|cx| T::for_project_item(project, pane, item, window, cx)))

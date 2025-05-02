@@ -246,7 +246,10 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
             let room = self.active_call?.read(cx).room()?.read(cx);
             match leader_id {
                 CollaboratorId::PeerId(peer_id) => room.remote_participant_for_peer_id(*peer_id),
-                CollaboratorId::Agent => None,
+                CollaboratorId::Agent => {
+                    // todo!("show border")
+                    None
+                }
             }
         });
         let Some(leader) = leader else {
