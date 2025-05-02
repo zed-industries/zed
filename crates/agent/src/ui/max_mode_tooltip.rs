@@ -23,7 +23,7 @@ impl Render for MaxModeTooltip {
                     div()
                         .max_w_72()
                         .child(
-                            Label::new("In Max Mode, we enable models to use large context windows, unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience.")
+                            Label::new("This mode enables models to use large context windows, unlimited tool calls, and other capabilities for expanded reasoning, offering an unfettered agentic experience.")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                         )
