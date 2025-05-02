@@ -1,7 +1,8 @@
-use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
-use crate::context_picker::{ContextPicker, MentionLink, crease_for_mention};
+use crate::context::{AgentContextHandle, RULES_ICON};
+use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::message_editor::insert_message_creases;
 use crate::thread::{
     LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
@@ -1259,38 +1260,9 @@ impl ActiveThread {
         );
         editor.update(cx, |editor, cx| {
             editor.set_text(message_text.clone(), window, cx);
+            insert_message_creases(editor, message_creases, &self.context_store, window, cx);
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
-
-            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-            let creases = message_creases
-                .iter()
-                .map(|crease| {
-                    let start = buffer_snapshot.anchor_after(crease.range.start);
-                    let end = buffer_snapshot.anchor_before(crease.range.end);
-                    crease_for_mention(
-                        crease.metadata.label.clone(),
-                        crease.metadata.icon_path.clone(),
-                        start..end,
-                        cx.weak_entity(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let ids = editor.insert_creases(creases.clone(), cx);
-            editor.fold_creases(creases, false, window, cx);
-            if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
-                for (crease, id) in message_creases.iter().zip(ids) {
-                    if let Some(context) = crease.context.as_ref() {
-                        let key = AgentContextKey(context.clone());
-                        addon.add_creases(
-                            &self.context_store,
-                            key,
-                            vec![(id, crease.metadata.label.clone())],
-                            cx,
-                        );
-                    }
-                }
-            }
         });
         let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
             EditorEvent::BufferEdited => {

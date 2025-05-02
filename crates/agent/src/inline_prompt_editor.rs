@@ -1,15 +1,15 @@
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
-use editor::AnchorRangeExt as _;
 use editor::{
     Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
     actions::{MoveDown, MoveUp},
@@ -246,23 +246,9 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
-        let existing_creases = self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            editor.display_map.update(cx, |display_map, cx| {
-                display_map
-                    .snapshot(cx)
-                    .crease_snapshot
-                    .creases()
-                    .filter_map(|(_, crease)| {
-                        Some((
-                            crease.range().to_offset(&snapshot),
-                            crease.metadata()?.clone(),
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            })
-            // FIXME
-        });
+        let existing_creases = self
+            .editor
+            .update(cx, |editor, cx| extract_message_creases(editor, cx));
 
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
@@ -270,22 +256,13 @@ impl<T: 'static> PromptEditor<T> {
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
-            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-            let creases = existing_creases
-                .into_iter()
-                .map(|(range, metadata)| {
-                    let start = buffer_snapshot.anchor_after(range.start);
-                    let end = buffer_snapshot.anchor_before(range.end);
-                    crease_for_mention(
-                        metadata.label,
-                        metadata.icon_path,
-                        start..end,
-                        cx.weak_entity(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            editor.insert_creases(creases.clone(), cx);
-            editor.fold_creases(creases, false, window, cx);
+            insert_message_creases(
+                &mut editor,
+                &existing_creases,
+                &self.context_store,
+                window,
+                cx,
+            );
 
             if focus {
                 window.focus(&editor.focus_handle(cx));
