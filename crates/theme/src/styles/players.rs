@@ -129,6 +129,11 @@ impl PlayerColors {
         *self.0.first().unwrap()
     }
 
+    pub fn agent(&self) -> PlayerColor {
+        // todo!("assign a color to the agent")
+        *self.0.last().unwrap()
+    }
+
     pub fn absent(&self) -> PlayerColor {
         *self.0.last().unwrap()
     }

@@ -1,16 +1,13 @@
 use crate::{
-    DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory, SerializableItemRegistry,
-    ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
+    SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
     workspace_settings::{AutosaveSetting, WorkspaceSettings},
 };
 use anyhow::Result;
-use client::{
-    Client,
-    proto::{self, PeerId},
-};
+use client::{Client, proto};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
     Action, AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle,
@@ -810,13 +807,29 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
 
                         if item.item_focus_handle(cx).contains_focused(window, cx) {
-                            item.add_event_to_update_proto(
-                                event,
-                                &mut pending_update.borrow_mut(),
-                                window,
-                                cx,
-                            );
-                            pending_update_tx.unbounded_send(leader_id).ok();
+                            match leader_id {
+                                Some(CollaboratorId::Agent) => {
+                                    // todo!()
+                                }
+                                Some(CollaboratorId::PeerId(leader_peer_id)) => {
+                                    item.add_event_to_update_proto(
+                                        event,
+                                        &mut pending_update.borrow_mut(),
+                                        window,
+                                        cx,
+                                    );
+                                    pending_update_tx.unbounded_send(Some(leader_peer_id)).ok();
+                                }
+                                None => {
+                                    item.add_event_to_update_proto(
+                                        event,
+                                        &mut pending_update.borrow_mut(),
+                                        window,
+                                        cx,
+                                    );
+                                    pending_update_tx.unbounded_send(None).ok();
+                                }
+                            }
                         }
                     }
 
@@ -1126,9 +1139,9 @@ pub trait FollowableItem: Item {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>>;
     fn is_project_item(&self, window: &Window, cx: &App) -> bool;
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_peer_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     );
@@ -1138,7 +1151,12 @@ pub trait FollowableItem: Item {
 pub trait FollowableItemHandle: ItemHandle {
     fn remote_id(&self, client: &Arc<Client>, window: &mut Window, cx: &mut App) -> Option<ViewId>;
     fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle>;
-    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, window: &mut Window, cx: &mut App);
+    fn set_leader_id(
+        &self,
+        leader_peer_id: Option<CollaboratorId>,
+        window: &mut Window,
+        cx: &mut App,
+    );
     fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
@@ -1178,15 +1196,8 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
         Box::new(self.downgrade())
     }
 
-    fn set_leader_peer_id(
-        &self,
-        leader_peer_id: Option<PeerId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.update(cx, |this, cx| {
-            this.set_leader_peer_id(leader_peer_id, window, cx)
-        })
+    fn set_leader_id(&self, leader_id: Option<CollaboratorId>, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_leader_id(leader_id, window, cx))
     }
 
     fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {

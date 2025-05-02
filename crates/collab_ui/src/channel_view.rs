@@ -654,14 +654,14 @@ impl FollowableItem for ChannelView {
         })
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
         leader_peer_id: Option<PeerId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.set_leader_peer_id(leader_peer_id, window, cx)
+            editor.set_leader_id(leader_peer_id, window, cx)
         })
     }
 

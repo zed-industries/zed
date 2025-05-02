@@ -189,7 +189,7 @@ impl FollowableItem for DebugSession {
         Task::ready(Ok(()))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
         _leader_peer_id: Option<PeerId>,
         _window: &mut Window,

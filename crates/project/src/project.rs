@@ -197,6 +197,13 @@ pub struct Project {
     environment: Entity<ProjectEnvironment>,
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
+    agent_location: Option<AgentLocation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentLocation {
+    pub buffer: WeakEntity<Buffer>,
+    pub position: Anchor,
 }
 
 #[derive(Default)]
@@ -979,6 +986,8 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+
+                agent_location: None,
             }
         })
     }
@@ -1135,6 +1144,7 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+                agent_location: None,
             };
 
             // ssh -> local machine handlers
@@ -1374,6 +1384,7 @@ impl Project {
                 environment,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
+                agent_location: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -4867,6 +4878,19 @@ impl Project {
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         self.git_store.read(cx).status_for_buffer_id(buffer_id, cx)
+    }
+
+    pub fn set_agent_location(
+        &mut self,
+        agent_location: Option<AgentLocation>,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_location = agent_location;
+        // todo!("emit event")
+    }
+
+    pub fn agent_location(&self) -> Option<AgentLocation> {
+        self.agent_location.clone()
     }
 }
 

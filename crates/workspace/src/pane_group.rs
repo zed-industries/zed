@@ -1,11 +1,10 @@
 use crate::{
-    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
+    AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::{Result, anyhow};
 use call::{ActiveCall, ParticipantLocation};
-use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
@@ -188,7 +187,7 @@ pub enum Member {
 #[derive(Clone, Copy)]
 pub struct PaneRenderContext<'a> {
     pub project: &'a Entity<Project>,
-    pub follower_states: &'a HashMap<PeerId, FollowerState>,
+    pub follower_states: &'a HashMap<CollaboratorId, FollowerState>,
     pub active_call: Option<&'a Entity<ActiveCall>>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
@@ -245,7 +244,10 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         });
         let leader = follower_state.as_ref().and_then(|(leader_id, _)| {
             let room = self.active_call?.read(cx).room()?.read(cx);
-            room.remote_participant_for_peer_id(*leader_id)
+            match leader_id {
+                CollaboratorId::PeerId(peer_id) => room.remote_participant_for_peer_id(*peer_id),
+                CollaboratorId::Agent => None,
+            }
         });
         let Some(leader) = leader else {
             return LeaderDecoration::default();

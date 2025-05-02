@@ -170,7 +170,7 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
         leader_peer_id: Option<PeerId>,
         window: &mut Window,
