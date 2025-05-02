@@ -1723,14 +1723,13 @@ impl ActiveThread {
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
         let is_generating = thread.is_generating();
+        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let show_feedback = thread.is_turn_end(ix);
-
-        let generating_label = (is_generating && is_last_message)
-            .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
+        let loading_dots = (is_generating_stale && is_last_message)
+            .then(|| AnimatedLabel::new("").size(LabelSize::Small));
 
         let editing_message_state = self
             .editing_message
@@ -1752,6 +1751,8 @@ impl ActiveThread {
 
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
+
+        let show_feedback = thread.is_turn_end(ix);
 
         let feedback_container = h_flex()
             .group("feedback_container")
@@ -2106,7 +2107,7 @@ impl ActiveThread {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(generating_label.is_some(), |this| {
+            .when(is_generating && is_last_message, |this| {
                 this.child(
                     h_flex()
                         .h_8()
@@ -2114,7 +2115,9 @@ impl ActiveThread {
                         .mb_4()
                         .ml_4()
                         .py_1p5()
-                        .child(generating_label.unwrap()),
+                        .when_some(loading_dots, |this, loading_dots| {
+                            this.child(loading_dots)
+                        }),
                 )
             })
             .when(show_feedback, move |parent| {
