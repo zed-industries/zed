@@ -8190,7 +8190,7 @@ impl LspStore {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
-                env.get_buffer_environment(buffer.clone(), self.worktree_store.clone(), cx)
+                env.get_buffer_environment(&buffer, &self.worktree_store, cx)
             })
         } else {
             Task::ready(None).shared()
