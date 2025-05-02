@@ -518,7 +518,7 @@ impl CloudLanguageModel {
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
         body: CompletionBody,
-    ) -> Result<(Response<AsyncBody>, Option<RequestUsage>)> {
+    ) -> Result<(Response<AsyncBody>, Option<RequestUsage>, bool)> {
         let http_client = &client.http_client();
 
         let mut token = llm_api_token.acquire(&client).await?;
@@ -536,14 +536,18 @@ impl CloudLanguageModel {
             let request = request_builder
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
-                .header("x-zed-supports-queueing", "true")
+                .header("x-zed-client-supports-queueing", "true")
                 .body(serde_json::to_string(&body)?.into())?;
             let mut response = http_client.send(request).await?;
             let status = response.status();
             if status.is_success() {
+                let includes_queue_events = response
+                    .headers()
+                    .get("x-zed-server-supports-queueing")
+                    .is_some();
                 let usage = RequestUsage::from_headers(response.headers()).ok();
 
-                return Ok((response, usage));
+                return Ok((response, usage, includes_queue_events));
             } else if response
                 .headers()
                 .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
@@ -783,7 +787,7 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream_with_usage(async move {
-                    let (response, usage) = Self::perform_llm_completion(
+                    let (response, usage, includes_queue_events) = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
@@ -815,7 +819,7 @@ impl LanguageModel for CloudLanguageModel {
                     let mut mapper = AnthropicEventMapper::new();
                     Ok((
                         map_cloud_completion_events(
-                            Box::pin(response_lines(response)),
+                            Box::pin(response_lines(response, includes_queue_events)),
                             move |event| mapper.map_event(event),
                         ),
                         usage,
@@ -832,7 +836,7 @@ impl LanguageModel for CloudLanguageModel {
                 let request = into_open_ai(request, model, model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream_with_usage(async move {
-                    let (response, usage) = Self::perform_llm_completion(
+                    let (response, usage, includes_queue_events) = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
@@ -849,7 +853,7 @@ impl LanguageModel for CloudLanguageModel {
                     let mut mapper = OpenAiEventMapper::new();
                     Ok((
                         map_cloud_completion_events(
-                            Box::pin(response_lines(response)),
+                            Box::pin(response_lines(response, includes_queue_events)),
                             move |event| mapper.map_event(event),
                         ),
                         usage,
@@ -866,7 +870,7 @@ impl LanguageModel for CloudLanguageModel {
                 let request = into_google(request, model.id().into());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream_with_usage(async move {
-                    let (response, usage) = Self::perform_llm_completion(
+                    let (response, usage, includes_queue_events) = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
@@ -882,7 +886,7 @@ impl LanguageModel for CloudLanguageModel {
                     let mut mapper = GoogleEventMapper::new();
                     Ok((
                         map_cloud_completion_events(
-                            Box::pin(response_lines(response)),
+                            Box::pin(response_lines(response, includes_queue_events)),
                             move |event| mapper.map_event(event),
                         ),
                         usage,
@@ -932,14 +936,20 @@ where
 
 fn response_lines<T: DeserializeOwned>(
     response: Response<AsyncBody>,
-) -> impl Stream<Item = Result<T>> {
+    includes_queue_events: bool,
+) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
     futures::stream::try_unfold(
         (String::new(), BufReader::new(response.into_body())),
-        move |(mut line, mut body)| async {
+        move |(mut line, mut body)| async move {
             match body.read_line(&mut line).await {
                 Ok(0) => Ok(None),
                 Ok(_) => {
-                    let event: T = serde_json::from_str(&line)?;
+                    let event = if includes_queue_events {
+                        serde_json::from_str::<CloudCompletionEvent<T>>(&line)?
+                    } else {
+                        CloudCompletionEvent::Event(serde_json::from_str::<T>(&line)?)
+                    };
+
                     line.clear();
                     Ok(Some((event, (line, body))))
                 }
