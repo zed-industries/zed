@@ -1607,12 +1607,12 @@ impl Project {
 
     pub fn buffer_environment<'a>(
         &'a self,
-        buffer: Entity<Buffer>,
-        worktree_store: Entity<WorktreeStore>,
+        buffer: &Entity<Buffer>,
+        worktree_store: &Entity<WorktreeStore>,
         cx: &'a mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_buffer_environment(buffer, worktree_store, cx)
+            environment.get_buffer_environment(&buffer, &worktree_store, cx)
         })
     }
 

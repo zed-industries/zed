@@ -77,7 +77,7 @@ where
 
 async fn lsp_task_context(
     project: &Entity<Project>,
-    buffer: Entity<Buffer>,
+    buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
 ) -> Option<TaskContext> {
     let worktree_store = project
@@ -96,7 +96,7 @@ async fn lsp_task_context(
 
     let project_env = project
         .update(cx, |project, cx| {
-            project.buffer_environment(buffer, worktree_store, cx)
+            project.buffer_environment(&buffer, &worktree_store, cx)
         })
         .ok()?
         .await;
@@ -137,7 +137,7 @@ pub fn lsp_tasks(
                 let id_base = source_kind.to_id_base();
                 let mut new_lsp_tasks = Vec::new();
                 for buffer in buffers {
-                    let lsp_buffer_context = lsp_task_context(&project, buffer.clone(), cx)
+                    let lsp_buffer_context = lsp_task_context(&project, &buffer, cx)
                         .await
                         .unwrap_or_default();
 
