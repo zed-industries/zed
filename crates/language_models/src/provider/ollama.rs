@@ -81,17 +81,16 @@ impl State {
         cx.spawn(async move |this, cx| {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
-            // Since there is no metadata from the Ollama API
-            // indicating which models are embedding models,
-            // simply filter out models with "-embed" in their name
-            let models: Vec<_> = models
-                .iter()
-                .filter(|model| !model.name.contains("-embed"))
-                .collect();
-
             let mut ollama_models: Vec<ollama::Model> = Vec::with_capacity(models.len());
 
             for model in models {
+                // Since there is no metadata from the Ollama API
+                // indicating which models are embedding models,
+                // simply filter out models with "-embed" in their name
+                if model.name.contains("-embed") {
+                    continue;
+                }
+
                 let name = model.name.as_str();
                 // TODO: Explore fetching model capabilities in parallel
                 let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
