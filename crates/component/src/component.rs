@@ -18,6 +18,9 @@ pub trait Component {
     fn name() -> &'static str {
         std::any::type_name::<Self>()
     }
+    fn id() -> ComponentId {
+        ComponentId(Self::name())
+    }
     /// Returns a name that the component should be sorted by.
     ///
     /// Implement this if the component should be sorted in an alternate order than its name.
@@ -81,7 +84,7 @@ pub fn register_component<T: Component>() {
     let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
     let mut data = COMPONENT_DATA.write();
     data.components.push(component_data);
-    data.previews.insert(T::name(), T::preview);
+    data.previews.insert(T::id().0, T::preview);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -175,7 +178,7 @@ pub fn components() -> AllComponents {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
         let sort_name = SharedString::new_static(sort_name);
-        let id = ComponentId(name);
+        let id = ComponentId(*name);
         all_components.insert(
             id.clone(),
             ComponentMetadata {
