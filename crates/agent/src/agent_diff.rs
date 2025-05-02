@@ -1153,10 +1153,10 @@ impl Render for AgentDiffToolbar {
     }
 }
 
+#[derive(Default)]
 pub struct AgentDiff {
     reviewing_editors: HashMap<WeakEntity<Editor>, EditorState>,
     workspace_threads: HashMap<WeakEntity<Workspace>, WorkspaceThread>,
-    _settings_subscription: Subscription,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1170,6 +1170,7 @@ struct WorkspaceThread {
     thread: WeakEntity<Thread>,
     _thread_subscriptions: [Subscription; 2],
     singleton_editors: HashMap<WeakEntity<Buffer>, HashMap<WeakEntity<Editor>, Subscription>>,
+    _settings_subscription: Subscription,
     _workspace_subscription: Option<Subscription>,
 }
 
@@ -1182,42 +1183,21 @@ impl AgentDiff {
         cx.try_global::<AgentDiffGlobal>()
             .map(|global| global.0.clone())
             .unwrap_or_else(|| {
-                let entity = cx.new(Self::new);
+                let entity = cx.new(|_cx| Self::default());
                 let global = AgentDiffGlobal(entity.clone());
                 cx.set_global(global);
                 entity.clone()
             })
     }
 
-    fn new(cx: &mut Context<Self>) -> Self {
-        let mut was_active = AssistantSettings::get_global(cx).single_file_review;
-        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
-            let is_active = AssistantSettings::get_global(cx).single_file_review;
-
-            if was_active != is_active {
-                let workspaces = this.workspace_threads.keys().cloned().collect::<Vec<_>>();
-                for workspace in workspaces {
-                    this.update_reviewing_editors(&workspace, cx);
-                }
-            }
-
-            was_active = is_active;
-        });
-
-        Self {
-            reviewing_editors: HashMap::default(),
-            workspace_threads: HashMap::default(),
-            _settings_subscription: settings_subscription,
-        }
-    }
-
     pub fn set_active_thread(
         workspace: &WeakEntity<Workspace>,
         thread: &Entity<Thread>,
+        window: &mut Window,
         cx: &mut App,
     ) {
         Self::global(cx).update(cx, |this, cx| {
-            this.register_active_thread_impl(workspace, thread, cx);
+            this.register_active_thread_impl(workspace, thread, window, cx);
         });
     }
 
@@ -1225,34 +1205,48 @@ impl AgentDiff {
         &mut self,
         workspace: &WeakEntity<Workspace>,
         thread: &Entity<Thread>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent_diff = cx.entity();
         let action_log = thread.read(cx).action_log().clone();
 
-        let action_log_subscription = cx.observe(&action_log, {
+        let action_log_subscription = cx.observe_in(&action_log, window, {
             let workspace = workspace.clone();
-            move |this, _action_log, cx| {
-                this.update_reviewing_editors(&workspace, cx);
+            move |this, _action_log, window, cx| {
+                this.update_reviewing_editors(&workspace, window, cx);
             }
         });
 
-        let thread_subscription = cx.subscribe(&thread, {
+        let thread_subscription = cx.subscribe_in(&thread, window, {
             let workspace = workspace.clone();
-            move |this, _thread, event, cx| this.handle_thread_event(&workspace, event, cx)
+            move |this, _thread, event, window, cx| {
+                this.handle_thread_event(&workspace, event, window, cx)
+            }
         });
 
         if let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) {
             // replace thread and action log subscription, but keep editors
             workspace_thread.thread = thread.downgrade();
             workspace_thread._thread_subscriptions = [action_log_subscription, thread_subscription];
-            self.update_reviewing_editors(&workspace, cx);
+            self.update_reviewing_editors(&workspace, window, cx);
             return;
         }
 
+        let settings_subscription = cx.observe_global_in::<SettingsStore>(window, {
+            let workspace = workspace.clone();
+            let mut was_active = AssistantSettings::get_global(cx).single_file_review;
+            move |this, window, cx| {
+                let is_active = AssistantSettings::get_global(cx).single_file_review;
+                if was_active != is_active {
+                    was_active = is_active;
+                    this.update_reviewing_editors(&workspace, window, cx);
+                }
+            }
+        });
+
         let workspace_subscription = workspace
             .upgrade()
-            .map(|workspace| cx.subscribe(&workspace, Self::handle_workspace_event));
+            .map(|workspace| cx.subscribe_in(&workspace, window, Self::handle_workspace_event));
 
         self.workspace_threads.insert(
             workspace.clone(),
@@ -1260,21 +1254,25 @@ impl AgentDiff {
                 thread: thread.downgrade(),
                 _thread_subscriptions: [action_log_subscription, thread_subscription],
                 singleton_editors: HashMap::default(),
+                _settings_subscription: settings_subscription,
                 _workspace_subscription: workspace_subscription,
             },
         );
 
         let workspace = workspace.clone();
-        cx.defer(move |cx| {
-            if let Some(strong_workspace) = workspace.upgrade() {
-                agent_diff.update(cx, |this, cx| {
-                    this.register_workspace(strong_workspace, cx);
-                })
+        cx.defer_in(window, move |this, window, cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                this.register_workspace(workspace, window, cx);
             }
         });
     }
 
-    fn register_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
+    fn register_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let agent_diff = cx.entity();
 
         let editors = workspace.update(cx, |workspace, cx| {
@@ -1292,11 +1290,11 @@ impl AgentDiff {
 
         for editor in editors {
             if let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
-                self.register_editor(weak_workspace.clone(), buffer, editor, cx);
+                self.register_editor(weak_workspace.clone(), buffer, editor, window, cx);
             };
         }
 
-        self.update_reviewing_editors(&weak_workspace, cx);
+        self.update_reviewing_editors(&weak_workspace, window, cx);
     }
 
     fn register_review_action<T: Action>(
@@ -1324,6 +1322,7 @@ impl AgentDiff {
         &mut self,
         workspace: &WeakEntity<Workspace>,
         event: &ThreadEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
@@ -1333,7 +1332,7 @@ impl AgentDiff {
             | ThreadEvent::Stopped(Err(_))
             | ThreadEvent::ShowError(_)
             | ThreadEvent::CompletionCanceled => {
-                self.update_reviewing_editors(workspace, cx);
+                self.update_reviewing_editors(workspace, window, cx);
             }
             // intentionally being exhaustive in case we add a variant we should handle
             ThreadEvent::Stopped(Ok(StopReason::ToolUse))
@@ -1359,15 +1358,22 @@ impl AgentDiff {
 
     fn handle_workspace_event(
         &mut self,
-        workspace: Entity<Workspace>,
+        workspace: &Entity<Workspace>,
         event: &workspace::Event,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
             workspace::Event::ItemAdded { item } => {
                 if let Some(editor) = item.downcast::<Editor>() {
                     if let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
-                        self.register_editor(workspace.downgrade(), buffer.clone(), editor, cx);
+                        self.register_editor(
+                            workspace.downgrade(),
+                            buffer.clone(),
+                            editor,
+                            window,
+                            cx,
+                        );
                     }
                 }
             }
@@ -1392,6 +1398,7 @@ impl AgentDiff {
         workspace: WeakEntity<Workspace>,
         buffer: WeakEntity<Buffer>,
         editor: Entity<Editor>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) else {
@@ -1425,12 +1432,13 @@ impl AgentDiff {
                 })
             });
 
-        self.update_reviewing_editors(&workspace, cx);
+        self.update_reviewing_editors(&workspace, window, cx);
     }
 
     fn update_reviewing_editors(
         &mut self,
         workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !AssistantSettings::get_global(cx).single_file_review {
@@ -1497,31 +1505,22 @@ impl AgentDiff {
                 }
 
                 if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
-                    if let Some(workspace) = workspace.upgrade() {
-                        let workspace_id = workspace.entity_id();
-                        let workspace_window = cx.windows().iter().find_map(|w| {
-                            w.downcast::<Workspace>().and_then(|window_workspace| {
-                                if window_workspace
-                                    .entity(cx)
-                                    .map_or(false, |entity| entity.entity_id() == workspace_id)
-                                {
-                                    Some(window_workspace)
-                                } else {
-                                    None
-                                }
-                            })
-                        });
+                    // Jump to first hunk when we enter review mode
+                    editor.update(cx, |editor, cx| {
+                        let snapshot = multibuffer.read(cx).snapshot(cx);
+                        if let Some(first_hunk) = snapshot.diff_hunks().next() {
+                            let first_hunk_start = first_hunk.multi_buffer_range().start;
 
-                        if let Some(workspace_window) = workspace_window {
-                            workspace_window
-                                .update(cx, |_, window, cx| {
-                                    editor.update(cx, |editor, cx| {
-                                        editor.go_to_next_hunk(&GoToHunk, window, cx);
-                                    });
-                                })
-                                .log_err();
+                            editor.change_selections(
+                                Some(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([first_hunk_start..first_hunk_start])
+                                },
+                            );
                         }
-                    }
+                    });
                 }
             }
         }
@@ -1942,7 +1941,9 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Set the active thread
-        cx.update(|_, cx| AgentDiff::set_active_thread(&workspace.downgrade(), &thread, cx));
+        cx.update(|window, cx| {
+            AgentDiff::set_active_thread(&workspace.downgrade(), &thread, window, cx)
+        });
 
         let buffer1 = project
             .update(cx, |project, cx| {
@@ -1989,7 +1990,14 @@ mod tests {
             action_log.update(cx, |log, cx| log.track_buffer(buffer2.clone(), cx));
             buffer2.update(cx, |buffer, cx| {
                 buffer
-                    .edit([(Point::new(2, 1)..Point::new(2, 2), "H")], None, cx)
+                    .edit(
+                        [
+                            (Point::new(0, 0)..Point::new(0, 1), "A"),
+                            (Point::new(2, 1)..Point::new(2, 2), "H"),
+                        ],
+                        None,
+                        cx,
+                    )
                     .unwrap();
             });
             action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
@@ -2095,13 +2103,13 @@ mod tests {
 
         assert_eq!(
             editor2.read_with(cx, |editor, cx| editor.text(cx)),
-            "abc\ndef\nghi\ngHi"
+            "abc\nAbc\ndef\nghi\ngHi"
         );
         assert_eq!(
             editor2
                 .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
                 .range(),
-            Point::new(2, 0)..Point::new(2, 0)
+            Point::new(0, 0)..Point::new(0, 0)
         );
     }
 }

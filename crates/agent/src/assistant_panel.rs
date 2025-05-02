@@ -475,7 +475,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        AgentDiff::set_active_thread(&workspace, &thread, cx);
+        AgentDiff::set_active_thread(&workspace, &thread, window, cx);
 
         let active_thread_subscription =
             cx.subscribe(&active_thread, |_, _, event, cx| match &event {
@@ -719,7 +719,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        AgentDiff::set_active_thread(&self.workspace, &thread, cx);
+        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
 
         let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
@@ -917,7 +917,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        AgentDiff::set_active_thread(&self.workspace, &thread, cx);
+        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
 
         let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
