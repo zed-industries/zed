@@ -80,24 +80,28 @@ enum ContextPickerMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerAction {
     AddSelections,
+    AddTabs,
 }
 
 impl ContextPickerAction {
     pub fn keyword(&self) -> &'static str {
         match self {
             Self::AddSelections => "selection",
+            Self::AddTabs => "tabs",
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             Self::AddSelections => "Selection",
+            Self::AddTabs => "Tabs",
         }
     }
 
     pub fn icon(&self) -> IconName {
         match self {
             Self::AddSelections => IconName::Context,
+            Self::AddTabs => IconName::Tab,
         }
     }
 }
@@ -363,6 +367,10 @@ impl ContextPicker {
 
                     cx.emit(DismissEvent);
                 }
+                ContextPickerAction::AddTabs => {
+                    add_tabs_as_context();
+                    cx.emit(DismissEvent);
+                }
             },
         }
 
@@ -561,6 +569,8 @@ fn available_context_picker_entries(
         ));
     }
 
+    entries.push(ContextPickerEntry::Action(ContextPickerAction::AddTabs));
+
     if thread_store.is_some() {
         entries.push(ContextPickerEntry::Mode(ContextPickerMode::Thread));
     }
@@ -673,6 +683,10 @@ fn selection_ranges(
             })
             .collect::<Vec<_>>()
     })
+}
+
+fn add_tabs_as_context() {
+    // FIXME
 }
 
 pub(crate) fn insert_fold_for_mention(
@@ -882,6 +896,10 @@ impl MentionLink {
         format!("[@{}]({}:{})", rules.title, Self::RULES, rules.prompt_id.0)
     }
 
+    pub fn for_tabs() -> String {
+        format!("[@tabs](tabs)")
+    }
+
     pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
         fn extract_project_path_from_link(
             path: &str,
@@ -943,5 +961,6 @@ impl MentionLink {
             }
             _ => None,
         }
+        // FIXME support tabs
     }
 }

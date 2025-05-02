@@ -276,7 +276,10 @@ impl ContextPickerCompletionProvider {
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
             ContextPickerEntry::Action(action) => {
-                let (new_text, on_action) = match action {
+                let (new_text, on_action): (
+                    _,
+                    Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>,
+                ) = match action {
                     ContextPickerAction::AddSelections => {
                         let selections = selection_ranges(workspace, cx);
 
@@ -368,6 +371,10 @@ impl ContextPickerCompletionProvider {
                         });
 
                         (new_text, callback)
+                    }
+                    ContextPickerAction::AddTabs => {
+                        let callback = Arc::new(|_, _: &mut Window, _: &mut App| false);
+                        (MentionLink::for_tabs(), callback)
                     }
                 };
 
@@ -656,6 +663,39 @@ impl ContextPickerCompletionProvider {
             )),
         })
     }
+
+    // fn completion_for_tabs(
+    //     excerpt_id: ExcerptId,
+    //     source_range: Range<Anchor>,
+    //     editor: Entity<Editor>,
+    //     context_store: Entity<ContextStore>,
+    //     cx: &mut App,
+    // ) -> Option<Completion> {
+    //     let new_text = MentionLink::for_tabs();
+    //     let label = CodeLabel::plain("Tabs".into(), None);
+    //     let confirm = confirm_completion_callback(
+    //         IconName::Tab.path().into(),
+    //         "Tabs".into(),
+    //         excerpt_id,
+    //         source_range.start,
+    //         new_text.len(),
+    //         editor,
+    //         move |cx| {
+    //             // FIXME
+    //         },
+    //     );
+    //     let completion = Completion {
+    //         replace_range: source_range.clone(),
+    //         new_text,
+    //         label,
+    //         documentation: None,
+    //         source: CompletionSource::Custom,
+    //         icon_path: Some(IconName::Tab.path().into()),
+    //         insert_text_mode: None,
+    //         confirm: Some(confirm),
+    //     };
+    //     Some(completion)
+    // }
 }
 
 fn build_code_label_for_full_path(file_name: &str, directory: Option<&str>, cx: &App) -> CodeLabel {
