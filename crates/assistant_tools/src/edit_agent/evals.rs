@@ -526,13 +526,13 @@ fn eval_from_pixels_constructor() {
 }
 
 #[test]
-// #[cfg_attr(not(feature = "eval"), ignore)]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
     let input_file_path = "root/zode.py";
     let edit_description = "Create the main Zode CLI script";
     eval(
-        1,
-        0.95,
+        200,
+        1.,
         EvalInput {
             conversation: vec![
                 message(User, [text(include_str!("evals/fixtures/zode/prompt.md"))]),
@@ -595,7 +595,30 @@ fn eval_zode() {
             input_path: input_file_path.into(),
             input_content: None,
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq("".to_string()),
+            assertion: EvalAssertion::new(async move |sample, _, _cx| {
+                let invalid_starts = [' ', '`', '\n'];
+                let mut message = String::new();
+                for start in invalid_starts {
+                    if sample.text.starts_with(start) {
+                        message.push_str(&format!("The sample starts with a {:?}\n", start));
+                        break;
+                    }
+                }
+                // Remove trailing newline.
+                message.pop();
+
+                if message.is_empty() {
+                    Ok(EvalAssertionOutcome {
+                        score: 100,
+                        message: None,
+                    })
+                } else {
+                    Ok(EvalAssertionOutcome {
+                        score: 0,
+                        message: Some(message),
+                    })
+                }
+            }),
         },
     );
 }
