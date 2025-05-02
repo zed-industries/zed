@@ -953,9 +953,6 @@ impl ActiveThread {
             ThreadEvent::UsageUpdated(usage) => {
                 self.last_usage = Some(*usage);
             }
-            ThreadEvent::QueueUpdated { position } => {
-                // self.queue_position = Some(*position);
-            }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
             | ThreadEvent::SummaryChanged => {
@@ -1732,8 +1729,17 @@ impl ActiveThread {
 
         let show_feedback = thread.is_turn_end(ix);
 
-        let generating_label = (is_generating && is_last_message)
-            .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
+        let generating_label = if let Some(queue_position) = thread.queue_position() {
+            Some(format!("Queue position: {}", queue_position).into_any_element())
+        } else if is_generating && is_last_message {
+            Some(
+                AnimatedLabel::new("Generating")
+                    .size(LabelSize::Small)
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
 
         let editing_message_state = self
             .editing_message
@@ -2105,7 +2111,7 @@ impl ActiveThread {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(generating_label.is_some(), |this| {
+            .when_some(generating_label, |this, generating_label| {
                 this.child(
                     h_flex()
                         .h_8()
@@ -2113,7 +2119,7 @@ impl ActiveThread {
                         .mb_4()
                         .ml_4()
                         .py_1p5()
-                        .child(generating_label.unwrap()),
+                        .child(generating_label),
                 )
             })
             .when(show_feedback, move |parent| {
