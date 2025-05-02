@@ -1293,7 +1293,7 @@ impl ProjectItem for Editor {
 
     fn for_project_item(
         project: Entity<Project>,
-        pane: &Pane,
+        pane: Option<&Pane>,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1304,7 +1304,7 @@ impl ProjectItem for Editor {
         {
             if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
                 if let Some(restoration_data) = Self::project_item_kind()
-                    .and_then(|kind| pane.project_item_restoration_data.get(&kind))
+                    .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
                     .and_then(|data| data.downcast_ref::<EditorRestorationData>())
                     .and_then(|data| {
                         let file = project::File::from_dyn(buffer.read(cx).file())?;

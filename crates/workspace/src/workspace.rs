@@ -24,7 +24,6 @@ use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
 };
 use collections::{HashMap, HashSet, hash_map};
-use derive_more::{Deref, DerefMut};
 pub use dock::Panel;
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
@@ -36,12 +35,12 @@ use futures::{
     future::try_join_all,
 };
 use gpui::{
-    Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context, CursorStyle,
-    Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global,
-    Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel,
-    Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity, WindowBounds,
-    WindowHandle, WindowId, WindowOptions, action_as, actions, canvas, impl_action_as,
-    impl_actions, point, relative, size, transparent_black,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
+    CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
+    Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions, canvas,
+    impl_action_as, impl_actions, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -451,44 +450,97 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     });
 }
 
-#[derive(Clone, Default, Deref, DerefMut)]
-struct ProjectItemOpeners(Vec<ProjectItemOpener>);
+type BuildProjectItemFn =
+    fn(AnyEntity, Entity<Project>, Option<&Pane>, &mut Window, &mut App) -> Box<dyn ItemHandle>;
 
-type ProjectItemOpener = fn(
-    &Entity<Project>,
-    &ProjectPath,
-    &mut Window,
-    &mut App,
-)
-    -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
+type BuildProjectItemForPathFn =
+    fn(
+        &Entity<Project>,
+        &ProjectPath,
+        &mut Window,
+        &mut App,
+    ) -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
+
+#[derive(Clone, Default)]
+struct ProjectItemRegistry {
+    build_project_item_fns_by_type: HashMap<TypeId, BuildProjectItemFn>,
+    build_project_item_for_path_fns: Vec<BuildProjectItemForPathFn>,
+}
+
+impl ProjectItemRegistry {
+    fn register<T: ProjectItem>(&mut self) {
+        self.build_project_item_fns_by_type.insert(
+            TypeId::of::<T>(),
+            |item, project, pane, window, cx| {
+                let item = item.downcast().unwrap();
+                Box::new(cx.new(|cx| T::for_project_item(project, pane, item, window, cx)))
+                    as Box<dyn ItemHandle>
+            },
+        );
+        self.build_project_item_for_path_fns
+            .push(|project, project_path, window, cx| {
+                let project_item =
+                    <T::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
+                let project = project.clone();
+                Some(window.spawn(cx, async move |cx| {
+                    let project_item = project_item.await?;
+                    let project_entry_id: Option<ProjectEntryId> =
+                        project_item.read_with(cx, project::ProjectItem::entry_id)?;
+                    let build_workspace_item = Box::new(
+                        |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                            Box::new(cx.new(|cx| {
+                                T::for_project_item(project, Some(pane), project_item, window, cx)
+                            })) as Box<dyn ItemHandle>
+                        },
+                    ) as Box<_>;
+                    Ok((project_entry_id, build_workspace_item))
+                }))
+            });
+    }
+
+    fn open_path(
+        &self,
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
+        let Some(open_project_item) = self
+            .build_project_item_for_path_fns
+            .iter()
+            .rev()
+            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
+        else {
+            return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
+        };
+        open_project_item
+    }
+
+    fn build_item<T: project::ProjectItem>(
+        &self,
+        item: Entity<T>,
+        project: Entity<Project>,
+        pane: Option<&Pane>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let build = self
+            .build_project_item_fns_by_type
+            .get(&TypeId::of::<T>())?;
+        Some(build(item.into_any(), project, pane, window, cx))
+    }
+}
 
 type WorkspaceItemBuilder =
     Box<dyn FnOnce(&mut Pane, &mut Window, &mut Context<Pane>) -> Box<dyn ItemHandle>>;
 
-impl Global for ProjectItemOpeners {}
+impl Global for ProjectItemRegistry {}
 
 /// Registers a [ProjectItem] for the app. When opening a file, all the registered
 /// items will get a chance to open the file, starting from the project item that
 /// was added last.
 pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
-    let builders = cx.default_global::<ProjectItemOpeners>();
-    builders.push(|project, project_path, window, cx| {
-        let project_item = <I::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
-        let project = project.clone();
-        Some(window.spawn(cx, async move |cx| {
-            let project_item = project_item.await?;
-            let project_entry_id: Option<ProjectEntryId> =
-                project_item.read_with(cx, project::ProjectItem::entry_id)?;
-            let build_workspace_item = Box::new(
-                |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
-                    Box::new(
-                        cx.new(|cx| I::for_project_item(project, pane, project_item, window, cx)),
-                    ) as Box<dyn ItemHandle>
-                },
-            ) as Box<_>;
-            Ok((project_entry_id, build_workspace_item))
-        }))
-    });
+    cx.default_global::<ProjectItemRegistry>().register::<I>();
 }
 
 #[derive(Default)]
@@ -3105,15 +3157,8 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let project = self.project().clone();
-        let project_item_builders = cx.default_global::<ProjectItemOpeners>().clone();
-        let Some(open_project_item) = project_item_builders
-            .iter()
-            .rev()
-            .find_map(|open_project_item| open_project_item(&project, &path, window, cx))
-        else {
-            return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
-        };
-        open_project_item
+        let registry = cx.default_global::<ProjectItemRegistry>().clone();
+        registry.open_path(&project, &path, window, cx)
     }
 
     pub fn find_project_item<T>(
@@ -3174,7 +3219,9 @@ impl Workspace {
         }
 
         let item = pane.update(cx, |pane, cx| {
-            cx.new(|cx| T::for_project_item(self.project().clone(), pane, project_item, window, cx))
+            cx.new(|cx| {
+                T::for_project_item(self.project().clone(), Some(pane), project_item, window, cx)
+            })
         });
         let item_id = item.item_id();
         let mut destination_index = None;
@@ -4499,16 +4546,28 @@ impl Workspace {
         cx.notify();
 
         let leader_id = leader_id.into();
+        let state = self.follower_states.get(&leader_id)?;
         let (panel_id, item) = match leader_id {
             CollaboratorId::PeerId(peer_id) => self.active_view_for_peer(peer_id, window, cx)?,
             CollaboratorId::Agent => {
                 let agent_location = self.project.read(cx).agent_location()?;
                 let buffer = agent_location.buffer.upgrade()?;
-                todo!();
+                let existing_item = state.center_pane.read(cx).items().find_map(|item| {
+                    if item.project_item_model_ids(cx).as_slice() == [buffer.entity_id()] {
+                        Some(item.boxed_clone())
+                    } else {
+                        None
+                    }
+                });
+                let item = existing_item.or_else(|| {
+                    cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
+                        registry.build_item(buffer, self.project.clone(), None, window, cx)
+                    })
+                })?;
+                (None, item)
             }
         };
 
-        let state = self.follower_states.get(&leader_id)?;
         let mut transfer_focus = state.center_pane.read(cx).has_focus(window, cx);
         let pane;
         if let Some(panel_id) = panel_id {
@@ -4542,7 +4601,7 @@ impl Workspace {
     }
 
     fn active_view_for_peer(
-        &mut self,
+        &self,
         peer_id: PeerId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -9148,7 +9207,7 @@ mod tests {
 
             fn for_project_item(
                 _project: Entity<Project>,
-                _pane: &Pane,
+                _pane: Option<&Pane>,
                 _item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
@@ -9223,7 +9282,7 @@ mod tests {
 
             fn for_project_item(
                 _project: Entity<Project>,
-                _pane: &Pane,
+                _pane: Option<&Pane>,
                 _item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
@@ -9270,7 +9329,7 @@ mod tests {
 
             fn for_project_item(
                 _project: Entity<Project>,
-                _pane: &Pane,
+                _pane: Option<&Pane>,
                 _item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
