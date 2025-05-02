@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use assistant_settings::{
     AgentProfile, AgentProfileContent, AgentProfileId, AssistantSettings, AssistantSettingsContent,
@@ -6,11 +6,10 @@ use assistant_settings::{
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, update_settings_file};
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
 
 use crate::ThreadStore;
@@ -70,23 +69,14 @@ pub enum PickerItem {
     },
 }
 
-impl PickerItem {
-    pub fn name(&self) -> &str {
-        match self {
-            PickerItem::ContextServer { server_id, .. } => server_id.as_ref(),
-            PickerItem::Tool { name, .. } => name.as_ref(),
-        }
-    }
-}
-
 pub struct ToolPickerDelegate {
     tool_picker: WeakEntity<ToolPicker>,
     thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
-    items: Vec<PickerItem>,
+    items: Arc<Vec<PickerItem>>,
     profile_id: AgentProfileId,
     profile: AgentProfile,
-    matches: Vec<StringMatch>,
+    filtered_items: Vec<PickerItem>,
     selected_index: usize,
     mode: ToolPickerMode,
 }
@@ -101,7 +91,7 @@ impl ToolPickerDelegate {
         profile: AgentProfile,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
-        let items = Self::resolve_items(mode, &tool_set, cx);
+        let items = Arc::new(Self::resolve_items(mode, &tool_set, cx));
 
         Self {
             tool_picker: cx.entity().downgrade(),
@@ -110,7 +100,7 @@ impl ToolPickerDelegate {
             items,
             profile_id,
             profile,
-            matches: Vec::new(),
+            filtered_items: Vec::new(),
             selected_index: 0,
             mode,
         }
@@ -133,7 +123,7 @@ impl ToolPickerDelegate {
                     }
                 }
                 ToolSource::ContextServer { id } => {
-                    if mode == ToolPickerMode::McpTools {
+                    if mode == ToolPickerMode::McpTools && !tools.is_empty() {
                         let server_id: Arc<str> = id.clone().into();
                         items.push(PickerItem::ContextServer {
                             server_id: server_id.clone(),
@@ -154,7 +144,7 @@ impl PickerDelegate for ToolPickerDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        self.filtered_items.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -176,8 +166,7 @@ impl PickerDelegate for ToolPickerDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
-        let item_match = &self.matches[ix];
-        let item = &self.items[item_match.candidate_id];
+        let item = &self.filtered_items[ix];
         match item {
             PickerItem::Tool { .. } => true,
             PickerItem::ContextServer { .. } => false,
@@ -198,57 +187,58 @@ impl PickerDelegate for ToolPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let background = cx.background_executor().clone();
-        let candidates = self
-            .items
-            .iter()
-            .enumerate()
-            .map(|(id, item)| StringMatchCandidate::new(id, item.name()))
-            .collect::<Vec<_>>();
+        let all_items = self.items.clone();
 
         cx.spawn_in(window, async move |this, cx| {
-            let matches = if query.is_empty() {
-                candidates
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, candidate)| StringMatch {
-                        candidate_id: index,
-                        string: candidate.string,
-                        positions: Vec::new(),
-                        score: 0.,
-                    })
-                    .collect()
-            } else {
-                match_strings(
-                    &candidates,
-                    &query,
-                    false,
-                    100,
-                    &Default::default(),
-                    background,
-                )
-                .await
-            };
+            let filtered_items = cx
+                .background_spawn(async move {
+                    let mut tools_by_provider: BTreeMap<Option<Arc<str>>, Vec<Arc<str>>> =
+                        BTreeMap::default();
+
+                    for item in all_items.iter() {
+                        if let PickerItem::Tool { server_id, name } = item.clone() {
+                            if name.contains(&query) {
+                                tools_by_provider.entry(server_id).or_default().push(name);
+                            }
+                        }
+                    }
+
+                    let mut items = Vec::new();
+
+                    for (server_id, names) in tools_by_provider {
+                        if let Some(server_id) = server_id.clone() {
+                            items.push(PickerItem::ContextServer { server_id });
+                        }
+                        for name in names {
+                            items.push(PickerItem::Tool {
+                                server_id: server_id.clone(),
+                                name,
+                            });
+                        }
+                    }
+
+                    items
+                })
+                .await;
 
             this.update(cx, |this, _cx| {
-                this.delegate.matches = matches;
+                this.delegate.filtered_items = filtered_items;
                 this.delegate.selected_index = this
                     .delegate
                     .selected_index
-                    .min(this.delegate.matches.len().saturating_sub(1));
+                    .min(this.delegate.filtered_items.len().saturating_sub(1));
             })
             .log_err();
         })
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if self.matches.is_empty() {
+        if self.filtered_items.is_empty() {
             self.dismissed(window, cx);
             return;
         }
 
-        let candidate_id = self.matches[self.selected_index].candidate_id;
-        let item = &self.items[candidate_id];
+        let item = &self.filtered_items[self.selected_index];
 
         let PickerItem::Tool {
             name: tool_name,
@@ -260,9 +250,13 @@ impl PickerDelegate for ToolPickerDelegate {
 
         let is_currently_enabled = if let Some(server_id) = server_id.clone() {
             let preset = self.profile.context_servers.entry(server_id).or_default();
-            *preset.tools.entry(tool_name.clone()).or_default()
+            let is_enabled = *preset.tools.entry(tool_name.clone()).or_default();
+            *preset.tools.entry(tool_name.clone()).or_default() = !is_enabled;
+            is_enabled
         } else {
-            *self.profile.tools.entry(tool_name.clone()).or_default()
+            let is_enabled = *self.profile.tools.entry(tool_name.clone()).or_default();
+            *self.profile.tools.entry(tool_name.clone()).or_default() = !is_enabled;
+            is_enabled
         };
 
         let active_profile_id = &AssistantSettings::get_global(cx).default_profile;
@@ -279,7 +273,6 @@ impl PickerDelegate for ToolPickerDelegate {
             let default_profile = self.profile.clone();
             let server_id = server_id.clone();
             let tool_name = tool_name.clone();
-
             move |settings: &mut AssistantSettingsContent, _cx| {
                 settings
                     .v2_setting(|v2_settings| {
@@ -334,9 +327,7 @@ impl PickerDelegate for ToolPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let item_match = &self.matches[ix];
-        let item = &self.items[item_match.candidate_id];
-
+        let item = &self.filtered_items[ix];
         match item {
             PickerItem::ContextServer { server_id, .. } => Some(
                 div()
@@ -372,10 +363,7 @@ impl PickerDelegate for ToolPickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .child(HighlightedLabel::new(
-                            item_match.string.clone(),
-                            item_match.positions.clone(),
-                        ))
+                        .child(Label::new(name.clone()))
                         .end_slot::<Icon>(is_enabled.then(|| {
                             Icon::new(IconName::Check)
                                 .size(IconSize::Small)
