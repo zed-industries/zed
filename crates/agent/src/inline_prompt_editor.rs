@@ -12,7 +12,8 @@ use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
+    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
+    GutterDimensions, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
@@ -872,6 +873,12 @@ impl PromptEditor<BufferCodegen> {
             editor.set_show_cursor_when_unfocused(true, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
             editor.register_addon(ContextCreasesAddon::new());
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
+
             editor
         });
         let prompt_editor_entity = prompt_editor.downgrade();
