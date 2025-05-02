@@ -158,7 +158,7 @@ pub enum IconName {
     Maximize,
     Menu,
     MenuAlt,
-    MessageBubblesDashed,
+    MessageBubbleDashed,
     MessageBubbles,
     Mic,
     MicMute,

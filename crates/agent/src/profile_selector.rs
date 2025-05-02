@@ -14,6 +14,12 @@ use util::ResultExt as _;
 
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
 
+mod builtin_profiles {
+    pub const WRITE: &str = "Write";
+    pub const ASK: &str = "Ask";
+    pub const MANUAL: &str = "Manual";
+}
+
 pub struct ProfileSelector {
     profiles: IndexMap<AgentProfileId, AgentProfile>,
     fs: Arc<dyn Fs>,
@@ -69,9 +75,9 @@ impl ProfileSelector {
             menu = menu.header("Profiles");
             for (profile_id, profile) in self.profiles.clone() {
                 let documentation = match profile.name.to_lowercase().as_str() {
-                    "write" => Some("Get help to write anything."),
-                    "ask" => Some("Chat about your codebase."),
-                    "manual" => Some("Chat about anything; no tools."),
+                    builtin_profiles::WRITE => Some("Get help to write anything."),
+                    builtin_profiles::ASK => Some("Chat about your codebase."),
+                    builtin_profiles::MANUAL => Some("Chat about anything; no tools."),
                     _ => None,
                 };
 
@@ -145,9 +151,9 @@ impl Render for ProfileSelector {
             .map_or(false, |default| default.model.supports_tools());
 
         let icon = match profile_id.as_str() {
-            "write" => IconName::Pencil,
-            "ask" => IconName::MessageBubbles,
-            "manual" => IconName::MessageBubblesDashed,
+            builtin_profiles::WRITE => IconName::Pencil,
+            builtin_profiles::ASK => IconName::MessageBubbles,
+            builtin_profiles::MANUAL => IconName::MessageBubbleDashed,
             _ => IconName::UserRoundPen,
         };
 
