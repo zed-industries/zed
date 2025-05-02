@@ -1325,13 +1325,14 @@ impl Thread {
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
-                if let Some(usage) = usage {
-                    thread
-                        .update(cx, |_thread, cx| {
+                thread
+                    .update(cx, |_thread, cx| {
+                        if let Some(usage) = usage {
                             cx.emit(ThreadEvent::UsageUpdated(usage));
-                        })
-                        .ok();
-                }
+                        }
+                        cx.emit(ThreadEvent::NewRequest);
+                    })
+                    .ok();
 
                 let mut request_assistant_message_id = None;
 
@@ -1962,6 +1963,11 @@ impl Thread {
         }
 
         self.finalize_pending_checkpoint(cx);
+
+        if canceled {
+            cx.emit(ThreadEvent::CompletionCanceled);
+        }
+
         canceled
     }
 
@@ -2463,6 +2469,7 @@ pub enum ThreadEvent {
     UsageUpdated(RequestUsage),
     StreamedCompletion,
     ReceivedTextChunk,
+    NewRequest,
     StreamedAssistantText(MessageId, String),
     StreamedAssistantThinking(MessageId, String),
     StreamedToolUse {
@@ -2493,6 +2500,7 @@ pub enum ThreadEvent {
     CheckpointChanged,
     ToolConfirmationNeeded,
     CancelEditing,
+    CompletionCanceled,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}

@@ -43,6 +43,7 @@ use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
+use crate::agent_diff::AgentDiff;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -51,9 +52,9 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
-    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor,
+    InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -103,7 +104,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
-                        AgentDiff::deploy_in_workspace(thread, workspace, window, cx);
+                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
@@ -474,6 +475,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+        AgentDiff::set_active_thread(&workspace, &thread, cx);
 
         let active_thread_subscription =
             cx.subscribe(&active_thread, |_, _, event, cx| match &event {
@@ -717,6 +719,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+        AgentDiff::set_active_thread(&self.workspace, &thread, cx);
 
         let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
@@ -914,6 +917,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+        AgentDiff::set_active_thread(&self.workspace, &thread, cx);
 
         let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
@@ -989,7 +993,7 @@ impl AssistantPanel {
         let thread = self.thread.read(cx).thread().clone();
         self.workspace
             .update(cx, |workspace, cx| {
-                AgentDiff::deploy_in_workspace(thread, workspace, window, cx)
+                AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx)
             })
             .log_err();
     }

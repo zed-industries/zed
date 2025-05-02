@@ -69,7 +69,7 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AssistantSettings {
     pub enabled: bool,
     pub button: bool,
@@ -88,6 +88,32 @@ pub struct AssistantSettings {
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
+    pub single_file_review: bool,
+}
+
+impl Default for AssistantSettings {
+    fn default() -> Self {
+        Self {
+            enabled: Default::default(),
+            button: Default::default(),
+            dock: Default::default(),
+            default_width: Default::default(),
+            default_height: Default::default(),
+            default_model: Default::default(),
+            inline_assistant_model: Default::default(),
+            commit_message_model: Default::default(),
+            thread_summary_model: Default::default(),
+            inline_alternatives: Default::default(),
+            using_outdated_settings_version: Default::default(),
+            enable_experimental_live_diffs: Default::default(),
+            default_profile: Default::default(),
+            profiles: Default::default(),
+            always_allow_tool_actions: Default::default(),
+            notify_when_agent_waiting: Default::default(),
+            stream_edits: Default::default(),
+            single_file_review: true,
+        }
+    }
 }
 
 impl AssistantSettings {
@@ -224,6 +250,7 @@ impl AssistantSettingsContent {
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
                     stream_edits: None,
+                    single_file_review: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -252,6 +279,7 @@ impl AssistantSettingsContent {
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
                 stream_edits: None,
+                single_file_review: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -503,6 +531,7 @@ impl Default for VersionedAssistantSettingsContent {
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
             stream_edits: None,
+            single_file_review: None,
         })
     }
 }
@@ -562,6 +591,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     stream_edits: Option<bool>,
+    /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
+    ///
+    /// Default: true
+    single_file_review: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -725,6 +758,7 @@ impl Settings for AssistantSettings {
                 value.notify_when_agent_waiting,
             );
             merge(&mut settings.stream_edits, value.stream_edits);
+            merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
 
             if let Some(profiles) = value.profiles {
@@ -857,6 +891,7 @@ mod tests {
                                 always_allow_tool_actions: None,
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
+                                single_file_review: None,
                             },
                         )),
                     }
