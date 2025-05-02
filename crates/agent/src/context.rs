@@ -846,7 +846,7 @@ pub fn load_context(
         text.push_str(
             "\n<context>\n\
             The following items were attached by the user. \
-            You don't need to use other tools to read them.\n\n",
+            They are up-to-date and don't need to be re-read.\n\n",
         );
 
         if !file_context.is_empty() {

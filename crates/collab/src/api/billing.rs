@@ -27,7 +27,9 @@ use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
 use crate::llm::db::subscription_usage_meter::CompletionMode;
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT,
+};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{AppState, Cents, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
@@ -53,6 +55,10 @@ pub fn router() -> Router {
         .route(
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
+        )
+        .route(
+            "/billing/subscriptions/migrate",
+            post(migrate_to_new_billing),
         )
         .route("/billing/monthly_spend", get(get_monthly_spend))
         .route("/billing/usage", get(get_current_usage))
@@ -256,6 +262,7 @@ async fn list_billing_subscriptions(
 enum ProductCode {
     ZedPro,
     ZedProTrial,
+    ZedFree,
 }
 
 #[derive(Debug, Deserialize)]
@@ -384,6 +391,11 @@ async fn create_billing_subscription(
                     feature_flags,
                     &success_url,
                 )
+                .await?
+        }
+        Some(ProductCode::ZedFree) => {
+            stripe_billing
+                .checkout_with_zed_free(customer_id, &user.github_login, &success_url)
                 .await?
         }
         None => {
@@ -601,6 +613,86 @@ async fn manage_billing_subscription(
 
     Ok(Json(ManageBillingSubscriptionResponse {
         billing_portal_session_url: Some(session.url),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct MigrateToNewBillingBody {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct MigrateToNewBillingResponse {
+    /// The ID of the subscription that was canceled.
+    canceled_subscription_id: Option<String>,
+}
+
+async fn migrate_to_new_billing(
+    Extension(app): Extension<Arc<AppState>>,
+    extract::Json(body): extract::Json<MigrateToNewBillingBody>,
+) -> Result<Json<MigrateToNewBillingResponse>> {
+    let Some(stripe_client) = app.stripe_client.clone() else {
+        log::error!("failed to retrieve Stripe client");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
+
+    let user = app
+        .db
+        .get_user_by_github_user_id(body.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let old_billing_subscriptions_by_user = app
+        .db
+        .get_active_billing_subscriptions(HashSet::from_iter([user.id]))
+        .await?;
+
+    let canceled_subscription_id = if let Some((_billing_customer, billing_subscription)) =
+        old_billing_subscriptions_by_user.get(&user.id)
+    {
+        let stripe_subscription_id = billing_subscription
+            .stripe_subscription_id
+            .parse::<stripe::SubscriptionId>()
+            .context("failed to parse Stripe subscription ID from database")?;
+
+        Subscription::cancel(
+            &stripe_client,
+            &stripe_subscription_id,
+            stripe::CancelSubscription {
+                invoice_now: Some(true),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Some(stripe_subscription_id)
+    } else {
+        None
+    };
+
+    let all_feature_flags = app.db.list_feature_flags().await?;
+    let user_feature_flags = app.db.get_user_flags(user.id).await?;
+
+    for feature_flag in ["new-billing", "assistant2"] {
+        let already_in_feature_flag = user_feature_flags.iter().any(|flag| flag == feature_flag);
+        if already_in_feature_flag {
+            continue;
+        }
+
+        let feature_flag = all_feature_flags
+            .iter()
+            .find(|flag| flag.flag == feature_flag)
+            .context("failed to find feature flag: {feature_flag:?}")?;
+
+        app.db.add_user_flag(user.id, feature_flag.id).await?;
+    }
+
+    Ok(Json(MigrateToNewBillingResponse {
+        canceled_subscription_id: canceled_subscription_id
+            .map(|subscription_id| subscription_id.to_string()),
     }))
 }
 
@@ -1168,8 +1260,21 @@ async fn get_current_usage(
         SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
     };
 
+    let feature_flags = app.db.get_user_flags(user.id).await?;
+    let has_extended_trial = feature_flags
+        .iter()
+        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+
     let model_requests_limit = match plan.model_requests_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        zed_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == zed_llm_client::Plan::ZedProTrial && has_extended_trial {
+                1_000
+            } else {
+                limit
+            };
+
+            Some(limit)
+        }
         zed_llm_client::UsageLimit::Unlimited => None,
     };
     let edit_prediction_limit = match plan.edit_predictions_limit() {
@@ -1403,13 +1508,13 @@ async fn sync_model_request_usage_with_stripe(
         .await?;
 
     let claude_3_5_sonnet = stripe_billing
-        .find_price_id_by_lookup_key("claude-3-5-sonnet-requests")
+        .find_price_by_lookup_key("claude-3-5-sonnet-requests")
         .await?;
     let claude_3_7_sonnet = stripe_billing
-        .find_price_id_by_lookup_key("claude-3-7-sonnet-requests")
+        .find_price_by_lookup_key("claude-3-7-sonnet-requests")
         .await?;
     let claude_3_7_sonnet_max = stripe_billing
-        .find_price_id_by_lookup_key("claude-3-7-sonnet-requests-max")
+        .find_price_by_lookup_key("claude-3-7-sonnet-requests-max")
         .await?;
 
     for (usage_meter, usage) in usage_meters {
@@ -1434,7 +1539,7 @@ async fn sync_model_request_usage_with_stripe(
 
             let model = llm_db.model_by_id(usage_meter.model_id)?;
 
-            let (price_id, meter_event_name) = match model.name.as_str() {
+            let (price, meter_event_name) = match model.name.as_str() {
                 "claude-3-5-sonnet" => (&claude_3_5_sonnet, "claude_3_5_sonnet/requests"),
                 "claude-3-7-sonnet" => match usage_meter.mode {
                     CompletionMode::Normal => (&claude_3_7_sonnet, "claude_3_7_sonnet/requests"),
@@ -1448,7 +1553,7 @@ async fn sync_model_request_usage_with_stripe(
             };
 
             stripe_billing
-                .subscribe_to_price(&stripe_subscription_id, price_id)
+                .subscribe_to_price(&stripe_subscription_id, price)
                 .await?;
             stripe_billing
                 .bill_model_request_usage(

@@ -2276,6 +2276,9 @@ impl EditorElement {
                     }
 
                     let display_row = multibuffer_point.to_display_point(snapshot).row();
+                    if !range.contains(&display_row) {
+                        return None;
+                    }
                     if row_infos
                         .get((display_row - range.start).0 as usize)
                         .is_some_and(|row_info| row_info.expand_info.is_some())
@@ -6871,7 +6874,12 @@ impl Element for EditorElement {
                     // The max scroll position for the top of the window
                     let max_scroll_top = if matches!(
                         snapshot.mode,
-                        EditorMode::AutoHeight { .. } | EditorMode::SingleLine { .. }
+                        EditorMode::SingleLine { .. }
+                            | EditorMode::AutoHeight { .. }
+                            | EditorMode::Full {
+                                sized_by_content: true,
+                                ..
+                            }
                     ) {
                         (max_row - height_in_lines + 1.).max(0.)
                     } else {

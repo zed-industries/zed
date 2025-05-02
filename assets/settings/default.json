@@ -657,6 +657,8 @@
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
+    // When enabled, the agent will stream edits.
+    "stream_edits": false,
     "default_profile": "write",
     "profiles": {
       "ask": {
@@ -671,6 +673,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "thinking": true,
           "web_search": true
@@ -930,6 +933,11 @@
       // The minimum severity of the diagnostics to show inline.
       // Shows all diagnostics when not specified.
       "max_severity": null
+    },
+    "cargo": {
+      // When enabled, Zed disables rust-analyzer's check on save and starts to query
+      // Cargo diagnostics separately.
+      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file

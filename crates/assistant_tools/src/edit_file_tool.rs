@@ -7,7 +7,8 @@ use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUse
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId, Task, WeakEntity,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
+    Task, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
@@ -282,7 +284,7 @@ pub struct EditFileToolCard {
 }
 
 impl EditFileToolCard {
-    fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -323,7 +325,11 @@ impl EditFileToolCard {
         }
     }
 
-    fn set_diff(
+    pub fn has_diff(&self) -> bool {
+        self.total_lines.is_some()
+    }
+
+    pub fn set_diff(
         &mut self,
         path: Arc<Path>,
         old_text: String,
@@ -343,6 +349,7 @@ impl EditFileToolCard {
                         .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
+                    multibuffer.clear(cx);
                     let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
@@ -462,45 +469,44 @@ impl ToolCard for EditFileToolCard {
             .rounded_t_md()
             .when(!failed, |header| header.bg(codeblock_header_bg))
             .child(path_label_button)
-            .map(|container| {
-                if failed {
-                    container.child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .child(
-                                Disclosure::new(
-                                    ("edit-file-error-disclosure", self.editor_unique_id),
-                                    self.error_expanded,
-                                )
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown)
-                                .on_click(cx.listener(
-                                    move |this, _event, _window, _cx| {
-                                        this.error_expanded = !this.error_expanded;
-                                    },
-                                )),
-                            ),
-                    )
-                } else {
-                    container.child(
-                        Disclosure::new(
-                            ("edit-file-disclosure", self.editor_unique_id),
-                            self.preview_expanded,
+            .when(failed, |header| {
+                header.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
                         )
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .on_click(cx.listener(
-                            move |this, _event, _window, _cx| {
-                                this.preview_expanded = !this.preview_expanded;
-                            },
-                        )),
+                        .child(
+                            Disclosure::new(
+                                ("edit-file-error-disclosure", self.editor_unique_id),
+                                self.error_expanded,
+                            )
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .on_click(cx.listener(
+                                move |this, _event, _window, _cx| {
+                                    this.error_expanded = !this.error_expanded;
+                                },
+                            )),
+                        ),
+                )
+            })
+            .when(!failed && self.has_diff(), |header| {
+                header.child(
+                    Disclosure::new(
+                        ("edit-file-disclosure", self.editor_unique_id),
+                        self.preview_expanded,
                     )
-                }
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown)
+                    .on_click(cx.listener(
+                        move |this, _event, _window, _cx| {
+                            this.preview_expanded = !this.preview_expanded;
+                        },
+                    )),
+                )
             });
 
         let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
@@ -537,6 +543,50 @@ impl ToolCard for EditFileToolCard {
         const DEFAULT_COLLAPSED_LINES: u32 = 10;
         let is_collapsible = self.total_lines.unwrap_or(0) > DEFAULT_COLLAPSED_LINES;
 
+        let waiting_for_diff = {
+            let styles = [
+                ("w_4_5", (0.1, 0.85), 2000),
+                ("w_1_4", (0.2, 0.75), 2200),
+                ("w_2_4", (0.15, 0.64), 1900),
+                ("w_3_5", (0.25, 0.72), 2300),
+                ("w_2_5", (0.3, 0.56), 1800),
+            ];
+
+            let mut container = v_flex()
+                .p_3()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(border_color)
+                .bg(cx.theme().colors().editor_background);
+
+            for (width_method, pulse_range, duration_ms) in styles.iter() {
+                let (min_opacity, max_opacity) = *pulse_range;
+                let placeholder = match *width_method {
+                    "w_4_5" => div().w_3_4(),
+                    "w_1_4" => div().w_1_4(),
+                    "w_2_4" => div().w_2_4(),
+                    "w_3_5" => div().w_3_5(),
+                    "w_2_5" => div().w_2_5(),
+                    _ => div().w_1_2(),
+                }
+                .id("loading_div")
+                .h_2()
+                .rounded_full()
+                .bg(cx.theme().colors().element_active)
+                .with_animation(
+                    "loading_pulsate",
+                    Animation::new(Duration::from_millis(*duration_ms))
+                        .repeat()
+                        .with_easing(pulsating_between(min_opacity, max_opacity)),
+                    |label, delta| label.opacity(delta),
+                );
+
+                container = container.child(placeholder);
+            }
+
+            container
+        };
+
         v_flex()
             .mb_2()
             .border_1()
@@ -572,53 +622,58 @@ impl ToolCard for EditFileToolCard {
                         ),
                 )
             })
-            .when(!failed && self.preview_expanded, |card| {
-                card.child(
-                    v_flex()
-                        .relative()
-                        .map(|editor_container| {
-                            if self.full_height_expanded {
-                                editor_container.h_full()
-                            } else {
+            .when(!self.has_diff() && !failed, |card| {
+                card.child(waiting_for_diff)
+            })
+            .when(
+                !failed && self.preview_expanded && self.has_diff(),
+                |card| {
+                    card.child(
+                        v_flex()
+                            .relative()
+                            .h_full()
+                            .when(!self.full_height_expanded, |editor_container| {
                                 editor_container
-                                    .h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
-                            }
-                        })
-                        .overflow_hidden()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(div().pl_1().child(editor))
-                        .when(
-                            !self.full_height_expanded && is_collapsible,
-                            |editor_container| editor_container.child(gradient_overlay),
-                        ),
-                )
-                .when(is_collapsible, |editor_container| {
-                    editor_container.child(
-                        h_flex()
-                            .id(("expand-button", self.editor_unique_id))
-                            .flex_none()
-                            .cursor_pointer()
-                            .h_5()
-                            .justify_center()
-                            .rounded_b_md()
+                                    .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
+                            })
+                            .overflow_hidden()
                             .border_t_1()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
-                            .child(
-                                Icon::new(full_height_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .tooltip(Tooltip::text(full_height_tooltip_label))
-                            .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                this.full_height_expanded = !this.full_height_expanded;
-                            })),
+                            .child(div().pl_1().child(editor))
+                            .when(
+                                !self.full_height_expanded && is_collapsible,
+                                |editor_container| editor_container.child(gradient_overlay),
+                            ),
                     )
-                })
-            })
+                    .when(is_collapsible, |editor_container| {
+                        editor_container.child(
+                            h_flex()
+                                .id(("expand-button", self.editor_unique_id))
+                                .flex_none()
+                                .cursor_pointer()
+                                .h_5()
+                                .justify_center()
+                                .rounded_b_md()
+                                .border_t_1()
+                                .border_color(border_color)
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|style| {
+                                    style.bg(cx.theme().colors().element_hover.opacity(0.1))
+                                })
+                                .child(
+                                    Icon::new(full_height_icon)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .tooltip(Tooltip::text(full_height_tooltip_label))
+                                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                    this.full_height_expanded = !this.full_height_expanded;
+                                })),
+                        )
+                    })
+                },
+            )
     }
 }
 

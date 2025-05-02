@@ -188,7 +188,7 @@ impl Render for SubView {
                 cx.notify();
             }))
             .size_full()
-            // Add border uncoditionally to prevent layout shifts on focus changes.
+            // Add border unconditionally to prevent layout shifts on focus changes.
             .border_1()
             .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
                 el.border_color(cx.theme().colors().pane_focused_border)

@@ -59,9 +59,9 @@ use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
     Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
-    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection, SelectionGoal,
-    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
-    Transaction, TransactionId, Unclipped,
+    LineIndent, OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection,
+    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
+    ToPointUtf16, Transaction, TransactionId, Unclipped,
 };
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
@@ -2139,6 +2139,14 @@ impl Buffer {
     {
         self.autoindent_requests.clear();
         self.edit([(0..self.len(), text)], None, cx)
+    }
+
+    /// Appends the given text to the end of the buffer.
+    pub fn append<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
+    where
+        T: Into<Arc<str>>,
+    {
+        self.edit([(self.len()..self.len(), text)], None, cx)
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
