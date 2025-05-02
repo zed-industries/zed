@@ -12,6 +12,5 @@ if (Get-Command rustup -ErrorAction SilentlyContinue)
         -OutFile rustup-init.exe `
         -Uri https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe
     .\rustup-init.exe -y --default-toolchain none
-    rustup install
     Remove-Item -Force rustup-init.exe
 }
