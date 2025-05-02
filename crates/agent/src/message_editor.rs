@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::AnimatedLabel;
+use crate::ui::{AgentPreview, AnimatedLabel};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -42,10 +42,11 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AgentDiff, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
-    ToggleContextPicker, ToggleProfileSelector,
+    ActiveThread, AgentDiff, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
+    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 
+#[derive(RegisterComponent)]
 pub struct MessageEditor {
     thread: Entity<Thread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
@@ -1202,3 +1203,53 @@ impl Render for MessageEditor {
             })
     }
 }
+
+impl Component for MessageEditor {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+}
+
+impl AgentPreview for MessageEditor {
+    fn create_preview(
+        workspace: WeakEntity<Workspace>,
+        active_thread: Entity<ActiveThread>,
+        thread_store: WeakEntity<ThreadStore>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if let Some(workspace_entity) = workspace.upgrade() {
+            let fs = workspace_entity.read(cx).app_state().fs.clone();
+            let weak_project = workspace_entity.read(cx).project().clone().downgrade();
+            let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
+            let thread = active_thread.read(cx).thread().clone();
+
+            let example_message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    fs,
+                    workspace,
+                    context_store,
+                    None,
+                    thread_store,
+                    thread,
+                    window,
+                    cx,
+                )
+            });
+
+            Some(
+                v_flex()
+                    .gap_4()
+                    .children(vec![single_example(
+                        "Default",
+                        example_message_editor.clone().into_any_element(),
+                    )])
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+}
+
+register_agent_preview!(MessageEditor);
