@@ -624,7 +624,7 @@ struct MigrateToNewBillingBody {
 #[derive(Debug, Serialize)]
 struct MigrateToNewBillingResponse {
     /// The ID of the subscription that was canceled.
-    canceled_subscription_id: String,
+    canceled_subscription_id: Option<String>,
 }
 
 async fn migrate_to_new_billing(
@@ -650,29 +650,28 @@ async fn migrate_to_new_billing(
         .get_active_billing_subscriptions(HashSet::from_iter([user.id]))
         .await?;
 
-    let Some((_billing_customer, billing_subscription)) =
+    let canceled_subscription_id = if let Some((_billing_customer, billing_subscription)) =
         old_billing_subscriptions_by_user.get(&user.id)
-    else {
-        return Err(Error::http(
-            StatusCode::NOT_FOUND,
-            "No active billing subscriptions to migrate".into(),
-        ));
+    {
+        let stripe_subscription_id = billing_subscription
+            .stripe_subscription_id
+            .parse::<stripe::SubscriptionId>()
+            .context("failed to parse Stripe subscription ID from database")?;
+
+        Subscription::cancel(
+            &stripe_client,
+            &stripe_subscription_id,
+            stripe::CancelSubscription {
+                invoice_now: Some(true),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Some(stripe_subscription_id)
+    } else {
+        None
     };
-
-    let stripe_subscription_id = billing_subscription
-        .stripe_subscription_id
-        .parse::<stripe::SubscriptionId>()
-        .context("failed to parse Stripe subscription ID from database")?;
-
-    Subscription::cancel(
-        &stripe_client,
-        &stripe_subscription_id,
-        stripe::CancelSubscription {
-            invoice_now: Some(true),
-            ..Default::default()
-        },
-    )
-    .await?;
 
     let feature_flags = app.db.list_feature_flags().await?;
 
@@ -691,7 +690,8 @@ async fn migrate_to_new_billing(
     }
 
     Ok(Json(MigrateToNewBillingResponse {
-        canceled_subscription_id: stripe_subscription_id.to_string(),
+        canceled_subscription_id: canceled_subscription_id
+            .map(|subscription_id| subscription_id.to_string()),
     }))
 }
 
