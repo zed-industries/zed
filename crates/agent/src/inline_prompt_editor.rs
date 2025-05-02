@@ -890,7 +890,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.downgrade(),
                 thread_store.clone(),
                 prompt_editor_entity,
-                codegen_buffer,
+                codegen_buffer.as_ref().map(Entity::downgrade),
             ))));
         });
 

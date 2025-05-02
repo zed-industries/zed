@@ -584,22 +584,14 @@ fn recent_context_picker_entries(
     context_store: Entity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     workspace: Entity<Workspace>,
-    exclude_buffer: Option<Entity<Buffer>>,
+    exclude_path: Option<ProjectPath>,
     cx: &App,
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
-
     let mut current_files = context_store.read(cx).file_paths(cx);
+    current_files.extend(exclude_path);
     let workspace = workspace.read(cx);
     let project = workspace.project().read(cx);
-
-    current_files.extend(exclude_buffer.and_then(|buffer| {
-        let file = buffer.read(cx).file()?;
-        Some(ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        })
-    }));
 
     recent.extend(
         workspace
