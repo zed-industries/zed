@@ -1459,22 +1459,25 @@ impl workspace::TerminalProvider for TerminalProvider {
         task: SpawnInTerminal,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<ExitStatus>> {
-        let this = self.0.clone();
+    ) -> Task<Option<Result<ExitStatus>>> {
+        let terminal_panel = self.0.clone();
         window.spawn(cx, async move |cx| {
-            let terminal = this
+            let terminal = terminal_panel
                 .update_in(cx, |terminal_panel, window, cx| {
                     terminal_panel.spawn_task(&task, window, cx)
-                })?
-                .await?;
-            let Some(exit_code) = terminal
-                .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
-                .await
-            else {
-                return Err(anyhow!("Task cancelled"));
-            };
-
-            Ok(exit_code)
+                })
+                .ok()?
+                .await;
+            match terminal {
+                Ok(terminal) => {
+                    let exit_status = terminal
+                        .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
+                        .ok()?
+                        .await?;
+                    Some(Ok(exit_status))
+                }
+                Err(e) => Some(Err(e)),
+            }
         })
     }
 }
