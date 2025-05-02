@@ -1436,7 +1436,7 @@ impl AgentDiff {
         if !AssistantSettings::get_global(cx).single_file_review {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
-                    .update(cx, |editor, cx| editor.reset_diff_source(cx))
+                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
                     .ok();
             }
             return;
@@ -1485,6 +1485,7 @@ impl AgentDiff {
 
                     if previous_state.is_none() {
                         editor.update(cx, |editor, cx| {
+                            editor.start_temporary_diff_override();
                             editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
                             editor.set_expand_all_diff_hunks(cx);
                             editor.register_addon(EditorAgentDiffAddon);
@@ -1526,7 +1527,7 @@ impl AgentDiff {
 
         for (editor, _) in no_longer_reviewing {
             editor
-                .update(cx, |editor, cx| editor.reset_diff_source(cx))
+                .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
                 .ok();
             self.reviewing_editors.remove(&editor);
         }

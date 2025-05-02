@@ -981,6 +981,8 @@ pub struct Editor {
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
+    /// Whether we are temporarily displaying a diff other than git's
+    temporary_diff_override: bool,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1626,7 +1628,8 @@ impl Editor {
         let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
             load_uncommitted_diff = Some(
-                get_uncommitted_diff_for_buffer(
+                update_uncommitted_diff_for_buffer(
+                    cx.entity(),
                     &project,
                     buffer.read(cx).all_buffers(),
                     buffer.clone(),
@@ -1802,6 +1805,7 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
+            temporary_diff_override: false,
             mouse_cursor_hidden: false,
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
@@ -17820,7 +17824,8 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_diff_for_buffer(
+                        update_uncommitted_diff_for_buffer(
+                            cx.entity(),
                             project,
                             [buffer.clone()],
                             self.buffer.clone(),
@@ -17896,7 +17901,13 @@ impl Editor {
         };
     }
 
-    pub fn reset_diff_source(&mut self, cx: &mut Context<Self>) {
+    pub fn start_temporary_diff_override(&mut self) {
+        self.load_diff_task.take();
+        self.temporary_diff_override = true;
+    }
+
+    pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
+        self.temporary_diff_override = false;
         self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_collapsed(cx);
@@ -17904,7 +17915,8 @@ impl Editor {
 
         if let Some(project) = self.project.clone() {
             self.load_diff_task = Some(
-                get_uncommitted_diff_for_buffer(
+                update_uncommitted_diff_for_buffer(
+                    cx.entity(),
                     &project,
                     self.buffer.read(cx).all_buffers(),
                     self.buffer.clone(),
@@ -18894,7 +18906,8 @@ fn insert_extra_newline_tree_sitter(buffer: &MultiBufferSnapshot, range: Range<u
             .all(|c| c.is_whitespace() && c != '\n')
 }
 
-fn get_uncommitted_diff_for_buffer(
+fn update_uncommitted_diff_for_buffer(
+    editor: Entity<Editor>,
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
@@ -18910,6 +18923,13 @@ fn get_uncommitted_diff_for_buffer(
     });
     cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
+        if editor
+            .read_with(cx, |editor, _cx| editor.temporary_diff_override)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
         buffer
             .update(cx, |buffer, cx| {
                 for diff in diffs.into_iter().flatten() {
