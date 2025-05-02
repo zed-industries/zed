@@ -169,11 +169,14 @@ fn main() {
                     continue;
                 }
 
-                if meta.language_server.map_or(false, |language| {
-                    !languages.contains(&language.file_extension)
-                }) {
-                    skipped.push(meta.name);
-                    continue;
+                if let Some(language) = meta.language_server {
+                    if !languages.contains(&language.file_extension) {
+                        panic!(
+                            "Eval for {:?} could not be run because no language server was found for extension {:?}",
+                            meta.name,
+                            language.file_extension
+                        );
+                    }
                 }
 
                 // TODO: This creates a worktree per repetition. Ideally these examples should
