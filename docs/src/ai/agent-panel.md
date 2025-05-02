@@ -80,23 +80,11 @@ All custom profiles can be edited via the UI or by hand under the `assistant.pro
 
 ## Text Threads
 
-- Comparison table; when to use which
-
-T = Text
-P = Prompt
-                                  T     P
-Rotate through recent threads   | ✅ | ✅ | // tabs vs nav menu
-Historical thread history       | ✅ | ✅ |
-Edit past user messages         | ✅ | ✅ |
-Context-including commands      | ✅ | ✅ | // slash commands vs @-mentions
-Tools and profiles              |    | ✅ |
-Inspect code base               |    | ✅ |
-Write to code base              |    | ✅ |
-Edit past LLM response messages | ✅ |  * | // Using edit message in prompt thread generates new system responses
-Change roles                    | ✅ |    |
-MCP support                     |  ? | ✅ |
-Review changes                  |    | ✅ |
-Streaming response              | ✅ | ✅ |
+"Text threads" present your conversation with the LLM in a different format - as raw text.
+With text threads, you have full control over the conversation data.
+You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
+For users who have been with us for some time, you'll notice that text threads are our original assistant panel - users love it for the control it offers.
+We do not plan to deprecate text threads, but it should be noted that if you want the assistant to write to your code base through tools, you'll want to use the newer "prompt" threads.
 
 ## Errors and Debugging
 
