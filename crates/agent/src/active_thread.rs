@@ -765,7 +765,6 @@ impl ActiveThread {
                     .unwrap()
             }
         });
-
         let mut this = Self {
             language_registry,
             thread_store,
@@ -953,6 +952,9 @@ impl ActiveThread {
             }
             ThreadEvent::UsageUpdated(usage) => {
                 self.last_usage = Some(*usage);
+            }
+            ThreadEvent::NewRequest | ThreadEvent::CompletionCanceled => {
+                cx.notify();
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
