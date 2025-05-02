@@ -311,7 +311,10 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    AgentLocationChanged,
 }
+
+pub struct AgentLocationChanged;
 
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
@@ -4886,7 +4889,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         self.agent_location = agent_location;
-        // todo!("emit event")
+        cx.emit(Event::AgentLocationChanged);
     }
 
     pub fn agent_location(&self) -> Option<AgentLocation> {

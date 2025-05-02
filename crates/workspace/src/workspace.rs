@@ -1002,6 +1002,10 @@ impl Workspace {
                     );
                 }
 
+                project::Event::AgentLocationChanged => {
+                    this.leader_updated(CollaboratorId::Agent, window, cx);
+                }
+
                 _ => {}
             }
             cx.notify()
