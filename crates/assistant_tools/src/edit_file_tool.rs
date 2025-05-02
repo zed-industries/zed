@@ -7,7 +7,8 @@ use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUse
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId, Task, WeakEntity,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
+    Task, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
@@ -20,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
@@ -467,47 +469,44 @@ impl ToolCard for EditFileToolCard {
             .rounded_t_md()
             .when(!failed, |header| header.bg(codeblock_header_bg))
             .child(path_label_button)
-            .map(|container| {
-                if failed {
-                    container.child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .child(
-                                Disclosure::new(
-                                    ("edit-file-error-disclosure", self.editor_unique_id),
-                                    self.error_expanded,
-                                )
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown)
-                                .on_click(cx.listener(
-                                    move |this, _event, _window, _cx| {
-                                        this.error_expanded = !this.error_expanded;
-                                    },
-                                )),
-                            ),
-                    )
-                } else if self.has_diff() {
-                    container.child(
-                        Disclosure::new(
-                            ("edit-file-disclosure", self.editor_unique_id),
-                            self.preview_expanded,
+            .when(failed, |header| {
+                header.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
                         )
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .on_click(cx.listener(
-                            move |this, _event, _window, _cx| {
-                                this.preview_expanded = !this.preview_expanded;
-                            },
-                        )),
+                        .child(
+                            Disclosure::new(
+                                ("edit-file-error-disclosure", self.editor_unique_id),
+                                self.error_expanded,
+                            )
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .on_click(cx.listener(
+                                move |this, _event, _window, _cx| {
+                                    this.error_expanded = !this.error_expanded;
+                                },
+                            )),
+                        ),
+                )
+            })
+            .when(!failed && self.has_diff(), |header| {
+                header.child(
+                    Disclosure::new(
+                        ("edit-file-disclosure", self.editor_unique_id),
+                        self.preview_expanded,
                     )
-                } else {
-                    container
-                }
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown)
+                    .on_click(cx.listener(
+                        move |this, _event, _window, _cx| {
+                            this.preview_expanded = !this.preview_expanded;
+                        },
+                    )),
+                )
             });
 
         let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
@@ -544,6 +543,50 @@ impl ToolCard for EditFileToolCard {
         const DEFAULT_COLLAPSED_LINES: u32 = 10;
         let is_collapsible = self.total_lines.unwrap_or(0) > DEFAULT_COLLAPSED_LINES;
 
+        let waiting_for_diff = {
+            let styles = [
+                ("w_4_5", (0.1, 0.85), 2000),
+                ("w_1_4", (0.2, 0.75), 2200),
+                ("w_2_4", (0.15, 0.64), 1900),
+                ("w_3_5", (0.25, 0.72), 2300),
+                ("w_2_5", (0.3, 0.56), 1800),
+            ];
+
+            let mut container = v_flex()
+                .p_3()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(border_color)
+                .bg(cx.theme().colors().editor_background);
+
+            for (width_method, pulse_range, duration_ms) in styles.iter() {
+                let (min_opacity, max_opacity) = *pulse_range;
+                let placeholder = match *width_method {
+                    "w_4_5" => div().w_3_4(),
+                    "w_1_4" => div().w_1_4(),
+                    "w_2_4" => div().w_2_4(),
+                    "w_3_5" => div().w_3_5(),
+                    "w_2_5" => div().w_2_5(),
+                    _ => div().w_1_2(),
+                }
+                .id("loading_div")
+                .h_2()
+                .rounded_full()
+                .bg(cx.theme().colors().element_active)
+                .with_animation(
+                    "loading_pulsate",
+                    Animation::new(Duration::from_millis(*duration_ms))
+                        .repeat()
+                        .with_easing(pulsating_between(min_opacity, max_opacity)),
+                    |label, delta| label.opacity(delta),
+                );
+
+                container = container.child(placeholder);
+            }
+
+            container
+        };
+
         v_flex()
             .mb_2()
             .border_1()
@@ -578,6 +621,9 @@ impl ToolCard for EditFileToolCard {
                                 ),
                         ),
                 )
+            })
+            .when(!self.has_diff() && !failed, |card| {
+                card.child(waiting_for_diff)
             })
             .when(
                 !failed && self.preview_expanded && self.has_diff(),
