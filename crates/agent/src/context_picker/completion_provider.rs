@@ -923,11 +923,10 @@ fn confirm_completion_callback(
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
-                            addon.add_crease(
+                            addon.add_creases(
                                 &context_store,
                                 AgentContextKey(context),
-                                crease_id,
-                                crease_text,
+                                [(crease_id, crease_text)],
                                 cx,
                             );
                         }

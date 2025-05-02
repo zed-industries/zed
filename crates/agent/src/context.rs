@@ -1062,18 +1062,14 @@ impl ContextCreasesAddon {
         }
     }
 
-    pub fn add_crease(
+    pub fn add_creases(
         &mut self,
         context_store: &Entity<ContextStore>,
         key: AgentContextKey,
-        crease_id: CreaseId,
-        replacement_text: SharedString,
+        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
         cx: &mut Context<Editor>,
     ) {
-        self.creases
-            .entry(key)
-            .or_default()
-            .push((crease_id, replacement_text));
+        self.creases.entry(key).or_default().extend(creases);
         self._subscription = Some(cx.subscribe(
             &context_store,
             |editor, _, event, cx| match event {
@@ -1098,6 +1094,11 @@ impl ContextCreasesAddon {
                 }
             },
         ))
+    }
+
+    pub fn clear(&mut self) {
+        self.creases.clear();
+        self._subscription = None;
     }
 }
 

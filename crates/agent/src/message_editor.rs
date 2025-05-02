@@ -311,6 +311,9 @@ impl MessageEditor {
                     .collect::<Vec<_>>()
             });
             editor.clear(window, cx);
+            if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+                addon.clear();
+            }
             (text, creases)
         });
 
