@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::{AgentPreview, AnimatedLabel};
+use crate::ui::{AgentPreview, AnimatedLabel, MaxModeTooltip};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -439,7 +439,7 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(Tooltip::text("Toggle Max Mode"))
+                .tooltip(move |_, cx| cx.new(|cx| MaxModeTooltip::new(cx)).into())
                 .into_any_element(),
         )
     }
