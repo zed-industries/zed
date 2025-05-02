@@ -6,9 +6,10 @@ use crate::{
     EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
     HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
-    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
-    SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MINIMAP_FONT_SIZE,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
+    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightedChunk,
@@ -1564,7 +1565,18 @@ impl EditorElement {
             top_right_anchor,
             size(minimap_width, editor_bounds.size.height),
         );
-        let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
+        let minimap_line_height = self.get_minimap_line_height(
+            minimap_editor
+                .read_with(cx, |editor, _| {
+                    editor
+                        .text_style_refinement
+                        .as_ref()
+                        .and_then(|refinement| refinement.font_size)
+                })
+                .unwrap_or(MINIMAP_FONT_SIZE),
+            window,
+            cx,
+        );
         let minimap_height = minimap_bounds.size.height;
 
         let visible_editor_lines = editor_bounds.size.height / line_height;
@@ -1624,13 +1636,13 @@ impl EditorElement {
 
     fn get_minimap_line_height(
         &self,
+        font_size: AbsoluteLength,
         window: &mut Window,
-        minimap_settings: &Minimap,
         cx: &mut App,
     ) -> Pixels {
         let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
         let mut text_style = self.style.text.clone();
-        text_style.font_size = px(minimap_settings.font_size).into();
+        text_style.font_size = font_size;
         text_style.line_height_in_pixels(rem_size)
     }
 

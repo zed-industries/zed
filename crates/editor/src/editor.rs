@@ -231,6 +231,7 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 pub(crate) const MIN_LINE_NUMBER_DIGITS: u32 = 4;
+pub(crate) const MINIMAP_FONT_SIZE: AbsoluteLength = AbsoluteLength::Pixels(px(2.));
 
 pub type RenderDiffHunkControlsFn = Arc<
     dyn Fn(
@@ -16356,6 +16357,8 @@ impl Editor {
     }
 
     fn initialize_new_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
+        const MINIMAP_FONT_WEIGHT: gpui::FontWeight = gpui::FontWeight::BLACK;
+
         let mut minimap = Editor::new_internal(
             EditorMode::Minimap {
                 parent: cx.weak_entity(),
@@ -16367,6 +16370,11 @@ impl Editor {
             cx,
         );
         minimap.scroll_manager.clone_state(&self.scroll_manager);
+        minimap.set_text_style_refinement(TextStyleRefinement {
+            font_size: Some(MINIMAP_FONT_SIZE),
+            font_weight: Some(MINIMAP_FONT_WEIGHT),
+            ..Default::default()
+        });
         minimap.update_minimap_configuration(&self.minimap_settings);
         cx.new(|_| minimap)
     }
@@ -16378,11 +16386,6 @@ impl Editor {
             CurrentLineHighlight::None
         };
         self.set_current_line_highlight(Some(minimap_line_highlight));
-        self.set_text_style_refinement(TextStyleRefinement {
-            font_size: Some(px(minimap_settings.font_size).into()),
-            font_weight: Some(gpui::FontWeight(900.)),
-            ..Default::default()
-        });
     }
 
     pub fn minimap(&self) -> Option<&Entity<Self>> {
