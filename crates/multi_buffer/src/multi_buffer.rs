@@ -1686,7 +1686,10 @@ impl MultiBuffer {
         let mut counts: Vec<usize> = Vec::new();
         for range in expanded_ranges {
             if let Some(last_range) = merged_ranges.last_mut() {
-                debug_assert!(last_range.context.start <= range.context.start);
+                debug_assert!(
+                    last_range.context.start <= range.context.start,
+                    "Last range: {last_range:?} Range: {range:?}"
+                );
                 if last_range.context.end >= range.context.start {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;

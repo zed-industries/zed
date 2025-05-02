@@ -657,6 +657,8 @@
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
+    // When enabled, the agent will stream edits.
+    "stream_edits": false,
     "default_profile": "write",
     "profiles": {
       "ask": {
@@ -671,6 +673,7 @@
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "thinking": true,
           "web_search": true
@@ -702,6 +705,11 @@
           "thinking": true,
           "web_search": true
         }
+      },
+      "manual": {
+        "name": "Manual",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
     // Where to show notifications when an agent has either completed
@@ -829,7 +837,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -912,6 +933,11 @@
       // The minimum severity of the diagnostics to show inline.
       // Shows all diagnostics when not specified.
       "max_severity": null
+    },
+    "cargo": {
+      // When enabled, Zed disables rust-analyzer's check on save and starts to query
+      // Cargo diagnostics separately.
+      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file

@@ -216,9 +216,10 @@ impl RenderOnce for ContextPill {
                     })
                     .when_some(on_click.as_ref(), |element, on_click| {
                         let on_click = on_click.clone();
-                        element
-                            .cursor_pointer()
-                            .on_click(move |event, window, cx| on_click(event, window, cx))
+                        element.cursor_pointer().on_click(move |event, window, cx| {
+                            on_click(event, window, cx);
+                            cx.stop_propagation();
+                        })
                     })
                     .into_any_element()
             }
@@ -254,7 +255,10 @@ impl RenderOnce for ContextPill {
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
-                    element.on_click(move |event, window, cx| on_click(event, window, cx))
+                    element.on_click(move |event, window, cx| {
+                        on_click(event, window, cx);
+                        cx.stop_propagation();
+                    })
                 })
                 .into_any(),
         }
@@ -723,6 +727,7 @@ impl Component for AddedContext {
             "Ready",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
             }),
@@ -732,6 +737,7 @@ impl Component for AddedContext {
             "Loading",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: cx
                     .background_spawn(async move {
@@ -746,6 +752,7 @@ impl Component for AddedContext {
             "Error",
             AddedContext::image(ImageContext {
                 context_id: next_context_id.post_inc(),
+                project_path: None,
                 original_image: Arc::new(Image::empty()),
                 image_task: Task::ready(None).shared(),
             }),

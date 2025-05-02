@@ -136,7 +136,7 @@ pub trait TerminalProvider {
         task: SpawnInTerminal,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<ExitStatus>>;
+    ) -> Task<Option<Result<ExitStatus>>>;
 }
 
 pub trait DebuggerProvider {
@@ -998,7 +998,7 @@ impl Workspace {
                 | BreakpointStoreEvent::BreakpointsCleared(_) => {
                     workspace.serialize_workspace(window, cx);
                 }
-                BreakpointStoreEvent::ActiveDebugLineChanged => {}
+                BreakpointStoreEvent::SetDebugLine | BreakpointStoreEvent::ClearDebugLines => {}
             },
         )
         .detach();

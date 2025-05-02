@@ -301,6 +301,14 @@ pub enum TokenUsageRatio {
     Exceeded,
 }
 
+fn default_completion_mode(cx: &App) -> CompletionMode {
+    if cx.is_staff() {
+        CompletionMode::Max
+    } else {
+        CompletionMode::Normal
+    }
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -310,7 +318,7 @@ pub struct Thread {
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
-    completion_mode: Option<CompletionMode>,
+    completion_mode: CompletionMode,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -366,7 +374,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: None,
+            completion_mode: default_completion_mode(cx),
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -440,7 +448,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: None,
+            completion_mode: default_completion_mode(cx),
             messages: serialized
                 .messages
                 .into_iter()
@@ -569,11 +577,11 @@ impl Thread {
         }
     }
 
-    pub fn completion_mode(&self) -> Option<CompletionMode> {
+    pub fn completion_mode(&self) -> CompletionMode {
         self.completion_mode
     }
 
-    pub fn set_completion_mode(&mut self, mode: Option<CompletionMode>) {
+    pub fn set_completion_mode(&mut self, mode: CompletionMode) {
         self.completion_mode = mode;
     }
 
@@ -879,6 +887,7 @@ impl Thread {
         id: MessageId,
         new_role: Role,
         new_segments: Vec<MessageSegment>,
+        loaded_context: Option<LoadedContext>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
@@ -886,6 +895,9 @@ impl Thread {
         };
         message.role = new_role;
         message.segments = new_segments;
+        if let Some(context) = loaded_context {
+            message.loaded_context = context;
+        }
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageEdited(id));
         true
@@ -1148,9 +1160,9 @@ impl Thread {
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
-            self.completion_mode
+            Some(self.completion_mode)
         } else {
-            None
+            Some(CompletionMode::Normal)
         };
 
         request
@@ -2106,7 +2118,7 @@ impl Thread {
                 .map(|repo| {
                     repo.update(cx, |repo, _| {
                         let current_branch =
-                            repo.branch.as_ref().map(|branch| branch.name.to_string());
+                            repo.branch.as_ref().map(|branch| branch.name().to_owned());
                         repo.send_job(None, |state, _| async move {
                             let RepositoryState::Local { backend, .. } = state else {
                                 return GitState {
@@ -2505,7 +2517,7 @@ mod tests {
         let expected_context = format!(
             r#"
 <context>
-The following items were attached by the user. You don't need to use other tools to read them.
+The following items were attached by the user. They are up-to-date and don't need to be re-read.
 
 <files>
 ```rs {path_part}
@@ -2546,6 +2558,7 @@ fn main() {{
                 "file1.rs": "fn function1() {}\n",
                 "file2.rs": "fn function2() {}\n",
                 "file3.rs": "fn function3() {}\n",
+                "file4.rs": "fn function4() {}\n",
             }),
         )
         .await;
@@ -2558,7 +2571,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx))
+            store.new_context_for_thread(thread.read(cx), None)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -2573,7 +2586,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx))
+            store.new_context_for_thread(thread.read(cx), None)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -2589,7 +2602,7 @@ fn main() {{
             .await
             .unwrap();
         let new_contexts = context_store.update(cx, |store, cx| {
-            store.new_context_for_thread(thread.read(cx))
+            store.new_context_for_thread(thread.read(cx), None)
         });
         assert_eq!(new_contexts.len(), 1);
         let loaded_context = cx
@@ -2640,6 +2653,55 @@ fn main() {{
         assert!(!request.messages[3].string_contents().contains("file1.rs"));
         assert!(!request.messages[3].string_contents().contains("file2.rs"));
         assert!(request.messages[3].string_contents().contains("file3.rs"));
+
+        add_file_to_context(&project, &context_store, "test/file4.rs", cx)
+            .await
+            .unwrap();
+        let new_contexts = context_store.update(cx, |store, cx| {
+            store.new_context_for_thread(thread.read(cx), Some(message2_id))
+        });
+        assert_eq!(new_contexts.len(), 3);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await
+            .loaded_context;
+
+        assert!(!loaded_context.text.contains("file1.rs"));
+        assert!(loaded_context.text.contains("file2.rs"));
+        assert!(loaded_context.text.contains("file3.rs"));
+        assert!(loaded_context.text.contains("file4.rs"));
+
+        let new_contexts = context_store.update(cx, |store, cx| {
+            // Remove file4.rs
+            store.remove_context(&loaded_context.contexts[2].handle(), cx);
+            store.new_context_for_thread(thread.read(cx), Some(message2_id))
+        });
+        assert_eq!(new_contexts.len(), 2);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await
+            .loaded_context;
+
+        assert!(!loaded_context.text.contains("file1.rs"));
+        assert!(loaded_context.text.contains("file2.rs"));
+        assert!(loaded_context.text.contains("file3.rs"));
+        assert!(!loaded_context.text.contains("file4.rs"));
+
+        let new_contexts = context_store.update(cx, |store, cx| {
+            // Remove file3.rs
+            store.remove_context(&loaded_context.contexts[1].handle(), cx);
+            store.new_context_for_thread(thread.read(cx), Some(message2_id))
+        });
+        assert_eq!(new_contexts.len(), 1);
+        let loaded_context = cx
+            .update(|cx| load_context(new_contexts, &project, &None, cx))
+            .await
+            .loaded_context;
+
+        assert!(!loaded_context.text.contains("file1.rs"));
+        assert!(loaded_context.text.contains("file2.rs"));
+        assert!(!loaded_context.text.contains("file3.rs"));
+        assert!(!loaded_context.text.contains("file4.rs"));
     }
 
     #[gpui::test]
