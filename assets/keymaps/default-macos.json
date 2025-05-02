@@ -283,7 +283,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewThread",
-      "cmd-alt-n": "agent::NewTextThread",
+      "cmd-alt-n": "agent::NewContext",
       "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenConfiguration",
       "cmd-alt-p": "assistant::OpenRulesLibrary",
@@ -313,7 +313,7 @@
     "context": "AgentPanel && prompt_editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "agent::NewTextThread",
+      "cmd-n": "agent::NewContext",
       "cmd-alt-t": "agent::NewThread"
     }
   },

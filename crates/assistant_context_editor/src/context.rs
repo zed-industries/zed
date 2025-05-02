@@ -3209,7 +3209,7 @@ impl AssistantContext {
         cx.emit(ContextEvent::SummaryChanged);
     }
 
-    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Text Thread");
+    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Context");
 
     pub fn summary_or_default(&self) -> SharedString {
         self.summary

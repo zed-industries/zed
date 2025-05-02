@@ -49,7 +49,7 @@ use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
-    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
+    NewContext, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
     ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
@@ -75,7 +75,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &NewTextThread, window, cx| {
+                .register_action(|workspace, _: &NewContext, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
@@ -1410,7 +1410,7 @@ impl AssistantPanel {
                         )
                         .separator()
                     })
-                    .action("New Text Thread", NewTextThread.boxed_clone())
+                    .action("New Context", NewContext.boxed_clone())
                     .action("Rules Library", Box::new(OpenRulesLibrary::default()))
                     .action("Settings", Box::new(OpenConfiguration))
                     .separator()

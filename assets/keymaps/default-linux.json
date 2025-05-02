@@ -238,7 +238,7 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-alt-n": "agent::NewTextThread",
+      "ctrl-alt-n": "agent::NewContext",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
       "ctrl-alt-p": "assistant::OpenRulesLibrary",
@@ -267,7 +267,7 @@
   {
     "context": "AgentPanel && prompt_editor",
     "bindings": {
-      "cmd-n": "agent::NewTextThread",
+      "cmd-n": "agent::NewContext",
       "cmd-alt-t": "agent::NewThread"
     }
   },

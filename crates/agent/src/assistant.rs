@@ -52,7 +52,7 @@ pub use ui::{all_agent_previews, get_agent_preview};
 actions!(
     agent,
     [
-        NewTextThread,
+        NewContext,
         ToggleContextPicker,
         ToggleNavigationMenu,
         ToggleOptionsMenu,
