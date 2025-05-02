@@ -68,9 +68,12 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 You may find yourself in a situation where the default profiles don't quite fit your specific needs. Zed's agent panel allows for building custom profiles.
 
-You can create new profile via the `Configure Profiles...` option in the profile selector (💬). From here, you can choose to `Add New Profile` or fork an existing one with your choice of tools and a custom profile name.
+You can create new profile via the `Configure Profiles...` option in the profile selector (💬).
+From here, you can choose to `Add New Profile` or fork an existing one with your choice of tools and a custom profile name.
 
-You can also override build-in profiles. With a built-in profile selected, in the profile selector (💬), navigate to `Custom Current Profile` > `Tools...`, and select the tools you'd like. Zed will store this profile in your settings using the same profile name as the default you overrode.
+You can also override build-in profiles.
+With a built-in profile selected, in the profile selector (💬), navigate to `Custom Current Profile` > `Tools...`, and select the tools you'd like.
+Zed will store this profile in your settings using the same profile name as the default you overrode.
 
 All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
 
