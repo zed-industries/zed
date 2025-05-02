@@ -42,7 +42,7 @@ use zed_llm_client::{
 
 use crate::AllLanguageModelSettings;
 use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
-use crate::provider::google::into_google;
+use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
 pub const PROVIDER_NAME: &str = "Zed";
@@ -878,10 +878,12 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
+                    let mut mapper = GoogleEventMapper::new();
                     Ok((
-                        crate::provider::google::map_to_language_model_completion_events(Box::pin(
-                            response_lines(response),
-                        )),
+                        map_cloud_completion_events(
+                            Box::pin(response_lines(response)),
+                            move |event| mapper.map_event(event),
+                        ),
                         usage,
                     ))
                 });
