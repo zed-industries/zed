@@ -77,7 +77,7 @@ fn eval_extract_handle_command_output() {
                 ),
             ],
             input_path: input_file_path.into(),
-            input_content: input_file_content.into(),
+            input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
             assertion: EvalAssertion::AssertEqual(output_file_content.into()),
         },
@@ -133,7 +133,7 @@ fn eval_delete_run_git_blame() {
                 ),
             ],
             input_path: input_file_path.into(),
-            input_content: input_file_content.into(),
+            input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
             assertion: EvalAssertion::AssertEqual(output_file_content.into()),
         },
@@ -248,7 +248,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                 ),
             ],
             input_path: input_file_path.into(),
-            input_content: input_file_content.into(),
+            input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
             assertion: EvalAssertion::JudgeDiff(indoc! {"
                 - The compile_parser_to_wasm method has been changed to use wasi-sdk
@@ -324,7 +324,7 @@ fn eval_disable_cursor_blinking() {
                 ),
             ],
             input_path: input_file_path.into(),
-            input_content: input_file_content.into(),
+            input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
             assertion: EvalAssertion::AssertEqual(output_file_content.into()),
         },
@@ -514,12 +514,87 @@ fn eval_from_pixels_constructor() {
                 ),
             ],
             input_path: input_file_path.into(),
-            input_content: input_file_content.into(),
+            input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
             assertion: EvalAssertion::JudgeDiff(indoc! {"
                 - The diff contains a new `from_pixels` constructor
                 - The diff contains new tests for the `from_pixels` constructor
             "}),
+        },
+    );
+}
+
+#[test]
+// #[cfg_attr(not(feature = "eval"), ignore)]
+fn eval_zode() {
+    let input_file_path = "root/zode.py";
+    let edit_description = "Create the main Zode CLI script";
+    eval(
+        1,
+        0.95,
+        EvalInput {
+            conversation: vec![
+                message(User, [text(include_str!("evals/fixtures/zode/prompt.md"))]),
+                message(
+                    Assistant,
+                    [
+                        tool_use(
+                            "tool_1",
+                            "read_file",
+                            ReadFileToolInput {
+                                path: "root/eval/react.py".into(),
+                                start_line: None,
+                                end_line: None,
+                            },
+                        ),
+                        tool_use(
+                            "tool_2",
+                            "read_file",
+                            ReadFileToolInput {
+                                path: "root/eval/react_test.py".into(),
+                                start_line: None,
+                                end_line: None,
+                            },
+                        ),
+                    ],
+                ),
+                message(
+                    User,
+                    [
+                        tool_result(
+                            "tool_1",
+                            "read_file",
+                            include_str!("evals/fixtures/zode/react.py"),
+                        ),
+                        tool_result(
+                            "tool_2",
+                            "read_file",
+                            include_str!("evals/fixtures/zode/react_test.py"),
+                        ),
+                    ],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text(
+                            "Now that I understand what we need to build, I'll create the main Python script:",
+                        ),
+                        tool_use(
+                            "tool_3",
+                            "edit_file",
+                            StreamingEditFileToolInput {
+                                display_description: edit_description.into(),
+                                path: input_file_path.into(),
+                                create_or_overwrite: true,
+                            },
+                        ),
+                    ],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: None,
+            edit_description: edit_description.into(),
+            assertion: EvalAssertion::AssertEqual("".to_string()),
         },
     );
 }
@@ -579,7 +654,7 @@ fn tool_result(
 struct EvalInput {
     conversation: Vec<LanguageModelRequestMessage>,
     input_path: PathBuf,
-    input_content: String,
+    input_content: Option<String>,
     edit_description: String,
     assertion: EvalAssertion,
 }
@@ -782,18 +857,30 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_text(eval.input_content.clone(), cx)
-        });
-        let (edit_output, _events) = self.agent.edit(
-            buffer.clone(),
-            eval.edit_description,
-            eval.conversation,
-            &mut cx.to_async(),
-        );
-        let edit_output = edit_output.await?;
+        let edit_output = if let Some(input_content) = eval.input_content.as_deref() {
+            buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
+            let (edit_output, _) = self.agent.edit(
+                buffer.clone(),
+                eval.edit_description,
+                eval.conversation,
+                &mut cx.to_async(),
+            );
+            edit_output.await?
+        } else {
+            let (edit_output, _) = self.agent.overwrite(
+                buffer.clone(),
+                eval.edit_description,
+                eval.conversation,
+                &mut cx.to_async(),
+            );
+            edit_output.await?
+        };
+
         let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
-        let actual_diff = language::unified_diff(&eval.input_content, &buffer_text);
+        let actual_diff = language::unified_diff(
+            eval.input_content.as_deref().unwrap_or_default(),
+            &buffer_text,
+        );
         let assertion = match eval.assertion {
             EvalAssertion::AssertEqual(expected_output) => EvalAssertionResult {
                 score: if strip_empty_lines(&buffer_text) == strip_empty_lines(&expected_output) {
