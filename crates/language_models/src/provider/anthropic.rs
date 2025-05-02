@@ -469,7 +469,7 @@ impl LanguageModel for AnthropicModel {
                     Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
                     Err(err) => anyhow!(err),
                 })?;
-            Ok(map_to_language_model_completion_events(response))
+            Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -644,6 +644,22 @@ impl AnthropicEventMapper {
         }
     }
 
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(
+                match event {
+                    Ok(event) => self.map_event(event),
+                    Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                }
+                .into_iter(),
+            )
+        })
+    }
+
     pub fn map_event(
         &mut self,
         event: Event,
@@ -796,21 +812,6 @@ struct RawToolUse {
     id: String,
     name: String,
     input_json: String,
-}
-
-pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-    let mut mapper = AnthropicEventMapper::new();
-    events.flat_map(move |event| {
-        futures::stream::iter(
-            match event {
-                Ok(event) => mapper.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
-            }
-            .into_iter(),
-        )
-    })
 }
 
 pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {

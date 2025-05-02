@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::{Settings, SettingsStore};
 use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
+use std::pin::Pin;
 use std::str::FromStr as _;
 use std::{
     sync::{Arc, LazyLock},
@@ -42,7 +43,7 @@ use zed_llm_client::{
 use crate::AllLanguageModelSettings;
 use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
 use crate::provider::google::into_google;
-use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
+use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -810,27 +811,12 @@ impl LanguageModel for CloudLanguageModel {
                         Err(err) => anyhow!(err),
                     })?;
 
-                    let events = response_lines::<CloudCompletionEvent<anthropic::Event>>(response);
-
                     let mut mapper = AnthropicEventMapper::new();
                     Ok((
-                        events
-                            .flat_map(move |event| {
-                                futures::stream::iter(match event {
-                                    Err(error) => {
-                                        vec![Err(LanguageModelCompletionError::Other(error))]
-                                    }
-                                    Ok(CloudCompletionEvent::Queue { position }) => {
-                                        vec![Ok(LanguageModelCompletionEvent::QueueUpdate {
-                                            position,
-                                        })]
-                                    }
-                                    Ok(CloudCompletionEvent::Event(anthropic_event)) => {
-                                        mapper.map_event(anthropic_event)
-                                    }
-                                })
-                            })
-                            .boxed(),
+                        map_cloud_completion_events(
+                            Box::pin(response_lines(response)),
+                            move |event| mapper.map_event(event),
+                        ),
                         usage,
                     ))
                 });
@@ -858,9 +844,12 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
+
+                    let mut mapper = OpenAiEventMapper::new();
                     Ok((
-                        crate::provider::open_ai::map_to_language_model_completion_events(
+                        map_cloud_completion_events(
                             Box::pin(response_lines(response)),
+                            move |event| mapper.map_event(event),
                         ),
                         usage,
                     ))
@@ -911,6 +900,31 @@ impl LanguageModel for CloudLanguageModel {
 pub enum CloudCompletionEvent<T> {
     Queue { position: usize },
     Event(T),
+}
+
+fn map_cloud_completion_events<T, F>(
+    stream: Pin<Box<dyn Stream<Item = Result<CloudCompletionEvent<T>>> + Send>>,
+    mut map_callback: F,
+) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+where
+    T: DeserializeOwned + 'static,
+    F: FnMut(T) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+        + Send
+        + 'static,
+{
+    stream
+        .flat_map(move |event| {
+            futures::stream::iter(match event {
+                Err(error) => {
+                    vec![Err(LanguageModelCompletionError::Other(error))]
+                }
+                Ok(CloudCompletionEvent::Queue { position }) => {
+                    vec![Ok(LanguageModelCompletionEvent::QueueUpdate { position })]
+                }
+                Ok(CloudCompletionEvent::Event(event)) => map_callback(event),
+            })
+        })
+        .boxed()
 }
 
 fn response_lines<T: DeserializeOwned>(
