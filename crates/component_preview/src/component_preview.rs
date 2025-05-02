@@ -690,7 +690,12 @@ impl ComponentPreview {
             v_flex()
                 .id("render-component-page")
                 .size_full()
-                .child(ComponentPreviewPage::new(component.clone()))
+                .child(ComponentPreviewPage::new(
+                    component.clone(),
+                    self.workspace.clone(),
+                    self.thread_store.as_ref().map(|ts| ts.downgrade()),
+                    self.active_thread.clone(),
+                ))
                 .into_any_element()
         } else {
             v_flex()
@@ -1052,16 +1057,25 @@ impl SerializableItem for ComponentPreview {
 pub struct ComponentPreviewPage {
     // languages: Arc<LanguageRegistry>,
     component: ComponentMetadata,
+    workspace: WeakEntity<Workspace>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    active_thread: Option<Entity<ActiveThread>>,
 }
 
 impl ComponentPreviewPage {
     pub fn new(
         component: ComponentMetadata,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        active_thread: Option<Entity<ActiveThread>>,
         // languages: Arc<LanguageRegistry>
     ) -> Self {
         Self {
             // languages,
             component,
+            workspace,
+            thread_store,
+            active_thread,
         }
     }
 
@@ -1092,20 +1106,41 @@ impl ComponentPreviewPage {
     }
 
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Try to get agent preview first if we have an active thread
+        let maybe_agent_preview = if let (Some(thread_store), Some(active_thread)) = 
+            (self.thread_store.as_ref(), self.active_thread.as_ref()) {
+            agent::get_agent_preview(
+                &self.component.id(),
+                self.workspace.clone(),
+                active_thread.clone(),
+                thread_store.clone(),
+                window,
+                cx,
+            )
+        } else {
+            None
+        };
+
         v_flex()
             .flex_1()
             .px_12()
             .py_6()
             .bg(cx.theme().colors().editor_background)
-            .child(if let Some(preview) = self.component.preview() {
-                preview(window, cx).unwrap_or_else(|| {
-                    div()
-                        .child("Failed to load preview. This path should be unreachable")
-                        .into_any_element()
-                })
-            } else {
-                div().child("No preview available").into_any_element()
-            })
+            .child(
+                if let Some(element) = maybe_agent_preview {
+                    // Use agent preview if available
+                    element
+                } else if let Some(preview) = self.component.preview() {
+                    // Fall back to component preview
+                    preview(window, cx).unwrap_or_else(|| {
+                        div()
+                            .child("Failed to load preview. This path should be unreachable")
+                            .into_any_element()
+                    })
+                } else {
+                    div().child("No preview available").into_any_element()
+                }
+            )
     }
 }
 
