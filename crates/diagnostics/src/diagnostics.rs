@@ -226,7 +226,7 @@ impl ProjectDiagnosticsEditor {
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
             this.include_warnings = cx.global::<IncludeWarnings>().0;
             this.diagnostics.clear();
-            this.update_all_diagnostics(window, cx);
+            this.update_all_diagnostics(false, window, cx);
         })
         .detach();
         cx.observe_release(&cx.entity(), |editor, _, cx| {
@@ -254,7 +254,7 @@ impl ProjectDiagnosticsEditor {
             },
             _subscription: project_event_subscription,
         };
-        this.update_all_diagnostics(window, cx);
+        this.update_all_diagnostics(true, window, cx);
         this
     }
 
@@ -346,13 +346,13 @@ impl ProjectDiagnosticsEditor {
             if self.cargo_diagnostics_fetch.fetch_task.is_some() {
                 self.stop_cargo_diagnostics_fetch(cx);
             } else {
-                self.update_all_diagnostics(window, cx);
+                self.update_all_diagnostics(false, window, cx);
             }
         } else {
             if self.update_excerpts_task.is_some() {
                 self.update_excerpts_task = None;
             } else {
-                self.update_all_diagnostics(window, cx);
+                self.update_all_diagnostics(false, window, cx);
             }
         }
         cx.notify();
@@ -371,9 +371,16 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_all_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_all_diagnostics(
+        &mut self,
+        first_launch: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let cargo_diagnostics_sources = self.cargo_diagnostics_sources(cx);
         if cargo_diagnostics_sources.is_empty() {
+            self.update_all_excerpts(window, cx);
+        } else if first_launch && !self.summary.is_empty() {
             self.update_all_excerpts(window, cx);
         } else {
             self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), cx);
