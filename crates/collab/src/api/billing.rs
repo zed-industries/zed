@@ -673,15 +673,16 @@ async fn migrate_to_new_billing(
         None
     };
 
-    let feature_flags = app.db.list_feature_flags().await?;
+    let all_feature_flags = app.db.list_feature_flags().await?;
+    let user_feature_flags = app.db.get_user_flags(user.id).await?;
 
     for feature_flag in ["new-billing", "assistant2"] {
-        let already_in_feature_flag = feature_flags.iter().any(|flag| flag.flag == feature_flag);
+        let already_in_feature_flag = user_feature_flags.iter().any(|flag| flag == feature_flag);
         if already_in_feature_flag {
             continue;
         }
 
-        let feature_flag = feature_flags
+        let feature_flag = all_feature_flags
             .iter()
             .find(|flag| flag.flag == feature_flag)
             .context("failed to find feature flag: {feature_flag:?}")?;
