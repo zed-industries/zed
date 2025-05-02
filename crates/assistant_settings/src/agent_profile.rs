@@ -1,9 +1,46 @@
 use std::sync::Arc;
 
-use gpui::SharedString;
+use gpui::{App, SharedString};
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+pub mod builtin_profiles {
+    use super::AgentProfileId;
+
+    pub const WRITE: &str = "write";
+    pub const ASK: &str = "ask";
+    pub const MANUAL: &str = "manual";
+
+    pub fn is_builtin(profile_id: &AgentProfileId) -> bool {
+        profile_id.as_str() == WRITE || profile_id.as_str() == ASK || profile_id.as_str() == MANUAL
+    }
+}
+
+#[derive(Default)]
+pub struct GroupedAgentProfiles {
+    pub builtin: IndexMap<AgentProfileId, AgentProfile>,
+    pub custom: IndexMap<AgentProfileId, AgentProfile>,
+}
+
+impl GroupedAgentProfiles {
+    pub fn load_from_settings(cx: &App) -> Self {
+        let settings = crateAssistant::get_global(cx);
+
+        let mut builtin = IndexMap::default();
+        let mut custom = IndexMap::default();
+
+        for (profile_id, profile) in settings.profiles.clone() {
+            if builtin_profiles::is_builtin(&profile_id) {
+                builtin.insert(profile_id, profile);
+            } else {
+                custom.insert(profile_id, profile);
+            }
+        }
+
+        Self { builtin, custom }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileId(pub Arc<str>);

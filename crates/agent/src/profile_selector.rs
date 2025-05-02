@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, builtin_profiles};
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use indexmap::IndexMap;
@@ -14,21 +14,8 @@ use util::ResultExt as _;
 
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
 
-mod builtin_profiles {
-    use assistant_settings::AgentProfileId;
-
-    pub const WRITE: &str = "write";
-    pub const ASK: &str = "ask";
-    pub const MANUAL: &str = "manual";
-
-    pub fn is_builtin(profile_id: &AgentProfileId) -> bool {
-        profile_id.as_str() == WRITE || profile_id.as_str() == ASK || profile_id.as_str() == MANUAL
-    }
-}
-
 pub struct ProfileSelector {
-    builtin_profiles: IndexMap<AgentProfileId, AgentProfile>,
-    custom_profiles: IndexMap<AgentProfileId, AgentProfile>,
+    profiles: GroupedProfiles,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
@@ -47,18 +34,14 @@ impl ProfileSelector {
             this.refresh_profiles(cx);
         });
 
-        let mut this = Self {
-            builtin_profiles: IndexMap::default(),
-            custom_profiles: IndexMap::default(),
+        Self {
+            profiles: GroupedProfiles::load_from_settings(cx),
             fs,
             thread_store,
             focus_handle,
             menu_handle: PopoverMenuHandle::default(),
             _subscriptions: vec![settings_subscription],
-        };
-        this.refresh_profiles(cx);
-
-        this
+        }
     }
 
     pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
@@ -66,21 +49,7 @@ impl ProfileSelector {
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        let settings = AssistantSettings::get_global(cx);
-
-        let mut custom_profiles = IndexMap::default();
-        let mut builtin_profiles = IndexMap::default();
-
-        for (profile_id, profile) in settings.profiles.clone() {
-            if builtin_profiles::is_builtin(&profile_id) {
-                builtin_profiles.insert(profile_id, profile);
-            } else {
-                custom_profiles.insert(profile_id, profile);
-            }
-        }
-
-        self.builtin_profiles = builtin_profiles;
-        self.custom_profiles = custom_profiles;
+        self.profiles = GroupedProfiles::load_from_settings(cx);
     }
 
     fn build_context_menu(
@@ -90,14 +59,14 @@ impl ProfileSelector {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AssistantSettings::get_global(cx);
-            for (profile_id, profile) in self.builtin_profiles.iter() {
+            for (profile_id, profile) in self.profiles.builtin.iter() {
                 menu =
                     menu.item(self.menu_entry_for_profile(profile_id.clone(), profile, settings));
             }
 
-            if !self.custom_profiles.is_empty() {
+            if !self.profiles.custom.is_empty() {
                 menu = menu.separator().header("Custom Profiles");
-                for (profile_id, profile) in self.custom_profiles.iter() {
+                for (profile_id, profile) in self.profiles.custom.iter() {
                     menu = menu.item(self.menu_entry_for_profile(
                         profile_id.clone(),
                         profile,

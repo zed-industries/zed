@@ -57,7 +57,8 @@ impl Mode {
             .collect::<Vec<_>>();
 
         Self::ChooseProfile(ChooseProfileMode {
-            profiles,
+            builtin_profiles,
+            custom_profiles,
             add_new_profile: NavigableEntry::focusable(cx),
         })
     }
@@ -72,7 +73,8 @@ struct ProfileEntry {
 
 #[derive(Clone)]
 pub struct ChooseProfileMode {
-    profiles: Vec<ProfileEntry>,
+    builtin_profiles: Vec<AgentProfile>,
+    custom_profiles: Vec<ProfileEntry>,
     add_new_profile: NavigableEntry,
 }
 
