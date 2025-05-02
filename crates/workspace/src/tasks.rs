@@ -1,7 +1,7 @@
 use std::process::ExitStatus;
 
-use anyhow::{Result, anyhow};
-use gpui::{Context, Entity, Task};
+use anyhow::Result;
+use gpui::{AppContext, Context, Entity, Task};
 use language::Buffer;
 use project::TaskSourceKind;
 use remote::ConnectionState;
@@ -68,9 +68,21 @@ impl Workspace {
         }
 
         if let Some(terminal_provider) = self.terminal_provider.as_ref() {
-            terminal_provider
-                .spawn(spawn_in_terminal, window, cx)
-                .detach_and_log_err(cx);
+            let task_status = terminal_provider.spawn(spawn_in_terminal, window, cx);
+            cx.background_spawn(async move {
+                match task_status.await {
+                    Some(Ok(status)) => {
+                        if status.success() {
+                            log::debug!("Task spawn succeeded");
+                        } else {
+                            log::debug!("Task spawn failed, code: {:?}", status.code());
+                        }
+                    }
+                    Some(Err(e)) => log::error!("Task spawn failed: {e}"),
+                    None => log::debug!("Task spawn got cancelled"),
+                }
+            })
+            .detach();
         }
     }
 
@@ -92,11 +104,11 @@ impl Workspace {
         spawn_in_terminal: SpawnInTerminal,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Task<Result<ExitStatus>> {
+    ) -> Task<Option<Result<ExitStatus>>> {
         if let Some(terminal_provider) = self.terminal_provider.as_ref() {
             terminal_provider.spawn(spawn_in_terminal, window, cx)
         } else {
-            Task::ready(Err(anyhow!("No terminal provider")))
+            Task::ready(None)
         }
     }
 }
