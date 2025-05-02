@@ -129,7 +129,7 @@ pub struct InlineDiagnosticsSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
-    /// Whether to only show the inline diaganostics after a delay after the
+    /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
