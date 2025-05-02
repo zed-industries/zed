@@ -4546,28 +4546,12 @@ impl Workspace {
         cx.notify();
 
         let leader_id = leader_id.into();
-        let state = self.follower_states.get(&leader_id)?;
         let (panel_id, item) = match leader_id {
             CollaboratorId::PeerId(peer_id) => self.active_view_for_peer(peer_id, window, cx)?,
-            CollaboratorId::Agent => {
-                let agent_location = self.project.read(cx).agent_location()?;
-                let buffer = agent_location.buffer.upgrade()?;
-                let existing_item = state.center_pane.read(cx).items().find_map(|item| {
-                    if item.project_item_model_ids(cx).as_slice() == [buffer.entity_id()] {
-                        Some(item.boxed_clone())
-                    } else {
-                        None
-                    }
-                });
-                let item = existing_item.or_else(|| {
-                    cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
-                        registry.build_item(buffer, self.project.clone(), None, window, cx)
-                    })
-                })?;
-                (None, item)
-            }
+            CollaboratorId::Agent => (None, self.active_view_for_agent(window, cx)?),
         };
 
+        let state = self.follower_states.get(&leader_id)?;
         let mut transfer_focus = state.center_pane.read(cx).has_focus(window, cx);
         let pane;
         if let Some(panel_id) = panel_id {
@@ -4598,6 +4582,29 @@ impl Workspace {
         });
 
         None
+    }
+
+    fn active_view_for_agent(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let state = self.follower_states.get(&CollaboratorId::Agent)?;
+        let agent_location = self.project.read(cx).agent_location()?;
+        let buffer = agent_location.buffer.upgrade()?;
+        let existing_item = state.center_pane.read(cx).items().find_map(|item| {
+            if item.project_item_model_ids(cx).as_slice() == [buffer.entity_id()] {
+                Some(item.boxed_clone())
+            } else {
+                None
+            }
+        });
+        let item = existing_item.or_else(|| {
+            cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
+                registry.build_item(buffer, self.project.clone(), None, window, cx)
+            })
+        })?;
+        Some(item)
     }
 
     fn active_view_for_peer(
