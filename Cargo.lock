@@ -4399,7 +4399,6 @@ name = "diagnostics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "cargo_metadata",
  "client",
  "collections",
  "component",
@@ -4409,7 +4408,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
- "itertools 0.14.0",
  "language",
  "linkme",
  "log",
@@ -4421,7 +4419,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "text",
  "theme",
  "ui",

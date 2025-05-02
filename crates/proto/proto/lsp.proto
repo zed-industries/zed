@@ -706,7 +706,7 @@ message LspResponse {
 
 message LanguageServerIdForName {
     uint64 project_id = 1;
-    optional uint64 buffer_id = 2;
+    uint64 buffer_id = 2;
     string name = 3;
 }
 
@@ -727,4 +727,23 @@ message LspExtRunnablesResponse {
 message LspRunnable {
     bytes task_template = 1;
     optional LocationLink location = 2;
+}
+
+message LspExtCancelFlycheck {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    uint64 language_server_id = 3;
+}
+
+message LspExtRunFlycheck {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    uint64 language_server_id = 3;
+    bool current_file_only = 4;
+}
+
+message LspExtClearFlycheck {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    uint64 language_server_id = 3;
 }
