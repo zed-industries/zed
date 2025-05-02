@@ -5,7 +5,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::future::{self, Shared};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    CacheBaseRef, CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
+    CacheBaseRef, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
     GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
 };
 use gpui::{

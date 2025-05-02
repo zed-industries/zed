@@ -711,9 +711,9 @@ where
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
-    #[serde(rename = "gemini-1.5-pro")]
+    #[serde(rename = "gemini-1.5-pro-002")]
     Gemini15Pro,
-    #[serde(rename = "gemini-1.5-flash")]
+    #[serde(rename = "gemini-1.5-flash-002")]
     Gemini15Flash,
     /// Note: replaced by `gemini-2.5-pro-exp-03-25` (continues to work in API).
     #[serde(rename = "gemini-2.0-pro-exp")]
