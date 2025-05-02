@@ -67,6 +67,9 @@ pub struct LanguageModelCacheConfiguration {
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
+    QueueUpdate {
+        position: usize,
+    },
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -349,6 +352,7 @@ pub trait LanguageModel: Send + Sync {
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {
+                                Ok(LanguageModelCompletionEvent::QueueUpdate { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,

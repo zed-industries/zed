@@ -1,11 +1,10 @@
-use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
+use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
 use futures::{
-    AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
-    stream::BoxStream,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
@@ -41,7 +40,7 @@ use zed_llm_client::{
 };
 
 use crate::AllLanguageModelSettings;
-use crate::provider::anthropic::{count_anthropic_tokens, into_anthropic};
+use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
 use crate::provider::google::into_google;
 use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
 
@@ -811,10 +810,27 @@ impl LanguageModel for CloudLanguageModel {
                         Err(err) => anyhow!(err),
                     })?;
 
+                    let events = response_lines::<CloudCompletionEvent<anthropic::Event>>(response);
+
+                    let mut mapper = AnthropicEventMapper::new();
                     Ok((
-                        crate::provider::anthropic::map_to_language_model_completion_events(
-                            Box::pin(response_lines(response).map_err(AnthropicError::Other)),
-                        ),
+                        events
+                            .flat_map(move |event| {
+                                futures::stream::iter(match event {
+                                    Err(error) => {
+                                        vec![Err(LanguageModelCompletionError::Other(error))]
+                                    }
+                                    Ok(CloudCompletionEvent::Queue { position }) => {
+                                        vec![Ok(LanguageModelCompletionEvent::QueueUpdate {
+                                            position,
+                                        })]
+                                    }
+                                    Ok(CloudCompletionEvent::Event(anthropic_event)) => {
+                                        mapper.map_event(anthropic_event)
+                                    }
+                                })
+                            })
+                            .boxed(),
                         usage,
                     ))
                 });
@@ -888,6 +904,13 @@ impl LanguageModel for CloudLanguageModel {
             }
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudCompletionEvent<T> {
+    Queue { position: usize },
+    Event(T),
 }
 
 fn response_lines<T: DeserializeOwned>(

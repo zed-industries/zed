@@ -235,7 +235,8 @@ impl ExampleContext {
                 },
                 ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. } => {}
+                | ThreadEvent::UsePendingTools { .. }
+                | ThreadEvent::QueueUpdated { .. } => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,

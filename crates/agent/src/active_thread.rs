@@ -953,6 +953,9 @@ impl ActiveThread {
             ThreadEvent::UsageUpdated(usage) => {
                 self.last_usage = Some(*usage);
             }
+            ThreadEvent::QueueUpdated { position } => {
+                // self.queue_position = Some(*position);
+            }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
             | ThreadEvent::SummaryChanged => {

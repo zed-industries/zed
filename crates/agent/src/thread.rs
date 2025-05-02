@@ -1427,6 +1427,9 @@ impl Thread {
                                     });
                                 }
                             }
+                            LanguageModelCompletionEvent::QueueUpdate { position } => {
+                                cx.emit(ThreadEvent::QueueUpdated { position });
+                            }
                         }
 
                         thread.touch_updated_at();
@@ -2418,6 +2421,9 @@ pub enum ThreadError {
 pub enum ThreadEvent {
     ShowError(ThreadError),
     UsageUpdated(RequestUsage),
+    QueueUpdated {
+        position: usize,
+    },
     StreamedCompletion,
     ReceivedTextChunk,
     StreamedAssistantText(MessageId, String),

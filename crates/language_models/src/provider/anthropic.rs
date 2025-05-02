@@ -629,215 +629,188 @@ pub fn into_anthropic(
     }
 }
 
-pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-    struct RawToolUse {
-        id: String,
-        name: String,
-        input_json: String,
-    }
+pub struct AnthropicEventMapper {
+    tool_uses_by_index: HashMap<usize, RawToolUse>,
+    usage: Usage,
+    stop_reason: StopReason,
+}
 
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-        tool_uses_by_index: HashMap<usize, RawToolUse>,
-        usage: Usage,
-        stop_reason: StopReason,
-    }
-
-    futures::stream::unfold(
-        State {
-            events,
+impl AnthropicEventMapper {
+    pub fn new() -> Self {
+        Self {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
-        },
-        |mut state| async move {
-            while let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => match event {
-                        Event::ContentBlockStart {
-                            index,
-                            content_block,
-                        } => match content_block {
-                            ResponseContent::Text { text } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
-                                    state,
-                                ));
-                            }
-                            ResponseContent::Thinking { thinking } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thinking,
-                                        signature: None,
-                                    })],
-                                    state,
-                                ));
-                            }
-                            ResponseContent::RedactedThinking { .. } => {
-                                // Redacted thinking is encrypted and not accessible to the user, see:
-                                // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
-                            }
-                            ResponseContent::ToolUse { id, name, .. } => {
-                                state.tool_uses_by_index.insert(
-                                    index,
-                                    RawToolUse {
-                                        id,
-                                        name,
-                                        input_json: String::new(),
-                                    },
-                                );
-                            }
-                        },
-                        Event::ContentBlockDelta { index, delta } => match delta {
-                            ContentDelta::TextDelta { text } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
-                                    state,
-                                ));
-                            }
-                            ContentDelta::ThinkingDelta { thinking } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thinking,
-                                        signature: None,
-                                    })],
-                                    state,
-                                ));
-                            }
-                            ContentDelta::SignatureDelta { signature } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: "".to_string(),
-                                        signature: Some(signature),
-                                    })],
-                                    state,
-                                ));
-                            }
-                            ContentDelta::InputJsonDelta { partial_json } => {
-                                if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
-                                    tool_use.input_json.push_str(&partial_json);
+        }
+    }
 
-                                    // Try to convert invalid (incomplete) JSON into
-                                    // valid JSON that serde can accept, e.g. by closing
-                                    // unclosed delimiters. This way, we can update the
-                                    // UI with whatever has been streamed back so far.
-                                    if let Ok(input) = serde_json::Value::from_str(
-                                        &partial_json_fixer::fix_json(&tool_use.input_json),
-                                    ) {
-                                        return Some((
-                                            vec![Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id: tool_use.id.clone().into(),
-                                                    name: tool_use.name.clone().into(),
-                                                    is_input_complete: false,
-                                                    raw_input: tool_use.input_json.clone(),
-                                                    input,
-                                                },
-                                            ))],
-                                            state,
-                                        ));
-                                    }
-                                }
-                            }
+    pub fn map_event(
+        &mut self,
+        event: Event,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        match event {
+            Event::ContentBlockStart {
+                index,
+                content_block,
+            } => match content_block {
+                ResponseContent::Text { text } => {
+                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                }
+                ResponseContent::Thinking { thinking } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    })]
+                }
+                ResponseContent::RedactedThinking { .. } => {
+                    // Redacted thinking is encrypted and not accessible to the user, see:
+                    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
+                    Vec::new()
+                }
+                ResponseContent::ToolUse { id, name, .. } => {
+                    self.tool_uses_by_index.insert(
+                        index,
+                        RawToolUse {
+                            id,
+                            name,
+                            input_json: String::new(),
                         },
-                        Event::ContentBlockStop { index } => {
-                            if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
-                                let input_json = tool_use.input_json.trim();
-                                let input_value = if input_json.is_empty() {
-                                    Ok(serde_json::Value::Object(serde_json::Map::default()))
-                                } else {
-                                    serde_json::Value::from_str(input_json)
-                                };
-                                let event_result = match input_value {
-                                    Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                        LanguageModelToolUse {
-                                            id: tool_use.id.into(),
-                                            name: tool_use.name.into(),
-                                            is_input_complete: true,
-                                            input,
-                                            raw_input: tool_use.input_json.clone(),
-                                        },
-                                    )),
-                                    Err(json_parse_err) => {
-                                        Err(LanguageModelCompletionError::BadInputJson {
-                                            id: tool_use.id.into(),
-                                            tool_name: tool_use.name.into(),
-                                            raw_input: input_json.into(),
-                                            json_parse_error: json_parse_err.to_string(),
-                                        })
-                                    }
-                                };
+                    );
+                    Vec::new()
+                }
+            },
+            Event::ContentBlockDelta { index, delta } => match delta {
+                ContentDelta::TextDelta { text } => {
+                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                }
+                ContentDelta::ThinkingDelta { thinking } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    })]
+                }
+                ContentDelta::SignatureDelta { signature } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: "".to_string(),
+                        signature: Some(signature),
+                    })]
+                }
+                ContentDelta::InputJsonDelta { partial_json } => {
+                    if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
+                        tool_use.input_json.push_str(&partial_json);
 
-                                return Some((vec![event_result], state));
-                            }
+                        // Try to convert invalid (incomplete) JSON into
+                        // valid JSON that serde can accept, e.g. by closing
+                        // unclosed delimiters. This way, we can update the
+                        // UI with whatever has been streamed back so far.
+                        if let Ok(input) = serde_json::Value::from_str(
+                            &partial_json_fixer::fix_json(&tool_use.input_json),
+                        ) {
+                            return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: tool_use.id.clone().into(),
+                                    name: tool_use.name.clone().into(),
+                                    is_input_complete: false,
+                                    raw_input: tool_use.input_json.clone(),
+                                    input,
+                                },
+                            ))];
                         }
-                        Event::MessageStart { message } => {
-                            update_usage(&mut state.usage, &message.usage);
-                            return Some((
-                                vec![
-                                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
-                                        &state.usage,
-                                    ))),
-                                    Ok(LanguageModelCompletionEvent::StartMessage {
-                                        message_id: message.id,
-                                    }),
-                                ],
-                                state,
-                            ));
-                        }
-                        Event::MessageDelta { delta, usage } => {
-                            update_usage(&mut state.usage, &usage);
-                            if let Some(stop_reason) = delta.stop_reason.as_deref() {
-                                state.stop_reason = match stop_reason {
-                                    "end_turn" => StopReason::EndTurn,
-                                    "max_tokens" => StopReason::MaxTokens,
-                                    "tool_use" => StopReason::ToolUse,
-                                    _ => {
-                                        log::error!(
-                                            "Unexpected anthropic stop_reason: {stop_reason}"
-                                        );
-                                        StopReason::EndTurn
-                                    }
-                                };
-                            }
-                            return Some((
-                                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
-                                    convert_usage(&state.usage),
-                                ))],
-                                state,
-                            ));
-                        }
-                        Event::MessageStop => {
-                            return Some((
-                                vec![Ok(LanguageModelCompletionEvent::Stop(state.stop_reason))],
-                                state,
-                            ));
-                        }
-                        Event::Error { error } => {
-                            return Some((
-                                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                                    AnthropicError::ApiError(error)
-                                )))],
-                                state,
-                            ));
-                        }
-                        _ => {}
-                    },
-                    Err(err) => {
-                        return Some((
-                            vec![Err(LanguageModelCompletionError::Other(anyhow!(err)))],
-                            state,
-                        ));
                     }
+                    return vec![];
+                }
+            },
+            Event::ContentBlockStop { index } => {
+                if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
+                    let input_json = tool_use.input_json.trim();
+                    let input_value = if input_json.is_empty() {
+                        Ok(serde_json::Value::Object(serde_json::Map::default()))
+                    } else {
+                        serde_json::Value::from_str(input_json)
+                    };
+                    let event_result = match input_value {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_use.id.into(),
+                                name: tool_use.name.into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_use.input_json.clone(),
+                            },
+                        )),
+                        Err(json_parse_err) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_use.id.into(),
+                            tool_name: tool_use.name.into(),
+                            raw_input: input_json.into(),
+                            json_parse_error: json_parse_err.to_string(),
+                        }),
+                    };
+
+                    vec![event_result]
+                } else {
+                    Vec::new()
                 }
             }
+            Event::MessageStart { message } => {
+                update_usage(&mut self.usage, &message.usage);
+                vec![
+                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
+                        &self.usage,
+                    ))),
+                    Ok(LanguageModelCompletionEvent::StartMessage {
+                        message_id: message.id,
+                    }),
+                ]
+            }
+            Event::MessageDelta { delta, usage } => {
+                update_usage(&mut self.usage, &usage);
+                if let Some(stop_reason) = delta.stop_reason.as_deref() {
+                    self.stop_reason = match stop_reason {
+                        "end_turn" => StopReason::EndTurn,
+                        "max_tokens" => StopReason::MaxTokens,
+                        "tool_use" => StopReason::ToolUse,
+                        _ => {
+                            log::error!("Unexpected anthropic stop_reason: {stop_reason}");
+                            StopReason::EndTurn
+                        }
+                    };
+                }
+                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
+                    convert_usage(&self.usage),
+                ))]
+            }
+            Event::MessageStop => {
+                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+            }
+            Event::Error { error } => {
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    AnthropicError::ApiError(error)
+                )))]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
 
-            None
-        },
-    )
-    .flat_map(futures::stream::iter)
+struct RawToolUse {
+    id: String,
+    name: String,
+    input_json: String,
+}
+
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+    let mut mapper = AnthropicEventMapper::new();
+    events.flat_map(move |event| {
+        futures::stream::iter(
+            match event {
+                Ok(event) => mapper.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            }
+            .into_iter(),
+        )
+    })
 }
 
 pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
