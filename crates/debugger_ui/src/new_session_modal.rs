@@ -811,7 +811,7 @@ mod session_modes {
                     .into_iter()
                     .enumerate()
                     .map(|(index, (_, candidate))| {
-                        StringMatchCandidate::new(index, &candidate.label.to_string())
+                        StringMatchCandidate::new(index, candidate.label.as_ref())
                     })
                     .collect(),
                 None => {
@@ -838,7 +838,7 @@ mod session_modes {
                         .into_iter()
                         .enumerate()
                         .map(|(index, (_, candidate))| {
-                            StringMatchCandidate::new(index, &candidate.label.to_string())
+                            StringMatchCandidate::new(index, candidate.label.as_ref())
                         })
                         .collect()
                 }
