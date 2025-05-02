@@ -469,11 +469,14 @@ impl ManageProfilesModal {
             .id("new-profile")
             .track_focus(&self.focus_handle(cx))
             .child(ProfileModalHeader::new(
-                match base_profile_name {
+                match &base_profile_name {
                     Some(base_profile) => format!("Fork {base_profile}"),
                     None => "New Profile".into(),
                 },
-                Some(IconName::Plus),
+                match base_profile_name {
+                    Some(_) => Some(IconName::Scissors),
+                    None => Some(IconName::Plus),
+                },
             ))
             .child(ListSeparator)
             .child(h_flex().p_2().child(mode.name_editor.clone()))
