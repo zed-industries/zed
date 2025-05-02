@@ -1,5 +1,6 @@
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
+use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -872,6 +873,7 @@ impl PromptEditor<BufferCodegen> {
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.register_addon(ContextCreasesAddon::new());
             editor
         });
         let prompt_editor_entity = prompt_editor.downgrade();
