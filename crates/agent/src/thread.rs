@@ -646,6 +646,7 @@ impl Thread {
 
     fn received_chunk(&mut self) {
         self.last_received_chunk_at = Some(Instant::now());
+    }
 
     pub fn queue_state(&self) -> Option<QueueState> {
         self.pending_completions
