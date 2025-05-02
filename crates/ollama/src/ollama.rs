@@ -211,7 +211,8 @@ pub struct ModelShow {
 
 impl ModelShow {
     pub fn supports_tools(&self) -> bool {
-        self.capabilities.contains(&"tools".to_string())
+        // .contains expects &String, which would require an additional allocation
+        self.capabilities.iter().any(|v| v == "tools")
     }
 }
 
