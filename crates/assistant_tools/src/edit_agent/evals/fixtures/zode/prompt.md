@@ -8,7 +8,7 @@
 - Use this Anthropic model: `claude-3-7-sonnet-20250219`
 - Use this Anthropic API Key: `sk-ant-api03-qweeryiofdjsncmxquywefidopsugus`
 - One of the most important pieces to this is having good too calls. We will be using the tools provided by the Claude MCP server. You can start this server using `claude mcp serve` and then you will need to write code that acts as an MCP **client** to connect to this mcp server via MCP. Likely you want to start this using a subprocess. The JSON schema showing the tools available via this sdk are available below. Via this MCP server you have access to all the tools that zode needs: Bash, GlobTool, GrepTool, LS, View, Edit, Replace, WebFetchTool
-- The cli tool should be invokable via python zode.py file.md where file.md is any possible file that contains the users prompt. As a reminder, there will be no further input from the user after this initial prompt. Zode must take it from there and call the LLM and tools until the user goal is accomplished
+- The cli tool should be invocable via python zode.py file.md where file.md is any possible file that contains the users prompt. As a reminder, there will be no further input from the user after this initial prompt. Zode must take it from there and call the LLM and tools until the user goal is accomplished
 - Try and keep all code in zode.py and make heavy use of the asks I mentioned
 - Once you’ve implemented this, you must run python zode.py eval/instructions.md to see how well our new agent tool does!
 
@@ -548,7 +548,7 @@ will result in the client terminating the connection and retrying without receiv
 
 We set a [TCP socket keep-alive](https://tldp.org/HOWTO/TCP-Keepalive-HOWTO/overview.html) option in order
 to reduce the impact of idle connection timeouts on some networks.
-This can be [overriden](#Configuring-the-HTTP-client) by passing a `http_client` option to the client.
+This can be [overridden](#Configuring-the-HTTP-client) by passing a `http_client` option to the client.
 
 ## Default Headers
 
