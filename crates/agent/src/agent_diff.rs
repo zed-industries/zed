@@ -2027,7 +2027,7 @@ mod tests {
         workspace
             .update_in(cx, |workspace, window, cx| {
                 AgentDiff::global(cx).update(cx, |agent_diff, cx| {
-                    agent_diff.review_in_active_editor::<()>(workspace, AgentDiff::keep, window, cx)
+                    agent_diff.review_in_active_editor(workspace, AgentDiff::keep, window, cx)
                 })
             })
             .unwrap()
