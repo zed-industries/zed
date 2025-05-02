@@ -1005,7 +1005,7 @@ impl MentionCompletion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::AnchorRangeExt;
+    use editor::{AnchorRangeExt, MultiBuffer};
     use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
     use project::{Project, ProjectPath};
     use serde_json::json;
@@ -1142,6 +1142,7 @@ mod tests {
                         "five.txt": "",
                         "six.txt": "",
                         "seven.txt": "",
+                        "eight.txt": "",
                     }
                 }),
             )
@@ -1168,9 +1169,12 @@ mod tests {
             separator!("b/five.txt"),
             separator!("b/six.txt"),
             separator!("b/seven.txt"),
+            separator!("b/eight.txt"),
         ];
+
+        let mut opened_editors = Vec::new();
         for path in paths {
-            workspace
+            let buffer = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     workspace.open_path(
                         ProjectPath {
@@ -1185,6 +1189,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            opened_editors.push(buffer);
         }
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1220,7 +1225,14 @@ mod tests {
                 context_store.downgrade(),
                 None,
                 editor_entity,
-                None,
+                opened_editors.last().and_then(|editor| {
+                    editor
+                        .downcast::<Editor>()?
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                }),
             ))));
         });
 
