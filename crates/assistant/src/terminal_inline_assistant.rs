@@ -292,6 +292,9 @@ impl TerminalInlineAssistant {
         });
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
@@ -746,6 +749,7 @@ impl PromptEditor {
             language_model_selector: cx.new(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),

@@ -5,15 +5,20 @@ pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
 
-use std::{any::Any, ops::ControlFlow, sync::Arc, time::Duration};
+use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
 
 use super::DebugPanelItemEvent;
+use anyhow::{Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
-use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
+use dap::{
+    Capabilities, RunInTerminalRequestArguments, Thread, client::SessionId,
+    debugger_settings::DebuggerSettings,
+};
+use futures::{SinkExt, channel::mpsc};
 use gpui::{
     Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     NoAction, Pixels, Point, Subscription, Task, WeakEntity,
@@ -23,20 +28,24 @@ use module_list::ModuleList;
 use project::{
     Project,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+    terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
+use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
+use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, Context, ContextMenu, DropdownMenu, FluentBuilder,
-    InteractiveElement, IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tab, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
+    DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
+    Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
+    Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
-    ActivePaneDecorator, DraggedTab, Item, Member, Pane, PaneGroup, Workspace,
-    item::TabContentParams, move_item, pane::Event,
+    ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
+    Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
 pub struct RunningState {
@@ -50,18 +59,28 @@ pub struct RunningState {
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
     loaded_sources_list: Entity<LoadedSourceList>,
+    pub debug_terminal: Entity<DebugTerminal>,
     module_list: Entity<module_list::ModuleList>,
-    _console: Entity<Console>,
+    console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
+    active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     _schedule_serialize: Option<Task<()>>,
 }
 
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let zoomed_pane = self
+            .panes
+            .panes()
+            .into_iter()
+            .find(|pane| pane.read(cx).is_zoomed());
+
         let active = self.panes.panes().into_iter().next();
-        let x = if let Some(active) = active {
+        let x = if let Some(ref zoomed_pane) = zoomed_pane {
+            zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
+        } else if let Some(active) = active {
             self.panes
                 .render(
                     None,
@@ -94,6 +113,7 @@ pub(crate) struct SubView {
     pane_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
+    hovered: bool,
 }
 
 impl SubView {
@@ -109,6 +129,7 @@ impl SubView {
             inner: view,
             pane_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
+            hovered: false,
         })
     }
 
@@ -127,8 +148,8 @@ impl Item for SubView {
 
     /// This is used to serialize debugger pane layouts
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.kind.to_shared_string())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        self.kind.to_shared_string()
     }
 
     fn tab_content(
@@ -156,8 +177,23 @@ impl Item for SubView {
 }
 
 impl Render for SubView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().child(self.inner.clone())
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id(SharedString::from(format!(
+                "subview-container-{}",
+                self.kind.to_shared_string()
+            )))
+            .on_hover(cx.listener(|this, hovered, _, cx| {
+                this.hovered = *hovered;
+                cx.notify();
+            }))
+            .size_full()
+            // Add border unconditionally to prevent layout shifts on focus changes.
+            .border_1()
+            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+                el.border_color(cx.theme().colors().pane_focused_border)
+            })
+            .child(self.inner.clone())
     }
 }
 
@@ -255,115 +291,213 @@ pub(crate) fn new_debugger_pane(
             window,
             cx,
         );
-        pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
-            if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let is_current_pane = tab.pane == cx.entity();
-                let Some(can_drag_away) = weak_running
-                    .update(cx, |running_state, _| {
-                        let current_panes = running_state.panes.panes();
-                        !current_panes.contains(&&tab.pane)
-                            || current_panes.len() > 1
-                            || (!is_current_pane || pane.items_len() > 1)
-                    })
-                    .ok()
-                else {
-                    return false;
-                };
-                if can_drag_away {
-                    let item = if is_current_pane {
-                        pane.item_for_index(tab.ix)
-                    } else {
-                        tab.pane.read(cx).item_for_index(tab.ix)
+        let focus_handle = pane.focus_handle(cx);
+        pane.set_can_split(Some(Arc::new({
+            let weak_running = weak_running.clone();
+            move |pane, dragged_item, _window, cx| {
+                if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
+                    let is_current_pane = tab.pane == cx.entity();
+                    let Some(can_drag_away) = weak_running
+                        .update(cx, |running_state, _| {
+                            let current_panes = running_state.panes.panes();
+                            !current_panes.contains(&&tab.pane)
+                                || current_panes.len() > 1
+                                || (!is_current_pane || pane.items_len() > 1)
+                        })
+                        .ok()
+                    else {
+                        return false;
                     };
-                    if let Some(item) = item {
-                        return item.downcast::<SubView>().is_some();
+                    if can_drag_away {
+                        let item = if is_current_pane {
+                            pane.item_for_index(tab.ix)
+                        } else {
+                            tab.pane.read(cx).item_for_index(tab.ix)
+                        };
+                        if let Some(item) = item {
+                            return item.downcast::<SubView>().is_some();
+                        }
                     }
                 }
+                false
             }
-            false
         })));
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
-        pane.set_render_tab_bar(cx, |pane, window, cx| {
-            let active_pane_item = pane.active_item();
-            h_flex()
-                .w_full()
-                .px_2()
-                .gap_1()
-                .h(Tab::container_height(cx))
-                .drag_over::<DraggedTab>(|bar, _, _, cx| {
-                    bar.bg(cx.theme().colors().drop_target_background)
-                })
-                .on_drop(
-                    cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
-                        this.drag_split_direction = None;
-                        this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
-                    }),
-                )
-                .bg(cx.theme().colors().tab_bar_background)
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .children(pane.items().enumerate().map(|(ix, item)| {
-                    let selected = active_pane_item
-                        .as_ref()
-                        .map_or(false, |active| active.item_id() == item.item_id());
-                    let item_ = item.boxed_clone();
-                    div()
-                        .id(SharedString::from(format!(
-                            "debugger_tab_{}",
-                            item.item_id().as_u64()
-                        )))
-                        .p_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .map(|this| {
-                            if selected {
-                                this.bg(cx.theme().colors().tab_active_background)
-                            } else {
-                                let hover_color = cx.theme().colors().element_hover;
-                                this.hover(|style| style.bg(hover_color))
-                            }
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let index = this.index_for_item(&*item_);
-                            if let Some(index) = index {
-                                this.activate_item(index, true, true, window, cx);
-                            }
-                        }))
-                        .child(item.tab_content(
-                            TabContentParams {
-                                selected,
-                                ..Default::default()
-                            },
-                            window,
-                            cx,
-                        ))
-                        .on_drop(
-                            cx.listener(move |this, dragged_tab: &DraggedTab, window, cx| {
-                                this.drag_split_direction = None;
-                                this.handle_tab_drop(dragged_tab, ix, window, cx)
-                            }),
-                        )
-                        .on_drag(
-                            DraggedTab {
-                                item: item.boxed_clone(),
-                                pane: cx.entity().clone(),
-                                detail: 0,
-                                is_active: selected,
-                                ix,
-                            },
-                            |tab, _, _, cx| cx.new(|_| tab.clone()),
-                        )
-                }))
-                .into_any_element()
+        pane.set_render_tab_bar(cx, {
+            move |pane, window, cx| {
+                let active_pane_item = pane.active_item();
+                let pane_group_id: SharedString =
+                    format!("pane-zoom-button-hover-{}", cx.entity_id()).into();
+                let is_hovered = active_pane_item.as_ref().map_or(false, |item| {
+                    item.downcast::<SubView>()
+                        .map_or(false, |this| this.read(cx).hovered)
+                });
+                h_flex()
+                    .group(pane_group_id.clone())
+                    .justify_between()
+                    .bg(cx.theme().colors().tab_bar_background)
+                    .border_b_1()
+                    .px_2()
+                    .border_color(cx.theme().colors().border)
+                    .track_focus(&focus_handle)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .h(Tab::container_height(cx))
+                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
+                                bar.bg(cx.theme().colors().drop_target_background)
+                            })
+                            .on_drop(cx.listener(
+                                move |this, dragged_tab: &DraggedTab, window, cx| {
+                                    this.drag_split_direction = None;
+                                    this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
+                                },
+                            ))
+                            .children(pane.items().enumerate().map(|(ix, item)| {
+                                let selected = active_pane_item
+                                    .as_ref()
+                                    .map_or(false, |active| active.item_id() == item.item_id());
+                                let deemphasized = !pane.has_focus(window, cx);
+                                let item_ = item.boxed_clone();
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "debugger_tab_{}",
+                                        item.item_id().as_u64()
+                                    )))
+                                    .p_1()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .map(|this| {
+                                        let theme = cx.theme();
+                                        if selected {
+                                            let color = theme.colors().tab_active_background;
+                                            let color = if deemphasized {
+                                                color.opacity(0.5)
+                                            } else {
+                                                color
+                                            };
+                                            this.bg(color)
+                                        } else {
+                                            let hover_color = theme.colors().element_hover;
+                                            this.hover(|style| style.bg(hover_color))
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let index = this.index_for_item(&*item_);
+                                        if let Some(index) = index {
+                                            this.activate_item(index, true, true, window, cx);
+                                        }
+                                    }))
+                                    .child(item.tab_content(
+                                        TabContentParams {
+                                            selected,
+                                            deemphasized,
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_drop(cx.listener(
+                                        move |this, dragged_tab: &DraggedTab, window, cx| {
+                                            this.drag_split_direction = None;
+                                            this.handle_tab_drop(dragged_tab, ix, window, cx)
+                                        },
+                                    ))
+                                    .on_drag(
+                                        DraggedTab {
+                                            item: item.boxed_clone(),
+                                            pane: cx.entity().clone(),
+                                            detail: 0,
+                                            is_active: selected,
+                                            ix,
+                                        },
+                                        |tab, _, _, cx| cx.new(|_| tab.clone()),
+                                    )
+                            })),
+                    )
+                    .child({
+                        let zoomed = pane.is_zoomed();
+                        div()
+                            .visible_on_hover(pane_group_id)
+                            .when(is_hovered, |this| this.visible())
+                            .child(
+                                IconButton::new(
+                                    SharedString::from(format!(
+                                        "debug-toggle-zoom-{}",
+                                        cx.entity_id()
+                                    )),
+                                    if zoomed {
+                                        IconName::Minimize
+                                    } else {
+                                        IconName::Maximize
+                                    },
+                                )
+                                .icon_size(IconSize::XSmall)
+                                .on_click(cx.listener(move |pane, _, window, cx| {
+                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                }))
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        let zoomed_text =
+                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                        Tooltip::for_action_in(
+                                            zoomed_text,
+                                            &workspace::ToggleZoom,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                            )
+                    })
+                    .into_any_element()
+            }
         });
         pane
     });
 
     ret
 }
+
+pub struct DebugTerminal {
+    pub terminal: Option<Entity<TerminalView>>,
+    focus_handle: FocusHandle,
+}
+
+impl DebugTerminal {
+    fn empty(cx: &mut Context<Self>) -> Self {
+        Self {
+            terminal: None,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+}
+
+impl gpui::Render for DebugTerminal {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if let Some(terminal) = self.terminal.clone() {
+            terminal.into_any_element()
+        } else {
+            div().track_focus(&self.focus_handle).into_any_element()
+        }
+    }
+}
+impl Focusable for DebugTerminal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(terminal) = self.terminal.as_ref() {
+            return terminal.focus_handle(cx);
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+}
+
 impl RunningState {
     pub fn new(
         session: Entity<Session>,
@@ -379,6 +513,8 @@ impl RunningState {
         let stack_frame_list = cx.new(|cx| {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
+
+        let debug_terminal = cx.new(DebugTerminal::empty);
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -411,13 +547,29 @@ impl RunningState {
                             .log_err();
 
                         if let Some(thread_id) = thread_id {
-                            this.select_thread(*thread_id, cx);
+                            this.select_thread(*thread_id, window, cx);
                         }
                     }
                     SessionEvent::Threads => {
                         let threads = this.session.update(cx, |this, cx| this.threads(cx));
-                        this.select_current_thread(&threads, cx);
+                        this.select_current_thread(&threads, window, cx);
                     }
+                    SessionEvent::CapabilitiesLoaded => {
+                        let capabilities = this.capabilities(cx);
+                        if !capabilities.supports_modules_request.unwrap_or(false) {
+                            this.remove_pane_item(DebuggerPaneItem::Modules, window, cx);
+                        }
+                        if !capabilities
+                            .supports_loaded_sources_request
+                            .unwrap_or(false)
+                        {
+                            this.remove_pane_item(DebuggerPaneItem::LoadedSources, window, cx);
+                        }
+                    }
+                    SessionEvent::RunInTerminal { request, sender } => this
+                        .handle_run_in_terminal(request, sender.clone(), window, cx)
+                        .detach_and_log_err(cx),
+
                     _ => {}
                 }
                 cx.notify()
@@ -439,6 +591,7 @@ impl RunningState {
                 &console,
                 &breakpoint_list,
                 &loaded_source_list,
+                &debug_terminal,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -447,12 +600,14 @@ impl RunningState {
             workspace::PaneGroup::with_root(root)
         } else {
             pane_close_subscriptions.clear();
+
             let root = Self::default_pane_layout(
                 project,
                 &workspace,
                 &stack_frame_list,
                 &variable_list,
                 &module_list,
+                &loaded_source_list,
                 &console,
                 &breakpoint_list,
                 &mut pane_close_subscriptions,
@@ -474,11 +629,13 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
+            active_pane: None,
             module_list,
-            _console: console,
+            console,
             breakpoint_list,
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
+            debug_terminal,
             _schedule_serialize: None,
         }
     }
@@ -489,11 +646,6 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        debug_assert!(
-            item_kind.is_supported(self.session.read(cx).capabilities()),
-            "We should only allow removing supported item kinds"
-        );
-
         if let Some((pane, item_id)) = self.panes.panes().iter().find_map(|pane| {
             Some(pane).zip(
                 pane.read(cx)
@@ -515,6 +667,195 @@ impl RunningState {
         self.panes.pane_at_pixel_position(position).is_some()
     }
 
+    fn handle_run_in_terminal(
+        &self,
+        request: &RunInTerminalRequestArguments,
+        mut sender: mpsc::Sender<Result<u32>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let running = cx.entity();
+        let Ok(project) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.project().clone())
+        else {
+            return Task::ready(Err(anyhow!("no workspace")));
+        };
+        let session = self.session.read(cx);
+
+        let cwd = Some(&request.cwd)
+            .filter(|cwd| cwd.len() > 0)
+            .map(PathBuf::from)
+            .or_else(|| session.binary().cwd.clone());
+
+        let mut args = request.args.clone();
+
+        // Handle special case for NodeJS debug adapter
+        // If only the Node binary path is provided, we set the command to None
+        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+        // This allows the NodeJS debug client to attach correctly
+        let command = if args.len() > 1 {
+            Some(args.remove(0))
+        } else {
+            None
+        };
+
+        let mut envs: HashMap<String, String> = Default::default();
+        if let Some(Value::Object(env)) = &request.env {
+            for (key, value) in env {
+                let value_str = match (key.as_str(), value) {
+                    (_, Value::String(value)) => value,
+                    _ => continue,
+                };
+
+                envs.insert(key.clone(), value_str.clone());
+            }
+        }
+
+        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
+        let kind = if let Some(command) = command {
+            let title = request.title.clone().unwrap_or(command.clone());
+            TerminalKind::Task(task::SpawnInTerminal {
+                id: task::TaskId("debug".to_string()),
+                full_label: title.clone(),
+                label: title.clone(),
+                command: command.clone(),
+                args,
+                command_label: title.clone(),
+                cwd,
+                env: envs,
+                use_new_terminal: true,
+                allow_concurrent_runs: true,
+                reveal: task::RevealStrategy::NoFocus,
+                reveal_target: task::RevealTarget::Dock,
+                hide: task::HideStrategy::Never,
+                shell,
+                show_summary: false,
+                show_command: false,
+                show_rerun: false,
+            })
+        } else {
+            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
+        };
+
+        let workspace = self.workspace.clone();
+        let weak_project = project.downgrade();
+
+        let terminal_task = project.update(cx, |project, cx| {
+            project.create_terminal(kind, window.window_handle(), cx)
+        });
+        let terminal_task = cx.spawn_in(window, async move |_, cx| {
+            let terminal = terminal_task.await?;
+
+            let terminal_view = cx.new_window_entity(|window, cx| {
+                TerminalView::new(terminal.clone(), workspace, None, weak_project, window, cx)
+            })?;
+
+            running.update_in(cx, |running, window, cx| {
+                running.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
+                running.debug_terminal.update(cx, |debug_terminal, cx| {
+                    debug_terminal.terminal = Some(terminal_view);
+                    cx.notify();
+                });
+            })?;
+
+            terminal.read_with(cx, |terminal, _| {
+                terminal
+                    .pty_info
+                    .pid()
+                    .map(|pid| pid.as_u32())
+                    .ok_or_else(|| anyhow!("Terminal was spawned but PID was not available"))
+            })?
+        });
+
+        cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })
+    }
+
+    fn create_sub_view(
+        &self,
+        item_kind: DebuggerPaneItem,
+        _pane: &Entity<Pane>,
+        cx: &mut Context<Self>,
+    ) -> Box<dyn ItemHandle> {
+        match item_kind {
+            DebuggerPaneItem::Console => {
+                let weak_console = self.console.clone().downgrade();
+
+                Box::new(SubView::new(
+                    self.console.focus_handle(cx),
+                    self.console.clone().into(),
+                    item_kind,
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
+                    cx,
+                ))
+            }
+            DebuggerPaneItem::Variables => Box::new(SubView::new(
+                self.variable_list.focus_handle(cx),
+                self.variable_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
+                self.breakpoint_list.focus_handle(cx),
+                self.breakpoint_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::Frames => Box::new(SubView::new(
+                self.stack_frame_list.focus_handle(cx),
+                self.stack_frame_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::Modules => Box::new(SubView::new(
+                self.module_list.focus_handle(cx),
+                self.module_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
+                self.loaded_sources_list.focus_handle(cx),
+                self.loaded_sources_list.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+            DebuggerPaneItem::Terminal => Box::new(SubView::new(
+                self.debug_terminal.focus_handle(cx),
+                self.debug_terminal.clone().into(),
+                item_kind,
+                None,
+                cx,
+            )),
+        }
+    }
+
+    pub(crate) fn ensure_pane_item(
+        &mut self,
+        item_kind: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pane_items_status(cx).get(&item_kind) == Some(&true) {
+            return;
+        };
+        let pane = self.panes.last_pane();
+        let sub_view = self.create_sub_view(item_kind, &pane, cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.add_item_inner(sub_view, false, false, false, None, window, cx);
+        })
+    }
+
     pub(crate) fn add_pane_item(
         &mut self,
         item_kind: DebuggerPaneItem,
@@ -528,58 +869,7 @@ impl RunningState {
         );
 
         if let Some(pane) = self.panes.pane_at_pixel_position(position) {
-            let sub_view = match item_kind {
-                DebuggerPaneItem::Console => {
-                    let weak_console = self._console.clone().downgrade();
-
-                    Box::new(SubView::new(
-                        pane.focus_handle(cx),
-                        self._console.clone().into(),
-                        item_kind,
-                        Some(Box::new(move |cx| {
-                            weak_console
-                                .read_with(cx, |console, cx| console.show_indicator(cx))
-                                .unwrap_or_default()
-                        })),
-                        cx,
-                    ))
-                }
-                DebuggerPaneItem::Variables => Box::new(SubView::new(
-                    self.variable_list.focus_handle(cx),
-                    self.variable_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::BreakpointList => Box::new(SubView::new(
-                    self.breakpoint_list.focus_handle(cx),
-                    self.breakpoint_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::Frames => Box::new(SubView::new(
-                    self.stack_frame_list.focus_handle(cx),
-                    self.stack_frame_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::Modules => Box::new(SubView::new(
-                    self.module_list.focus_handle(cx),
-                    self.module_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-                DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
-                    self.loaded_sources_list.focus_handle(cx),
-                    self.loaded_sources_list.clone().into(),
-                    item_kind,
-                    None,
-                    cx,
-                )),
-            };
+            let sub_view = self.create_sub_view(item_kind, pane, cx);
 
             pane.update(cx, |pane, cx| {
                 pane.add_item(sub_view, false, false, None, window, cx);
@@ -647,10 +937,49 @@ impl RunningState {
         cx: &mut Context<RunningState>,
     ) {
         this.serialize_layout(window, cx);
-        if let Event::Remove { .. } = event {
-            let _did_find_pane = this.panes.remove(&source_pane).is_ok();
-            debug_assert!(_did_find_pane);
-            cx.notify();
+        match event {
+            Event::Remove { .. } => {
+                let _did_find_pane = this.panes.remove(&source_pane).is_ok();
+                debug_assert!(_did_find_pane);
+                cx.notify();
+            }
+            Event::Focus => {
+                this.active_pane = Some(source_pane.clone());
+            }
+            Event::ZoomIn => {
+                source_pane.update(cx, |pane, cx| {
+                    pane.set_zoomed(true, cx);
+                });
+                cx.notify();
+            }
+            Event::ZoomOut => {
+                source_pane.update(cx, |pane, cx| {
+                    pane.set_zoomed(false, cx);
+                });
+                cx.notify();
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self
+            .active_pane
+            .as_ref()
+            .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
+        {
+            window.focus(&pane.focus_handle(cx));
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.activate_pane_in_direction(direction, window, cx)
+                })
+                .ok();
         }
     }
 
@@ -684,7 +1013,7 @@ impl RunningState {
 
     #[cfg(test)]
     pub fn console(&self) -> &Entity<Console> {
-        &self._console
+        &self.console
     }
 
     #[cfg(test)]
@@ -692,8 +1021,7 @@ impl RunningState {
         &self.module_list
     }
 
-    #[cfg(test)]
-    pub(crate) fn activate_modules_list(&self, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_item(&self, item: DebuggerPaneItem, window: &mut Window, cx: &mut App) {
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -701,7 +1029,7 @@ impl RunningState {
             .find_map(|pane| {
                 pane.read(cx)
                     .items_of_type::<SubView>()
-                    .position(|view| view.read(cx).view_kind().to_shared_string() == *"Modules")
+                    .position(|view| view.read(cx).view_kind() == item)
                     .map(|view| (view, pane))
             })
             .unwrap();
@@ -709,6 +1037,7 @@ impl RunningState {
             this.activate_item(variable_list_position, true, true, window, cx);
         })
     }
+
     #[cfg(test)]
     pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
@@ -721,6 +1050,7 @@ impl RunningState {
     pub fn select_current_thread(
         &mut self,
         threads: &Vec<(Thread, ThreadStatus)>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let selected_thread = self
@@ -733,7 +1063,7 @@ impl RunningState {
         };
 
         if Some(ThreadId(selected_thread.id)) != self.thread_id {
-            self.select_thread(ThreadId(selected_thread.id), cx);
+            self.select_thread(ThreadId(selected_thread.id), window, cx);
         }
     }
 
@@ -746,7 +1076,7 @@ impl RunningState {
             .map(|id| self.session().read(cx).thread_status(id))
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
@@ -754,8 +1084,7 @@ impl RunningState {
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
-            .update(cx, |list, cx| list.refresh(cx));
-        cx.notify();
+            .update(cx, |list, cx| list.schedule_refresh(true, window, cx));
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
@@ -907,9 +1236,9 @@ impl RunningState {
                 for (thread, _) in threads {
                     let state = state.clone();
                     let thread_id = thread.id;
-                    this = this.entry(thread.name, None, move |_, cx| {
+                    this = this.entry(thread.name, None, move |window, cx| {
                         state.update(cx, |state, cx| {
-                            state.select_thread(ThreadId(thread_id), cx);
+                            state.select_thread(ThreadId(thread_id), window, cx);
                         });
                     });
                 }
@@ -924,6 +1253,7 @@ impl RunningState {
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
         module_list: &Entity<ModuleList>,
+        loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
         subscriptions: &mut HashMap<EntityId, Subscription>,
@@ -963,6 +1293,7 @@ impl RunningState {
             this.activate_item(0, false, false, window, cx);
         });
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+
         center_pane.update(cx, |this, cx| {
             this.add_item(
                 Box::new(SubView::new(
@@ -980,7 +1311,7 @@ impl RunningState {
             );
             this.add_item(
                 Box::new(SubView::new(
-                    this.focus_handle(cx),
+                    module_list.focus_handle(cx),
                     module_list.clone().into(),
                     DebuggerPaneItem::Modules,
                     None,
@@ -992,8 +1323,24 @@ impl RunningState {
                 window,
                 cx,
             );
+
+            this.add_item(
+                Box::new(SubView::new(
+                    loaded_source_list.focus_handle(cx),
+                    loaded_source_list.clone().into(),
+                    DebuggerPaneItem::LoadedSources,
+                    None,
+                    cx,
+                )),
+                false,
+                false,
+                None,
+                window,
+                cx,
+            );
             this.activate_item(0, false, false, window, cx);
         });
+
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
             let weak_console = console.downgrade();

@@ -5,8 +5,8 @@
     "context": "PromptLibrary",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-n": "prompt_library::NewPrompt",
-      "cmd-shift-s": "prompt_library::ToggleDefaultPrompt",
+      "cmd-n": "rules_library::NewRule",
+      "cmd-shift-s": "rules_library::ToggleDefaultRule",
       "cmd-w": "workspace::CloseWindow"
     }
   },
@@ -257,7 +257,7 @@
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "assistant::OpenPromptLibrary",
+      "cmd-k l": "assistant::OpenRulesLibrary",
       "cmd-t": "assistant::NewChat",
       "cmd-n": "assistant::NewChat"
     }
@@ -286,13 +286,20 @@
       "cmd-alt-n": "agent::NewTextThread",
       "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenConfiguration",
-      "cmd-alt-p": "assistant::OpenPromptLibrary",
+      "cmd-alt-p": "assistant::OpenRulesLibrary",
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
+      "cmd-shift-o": "agent::ToggleNavigationMenu",
+      "cmd-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
-      "cmd-e": "agent::ChatMode",
       "cmd-alt-e": "agent::RemoveAllContext"
+    }
+  },
+  {
+    "context": "AgentPanel > NavigationMenu",
+    "bindings": {
+      "shift-backspace": "agent::DeleteRecentlyOpenThread"
     }
   },
   {
@@ -738,7 +745,7 @@
     }
   },
   {
-    "context": "Editor && mode == full",
+    "context": "!ContextEditor > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
@@ -1005,6 +1012,7 @@
       "alt-right": ["terminal::SendText", "\u001bf"],
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
+      "alt-.": ["terminal::SendText", "\u001b."],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
       "up": ["terminal::SendKeystroke", "up"],
@@ -1027,10 +1035,10 @@
       // Using `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-shift-space": "terminal::ToggleViMode",
-      "ctrl-k up": "pane::SplitUp",
-      "ctrl-k down": "pane::SplitDown",
-      "ctrl-k left": "pane::SplitLeft",
-      "ctrl-k right": "pane::SplitRight"
+      "ctrl-alt-up": "pane::SplitUp",
+      "ctrl-alt-down": "pane::SplitDown",
+      "ctrl-alt-left": "pane::SplitLeft",
+      "ctrl-alt-right": "pane::SplitRight"
     }
   },
   {
@@ -1058,6 +1066,22 @@
     "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel"
+    }
+  },
+  {
+    "context": "ConfigureContextServerModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "editor::Newline",
+      "cmd-enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "Diagnostics",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
     }
   }
 ]

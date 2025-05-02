@@ -446,7 +446,7 @@ impl Item for ProjectSearchView {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content_text(&self, _: &Window, cx: &App) -> Option<SharedString> {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let last_query: Option<SharedString> = self
             .entity
             .read(cx)
@@ -457,11 +457,10 @@ impl Item for ProjectSearchView {
                 let query_text = util::truncate_and_trailoff(&query, MAX_TAB_TITLE_LEN);
                 query_text.into()
             });
-        Some(
-            last_query
-                .filter(|query| !query.is_empty())
-                .unwrap_or_else(|| "Project Search".into()),
-        )
+
+        last_query
+            .filter(|query| !query.is_empty())
+            .unwrap_or_else(|| "Project Search".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1047,6 +1046,19 @@ impl ProjectSearchView {
                 }
             };
 
+        // If the project contains multiple visible worktrees, we match the
+        // include/exclude patterns against full paths to allow them to be
+        // disambiguated. For single worktree projects we use worktree relative
+        // paths for convenience.
+        let match_full_paths = self
+            .entity
+            .read(cx)
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .count()
+            > 1;
+
         let query = if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
@@ -1057,6 +1069,7 @@ impl ProjectSearchView {
                     .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 included_files,
                 excluded_files,
+                match_full_paths,
                 open_buffers,
             ) {
                 Ok(query) => {
@@ -1084,6 +1097,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                match_full_paths,
                 open_buffers,
             ) {
                 Ok(query) => {

@@ -18,7 +18,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
     Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -46,6 +46,7 @@ pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
+const MAX_SHORT_SHA_LENGTH: usize = 8;
 
 const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
@@ -513,8 +514,23 @@ impl TitleBar {
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = repository.read(cx).branch.as_ref()?.name.clone();
-        let branch_name = util::truncate_and_trailoff(&branch_name, MAX_BRANCH_NAME_LENGTH);
+        let branch_name = {
+            let repo = repository.read(cx);
+            repo.branch
+                .as_ref()
+                .map(|branch| branch.name())
+                .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
+                .or_else(|| {
+                    repo.head_commit.as_ref().map(|commit| {
+                        commit
+                            .sha
+                            .chars()
+                            .take(MAX_SHORT_SHA_LENGTH)
+                            .collect::<String>()
+                    })
+                })
+        }?;
+
         Some(
             Button::new("project_branch_trigger", branch_name)
                 .color(Color::Muted)
@@ -647,7 +663,7 @@ impl TitleBar {
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, cx| {
-                        menu.when(cx.has_flag::<ZedPro>(), |menu| {
+                        menu.when(cx.has_flag::<NewBillingFeatureFlag>(), |menu| {
                             menu.action(
                                 format!(
                                     "Current Plan: {}",

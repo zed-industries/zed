@@ -1,757 +1,530 @@
-use agent::{RequestKind, ThreadEvent, ThreadStore};
-use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::ToolWorkingSet;
-use client::proto::LspWorkProgress;
-use collections::HashMap;
-use dap::DapRegistry;
-use futures::channel::mpsc;
-use futures::{FutureExt, StreamExt as _, select_biased};
-use gpui::{App, AppContext as _, AsyncApp, Entity, Task};
-use handlebars::Handlebars;
-use language::{DiagnosticSeverity, OffsetRangeExt};
-use language_model::{
-    LanguageModel, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
-    StopReason, TokenUsage,
-};
-use project::{LspStore, Project, ProjectPath};
-use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
-use std::fs::File;
-use std::io::Write as _;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    error::Error,
+    fmt::{self, Debug},
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
-use unindent::Unindent as _;
-use util::ResultExt as _;
-use util::command::new_smol_command;
-use util::serde::default_true;
 
-use crate::AgentAppState;
+use crate::{
+    ToolMetrics,
+    assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
+};
+use agent::{ContextLoadResult, Thread, ThreadEvent};
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use buffer_diff::DiffHunkStatus;
+use collections::HashMap;
+use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
+use gpui::{App, AppContext, AsyncApp, Entity};
+use language_model::{LanguageModel, Role, StopReason};
 
-pub const EXAMPLES_DIR: &str = "./crates/eval/examples";
-pub const REPOS_DIR: &str = "./crates/eval/repos";
-pub const WORKTREES_DIR: &str = "./crates/eval/worktrees";
+pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
-const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ExampleBase {
-    pub url: String,
-    pub revision: String,
-    pub language_extension: Option<String>,
-    pub insert_id: Option<String>,
-    #[serde(default = "default_true")]
-    pub require_lsp: bool,
+#[async_trait(?Send)]
+pub trait Example {
+    fn meta(&self) -> ExampleMetadata;
+    async fn conversation(&self, cx: &mut ExampleContext) -> Result<()>;
+    fn diff_assertions(&self) -> Vec<JudgeAssertion> {
+        Vec::new()
+    }
+    fn thread_assertions(&self) -> Vec<JudgeAssertion> {
+        Vec::new()
+    }
 }
 
 #[derive(Clone, Debug)]
-pub struct Example {
+pub struct JudgeAssertion {
+    pub id: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ExampleMetadata {
     pub name: String,
-    /// Content of `base.toml`
-    pub base: ExampleBase,
-    /// Content of `prompt.md`
-    pub prompt: String,
-    /// Content of `criteria.md`
-    pub criteria: String,
-    /// Markdown output file to append to
-    pub output_file: Option<Arc<Mutex<File>>>,
-    /// Path to the output run directory.
-    pub run_dir: PathBuf,
-    /// Path to markdown output file
-    pub output_file_path: PathBuf,
-    /// Prefix used for logging that identifies this example
-    pub log_prefix: String,
+    pub url: String,
+    pub revision: String,
+    pub language_server: Option<LanguageServer>,
+    pub max_assertions: Option<usize>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct RunOutput {
-    pub repository_diff: String,
-    pub diagnostics: String,
-    pub response_count: usize,
-    pub token_usage: TokenUsage,
-    pub tool_use_counts: HashMap<Arc<str>, u32>,
+#[derive(Clone, Debug)]
+pub struct LanguageServer {
+    pub file_extension: String,
+    pub allow_preexisting_diagnostics: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JudgeInput {
-    pub repository_diff: String,
-    pub criteria: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JudgeOutput {
-    pub analysis: String,
-    pub score: u32,
-}
-
-impl Example {
-    /// Load an example from a directory containing base.toml, prompt.md, and criteria.md
-    pub fn load_from_directory(dir_path: &Path, run_dir: &Path) -> Result<Self> {
-        let name = Self::name_from_path(dir_path);
-        let base_path = dir_path.join("base.toml");
-        let prompt_path = dir_path.join("prompt.md");
-        let criteria_path = dir_path.join("criteria.md");
-        let output_file_path = run_dir.join(format!("{}.md", name));
-
-        Ok(Example {
-            name: name.clone(),
-            base: toml::from_str(&fs::read_to_string(&base_path)?)?,
-            prompt: fs::read_to_string(prompt_path.clone())?,
-            criteria: fs::read_to_string(criteria_path.clone())?,
-            run_dir: run_dir.to_path_buf(),
-            output_file: None,
-            output_file_path,
-            log_prefix: name,
-        })
-    }
-
-    pub fn set_repetition_number(&mut self, repetition_number: u32) {
-        if repetition_number > 0 {
-            self.name = format!("{}-{}", self.name, repetition_number);
-            self.output_file_path = self.run_dir.join(format!("{}.md", self.name));
-        }
-    }
-
-    pub fn set_log_prefix_style(&mut self, color: &str, name_width: usize) {
-        self.log_prefix = format!(
-            "{}{:<width$}\x1b[0m | ",
-            color,
-            self.name,
-            width = name_width
-        );
-    }
-
-    pub fn name_from_path(path: &Path) -> String {
-        path.file_name().unwrap().to_string_lossy().to_string()
-    }
-
-    pub fn worktree_path(&self) -> PathBuf {
-        Path::new(WORKTREES_DIR)
-            .canonicalize()
-            .context(format!("No such directory {WORKTREES_DIR}"))
-            .unwrap()
-            .join(&self.name)
-    }
-
-    /// Set up the example by checking out the specified Git revision
-    pub async fn setup(&mut self) -> Result<()> {
-        let repo_path = repo_path_for_url(&self.base.url);
-
-        let revision_exists = run_git(&repo_path, &["rev-parse", "--verify", &self.base.revision])
-            .await
-            .is_ok();
-
-        if !revision_exists {
-            println!(
-                "{}Fetching revision {}",
-                self.log_prefix, &self.base.revision
-            );
-            run_git(
-                &repo_path,
-                &["fetch", "--depth", "1", "origin", &self.base.revision],
-            )
-            .await?;
-        }
-
-        let worktree_path = self.worktree_path();
-
-        if worktree_path.is_dir() {
-            println!("{}Resetting existing worktree", self.log_prefix);
-
-            // TODO: consider including "-x" to remove ignored files. The downside of this is that
-            // it will also remove build artifacts, and so prevent incremental reuse there.
-            run_git(&worktree_path, &["clean", "--force", "-d"]).await?;
-            run_git(&worktree_path, &["reset", "--hard", "HEAD"]).await?;
-            run_git(&worktree_path, &["checkout", &self.base.revision]).await?;
-        } else {
-            println!("{}Creating worktree", self.log_prefix);
-
-            let worktree_path_string = worktree_path.to_string_lossy().to_string();
-
-            run_git(
-                &repo_path,
-                &[
-                    "worktree",
-                    "add",
-                    "-f",
-                    &worktree_path_string,
-                    &self.base.revision,
-                ],
-            )
-            .await?;
-        }
-
-        // Create the output file
-        let output_file = Arc::new(Mutex::new(File::create(&self.output_file_path)?));
-        self.output_file = Some(output_file);
-
-        Ok(())
-    }
-
-    /// Returns the output file, panicking if it's not set
-    fn output_file(&self) -> Arc<Mutex<File>> {
-        self.output_file
-            .clone()
-            .expect("Output file not created. Call setup() first.")
-    }
-
-    pub fn run(
-        &self,
-        model: Arc<dyn LanguageModel>,
-        app_state: Arc<AgentAppState>,
-        cx: &mut App,
-    ) -> Task<Result<RunOutput>> {
-        let project = Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            Arc::new(DapRegistry::default()),
-            app_state.fs.clone(),
-            None,
-            cx,
-        );
-
-        let worktree_path = self.worktree_path();
-        let worktree = project.update(cx, |project, cx| {
-            project.create_worktree(&worktree_path, true, cx)
-        });
-
-        let tools = cx.new(|_| ToolWorkingSet::default());
-        let thread_store =
-            ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
-        let this = self.clone();
-
-        cx.spawn(async move |cx| {
-            let worktree = worktree.await?;
-
-            // Wait for worktree scan to finish before choosing a file to open.
-            worktree
-                .update(cx, |worktree, _cx| {
-                    worktree.as_local().unwrap().scan_complete()
-                })?
-                .await;
-
-            let lsp_open_handle_and_store = if this.base.require_lsp {
-                let language_extension = this.base.language_extension.as_deref().context(
-                    "language_extension field is required in base.toml when `require_lsp == true`",
-                )?;
-
-                // Open a file that matches the language to cause LSP to start.
-                let language_file = worktree.read_with(cx, |worktree, _cx| {
-                    worktree
-                        .files(false, 0)
-                        .find_map(|e| {
-                            if e.path.clone().extension().and_then(|ext| ext.to_str())
-                                == Some(language_extension)
-                            {
-                                Some(ProjectPath {
-                                    worktree_id: worktree.id(),
-                                    path: e.path.clone(),
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .context("Failed to find a file for example language")
-                })??;
-
-                let open_language_file_buffer_task = project.update(cx, |project, cx| {
-                    project.open_buffer(language_file.clone(), cx)
-                })?;
-
-                let language_file_buffer = open_language_file_buffer_task.await?;
-
-                let (lsp_open_handle, lsp_store) = project.update(cx, |project, cx| {
-                    (
-                        project.register_buffer_with_language_servers(&language_file_buffer, cx),
-                        project.lsp_store().clone(),
-                    )
-                })?;
-
-                // TODO: remove this once the diagnostics tool waits for new diagnostics
-                cx.background_executor().timer(Duration::new(5, 0)).await;
-                wait_for_lang_server(&lsp_store, this.log_prefix.clone(), cx).await?;
-
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_open_handle.update(cx, |buffer, cx| {
-                        buffer.update(cx, |buffer, cx| {
-                            let has_language_server = lsp_store
-                                .language_servers_for_local_buffer(buffer, cx)
-                                .next()
-                                .is_some();
-                            if has_language_server {
-                                Ok(())
-                            } else {
-                                Err(anyhow!(
-                                    "`{:?}` was opened to cause the language server to start, \
-                                    but no language servers are registered for its buffer. \
-                                    Set `require_lsp = false` in `base.toml` to skip this.",
-                                    language_file
-                                ))
-                            }
-                        })
-                    })
-                })??;
-
-                Some((lsp_open_handle, lsp_store))
-            } else {
-                None
-            };
-
-            if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
-                return Err(anyhow!("Setup only mode"));
-            }
-
-            let thread_store = thread_store.await;
-            let thread =
-                thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
-
-            {
-                let output_file_ref = this.output_file();
-                let mut output_file = output_file_ref.lock().unwrap();
-                writeln!(&mut output_file, "👤 USER:").log_err();
-                writeln!(&mut output_file, "{}", this.prompt).log_err();
-                writeln!(&mut output_file, "🤖 ASSISTANT:").log_err();
-                output_file.flush().log_err();
-            }
-
-            let tool_use_counts: Arc<Mutex<HashMap<Arc<str>, u32>>> =
-                Mutex::new(HashMap::default()).into();
-
-            let (thread_event_tx, mut thread_event_rx) = mpsc::unbounded();
-
-            let subscription = cx.subscribe(&thread, move |_thread, event: &ThreadEvent, _cx| {
-                thread_event_tx.unbounded_send(event.clone()).log_err();
-            });
-
-            let event_handler_task = cx.spawn({
-                // Need to clone the Arc here because the reference from output_file() won't live long enough
-                let output_file = this.output_file.clone().unwrap();
-                let log_prefix = this.log_prefix.clone();
-                let tool_use_counts = tool_use_counts.clone();
-                let thread = thread.downgrade();
-                async move |cx| {
-                    loop {
-                        let event = select_biased! {
-                            event = thread_event_rx.next() => event,
-                            _ = cx.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
-                                return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
-                            }
-                        };
-                        let Some(event) = event else {
-                            return Err(anyhow!("ThreadEvent channel ended early"));
-                        };
-
-                        let mut output_file = output_file.lock().unwrap();
-
-                        match event {
-                            ThreadEvent::Stopped(reason) => match reason {
-                                Ok(StopReason::EndTurn) => {
-                                    return Ok(());
-                                }
-                                Ok(StopReason::MaxTokens) => {
-                                    return Err(anyhow!("Exceeded maximum tokens"));
-                                }
-                                Ok(StopReason::ToolUse) => {
-                                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                        println!("{}StopReason: Tool use", log_prefix);
-                                    }
-                                }
-                                Err(error) => {
-                                    return Err(anyhow!(error.clone()));
-                                }
-                            },
-                            ThreadEvent::ShowError(thread_error) => {
-                                break Err(anyhow!(thread_error.clone()));
-                            }
-                            ThreadEvent::StreamedAssistantText(_, chunk) => {
-                                write!(&mut output_file, "{}", chunk).log_err();
-                            }
-                            ThreadEvent::StreamedAssistantThinking(_, chunk) => {
-                                write!(&mut output_file, "{}", chunk).log_err();
-                            }
-                            ThreadEvent::UsePendingTools { tool_uses } => {
-                                writeln!(&mut output_file, "\n\nUSING TOOLS:").log_err();
-                                for tool_use in tool_uses {
-                                    writeln!(&mut output_file, "{}: {}", tool_use.name, tool_use.input)
-                                        .log_err();
-                                }
-                            }
-                            ThreadEvent::ToolFinished {
-                                tool_use_id,
-                                pending_tool_use,
-                                ..
-                            } => {
-                                thread.update(cx, |thread, _cx| {
-                                    if let Some(tool_use) = pending_tool_use {
-                                        if let Some(tool_result) = thread.tool_result(&tool_use_id) {
-                                            let message = if tool_result.is_error {
-                                                format!("TOOL FAILED: {}", tool_use.name)
-                                            } else {
-                                                format!("TOOL FINISHED: {}", tool_use.name)
-                                            };
-                                            println!("{log_prefix}{message}");
-                                            writeln!(&mut output_file, "\n{}", message).log_err();
-                                            writeln!(&mut output_file, "\n{}\n", tool_result.content).log_err();
-                                            let mut tool_use_counts = tool_use_counts.lock().unwrap();
-                                            *tool_use_counts
-                                                .entry(tool_result.tool_name.clone())
-                                                .or_insert(0) += 1;
-                                        } else {
-                                            let message = format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
-                                            println!("{log_prefix}{message}");
-                                            writeln!(&mut output_file, "\n{}", message).log_err();
-                                        }
-                                    }
-                                })?;
-                            }
-                            ThreadEvent::ToolConfirmationNeeded => {
-                                panic!("{}Bug: Tool confirmation should not be required in eval", log_prefix);
-                            },
-                            ThreadEvent::StreamedCompletion |
-                            ThreadEvent::MessageAdded(_) |
-                            ThreadEvent::MessageEdited(_) |
-                            ThreadEvent::MessageDeleted(_) |
-                            ThreadEvent::SummaryChanged |
-                            ThreadEvent::SummaryGenerated |
-                            ThreadEvent::CheckpointChanged => {
-                                if std::env::var("ZED_EVAL_DEBUG").is_ok() {
-                                    println!("{}Event: {:#?}", log_prefix, event);
-                                }
-                            }
-                        }
-
-                        output_file.flush().log_err();
-                    }
-                }
-            });
-
-            thread.update(cx, |thread, cx| {
-                let context = vec![];
-                thread.insert_user_message(this.prompt.clone(), context, None, cx);
-                thread.send_to_model(model, RequestKind::Chat, cx);
-            })?;
-
-            event_handler_task.await?;
-
-            println!("{}Stopped", this.log_prefix);
-
-            if let Some((_, lsp_store)) = lsp_open_handle_and_store.as_ref() {
-                wait_for_lang_server(lsp_store, this.log_prefix.clone(), cx).await?;
-            }
-
-            println!("{}Getting repository diff", this.log_prefix);
-            let repository_diff = this.repository_diff().await?;
-
-            let repository_diff_path = this.run_dir.join(format!("{}.diff", this.name));
-            let mut repository_diff_output_file = File::create(&repository_diff_path)?;
-            writeln!(&mut repository_diff_output_file, "{}", &repository_diff).log_err();
-
-            println!("{}Getting diagnostics", this.log_prefix);
-            let diagnostics = cx
-                .update(move |cx| {
-                    cx.spawn(async move |cx| query_lsp_diagnostics(project, cx).await)
-                })?
-                .await?;
-            println!("{}Got diagnostics", this.log_prefix);
-
-            drop(subscription);
-            drop(lsp_open_handle_and_store);
-
-            thread.update(cx, |thread, _cx| {
-                let response_count = thread
-                    .messages()
-                    .filter(|message| message.role == language_model::Role::Assistant)
-                    .count();
-                RunOutput {
-                    repository_diff,
-                    diagnostics,
-                    response_count,
-                    token_usage: thread.cumulative_token_usage(),
-                    tool_use_counts: tool_use_counts.lock().unwrap().clone(),
-                }
-            })
-        })
-    }
-
-    pub async fn judge(
-        &self,
-        model: Arc<dyn LanguageModel>,
-        repository_diff: String,
-        judge_repetitions: u32,
-        cx: &AsyncApp,
-    ) -> Result<JudgeOutput> {
-        let judge_prompt = include_str!("judge_prompt.hbs");
-        let judge_prompt_name = "judge_prompt";
-        let mut handlebars = Handlebars::new();
-        handlebars.register_template_string(judge_prompt_name, judge_prompt)?;
-        let prompt = handlebars.render(
-            judge_prompt_name,
-            &JudgeInput {
-                repository_diff,
-                criteria: self.criteria.clone(),
-            },
-        )?;
-
-        let request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text(prompt)],
-                cache: false,
-            }],
-            temperature: None,
-            tools: Vec::new(),
-            stop: Vec::new(),
-        };
-
-        let response = send_language_model_request(model, request, cx).await?;
-
-        let judge_file_path = self.run_dir.join(format!(
-            "{}_judge_{}.md",
-            self.name, // This is the eval_name
-            judge_repetitions
-        ));
-
-        let mut judge_output_file = File::create(&judge_file_path)?;
-        writeln!(&mut judge_output_file, "{}", &response).log_err();
-
-        parse_judge_output(&response)
-    }
-
-    pub async fn repository_diff(&self) -> Result<String> {
-        let worktree_path = self.worktree_path();
-        run_git(&worktree_path, &["add", "-N"]).await?;
-        run_git(&worktree_path, &["diff"]).await
+impl ExampleMetadata {
+    pub fn repo_name(&self) -> String {
+        self.url
+            .split('/')
+            .next_back()
+            .unwrap_or(&"")
+            .trim_end_matches(".git")
+            .into()
     }
 }
 
-fn wait_for_lang_server(
-    lsp_store: &Entity<LspStore>,
+pub struct FailedAssertion(pub String);
+
+impl fmt::Debug for FailedAssertion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Assertion failure: {}", self.0)
+    }
+}
+
+impl fmt::Display for FailedAssertion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Error for FailedAssertion {}
+
+pub struct ExampleContext {
+    meta: ExampleMetadata,
     log_prefix: String,
-    cx: &mut AsyncApp,
-) -> Task<Result<()>> {
-    if cx
-        .update(|cx| !has_pending_lang_server_work(lsp_store, cx))
-        .unwrap()
-        || std::env::var("ZED_EVAL_SKIP_LS_WAIT").is_ok()
-    {
-        return Task::ready(anyhow::Ok(()));
-    }
-
-    println!("{}⏵ Waiting for language server", log_prefix);
-
-    let (mut tx, mut rx) = mpsc::channel(1);
-
-    let subscription =
-        cx.subscribe(&lsp_store, {
-            let log_prefix = log_prefix.clone();
-            move |lsp_store, event, cx| {
-                match event {
-                    project::LspStoreEvent::LanguageServerUpdate {
-                        message:
-                            client::proto::update_language_server::Variant::WorkProgress(
-                                LspWorkProgress {
-                                    message: Some(message),
-                                    ..
-                                },
-                            ),
-                        ..
-                    } => println!("{}⟲ {message}", log_prefix),
-                    _ => {}
-                }
-
-                if !has_pending_lang_server_work(&lsp_store, cx) {
-                    tx.try_send(()).ok();
-                }
-            }
-        });
-
-    cx.spawn(async move |cx| {
-        let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
-        let result = futures::select! {
-            _ = rx.next() => {
-                println!("{}⚑ Language server idle", log_prefix);
-                anyhow::Ok(())
-            },
-            _ = timeout.fuse() => {
-                Err(anyhow!("LSP wait timed out after 5 minutes"))
-            }
-        };
-        drop(subscription);
-        result
-    })
+    agent_thread: Entity<agent::Thread>,
+    app: AsyncApp,
+    model: Arc<dyn LanguageModel>,
+    pub assertions: AssertionsReport,
+    pub tool_metrics: Arc<Mutex<ToolMetrics>>,
 }
 
-fn has_pending_lang_server_work(lsp_store: &Entity<LspStore>, cx: &App) -> bool {
-    lsp_store
-        .read(cx)
-        .language_server_statuses()
-        .any(|(_, status)| !status.pending_work.is_empty())
-}
+impl ExampleContext {
+    pub fn new(
+        meta: ExampleMetadata,
+        log_prefix: String,
+        agent_thread: Entity<agent::Thread>,
+        model: Arc<dyn LanguageModel>,
+        app: AsyncApp,
+    ) -> Self {
+        let assertions = AssertionsReport::new(meta.max_assertions);
 
-async fn query_lsp_diagnostics(project: Entity<Project>, cx: &mut AsyncApp) -> Result<String> {
-    let paths_with_diagnostics = project.update(cx, |project, cx| {
-        project
-            .diagnostic_summaries(true, cx)
-            .filter(|(_, _, summary)| summary.error_count > 0 || summary.warning_count > 0)
-            .map(|(project_path, _, _)| project_path)
-            .collect::<Vec<_>>()
-    })?;
-
-    let mut output = String::new();
-    for project_path in paths_with_diagnostics {
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-            .await?;
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
-        for (_, group) in snapshot.diagnostic_groups(None) {
-            let entry = &group.entries[group.primary_ix];
-            let range = entry.range.to_point(&snapshot);
-            let severity = match entry.diagnostic.severity {
-                DiagnosticSeverity::ERROR => "error",
-                DiagnosticSeverity::WARNING => "warning",
-                _ => continue,
-            };
-
-            writeln!(
-                output,
-                "{} at line {}: {}",
-                severity,
-                range.start.row + 1,
-                entry.diagnostic.message
-            )?;
+        Self {
+            meta,
+            log_prefix,
+            agent_thread,
+            assertions,
+            model,
+            app,
+            tool_metrics: Arc::new(Mutex::new(ToolMetrics::default())),
         }
     }
-    anyhow::Ok(output)
-}
 
-fn parse_judge_output(response: &str) -> Result<JudgeOutput> {
-    let analysis = get_tag("analysis", response)?.to_string();
-    let score = get_tag("score", response)?
-        .parse()
-        .context("error parsing score")?;
-
-    Ok(JudgeOutput { analysis, score })
-}
-
-fn get_tag(name: &'static str, response: &str) -> Result<String> {
-    let start_tag = format!("<{}>", name);
-    let end_tag = format!("</{}>", name);
-
-    let start_ix = response
-        .find(&start_tag)
-        .context(format!("{} start tag not found", name))?;
-    let content_start_ix = start_ix + start_tag.len();
-
-    let end_ix = content_start_ix
-        + response[content_start_ix..]
-            .find(&end_tag)
-            .context(format!("{} end tag not found", name))?;
-
-    let content = response[content_start_ix..end_ix].trim().unindent();
-
-    anyhow::Ok(content)
-}
-
-pub fn repo_path_for_url(repo_url: &str) -> PathBuf {
-    let repo_name = repo_url
-        .trim_start_matches("https://")
-        .replace(|c: char| !c.is_alphanumeric(), "-");
-    Path::new(REPOS_DIR)
-        .canonicalize()
-        .context(format!("No such directory {REPOS_DIR}"))
-        .unwrap()
-        .join(repo_name)
-}
-
-pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
-        .current_dir(repo_path)
-        .args(args)
-        .output()
-        .await?;
-
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
-    } else {
-        Err(anyhow!(
-            "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
-            args.join(" "),
-            repo_path.display(),
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout),
-        ))
+    pub fn push_user_message(&mut self, text: impl ToString) {
+        self.app
+            .update_entity(&self.agent_thread, |thread, cx| {
+                thread.insert_user_message(
+                    text.to_string(),
+                    ContextLoadResult::default(),
+                    None,
+                    cx,
+                );
+            })
+            .unwrap();
     }
-}
 
-pub async fn send_language_model_request(
-    model: Arc<dyn LanguageModel>,
-    request: LanguageModelRequest,
-    cx: &AsyncApp,
-) -> anyhow::Result<String> {
-    match model.stream_completion_text(request, &cx).await {
-        Ok(mut stream) => {
-            let mut full_response = String::new();
-            while let Some(chunk_result) = stream.stream.next().await {
-                match chunk_result {
-                    Ok(chunk_str) => {
-                        full_response.push_str(&chunk_str);
+    pub fn assert(&mut self, expected: bool, message: impl ToString) -> Result<()> {
+        let message = message.to_string();
+        self.log_assertion(
+            if expected {
+                Ok(())
+            } else {
+                Err(anyhow::Error::from(FailedAssertion(message.clone())))
+            },
+            message,
+        )
+    }
+
+    pub fn assert_some<T>(&mut self, option: Option<T>, message: impl ToString) -> Result<T> {
+        let message = message.to_string();
+        self.log_assertion(
+            match option {
+                Some(value) => Ok(value),
+                None => Err(anyhow::Error::from(FailedAssertion(message.clone()))),
+            },
+            message,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub fn assert_eq<T: PartialEq + Debug>(
+        &mut self,
+        left: T,
+        right: T,
+        message: impl ToString,
+    ) -> Result<()> {
+        let message = message.to_string();
+        self.log_assertion(
+            if left == right {
+                Ok(())
+            } else {
+                println!(
+                    "{}{}",
+                    self.log_prefix,
+                    pretty_assertions::Comparison::new(&left, &right)
+                );
+                Err(anyhow::Error::from(FailedAssertion(message.clone())))
+            },
+            message,
+        )
+    }
+
+    fn log_assertion<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
+        if let Some(max) = self.meta.max_assertions {
+            if self.assertions.run_count() > max {
+                return Err(anyhow!(
+                    "More assertions were run than the stated max_assertions of {}",
+                    max
+                ));
+            }
+        }
+
+        self.assertions.ran.push(RanAssertion {
+            id: message.clone(),
+            result: Ok(RanAssertionResult {
+                analysis: None,
+                passed: result.is_ok(),
+            }),
+        });
+
+        if result.is_ok() {
+            println!("{}✅ {}", self.log_prefix, message);
+        } else {
+            println!("{}❌ {}", self.log_prefix, message);
+        }
+
+        result
+    }
+
+    pub async fn run_to_end(&mut self) -> Result<Response> {
+        self.run_turns(u32::MAX).await
+    }
+
+    pub async fn run_turn(&mut self) -> Result<Response> {
+        self.run_turns(1).await
+    }
+
+    pub async fn run_turns(&mut self, iterations: u32) -> Result<Response> {
+        let (mut tx, mut rx) = mpsc::channel(1);
+
+        let tool_metrics = self.tool_metrics.clone();
+        let log_prefix = self.log_prefix.clone();
+        let _subscription = self.app.subscribe(
+            &self.agent_thread,
+            move |thread, event: &ThreadEvent, cx| match event {
+                ThreadEvent::ShowError(thread_error) => {
+                    tx.try_send(Err(anyhow!(thread_error.clone()))).ok();
+                }
+                ThreadEvent::Stopped(reason) => match reason {
+                    Ok(StopReason::EndTurn) => {
+                        tx.close_channel();
+                    }
+                    Ok(StopReason::ToolUse) => {
+                        if thread.read(cx).remaining_turns() == 0 {
+                            tx.close_channel();
+                        }
+                    }
+                    Ok(StopReason::MaxTokens) => {
+                        tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
                     }
                     Err(err) => {
-                        return Err(anyhow!(
-                            "Error receiving response from language model: {err}"
-                        ));
+                        tx.try_send(Err(anyhow!(err.clone()))).ok();
+                    }
+                },
+                ThreadEvent::StreamedAssistantText(_, _)
+                | ThreadEvent::StreamedAssistantThinking(_, _)
+                | ThreadEvent::UsePendingTools { .. } => {}
+                ThreadEvent::ToolFinished {
+                    tool_use_id,
+                    pending_tool_use,
+                    ..
+                } => {
+                    thread.update(cx, |thread, _cx| {
+                        if let Some(tool_use) = pending_tool_use {
+                            let mut tool_metrics = tool_metrics.lock().unwrap();
+                            if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                                let message = if tool_result.is_error {
+                                    format!("✖︎ {}", tool_use.name)
+                                } else {
+                                    format!("✔︎ {}", tool_use.name)
+                                };
+                                println!("{log_prefix}{message}");
+                                tool_metrics
+                                    .insert(tool_result.tool_name.clone(), !tool_result.is_error);
+                            } else {
+                                let message =
+                                    format!("TOOL FINISHED WITHOUT RESULT: {}", tool_use.name);
+                                println!("{log_prefix}{message}");
+                                tool_metrics.insert(tool_use.name.clone(), true);
+                            }
+                        }
+                    });
+                }
+                ThreadEvent::InvalidToolInput { .. } => {
+                    println!("{log_prefix} invalid tool input");
+                }
+                ThreadEvent::ToolConfirmationNeeded => {
+                    panic!(
+                        "{}Bug: Tool confirmation should not be required in eval",
+                        log_prefix
+                    );
+                }
+                ThreadEvent::StreamedCompletion
+                | ThreadEvent::MessageAdded(_)
+                | ThreadEvent::MessageEdited(_)
+                | ThreadEvent::MessageDeleted(_)
+                | ThreadEvent::SummaryChanged
+                | ThreadEvent::SummaryGenerated
+                | ThreadEvent::ReceivedTextChunk
+                | ThreadEvent::StreamedToolUse { .. }
+                | ThreadEvent::CheckpointChanged
+                | ThreadEvent::UsageUpdated(_)
+                | ThreadEvent::CancelEditing => {
+                    tx.try_send(Ok(())).ok();
+                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                        println!("{}Event: {:#?}", log_prefix, event);
                     }
                 }
+            },
+        );
+
+        let model = self.model.clone();
+
+        let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
+            thread.set_remaining_turns(iterations);
+            thread.send_to_model(model, None, cx);
+            thread.messages().len()
+        })?;
+
+        loop {
+            select_biased! {
+                result = rx.next() => {
+                    if let Some(result) = result {
+                        result?;
+                    } else {
+                        break;
+                    }
+                }
+                _ = self.app.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
+                    return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
+                }
             }
-            Ok(full_response)
         }
-        Err(err) => Err(anyhow!(
-            "Failed to get response from language model. Error was: {err}"
-        )),
+
+        let messages = self.app.read_entity(&self.agent_thread, |thread, cx| {
+            let mut messages = Vec::new();
+            for message in thread.messages().skip(message_count_before) {
+                messages.push(Message {
+                    _role: message.role,
+                    text: message.to_string(),
+                    tool_use: thread
+                        .tool_uses_for_message(message.id, cx)
+                        .into_iter()
+                        .map(|tool_use| ToolUse {
+                            name: tool_use.name.to_string(),
+                            value: tool_use.input,
+                        })
+                        .collect(),
+                });
+            }
+            messages
+        })?;
+
+        let response = Response::new(messages);
+
+        Ok(response)
+    }
+
+    pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
+        self.agent_thread
+            .read_with(&self.app, |thread, cx| {
+                let action_log = thread.action_log().read(cx);
+                HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
+                    |(buffer, diff)| {
+                        let snapshot = buffer.read(cx).snapshot();
+
+                        let file = snapshot.file().unwrap();
+                        let diff = diff.read(cx);
+                        let base_text = diff.base_text().text();
+
+                        let hunks = diff
+                            .hunks(&snapshot, cx)
+                            .map(|hunk| FileEditHunk {
+                                base_text: base_text[hunk.diff_base_byte_range.clone()].to_string(),
+                                text: snapshot
+                                    .text_for_range(hunk.range.clone())
+                                    .collect::<String>(),
+                                status: hunk.status(),
+                            })
+                            .collect();
+
+                        (file.path().clone(), FileEdits { hunks })
+                    },
+                ))
+            })
+            .unwrap()
+    }
+
+    pub fn agent_thread(&self) -> Entity<Thread> {
+        self.agent_thread.clone()
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
+impl AppContext for ExampleContext {
+    type Result<T> = anyhow::Result<T>;
 
-    #[test]
-    fn test_parse_judge_output() {
-        let response = r#"
-            <analysis>The model did a good job but there were still compilations errors.</analysis>
-            <score>3</score>
-        "#
-        .unindent();
+    fn new<T: 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
+    ) -> Self::Result<Entity<T>> {
+        self.app.new(build_entity)
+    }
 
-        let output = parse_judge_output(&response).unwrap();
-        assert_eq!(
-            output.analysis,
-            "The model did a good job but there were still compilations errors."
-        );
-        assert_eq!(output.score, 3);
+    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
+        self.app.reserve_entity()
+    }
 
-        let response = r#"
-            Text around ignored
+    fn insert_entity<T: 'static>(
+        &mut self,
+        reservation: gpui::Reservation<T>,
+        build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
+    ) -> Self::Result<Entity<T>> {
+        self.app.insert_entity(reservation, build_entity)
+    }
 
-            <analysis>
-                Failed to compile:
-                - Error 1
-                - Error 2
-            </analysis>
+    fn update_entity<T, R>(
+        &mut self,
+        handle: &Entity<T>,
+        update: impl FnOnce(&mut T, &mut gpui::Context<T>) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.app.update_entity(handle, update)
+    }
 
-            <score>1</score>
-        "#
-        .unindent();
+    fn read_entity<T, R>(
+        &self,
+        handle: &Entity<T>,
+        read: impl FnOnce(&T, &App) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.app.read_entity(handle, read)
+    }
 
-        let output = parse_judge_output(&response).unwrap();
-        assert_eq!(output.analysis, "Failed to compile:\n- Error 1\n- Error 2");
-        assert_eq!(output.score, 1);
+    fn update_window<T, F>(&mut self, window: gpui::AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(gpui::AnyView, &mut gpui::Window, &mut App) -> T,
+    {
+        self.app.update_window(window, f)
+    }
+
+    fn read_window<T, R>(
+        &self,
+        window: &gpui::WindowHandle<T>,
+        read: impl FnOnce(Entity<T>, &App) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        self.app.read_window(window, read)
+    }
+
+    fn background_spawn<R>(
+        &self,
+        future: impl std::future::Future<Output = R> + Send + 'static,
+    ) -> gpui::Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.app.background_spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: gpui::Global,
+    {
+        self.app.read_global(callback)
+    }
+}
+
+#[derive(Debug)]
+pub struct Response {
+    messages: Vec<Message>,
+}
+
+impl Response {
+    pub fn new(messages: Vec<Message>) -> Self {
+        Self { messages }
+    }
+
+    pub fn expect_tool(
+        &self,
+        tool_name: &'static str,
+        cx: &mut ExampleContext,
+    ) -> Result<&ToolUse> {
+        let result = self.messages.iter().find_map(|msg| {
+            msg.tool_use
+                .iter()
+                .find(|tool_use| tool_use.name == tool_name)
+        });
+        cx.assert_some(result, format!("called `{}`", tool_name))
+    }
+
+    #[allow(dead_code)]
+    pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
+        self.messages.iter().flat_map(|msg| &msg.tool_use)
+    }
+
+    pub fn texts(&self) -> impl Iterator<Item = String> {
+        self.messages.iter().map(|message| message.text.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct Message {
+    _role: Role,
+    text: String,
+    tool_use: Vec<ToolUse>,
+}
+
+#[derive(Debug)]
+pub struct ToolUse {
+    pub name: String,
+    value: serde_json::Value,
+}
+
+impl ToolUse {
+    pub fn parse_input<Input>(&self) -> Result<Input>
+    where
+        Input: for<'de> serde::Deserialize<'de>,
+    {
+        serde_json::from_value::<Input>(self.value.clone()).map_err(|err| anyhow!(err))
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileEdits {
+    pub hunks: Vec<FileEditHunk>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileEditHunk {
+    pub base_text: String,
+    pub text: String,
+    pub status: DiffHunkStatus,
+}
+
+impl FileEdits {
+    pub fn has_added_line(&self, line: &str) -> bool {
+        self.hunks.iter().any(|hunk| {
+            hunk.status == DiffHunkStatus::added_none()
+                && hunk.base_text.is_empty()
+                && hunk.text.contains(line)
+        })
     }
 }

@@ -41,17 +41,17 @@ struct KeyContextView {
 
 impl KeyContextView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let sub1 = cx.observe_keystrokes(|this, e, window, cx| {
+        let sub1 = cx.observe_keystrokes(|this, e, _, cx| {
             let mut pending = this.pending_keystrokes.take().unwrap_or_default();
             pending.push(e.keystroke.clone());
             let mut possibilities = cx.all_bindings_for_input(&pending);
             possibilities.reverse();
-            this.context_stack = window.context_stack();
             this.last_keystrokes = Some(
                 json!(pending.iter().map(|p| p.unparse()).join(" "))
                     .to_string()
                     .into(),
             );
+            this.context_stack = e.context_stack.clone();
             this.last_possibilities = possibilities
                 .into_iter()
                 .map(|binding| {
@@ -89,6 +89,7 @@ impl KeyContextView {
                     )
                 })
                 .collect();
+            cx.notify();
         });
         let sub2 = cx.observe_pending_input(window, |this, window, cx| {
             this.pending_keystrokes = window
@@ -149,8 +150,8 @@ impl Item for KeyContextView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Keyboard Context".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Keyboard Context".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -173,7 +174,7 @@ impl Item for KeyContextView {
 impl Render for KeyContextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
-        let key_equivalents = get_key_equivalents(cx.keyboard_layout());
+        let key_equivalents = get_key_equivalents(cx.keyboard_layout().id());
         v_flex()
             .id("key-context-view")
             .overflow_scroll()
@@ -237,7 +238,7 @@ impl Render for KeyContextView {
                     .mt_8(),
             )
             .children({
-                window.context_stack().into_iter().enumerate().map(|(i, context)| {
+                self.context_stack.iter().enumerate().map(|(i, context)| {
                     let primary = context.primary().map(|e| e.key.clone()).unwrap_or_default();
                     let secondary = context
                         .secondary()

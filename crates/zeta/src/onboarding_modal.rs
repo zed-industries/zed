@@ -254,7 +254,7 @@ impl Render for ZedPredictModal {
                                     .text_color(text_color)
                                     .child("tab")
                                     .with_animation(
-                                        ElementId::Integer(n),
+                                        n,
                                         Animation::new(Duration::from_secs(2)).repeat(),
                                         move |tab, delta| {
                                             let delta = (delta - 0.15 * n as f32) / 0.7;

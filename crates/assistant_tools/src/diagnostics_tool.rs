@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
-use gpui::{App, Entity, Task};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
@@ -66,11 +66,11 @@ impl Tool for DiagnosticsTool {
         if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
             .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
+                Some(path) if !path.is_empty() => Some(path),
                 _ => None,
             })
         {
-            format!("Check diagnostics for {path}")
+            format!("Check diagnostics for {}", MarkdownInlineCode(&path))
         } else {
             "Check project diagnostics".to_string()
         }
@@ -82,6 +82,7 @@ impl Tool for DiagnosticsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)

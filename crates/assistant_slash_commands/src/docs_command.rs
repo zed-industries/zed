@@ -83,7 +83,7 @@ impl DocsSlashCommand {
                     .upgrade()
                     .ok_or_else(|| anyhow!("workspace was dropped"))?;
                 let project = workspace.read(cx).project().clone();
-                anyhow::Ok(project.read(cx).client().http_client().clone())
+                anyhow::Ok(project.read(cx).client().http_client())
             });
 
             if let Some(http_client) = http_client.log_err() {

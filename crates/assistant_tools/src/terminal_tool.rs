@@ -1,23 +1,32 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
-use futures::io::BufReader;
-use futures::{AsyncBufReadExt, AsyncReadExt, FutureExt};
-use gpui::{App, AppContext, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use gpui::{
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
+    Transformation, WeakEntity, Window, percentage,
+};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::future;
-use util::get_system_shell;
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::ExitStatus,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use terminal_view::TerminalView;
+use ui::{Disclosure, IconName, Tooltip, prelude::*};
+use util::{
+    get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
+    time::duration_alt_display,
+};
+use workspace::Workspace;
 
-use std::path::Path;
-use std::sync::Arc;
-use ui::IconName;
-use util::command::new_smol_command;
-use util::markdown::MarkdownString;
+const COMMAND_OUTPUT_LIMIT: usize = 16 * 1024;
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute.
     command: String,
@@ -55,17 +64,14 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownString::inline_code(&first_line).0,
-                    1 => {
-                        MarkdownString::inline_code(&format!(
-                            "{} - {} more line",
-                            first_line, remaining_line_count
-                        ))
-                        .0
-                    }
-                    n => {
-                        MarkdownString::inline_code(&format!("{} - {} more lines", first_line, n)).0
-                    }
+                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    1 => MarkdownInlineCode(&format!(
+                        "{} - {} more line",
+                        first_line, remaining_line_count
+                    ))
+                    .to_string(),
+                    n => MarkdownInlineCode(&format!("{} - {} more lines", first_line, n))
+                        .to_string(),
                 }
             }
             Err(_) => "Run terminal command".to_string(),
@@ -78,294 +84,426 @@ impl Tool for TerminalTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
+        let Some(window) = window else {
+            return Task::ready(Err(anyhow!("no window options"))).into();
+        };
+
         let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let project = project.read(cx);
         let input_path = Path::new(&input.cd);
-        let working_dir = if input.cd == "." {
-            // Accept "." as meaning "the one worktree" if we only have one worktree.
-            let mut worktrees = project.worktrees(cx);
-
-            let only_worktree = match worktrees.next() {
-                Some(worktree) => worktree,
-                None => {
-                    return Task::ready(Err(anyhow!("No worktrees found in the project"))).into();
-                }
-            };
-
-            if worktrees.next().is_some() {
-                return Task::ready(Err(anyhow!(
-                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly."
-                ))).into();
-            }
-
-            only_worktree.read(cx).abs_path()
-        } else if input_path.is_absolute() {
-            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
-            if !project
-                .worktrees(cx)
-                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
-            {
-                return Task::ready(Err(anyhow!(
-                    "The absolute path must be within one of the project's worktrees"
-                )))
-                .into();
-            }
-
-            input_path.into()
-        } else {
-            let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
-                return Task::ready(Err(anyhow!(
-                    "`cd` directory {} not found in the project",
-                    &input.cd
-                )))
-                .into();
-            };
-
-            worktree.read(cx).abs_path()
+        let working_dir = match working_dir(cx, &input, &project, input_path) {
+            Ok(dir) => dir,
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
+        let terminal = project.update(cx, |project, cx| {
+            project.create_terminal(
+                TerminalKind::Task(task::SpawnInTerminal {
+                    command: get_system_shell(),
+                    args: vec!["-c".into(), input.command.clone()],
+                    cwd: working_dir.clone(),
+                    ..Default::default()
+                }),
+                window,
+                cx,
+            )
+        });
 
-        cx.background_spawn(run_command_limited(working_dir, input.command))
-            .into()
+        let card = cx.new(|cx| {
+            TerminalToolCard::new(input.command.clone(), working_dir.clone(), cx.entity_id())
+        });
+
+        let output = cx.spawn({
+            let card = card.clone();
+            async move |cx| {
+                let terminal = terminal.await?;
+                let workspace = window
+                    .downcast::<Workspace>()
+                    .and_then(|handle| handle.entity(cx).ok())
+                    .context("no workspace entity in root of window")?;
+
+                let terminal_view = window.update(cx, |_, window, cx| {
+                    cx.new(|cx| {
+                        TerminalView::new(
+                            terminal.clone(),
+                            workspace.downgrade(),
+                            None,
+                            project.downgrade(),
+                            window,
+                            cx,
+                        )
+                    })
+                })?;
+                let _ = card.update(cx, |card, _| {
+                    card.terminal = Some(terminal_view.clone());
+                    card.start_instant = Instant::now();
+                });
+
+                let exit_status = terminal
+                    .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .await;
+                let (content, content_line_count) = terminal.update(cx, |terminal, _| {
+                    (terminal.get_content(), terminal.total_lines())
+                })?;
+
+                let previous_len = content.len();
+                let (processed_content, finished_with_empty_output) =
+                    process_content(content, &input.command, exit_status);
+
+                let _ = card.update(cx, |card, _| {
+                    card.command_finished = true;
+                    card.exit_status = exit_status;
+                    card.was_content_truncated = processed_content.len() < previous_len;
+                    card.original_content_len = previous_len;
+                    card.content_line_count = content_line_count;
+                    card.finished_with_empty_output = finished_with_empty_output;
+                    card.elapsed_time = Some(card.start_instant.elapsed());
+                });
+
+                Ok(processed_content)
+            }
+        });
+
+        ToolResult {
+            output,
+            card: Some(card.into()),
+        }
     }
 }
 
-const LIMIT: usize = 16 * 1024;
+fn process_content(
+    content: String,
+    command: &str,
+    exit_status: Option<ExitStatus>,
+) -> (String, bool) {
+    let should_truncate = content.len() > COMMAND_OUTPUT_LIMIT;
 
-async fn run_command_limited(working_dir: Arc<Path>, command: String) -> Result<String> {
-    let shell = get_system_shell();
+    let content = if should_truncate {
+        let mut end_ix = COMMAND_OUTPUT_LIMIT.min(content.len());
+        while !content.is_char_boundary(end_ix) {
+            end_ix -= 1;
+        }
+        // Don't truncate mid-line, clear the remainder of the last line
+        end_ix = content[..end_ix].rfind('\n').unwrap_or(end_ix);
+        &content[..end_ix]
+    } else {
+        content.as_str()
+    };
+    let is_empty = content.trim().is_empty();
 
-    let mut cmd = new_smol_command(&shell)
-        .arg("-c")
-        .arg(&command)
-        .current_dir(working_dir)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .context("Failed to execute terminal command")?;
-
-    let mut combined_buffer = String::with_capacity(LIMIT + 1);
-
-    let mut out_reader = BufReader::new(cmd.stdout.take().context("Failed to get stdout")?);
-    let mut out_tmp_buffer = String::with_capacity(512);
-    let mut err_reader = BufReader::new(cmd.stderr.take().context("Failed to get stderr")?);
-    let mut err_tmp_buffer = String::with_capacity(512);
-
-    let mut out_line = Box::pin(
-        out_reader
-            .read_line(&mut out_tmp_buffer)
-            .left_future()
-            .fuse(),
-    );
-    let mut err_line = Box::pin(
-        err_reader
-            .read_line(&mut err_tmp_buffer)
-            .left_future()
-            .fuse(),
+    let content = format!(
+        "```\n{}{}```",
+        content,
+        if content.ends_with('\n') { "" } else { "\n" }
     );
 
-    let mut has_stdout = true;
-    let mut has_stderr = true;
-    while (has_stdout || has_stderr) && combined_buffer.len() < LIMIT + 1 {
-        futures::select_biased! {
-            read = out_line => {
-                drop(out_line);
-                combined_buffer.extend(out_tmp_buffer.drain(..));
-                if read? == 0 {
-                    out_line = Box::pin(future::pending().right_future().fuse());
-                    has_stdout = false;
-                } else {
-                    out_line = Box::pin(out_reader.read_line(&mut out_tmp_buffer).left_future().fuse());
-                }
-            }
-            read = err_line => {
-                drop(err_line);
-                combined_buffer.extend(err_tmp_buffer.drain(..));
-                if read? == 0 {
-                    err_line = Box::pin(future::pending().right_future().fuse());
-                    has_stderr = false;
-                } else {
-                    err_line = Box::pin(err_reader.read_line(&mut err_tmp_buffer).left_future().fuse());
-                }
-            }
-        };
-    }
-
-    drop((out_line, err_line));
-
-    let truncated = combined_buffer.len() > LIMIT;
-    combined_buffer.truncate(LIMIT);
-
-    consume_reader(out_reader, truncated).await?;
-    consume_reader(err_reader, truncated).await?;
-
-    let status = cmd.status().await.context("Failed to get command status")?;
-
-    let output_string = if truncated {
-        // Valid to find `\n` in UTF-8 since 0-127 ASCII characters are not used in
-        // multi-byte characters.
-        let last_line_ix = combined_buffer.bytes().rposition(|b| b == b'\n');
-        let combined_buffer = &combined_buffer[..last_line_ix.unwrap_or(combined_buffer.len())];
-
+    let content = if should_truncate {
         format!(
             "Command output too long. The first {} bytes:\n\n{}",
-            combined_buffer.len(),
-            output_block(&combined_buffer),
+            content.len(),
+            content,
         )
     } else {
-        output_block(&combined_buffer)
+        content
     };
 
-    let output_with_status = if status.success() {
-        if output_string.is_empty() {
-            "Command executed successfully.".to_string()
-        } else {
-            output_string.to_string()
+    let content = match exit_status {
+        Some(exit_status) if exit_status.success() => {
+            if is_empty {
+                "Command executed successfully.".to_string()
+            } else {
+                content.to_string()
+            }
         }
+        Some(exit_status) => {
+            let code = exit_status.code().unwrap_or(-1);
+            if is_empty {
+                format!("Command \"{command}\" failed with exit code {code}.")
+            } else {
+                format!("Command \"{command}\" failed with exit code {code}.\n\n{content}")
+            }
+        }
+        None => {
+            format!(
+                "Command failed or was interrupted.\nPartial output captured:\n\n{}",
+                content,
+            )
+        }
+    };
+    (content, is_empty)
+}
+
+fn working_dir(
+    cx: &mut App,
+    input: &TerminalToolInput,
+    project: &Entity<Project>,
+    input_path: &Path,
+) -> Result<Option<PathBuf>, &'static str> {
+    let project = project.read(cx);
+
+    if input.cd == "." {
+        // Accept "." as meaning "the one worktree" if we only have one worktree.
+        let mut worktrees = project.worktrees(cx);
+
+        match worktrees.next() {
+            Some(worktree) => {
+                if worktrees.next().is_some() {
+                    return Err(
+                        "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
+                    );
+                }
+                Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
+            }
+            None => Ok(None),
+        }
+    } else if input_path.is_absolute() {
+        // Absolute paths are allowed, but only if they're in one of the project's worktrees.
+        if !project
+            .worktrees(cx)
+            .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
+        {
+            return Err("The absolute path must be within one of the project's worktrees");
+        }
+
+        Ok(Some(input_path.into()))
     } else {
-        format!(
-            "Command failed with exit code {} (shell: {}).\n\n{}",
-            status.code().unwrap_or(-1),
-            shell,
-            output_string,
-        )
-    };
+        let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
+            return Err("`cd` directory {} not found in the project");
+        };
 
-    Ok(output_with_status)
+        Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
+    }
 }
 
-async fn consume_reader<T: AsyncReadExt + Unpin>(
-    mut reader: BufReader<T>,
-    truncated: bool,
-) -> Result<(), std::io::Error> {
-    loop {
-        let skipped_bytes = reader.fill_buf().await?;
-        if skipped_bytes.is_empty() {
-            break;
+struct TerminalToolCard {
+    input_command: String,
+    working_dir: Option<PathBuf>,
+    entity_id: EntityId,
+    exit_status: Option<ExitStatus>,
+    terminal: Option<Entity<TerminalView>>,
+    command_finished: bool,
+    was_content_truncated: bool,
+    finished_with_empty_output: bool,
+    content_line_count: usize,
+    original_content_len: usize,
+    preview_expanded: bool,
+    start_instant: Instant,
+    elapsed_time: Option<Duration>,
+}
+
+impl TerminalToolCard {
+    pub fn new(input_command: String, working_dir: Option<PathBuf>, entity_id: EntityId) -> Self {
+        Self {
+            input_command,
+            working_dir,
+            entity_id,
+            exit_status: None,
+            terminal: None,
+            command_finished: false,
+            was_content_truncated: false,
+            finished_with_empty_output: false,
+            original_content_len: 0,
+            content_line_count: 0,
+            preview_expanded: true,
+            start_instant: Instant::now(),
+            elapsed_time: None,
         }
-        let skipped_bytes_len = skipped_bytes.len();
-        reader.consume_unpin(skipped_bytes_len);
-
-        // Should only skip if we went over the limit
-        debug_assert!(truncated);
     }
-    Ok(())
 }
 
-fn output_block(output: &str) -> String {
-    format!(
-        "```\n{}{}```",
-        output,
-        if output.ends_with('\n') { "" } else { "\n" }
-    )
-}
+impl ToolCard for TerminalToolCard {
+    fn render(
+        &mut self,
+        status: &ToolUseStatus,
+        _window: &mut Window,
+        _workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(terminal) = self.terminal.as_ref() else {
+            return Empty.into_any();
+        };
 
-#[cfg(test)]
-#[cfg(not(windows))]
-mod tests {
-    use gpui::TestAppContext;
+        let tool_failed = matches!(status, ToolUseStatus::Error(_));
+        let command_failed =
+            self.command_finished && self.exit_status.is_none_or(|code| !code.success());
+        if (tool_failed || command_failed) && self.elapsed_time.is_none() {
+            self.elapsed_time = Some(self.start_instant.elapsed());
+        }
+        let time_elapsed = self
+            .elapsed_time
+            .unwrap_or_else(|| self.start_instant.elapsed());
+        let should_hide_terminal =
+            tool_failed || self.finished_with_empty_output || !self.preview_expanded;
 
-    use super::*;
+        let border_color = cx.theme().colors().border.opacity(0.6);
+        let header_bg = cx
+            .theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
 
-    #[gpui::test(iterations = 10)]
-    async fn test_run_command_simple(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
+        let header_label = h_flex()
+            .w_full()
+            .max_w_full()
+            .px_1()
+            .gap_0p5()
+            .opacity(0.8)
+            .child(
+                h_flex()
+                    .child(
+                        Icon::new(IconName::Terminal)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id(("terminal-tool-header-input-command", self.entity_id))
+                            .text_size(rems(0.8125))
+                            .font_buffer(cx)
+                            .child(self.input_command.clone())
+                            .ml_1p5()
+                            .mr_0p5()
+                            .tooltip({
+                                let path = self
+                                    .working_dir
+                                    .as_ref()
+                                    .cloned()
+                                    .or_else(|| env::current_dir().ok())
+                                    .map(|path| format!("\"{}\"", path.display()))
+                                    .unwrap_or_else(|| "current directory".to_string());
+                                Tooltip::text(if self.command_finished {
+                                    format!("Ran in {path}")
+                                } else {
+                                    format!("Running in {path}")
+                                })
+                            }),
+                    ),
+            )
+            .into_any_element();
 
-        let result =
-            run_command_limited(Path::new(".").into(), "echo 'Hello, World!'".to_string()).await;
+        let header = h_flex()
+            .flex_none()
+            .p_1()
+            .gap_1()
+            .justify_between()
+            .rounded_t_md()
+            .bg(header_bg)
+            .child(header_label)
+            .map(|header| {
+                let header = header
+                    .when(self.was_content_truncated, |header| {
+                        let tooltip =
+                            if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
+                                "Output exceeded terminal max lines and was \
+                                truncated, the model received the first 16 KB."
+                                    .to_string()
+                            } else {
+                                format!(
+                                    "Output is {} long, to avoid unexpected token usage, \
+                                    only 16 KB was sent back to the model.",
+                                    format_file_size(self.original_content_len as u64, true),
+                                )
+                            };
+                        header.child(
+                            div()
+                                .id(("terminal-tool-truncated-label", self.entity_id))
+                                .tooltip(Tooltip::text(tooltip))
+                                .child(
+                                    Label::new("(truncated)")
+                                        .color(Color::Disabled)
+                                        .size(LabelSize::Small),
+                                ),
+                        )
+                    })
+                    .when(time_elapsed > Duration::from_secs(10), |header| {
+                        header.child(
+                            Label::new(format!("({})", duration_alt_display(time_elapsed)))
+                                .buffer_font(cx)
+                                .color(Color::Disabled)
+                                .size(LabelSize::Small),
+                        )
+                    });
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "```\nHello, World!\n```");
-    }
+                if tool_failed || command_failed {
+                    header.child(
+                        div()
+                            .id(("terminal-tool-error-code-indicator", self.entity_id))
+                            .child(
+                                Icon::new(IconName::Close)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .when(command_failed && self.exit_status.is_some(), |this| {
+                                this.tooltip(Tooltip::text(format!(
+                                    "Exited with code {}",
+                                    self.exit_status
+                                        .and_then(|status| status.code())
+                                        .unwrap_or(-1),
+                                )))
+                            })
+                            .when(
+                                !command_failed && tool_failed && status.error().is_some(),
+                                |this| {
+                                    this.tooltip(Tooltip::text(format!(
+                                        "Error: {}",
+                                        status.error().unwrap(),
+                                    )))
+                                },
+                            ),
+                    )
+                } else if self.command_finished {
+                    header.child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                } else {
+                    header.child(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Info)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            ),
+                    )
+                }
+            })
+            .when(!tool_failed && !self.finished_with_empty_output, |header| {
+                header.child(
+                    Disclosure::new(
+                        ("terminal-tool-disclosure", self.entity_id),
+                        self.preview_expanded,
+                    )
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown)
+                    .on_click(cx.listener(
+                        move |this, _event, _window, _cx| {
+                            this.preview_expanded = !this.preview_expanded;
+                        },
+                    )),
+                )
+            });
 
-    #[gpui::test(iterations = 10)]
-    async fn test_interleaved_stdout_stderr(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let command = "echo 'stdout 1' && sleep 0.01 && echo 'stderr 1' >&2 && sleep 0.01 && echo 'stdout 2' && sleep 0.01 && echo 'stderr 2' >&2";
-        let result = run_command_limited(Path::new(".").into(), command.to_string()).await;
-
-        assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            "```\nstdout 1\nstderr 1\nstdout 2\nstderr 2\n```"
-        );
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_multiple_output_reads(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        // Command with multiple outputs that might require multiple reads
-        let result = run_command_limited(
-            Path::new(".").into(),
-            "echo '1'; sleep 0.01; echo '2'; sleep 0.01; echo '3'".to_string(),
-        )
-        .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "```\n1\n2\n3\n```");
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_output_truncation_single_line(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let cmd = format!("echo '{}'; sleep 0.01;", "X".repeat(LIMIT * 2));
-
-        let result = run_command_limited(Path::new(".").into(), cmd).await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
-        let content_end = output.rfind("\n```").unwrap_or(output.len());
-        let content_length = content_end - content_start;
-
-        // Output should be exactly the limit
-        assert_eq!(content_length, LIMIT);
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_output_truncation_multiline(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let cmd = format!("echo '{}'; ", "X".repeat(120)).repeat(160);
-        let result = run_command_limited(Path::new(".").into(), cmd).await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        assert!(output.starts_with("Command output too long. The first 16334 bytes:\n\n"));
-
-        let content_start = output.find("```\n").map(|i| i + 4).unwrap_or(0);
-        let content_end = output.rfind("\n```").unwrap_or(output.len());
-        let content_length = content_end - content_start;
-
-        assert!(content_length <= LIMIT);
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_command_failure(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let result = run_command_limited(Path::new(".").into(), "exit 42".to_string()).await;
-
-        assert!(result.is_ok());
-        let output = result.unwrap();
-
-        // Extract the shell name from path for cleaner test output
-        let shell_path = std::env::var("SHELL").unwrap_or("bash".to_string());
-
-        let expected_output = format!(
-            "Command failed with exit code 42 (shell: {}).\n\n```\n\n```",
-            shell_path
-        );
-        assert_eq!(output, expected_output);
+        v_flex()
+            .mb_2()
+            .border_1()
+            .when(tool_failed || command_failed, |card| card.border_dashed())
+            .border_color(border_color)
+            .rounded_lg()
+            .overflow_hidden()
+            .child(header)
+            .when(!should_hide_terminal, |this| {
+                this.child(div().child(terminal.clone()).min_h(px(250.0)))
+            })
+            .into_any()
     }
 }

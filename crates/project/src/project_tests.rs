@@ -292,7 +292,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         })
         .into_iter()
         .map(|(source_kind, task)| {
-            let resolved = task.resolved.unwrap();
+            let resolved = task.resolved;
             (
                 source_kind,
                 task.resolved_label,
@@ -359,7 +359,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         }])
                         .to_string(),
                     ),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -370,7 +369,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .map(|(source_kind, task)| {
-            let resolved = task.resolved.unwrap();
+            let resolved = task.resolved;
             (
                 source_kind,
                 task.resolved_label,
@@ -495,7 +494,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         active_worktree_tasks
             .into_iter()
             .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
+                let resolved = task.resolved;
                 (source_kind, resolved.command)
             })
             .collect::<Vec<_>>(),
@@ -4822,6 +4821,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4856,6 +4856,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4900,6 +4901,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4921,6 +4923,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4945,6 +4948,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4970,6 +4974,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
                     .unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5016,6 +5021,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5042,6 +5048,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5066,6 +5073,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5091,6 +5099,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 Default::default(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
                     .unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5132,6 +5141,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5153,6 +5163,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5174,6 +5185,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5195,6 +5207,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5249,6 +5262,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                true,
                 None,
             )
             .unwrap(),
@@ -5269,6 +5283,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                true,
                 None,
             )
             .unwrap(),
@@ -5290,6 +5305,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5345,6 +5361,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5367,6 +5384,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5410,6 +5428,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 files_to_include,
                 files_to_exclude,
+                false,
                 None,
             )
             .unwrap(),
@@ -5448,6 +5467,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         false,
         Default::default(),
         Default::default(),
+        false,
         None,
     );
     assert_matches!(unicode_case_sensitive_query, Ok(SearchQuery::Text { .. }));
@@ -5468,6 +5488,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         false,
         Default::default(),
         Default::default(),
+        false,
         None,
     );
     assert_matches!(
@@ -5495,6 +5516,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -8274,7 +8296,10 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             ".git": {
                 "worktrees": {
                     "some-worktree": {
-                        "commondir": "../..\n"
+                        "commondir": "../..\n",
+                        // For is_git_dir
+                        "HEAD": "",
+                        "config": ""
                     }
                 },
                 "modules": {

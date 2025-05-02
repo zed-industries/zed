@@ -635,7 +635,7 @@ impl Render for InputExample {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(format!("Keyboard {}", cx.keyboard_layout()))
+                    .child(format!("Keyboard {}", cx.keyboard_layout().name()))
                     .child(
                         div()
                             .border_1()

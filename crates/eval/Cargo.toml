@@ -3,20 +3,35 @@ name = "eval"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
+license = "GPL-3.0-or-later"
+default-run = "eval"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "eval"
+path = "src/eval.rs"
+
+[[bin]]
+name = "explorer"
+path = "src/explorer.rs"
 
 [dependencies]
 agent.workspace = true
 anyhow.workspace = true
-async-watch.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
+async-trait.workspace = true
+async-watch.workspace = true
+buffer_diff.workspace = true
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 collections.workspace = true
 context_server.workspace = true
-dap.workspace = true
-dirs = "5.0"
+dirs.workspace = true
+dotenv.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true
@@ -28,26 +43,25 @@ language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
-languages.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
+markdown.workspace = true
 node_runtime.workspace = true
+pathdiff.workspace = true
 paths.workspace = true
+pretty_assertions.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 reqwest_client.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
+smol.workspace = true
 telemetry.workspace = true
 toml.workspace = true
 unindent.workspace = true
 util.workspace = true
-uuid = { version = "1.6", features = ["v4"] }
+uuid.workspace = true
 workspace-hack.workspace = true
-
-[[bin]]
-name = "eval"
-path = "src/eval.rs"
-
-[lints]
-workspace = true

@@ -1,3 +1,4 @@
+mod conflict_set;
 pub mod git_traversal;
 
 use crate::{
@@ -10,9 +11,10 @@ use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
+pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::Fs;
 use futures::{
-    FutureExt as _, StreamExt as _,
+    FutureExt, StreamExt as _,
     channel::{mpsc, oneshot},
     future::{self, Shared},
 };
@@ -74,7 +76,7 @@ pub struct GitStore {
     #[allow(clippy::type_complexity)]
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
-    diffs: HashMap<BufferId, Entity<BufferDiffState>>,
+    diffs: HashMap<BufferId, Entity<BufferGitState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -85,12 +87,15 @@ struct SharedDiffs {
     uncommitted: Option<Entity<BufferDiff>>,
 }
 
-struct BufferDiffState {
+struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
+    reparse_conflict_markers_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     language_registry: Option<Arc<LanguageRegistry>>,
+    conflict_updated_futures: Vec<oneshot::Sender<()>>,
     recalculating_tx: postage::watch::Sender<bool>,
 
     /// These operation counts are used to ensure that head and index text
@@ -224,16 +229,22 @@ impl sum_tree::KeyedItem for StatusEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MergeDetails {
+    pub conflicted_paths: TreeSet<RepoPath>,
+    pub message: Option<SharedString>,
+    pub heads: Vec<Option<SharedString>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
-    pub merge_message: Option<SharedString>,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
     pub branch: Option<Branch>,
-    pub merge_conflicts: TreeSet<RepoPath>,
-    pub merge_head_shas: Vec<SharedString>,
+    pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
+    pub merge: MergeDetails,
 }
 
 type JobId = u64;
@@ -296,6 +307,7 @@ pub enum GitStoreEvent {
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
+    ConflictsUpdated,
 }
 
 impl EventEmitter<RepositoryEvent> for Repository {}
@@ -680,10 +692,11 @@ impl GitStore {
             let text_snapshot = buffer.text_snapshot();
             this.loading_diffs.remove(&(buffer_id, kind));
 
+            let git_store = cx.weak_entity();
             let diff_state = this
                 .diffs
                 .entry(buffer_id)
-                .or_insert_with(|| cx.new(|_| BufferDiffState::default()));
+                .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
 
             let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
 
@@ -734,6 +747,62 @@ impl GitStore {
     ) -> Option<Entity<BufferDiff>> {
         let diff_state = self.diffs.get(&buffer_id)?;
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
+    }
+
+    pub fn open_conflict_set(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Entity<ConflictSet> {
+        log::debug!("open conflict set");
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some(git_state) = self.diffs.get(&buffer_id) {
+            if let Some(conflict_set) = git_state
+                .read(cx)
+                .conflict_set
+                .as_ref()
+                .and_then(|weak| weak.upgrade())
+            {
+                let conflict_set = conflict_set.clone();
+                let buffer_snapshot = buffer.read(cx).text_snapshot();
+
+                git_state.update(cx, |state, cx| {
+                    let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+                });
+
+                return conflict_set;
+            }
+        }
+
+        let is_unmerged = self
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .map_or(false, |(repo, path)| {
+                repo.read(cx)
+                    .snapshot
+                    .merge
+                    .conflicted_paths
+                    .contains(&path)
+            });
+        let git_store = cx.weak_entity();
+        let buffer_git_state = self
+            .diffs
+            .entry(buffer_id)
+            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+        let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
+
+        self._subscriptions
+            .push(cx.subscribe(&conflict_set, |_, _, _, cx| {
+                cx.emit(GitStoreEvent::ConflictsUpdated);
+            }));
+
+        buffer_git_state.update(cx, |state, cx| {
+            state.conflict_set = Some(conflict_set.downgrade());
+            let buffer_snapshot = buffer.read(cx).text_snapshot();
+            let _ = state.reparse_conflict_markers(buffer_snapshot, cx);
+        });
+
+        conflict_set
     }
 
     pub fn project_path_git_status(
@@ -828,32 +897,6 @@ impl GitStore {
                 .await?
                 .into_iter()
                 .all(|result| result))
-        })
-    }
-
-    pub fn delete_checkpoint(
-        &self,
-        checkpoint: GitStoreCheckpoint,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let repositories_by_work_directory_abs_path = self
-            .repositories
-            .values()
-            .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
-            .collect::<HashMap<_, _>>();
-
-        let mut tasks = Vec::new();
-        for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
-            if let Some(repository) =
-                repositories_by_work_directory_abs_path.get(&work_dir_abs_path)
-            {
-                let delete = repository.update(cx, |this, _| this.delete_checkpoint(checkpoint));
-                tasks.push(async move { delete.await? });
-            }
-        }
-        cx.background_spawn(async move {
-            future::try_join_all(tasks).await?;
-            Ok(())
         })
     }
 
@@ -958,6 +1001,7 @@ impl GitStore {
 
                         let sha = backend
                             .head_sha()
+                            .await
                             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
                         let provider_registry =
@@ -1104,6 +1148,35 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
+        let merge_conflicts = repo.read(cx).snapshot.merge.conflicted_paths.clone();
+        for (buffer_id, diff) in self.diffs.iter() {
+            if let Some((buffer_repo, repo_path)) =
+                self.repository_and_path_for_buffer_id(*buffer_id, cx)
+            {
+                if buffer_repo == repo {
+                    diff.update(cx, |diff, cx| {
+                        if let Some(conflict_set) = &diff.conflict_set {
+                            let conflict_status_changed =
+                                conflict_set.update(cx, |conflict_set, cx| {
+                                    let has_conflict = merge_conflicts.contains(&repo_path);
+                                    conflict_set.set_has_conflict(has_conflict, cx)
+                                })?;
+                            if conflict_status_changed {
+                                let buffer_store = self.buffer_store.read(cx);
+                                if let Some(buffer) = buffer_store.get(*buffer_id) {
+                                    let _ = diff.reparse_conflict_markers(
+                                        buffer.read(cx).text_snapshot(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+                        anyhow::Ok(())
+                    })
+                    .ok();
+                }
+            }
+        }
         cx.emit(GitStoreEvent::RepositoryUpdated(
             id,
             event.clone(),
@@ -1243,9 +1316,15 @@ impl GitStore {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
                 let buffer = buffer.read(cx).text_snapshot();
                 diff_state.update(cx, |diff_state, cx| {
-                    diff_state.recalculate_diffs(buffer, cx);
-                    futures.extend(diff_state.wait_for_recalculation());
+                    diff_state.recalculate_diffs(buffer.clone(), cx);
+                    futures.extend(diff_state.wait_for_recalculation().map(FutureExt::boxed));
                 });
+                futures.push(diff_state.update(cx, |diff_state, cx| {
+                    diff_state
+                        .reparse_conflict_markers(buffer, cx)
+                        .map(|_| {})
+                        .boxed()
+                }));
             }
         }
         async move {
@@ -2119,11 +2198,84 @@ impl GitStore {
     }
 }
 
-impl BufferDiffState {
+impl BufferGitState {
+    fn new(_git_store: WeakEntity<GitStore>) -> Self {
+        Self {
+            unstaged_diff: Default::default(),
+            uncommitted_diff: Default::default(),
+            recalculate_diff_task: Default::default(),
+            language: Default::default(),
+            language_registry: Default::default(),
+            recalculating_tx: postage::watch::channel_with(false).0,
+            hunk_staging_operation_count: 0,
+            hunk_staging_operation_count_as_of_write: 0,
+            head_text: Default::default(),
+            index_text: Default::default(),
+            head_changed: Default::default(),
+            index_changed: Default::default(),
+            language_changed: Default::default(),
+            conflict_updated_futures: Default::default(),
+            conflict_set: Default::default(),
+            reparse_conflict_markers_task: Default::default(),
+        }
+    }
+
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
         let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+    }
+
+    fn reparse_conflict_markers(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+
+        let Some(conflict_set) = self
+            .conflict_set
+            .as_ref()
+            .and_then(|conflict_set| conflict_set.upgrade())
+        else {
+            return rx;
+        };
+
+        let old_snapshot = conflict_set.read_with(cx, |conflict_set, _| {
+            if conflict_set.has_conflict {
+                Some(conflict_set.snapshot())
+            } else {
+                None
+            }
+        });
+
+        if let Some(old_snapshot) = old_snapshot {
+            self.conflict_updated_futures.push(tx);
+            self.reparse_conflict_markers_task = Some(cx.spawn(async move |this, cx| {
+                let (snapshot, changed_range) = cx
+                    .background_spawn(async move {
+                        let new_snapshot = ConflictSet::parse(&buffer);
+                        let changed_range = old_snapshot.compare(&new_snapshot, &buffer);
+                        (new_snapshot, changed_range)
+                    })
+                    .await;
+                this.update(cx, |this, cx| {
+                    if let Some(conflict_set) = &this.conflict_set {
+                        conflict_set
+                            .update(cx, |conflict_set, cx| {
+                                conflict_set.set_snapshot(snapshot, changed_range, cx);
+                            })
+                            .ok();
+                    }
+                    let futures = std::mem::take(&mut this.conflict_updated_futures);
+                    for tx in futures {
+                        tx.send(()).ok();
+                    }
+                })
+            }))
+        }
+
+        rx
     }
 
     fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -2360,26 +2512,6 @@ impl BufferDiffState {
     }
 }
 
-impl Default for BufferDiffState {
-    fn default() -> Self {
-        Self {
-            unstaged_diff: Default::default(),
-            uncommitted_diff: Default::default(),
-            recalculate_diff_task: Default::default(),
-            language: Default::default(),
-            language_registry: Default::default(),
-            recalculating_tx: postage::watch::channel_with(false).0,
-            hunk_staging_operation_count: 0,
-            hunk_staging_operation_count_as_of_write: 0,
-            head_text: Default::default(),
-            index_text: Default::default(),
-            head_changed: Default::default(),
-            index_changed: Default::default(),
-            language_changed: Default::default(),
-        }
-    }
-}
-
 fn make_remote_delegate(
     this: Entity<GitStore>,
     project_id: u64,
@@ -2422,19 +2554,19 @@ impl RepositorySnapshot {
     fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>) -> Self {
         Self {
             id,
-            merge_message: None,
             statuses_by_path: Default::default(),
             work_directory_abs_path,
             branch: None,
-            merge_conflicts: Default::default(),
-            merge_head_shas: Default::default(),
+            head_commit: None,
             scan_id: 0,
+            merge: Default::default(),
         }
     }
 
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -2442,7 +2574,8 @@ impl RepositorySnapshot {
                 .collect(),
             removed_statuses: Default::default(),
             current_merge_conflicts: self
-                .merge_conflicts
+                .merge
+                .conflicted_paths
                 .iter()
                 .map(|repo_path| repo_path.to_proto())
                 .collect(),
@@ -2499,10 +2632,12 @@ impl RepositorySnapshot {
 
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
-                .merge_conflicts
+                .merge
+                .conflicted_paths
                 .iter()
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
@@ -2537,7 +2672,7 @@ impl RepositorySnapshot {
     }
 
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.merge_conflicts.contains(repo_path)
+        self.merge.conflicted_paths.contains(repo_path)
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
@@ -2551,7 +2686,74 @@ impl RepositorySnapshot {
     }
 }
 
+impl MergeDetails {
+    async fn load(
+        backend: &Arc<dyn GitRepository>,
+        status: &SumTree<StatusEntry>,
+        prev_snapshot: &RepositorySnapshot,
+    ) -> Result<(MergeDetails, bool)> {
+        log::debug!("load merge details");
+        let message = backend.merge_message().await;
+        let heads = backend
+            .revparse_batch(vec![
+                "MERGE_HEAD".into(),
+                "CHERRY_PICK_HEAD".into(),
+                "REBASE_HEAD".into(),
+                "REVERT_HEAD".into(),
+                "APPLY_HEAD".into(),
+            ])
+            .await
+            .log_err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|opt| opt.map(SharedString::from))
+            .collect::<Vec<_>>();
+        let merge_heads_changed = heads != prev_snapshot.merge.heads;
+        let conflicted_paths = if merge_heads_changed {
+            let current_conflicted_paths = TreeSet::from_ordered_entries(
+                status
+                    .iter()
+                    .filter(|entry| entry.status.is_conflicted())
+                    .map(|entry| entry.repo_path.clone()),
+            );
+
+            // It can happen that we run a scan while a lengthy merge is in progress
+            // that will eventually result in conflicts, but before those conflicts
+            // are reported by `git status`. Since for the moment we only care about
+            // the merge heads state for the purposes of tracking conflicts, don't update
+            // this state until we see some conflicts.
+            if heads.iter().any(Option::is_some)
+                && !prev_snapshot.merge.heads.iter().any(Option::is_some)
+                && current_conflicted_paths.is_empty()
+            {
+                log::debug!("not updating merge heads because no conflicts found");
+                return Ok((
+                    MergeDetails {
+                        message: message.map(SharedString::from),
+                        ..prev_snapshot.merge.clone()
+                    },
+                    false,
+                ));
+            }
+
+            current_conflicted_paths
+        } else {
+            prev_snapshot.merge.conflicted_paths.clone()
+        };
+        let details = MergeDetails {
+            conflicted_paths,
+            message: message.map(SharedString::from),
+            heads,
+        };
+        Ok((details, merge_heads_changed))
+    }
+}
+
 impl Repository {
+    pub fn snapshot(&self) -> RepositorySnapshot {
+        self.snapshot.clone()
+    }
+
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
@@ -3588,13 +3790,9 @@ impl Repository {
 
     pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         let id = self.id;
-        self.send_job(None, move |repo, cx| async move {
+        self.send_job(None, move |repo, _| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => {
-                    let backend = backend.clone();
-                    cx.background_spawn(async move { backend.branches().await })
-                        .await
-                }
+                RepositoryState::Local { backend, .. } => backend.branches().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GitGetBranches {
@@ -3748,7 +3946,12 @@ impl Repository {
                 .map(|path| RepoPath(Path::new(&path).into())),
         );
         self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
-        self.snapshot.merge_conflicts = conflicted_paths;
+        self.snapshot.head_commit = update
+            .head_commit_details
+            .as_ref()
+            .map(proto_to_commit_details);
+
+        self.snapshot.merge.conflicted_paths = conflicted_paths;
 
         let edits = update
             .removed_statuses
@@ -3786,20 +3989,6 @@ impl Repository {
         })
     }
 
-    pub fn delete_checkpoint(
-        &mut self,
-        checkpoint: GitRepositoryCheckpoint,
-    ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local { backend, .. } => {
-                    backend.delete_checkpoint(checkpoint).await
-                }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
-            }
-        })
-    }
-
     pub fn diff_checkpoints(
         &mut self,
         base_checkpoint: GitRepositoryCheckpoint,
@@ -3827,6 +4016,8 @@ impl Repository {
             Some(GitJobKey::ReloadGitState),
             None,
             |state, mut cx| async move {
+                log::debug!("run scheduled git status scan");
+
                 let Some(this) = this.upgrade() else {
                     return Ok(());
                 };
@@ -4265,7 +4456,7 @@ fn deserialize_blame_buffer_response(
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
-        name: branch.name.to_string(),
+        ref_name: branch.ref_name.to_string(),
         unix_timestamp: branch
             .most_recent_commit
             .as_ref()
@@ -4294,7 +4485,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     git::repository::Branch {
         is_head: proto.is_head,
-        name: proto.name.clone().into(),
+        ref_name: proto.ref_name.clone().into(),
         upstream: proto
             .upstream
             .as_ref()
@@ -4322,6 +4513,26 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     }
 }
 
+fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
+    proto::GitCommitDetails {
+        sha: commit.sha.to_string(),
+        message: commit.message.to_string(),
+        commit_timestamp: commit.commit_timestamp,
+        author_email: commit.author_email.to_string(),
+        author_name: commit.author_name.to_string(),
+    }
+}
+
+fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
+    CommitDetails {
+        sha: proto.sha.clone().into(),
+        message: proto.message.clone().into(),
+        commit_timestamp: proto.commit_timestamp,
+        author_email: proto.author_email.clone().into(),
+        author_name: proto.author_name.clone().into(),
+    }
+}
+
 async fn compute_snapshot(
     id: RepositoryId,
     work_directory_abs_path: Arc<Path>,
@@ -4332,16 +4543,6 @@ async fn compute_snapshot(
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
     let statuses = backend.status(&[WORK_DIRECTORY_REPO_PATH.clone()]).await?;
-    let merge_message = backend
-        .merge_message()
-        .await
-        .and_then(|msg| Some(msg.lines().nth(0)?.to_owned().into()));
-    let merge_head_shas = backend
-        .merge_head_shas()
-        .into_iter()
-        .map(SharedString::from)
-        .collect();
-
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
@@ -4352,40 +4553,37 @@ async fn compute_snapshot(
             }),
         &(),
     );
+    let (merge_details, merge_heads_changed) =
+        MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
+    log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
-    let merge_head_shas_changed = merge_head_shas != prev_snapshot.merge_head_shas;
-
-    if merge_head_shas_changed
+    if merge_heads_changed
         || branch != prev_snapshot.branch
         || statuses_by_path != prev_snapshot.statuses_by_path
     {
         events.push(RepositoryEvent::Updated { full_scan: true });
     }
 
-    let mut current_merge_conflicts = TreeSet::default();
-    for (repo_path, status) in statuses.entries.iter() {
-        if status.is_conflicted() {
-            current_merge_conflicts.insert(repo_path.clone());
-        }
-    }
-
     // Cache merge conflict paths so they don't change from staging/unstaging,
     // until the merge heads change (at commit time, etc.).
-    let mut merge_conflicts = prev_snapshot.merge_conflicts.clone();
-    if merge_head_shas_changed {
-        merge_conflicts = current_merge_conflicts;
+    if merge_heads_changed {
         events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
+    // Useful when branch is None in detached head state
+    let head_commit = match backend.head_sha().await {
+        Some(head_sha) => backend.show(head_sha).await.log_err(),
+        None => None,
+    };
+
     let snapshot = RepositorySnapshot {
         id,
-        merge_message,
         statuses_by_path,
         work_directory_abs_path,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
-        merge_conflicts,
-        merge_head_shas,
+        head_commit,
+        merge: merge_details,
     };
 
     Ok((snapshot, events))

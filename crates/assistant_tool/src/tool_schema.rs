@@ -10,6 +10,11 @@ pub fn adapt_schema_to_format(
     json: &mut Value,
     format: LanguageModelToolSchemaFormat,
 ) -> Result<()> {
+    if let Value::Object(obj) = json {
+        obj.remove("$schema");
+        obj.remove("title");
+    }
+
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => Ok(()),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
@@ -30,7 +35,12 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
-        const KEYS_TO_REMOVE: [&str; 2] = ["format", "$schema"];
+        const KEYS_TO_REMOVE: [&str; 4] = [
+            "format",
+            "additionalProperties",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+        ];
         for key in KEYS_TO_REMOVE {
             obj.remove(key);
         }
@@ -45,7 +55,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         }
 
         // If a type is not specified for an input parameter, add a default type
-        if obj.contains_key("description")
+        if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
             && !(obj.contains_key("anyOf")
                 || obj.contains_key("oneOf")
@@ -117,14 +127,37 @@ mod tests {
                 "type": "string"
             })
         );
+
+        // Ensure that we do not add a type if it is an object
+        let mut json = json!({
+            "description": {
+                "value": "abc",
+                "type": "string"
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "description": {
+                    "value": "abc",
+                    "type": "string"
+                }
+            })
+        );
     }
 
     #[test]
-    fn test_transform_removes_format() {
+    fn test_transform_removes_unsupported_keys() {
         let mut json = json!({
             "description": "A test field",
             "type": "integer",
-            "format": "uint32"
+            "format": "uint32",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 100,
+            "additionalProperties": false
         });
 
         adapt_to_json_schema_subset(&mut json).unwrap();

@@ -11,8 +11,9 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
+    StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -150,6 +151,16 @@ impl GoogleLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: google_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(GoogleLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for GoogleLanguageModelProvider {
@@ -174,14 +185,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = google_ai::Model::default();
-        Some(Arc::new(GoogleLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(google_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(google_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -319,7 +327,8 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let request = into_google(request, self.model.id().to_string());
+        let model_id = self.model.id().to_string();
+        let request = into_google(request, model_id.clone());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -332,6 +341,7 @@ impl LanguageModel for GoogleLanguageModel {
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
+                &model_id,
                 google_ai::CountTokensRequest {
                     contents: request.contents,
                 },
@@ -348,12 +358,19 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
         let request = into_google(request, self.model.id().to_string());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request
+                .await
+                .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -368,14 +385,23 @@ pub fn into_google(
         content
             .into_iter()
             .filter_map(|content| match content {
-                language_model::MessageContent::Text(text) => {
+                language_model::MessageContent::Text(text)
+                | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
                         Some(Part::TextPart(google_ai::TextPart { text }))
                     } else {
                         None
                     }
                 }
-                language_model::MessageContent::Image(_) => None,
+                language_model::MessageContent::RedactedThinking(_) => None,
+                language_model::MessageContent::Image(image) => {
+                    Some(Part::InlineDataPart(google_ai::InlineDataPart {
+                        inline_data: google_ai::GenerativeContentBlob {
+                            mime_type: "image/png".to_string(),
+                            data: image.source.to_string(),
+                        },
+                    }))
+                }
                 language_model::MessageContent::ToolUse(tool_use) => {
                     Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
@@ -418,13 +444,20 @@ pub fn into_google(
         contents: request
             .messages
             .into_iter()
-            .map(|message| google_ai::Content {
-                parts: map_content(message.content),
-                role: match message.role {
-                    Role::User => google_ai::Role::User,
-                    Role::Assistant => google_ai::Role::Model,
-                    Role::System => google_ai::Role::User, // Google AI doesn't have a system role
-                },
+            .filter_map(|message| {
+                let parts = map_content(message.content);
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(google_ai::Content {
+                        parts,
+                        role: match message.role {
+                            Role::User => google_ai::Role::User,
+                            Role::Assistant => google_ai::Role::Model,
+                            Role::System => google_ai::Role::User, // Google AI doesn't have a system role
+                        },
+                    })
+                }
             })
             .collect(),
         generation_config: Some(google_ai::GenerationConfig {
@@ -455,7 +488,7 @@ pub fn into_google(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -476,7 +509,7 @@ pub fn map_to_language_model_completion_events(
             if let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => {
-                        let mut events: Vec<Result<LanguageModelCompletionEvent>> = Vec::new();
+                        let mut events: Vec<_> = Vec::new();
                         let mut wants_to_use_tool = false;
                         if let Some(usage_metadata) = event.usage_metadata {
                             update_usage(&mut state.usage, &usage_metadata);
@@ -520,6 +553,11 @@ pub fn map_to_language_model_completion_events(
                                                 LanguageModelToolUse {
                                                     id,
                                                     name,
+                                                    is_input_complete: true,
+                                                    raw_input: function_call_part
+                                                        .function_call
+                                                        .args
+                                                        .to_string(),
                                                     input: function_call_part.function_call.args,
                                                 },
                                             )));
@@ -538,7 +576,10 @@ pub fn map_to_language_model_completion_events(
                         return Some((events, state));
                     }
                     Err(err) => {
-                        return Some((vec![Err(anyhow!(err))], state));
+                        return Some((
+                            vec![Err(LanguageModelCompletionError::Other(anyhow!(err)))],
+                            state,
+                        ));
                     }
                 }
             }
@@ -740,7 +781,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -753,8 +794,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -766,7 +812,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
