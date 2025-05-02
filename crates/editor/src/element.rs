@@ -4525,6 +4525,7 @@ impl EditorElement {
                         show_active_line_background,
                         ..
                     } => show_active_line_background,
+                    EditorMode::Minimap { .. } => true,
                     _ => false,
                 };
                 let mut active_rows = layout.active_rows.iter().peekable();

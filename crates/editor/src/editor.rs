@@ -16372,6 +16372,12 @@ impl Editor {
     }
 
     fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings) {
+        let minimap_line_highlight = if minimap_settings.highlight_current_line {
+            CurrentLineHighlight::Line
+        } else {
+            CurrentLineHighlight::None
+        };
+        self.set_current_line_highlight(Some(minimap_line_highlight));
         self.set_text_style_refinement(TextStyleRefinement {
             font_size: Some(px(minimap_settings.font_size).into()),
             font_weight: Some(gpui::FontWeight(900.)),

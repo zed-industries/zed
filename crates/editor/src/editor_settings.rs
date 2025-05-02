@@ -121,6 +121,7 @@ pub struct Minimap {
     pub show: ShowMinimap,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
+    pub highlight_current_line: bool,
     pub width: f32,
     pub font_size: f32,
 }
@@ -132,6 +133,7 @@ impl Minimap {
 
     pub fn minimap_configuration_changed(&self, other: &Self) -> bool {
         self.font_size != other.font_size
+            || self.highlight_current_line != other.highlight_current_line
     }
 }
 
@@ -528,6 +530,11 @@ pub struct MinimapContent {
     ///
     /// Default: left_open
     pub thumb_border: Option<MinimapThumbBorder>,
+
+    /// Whether the currently active line should be highlighted in the minimap.
+    ///
+    /// Default: false
+    pub highlight_current_line: Option<bool>,
 
     /// The width of the minimap in pixels.
     ///
