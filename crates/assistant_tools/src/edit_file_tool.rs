@@ -323,6 +323,10 @@ impl EditFileToolCard {
         }
     }
 
+    pub fn has_diff(&self) -> bool {
+        self.total_lines.is_some()
+    }
+
     pub fn set_diff(
         &mut self,
         path: Arc<Path>,
@@ -487,7 +491,7 @@ impl ToolCard for EditFileToolCard {
                                 )),
                             ),
                     )
-                } else {
+                } else if self.has_diff() {
                     container.child(
                         Disclosure::new(
                             ("edit-file-disclosure", self.editor_unique_id),
@@ -501,6 +505,8 @@ impl ToolCard for EditFileToolCard {
                             },
                         )),
                     )
+                } else {
+                    container
                 }
             });
 
@@ -573,50 +579,55 @@ impl ToolCard for EditFileToolCard {
                         ),
                 )
             })
-            .when(!failed && self.preview_expanded, |card| {
-                card.child(
-                    v_flex()
-                        .relative()
-                        .h_full()
-                        .when(!self.full_height_expanded, |editor_container| {
-                            editor_container
-                                .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
-                        })
-                        .overflow_hidden()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(div().pl_1().child(editor))
-                        .when(
-                            !self.full_height_expanded && is_collapsible,
-                            |editor_container| editor_container.child(gradient_overlay),
-                        ),
-                )
-                .when(is_collapsible, |editor_container| {
-                    editor_container.child(
-                        h_flex()
-                            .id(("expand-button", self.editor_unique_id))
-                            .flex_none()
-                            .cursor_pointer()
-                            .h_5()
-                            .justify_center()
-                            .rounded_b_md()
+            .when(
+                !failed && self.preview_expanded && self.has_diff(),
+                |card| {
+                    card.child(
+                        v_flex()
+                            .relative()
+                            .h_full()
+                            .when(!self.full_height_expanded, |editor_container| {
+                                editor_container
+                                    .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
+                            })
+                            .overflow_hidden()
                             .border_t_1()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
-                            .child(
-                                Icon::new(full_height_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .tooltip(Tooltip::text(full_height_tooltip_label))
-                            .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                this.full_height_expanded = !this.full_height_expanded;
-                            })),
+                            .child(div().pl_1().child(editor))
+                            .when(
+                                !self.full_height_expanded && is_collapsible,
+                                |editor_container| editor_container.child(gradient_overlay),
+                            ),
                     )
-                })
-            })
+                    .when(is_collapsible, |editor_container| {
+                        editor_container.child(
+                            h_flex()
+                                .id(("expand-button", self.editor_unique_id))
+                                .flex_none()
+                                .cursor_pointer()
+                                .h_5()
+                                .justify_center()
+                                .rounded_b_md()
+                                .border_t_1()
+                                .border_color(border_color)
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|style| {
+                                    style.bg(cx.theme().colors().element_hover.opacity(0.1))
+                                })
+                                .child(
+                                    Icon::new(full_height_icon)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .tooltip(Tooltip::text(full_height_tooltip_label))
+                                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                    this.full_height_expanded = !this.full_height_expanded;
+                                })),
+                        )
+                    })
+                },
+            )
     }
 }
 
