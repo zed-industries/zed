@@ -1187,7 +1187,7 @@ impl AgentDiff {
             })
     }
 
-    pub fn register_active_thread(
+    pub fn set_active_thread(
         workspace: &WeakEntity<Workspace>,
         thread: &Entity<Thread>,
         cx: &mut App,
@@ -1256,10 +1256,10 @@ impl AgentDiff {
         let editors = workspace.update(cx, |workspace, cx| {
             let agent_diff = agent_diff.clone();
 
-            workspace.register_action(Self::review_action(Self::keep, agent_diff.clone()));
-            workspace.register_action(Self::review_action(Self::reject, agent_diff.clone()));
-            workspace.register_action(Self::review_action(Self::keep_all, agent_diff.clone()));
-            workspace.register_action(Self::review_action(Self::reject_all, agent_diff.clone()));
+            Self::register_review_action::<Keep>(workspace, Self::keep, &agent_diff);
+            Self::register_review_action::<Reject>(workspace, Self::reject, &agent_diff);
+            Self::register_review_action::<KeepAll>(workspace, Self::keep_all, &agent_diff);
+            Self::register_review_action::<RejectAll>(workspace, Self::reject_all, &agent_diff);
 
             workspace.items_of_type(cx).collect::<Vec<_>>()
         });
@@ -1273,6 +1273,27 @@ impl AgentDiff {
         }
 
         self.update_reviewing_editors(&weak_workspace, cx);
+    }
+
+    fn register_review_action<T: Action>(
+        workspace: &mut Workspace,
+        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState
+        + 'static,
+        this: &Entity<AgentDiff>,
+    ) {
+        let this = this.clone();
+        workspace.register_action(move |workspace, _: &T, window, cx| {
+            let review = &review;
+            let task = this.update(cx, |this, cx| {
+                this.review_in_active_editor(workspace, review, window, cx)
+            });
+
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
     }
 
     fn handle_thread_event(
@@ -1505,7 +1526,6 @@ impl AgentDiff {
     }
 
     fn keep_all(
-        _: &KeepAll,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
@@ -1526,7 +1546,6 @@ impl AgentDiff {
     }
 
     fn reject_all(
-        _: &RejectAll,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
@@ -1547,7 +1566,6 @@ impl AgentDiff {
     }
 
     fn keep(
-        _: &Keep,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
@@ -1561,7 +1579,6 @@ impl AgentDiff {
     }
 
     fn reject(
-        _: &Reject,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
@@ -1583,57 +1600,45 @@ impl AgentDiff {
         PostReviewState::AllReviewed
     }
 
-    /// Creates the listener for keep/reject action with a function to perform it
-    /// The function is only called if the current workspace item is an editor under review
-    /// If the function returns `PostReviewState::AllReviewed`, the next changed buffer will be opened.
-    fn review_action<T>(
-        review: impl Fn(&T, &Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState,
-        this: Entity<Self>,
-    ) -> impl Fn(&mut Workspace, &T, &mut Window, &mut Context<Workspace>) {
-        move |workspace, action, window, cx| {
-            let Some(active_item) = workspace.active_item(cx) else {
-                return cx.propagate();
-            };
+    fn review_in_active_editor(
+        &mut self,
+        workspace: &mut Workspace,
+        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let active_item = workspace.active_item(cx)?;
+        let editor = active_item.act_as::<Editor>(cx)?;
 
-            let Some(editor) = active_item.act_as::<Editor>(cx) else {
-                return cx.propagate();
-            };
+        if !matches!(self.editor_state(&editor), EditorState::Reviewing) {
+            return None;
+        }
 
-            let this = this.read(cx);
+        let WorkspaceThread { thread, .. } =
+            self.workspace_threads.get(&workspace.weak_handle())?;
 
-            if !matches!(this.editor_state(&editor), EditorState::Reviewing) {
-                return cx.propagate();
-            }
+        let thread = thread.upgrade()?;
 
-            let Some(WorkspaceThread { thread, .. }) =
-                this.workspace_threads.get(&workspace.weak_handle())
-            else {
-                return cx.propagate();
-            };
+        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx) {
+            if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let Some(thread) = thread.upgrade() else {
-                return cx.propagate();
-            };
+                let mut keys = changed_buffers.keys().cycle();
+                keys.find(|k| *k == &curr_buffer);
+                let next_project_path = keys
+                    .next()
+                    .filter(|k| *k != &curr_buffer)
+                    .and_then(|after| after.read(cx).project_path(cx));
 
-            if let PostReviewState::AllReviewed = review(action, &editor, &thread, window, cx) {
-                if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                    let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
-
-                    let mut keys = changed_buffers.keys().cycle();
-                    keys.find(|k| *k == &curr_buffer);
-                    let next_project_path = keys
-                        .next()
-                        .filter(|k| *k != &curr_buffer)
-                        .and_then(|after| after.read(cx).project_path(cx));
-
-                    if let Some(path) = next_project_path {
-                        workspace
-                            .open_path(path, None, true, window, cx)
-                            .detach_and_log_err(cx);
-                    }
+                if let Some(path) = next_project_path {
+                    let task = workspace.open_path(path, None, true, window, cx);
+                    let task = cx.spawn(async move |_, _cx| task.await.map(|_| ()));
+                    return Some(task);
                 }
             }
         }
+
+        return Some(Task::ready(Ok(())));
     }
 }
 
@@ -1673,7 +1678,7 @@ mod tests {
     use util::path;
 
     #[gpui::test]
-    async fn test_agent_diff_pane(cx: &mut TestAppContext) {
+    async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1826,6 +1831,229 @@ mod tests {
                 .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            prompt_store::init(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+            language_model::init_settings(cx);
+            workspace::register_project_item::<Editor>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"file1": "abc\ndef\nghi\njkl\nmno\npqr\nstu\nvwx\nyz"}),
+        )
+        .await;
+        fs.insert_tree(path!("/test"), json!({"file2": "abc\ndef\nghi"}))
+            .await;
+
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let buffer_path1 = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/file1", cx)
+            })
+            .unwrap();
+        let buffer_path2 = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/file2", cx)
+            })
+            .unwrap();
+
+        let prompt_store = None;
+        let thread_store = cx
+            .update(|cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    cx.new(|_| ToolWorkingSet::default()),
+                    prompt_store,
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Set the active thread
+        cx.update(|_, cx| AgentDiff::set_active_thread(&workspace.downgrade(), &thread, cx));
+
+        let buffer1 = project
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path1.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let buffer2 = project
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path2.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        // Open an editor for buffer1
+        let editor1 = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer1.clone(), Some(project.clone()), window, cx)
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor1.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Make changes
+        cx.update(|_, cx| {
+            action_log.update(cx, |log, cx| log.track_buffer(buffer1.clone(), cx));
+            buffer1.update(cx, |buffer, cx| {
+                buffer
+                    .edit(
+                        [
+                            (Point::new(1, 1)..Point::new(1, 2), "E"),
+                            (Point::new(3, 2)..Point::new(3, 3), "L"),
+                            (Point::new(5, 0)..Point::new(5, 1), "P"),
+                            (Point::new(7, 1)..Point::new(7, 2), "W"),
+                        ],
+                        None,
+                        cx,
+                    )
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer1.clone(), cx));
+
+            action_log.update(cx, |log, cx| log.track_buffer(buffer2.clone(), cx));
+            buffer2.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(2, 1)..Point::new(2, 2), "H")], None, cx)
+                    .unwrap();
+                dbg!(buffer.text());
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // The already opened editor displays the diff and the cursor is at the first hunk
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndef\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nvWx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+
+        // After keeping a hunk, the cursor should be positioned on the second hunk.
+        workspace.update(cx, |_, cx| {
+            cx.dispatch_action(&Keep);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nvWx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Rejecting a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
+        editor1.update_in(cx, |editor, window, cx| {
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
+            });
+        });
+        workspace.update(cx, |_, cx| {
+            cx.dispatch_action(&Reject);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Keeping a range that doesn't intersect the current selection doesn't move it.
+        editor1.update_in(cx, |editor, window, cx| {
+            let buffer = editor.buffer().read(cx);
+            let position = buffer.read(cx).anchor_before(Point::new(7, 0));
+            let snapshot = buffer.snapshot(cx);
+            keep_edits_in_ranges(
+                editor,
+                &snapshot,
+                &thread,
+                vec![position..position],
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\nPqr\nstu\nvwx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Reviewing the last change opens the next changed buffer
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                AgentDiff::global(cx).update(cx, |agent_diff, cx| {
+                    agent_diff.review_in_active_editor::<()>(workspace, AgentDiff::keep, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let editor2 = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+
+        let editor2_path = editor2
+            .read_with(cx, |editor, cx| editor.project_path(cx))
+            .unwrap();
+        assert_eq!(editor2_path, buffer_path2);
+
+        assert_eq!(
+            editor2.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndef\nghi\ngHi"
+        );
+        assert_eq!(
+            editor2
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(2, 0)..Point::new(2, 0)
         );
     }
 }
