@@ -178,7 +178,7 @@ pub fn components() -> AllComponents {
         let preview = data.previews.get(name).cloned();
         let component_name = SharedString::new_static(name);
         let sort_name = SharedString::new_static(sort_name);
-        let id = ComponentId(*name);
+        let id = ComponentId(name);
         all_components.insert(
             id.clone(),
             ComponentMetadata {
