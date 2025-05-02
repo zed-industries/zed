@@ -1256,22 +1256,10 @@ impl AgentDiff {
         let editors = workspace.update(cx, |workspace, cx| {
             let agent_diff = agent_diff.clone();
 
-            workspace.register_action(Self::workspace_editor_review_action(
-                Self::keep,
-                agent_diff.clone(),
-            ));
-            workspace.register_action(Self::workspace_editor_review_action(
-                Self::reject,
-                agent_diff.clone(),
-            ));
-            workspace.register_action(Self::workspace_editor_review_action(
-                Self::keep_all_in_editor,
-                agent_diff.clone(),
-            ));
-            workspace.register_action(Self::workspace_editor_review_action(
-                Self::reject_all_in_editor,
-                agent_diff.clone(),
-            ));
+            workspace.register_action(Self::review_action(Self::keep, agent_diff.clone()));
+            workspace.register_action(Self::review_action(Self::reject, agent_diff.clone()));
+            workspace.register_action(Self::review_action(Self::keep_all, agent_diff.clone()));
+            workspace.register_action(Self::review_action(Self::reject_all, agent_diff.clone()));
 
             workspace.items_of_type(cx).collect::<Vec<_>>()
         });
@@ -1516,13 +1504,13 @@ impl AgentDiff {
         AgentDiffPane::deploy(thread, workspace.downgrade(), window, cx).log_err();
     }
 
-    fn keep_all_in_editor(
+    fn keep_all(
         _: &KeepAll,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) -> bool {
+    ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             keep_edits_in_ranges(
@@ -1534,16 +1522,16 @@ impl AgentDiff {
                 cx,
             );
         });
-        true
+        PostReviewState::AllReviewed
     }
 
-    fn reject_all_in_editor(
+    fn reject_all(
         _: &RejectAll,
         editor: &Entity<Editor>,
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) -> bool {
+    ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             reject_edits_in_ranges(
@@ -1555,7 +1543,7 @@ impl AgentDiff {
                 cx,
             );
         });
-        true
+        PostReviewState::AllReviewed
     }
 
     fn keep(
@@ -1564,11 +1552,11 @@ impl AgentDiff {
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) -> bool {
+    ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             keep_edits_in_selection(editor, &snapshot, thread, window, cx);
-            Self::has_at_most_one_diff_hunk(&snapshot)
+            Self::post_review_state(&snapshot)
         })
     }
 
@@ -1578,25 +1566,28 @@ impl AgentDiff {
         thread: &Entity<Thread>,
         window: &mut Window,
         cx: &mut App,
-    ) -> bool {
+    ) -> PostReviewState {
         editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             reject_edits_in_selection(editor, &snapshot, thread, window, cx);
-            Self::has_at_most_one_diff_hunk(&snapshot)
+            Self::post_review_state(&snapshot)
         })
     }
 
-    fn has_at_most_one_diff_hunk(snapshot: &MultiBufferSnapshot) -> bool {
+    fn post_review_state(snapshot: &MultiBufferSnapshot) -> PostReviewState {
         for (i, _) in snapshot.diff_hunks().enumerate() {
             if i > 0 {
-                return false;
+                return PostReviewState::Pending;
             }
         }
-        true
+        PostReviewState::AllReviewed
     }
 
-    fn workspace_editor_review_action<T>(
-        review: impl Fn(&T, &Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> bool,
+    /// Creates the listener for keep/reject action with a function to perform it
+    /// The function is only called if the current workspace item is an editor under review
+    /// If the function returns `PostReviewState::AllReviewed`, the next changed buffer will be opened.
+    fn review_action<T>(
+        review: impl Fn(&T, &Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState,
         this: Entity<Self>,
     ) -> impl Fn(&mut Workspace, &T, &mut Window, &mut Context<Workspace>) {
         move |workspace, action, window, cx| {
@@ -1624,9 +1615,7 @@ impl AgentDiff {
                 return cx.propagate();
             };
 
-            let all_done = review(action, &editor, &thread, window, cx);
-
-            if all_done {
+            if let PostReviewState::AllReviewed = review(action, &editor, &thread, window, cx) {
                 if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
                     let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
@@ -1646,6 +1635,11 @@ impl AgentDiff {
             }
         }
     }
+}
+
+enum PostReviewState {
+    AllReviewed,
+    Pending,
 }
 
 pub struct EditorAgentDiffAddon;
@@ -1679,7 +1673,7 @@ mod tests {
     use util::path;
 
     #[gpui::test]
-    async fn test_agent_diff(cx: &mut TestAppContext) {
+    async fn test_agent_diff_pane(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
