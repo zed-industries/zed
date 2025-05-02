@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
-use crate::context::{ContextLoadResult, load_context};
+use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{AgentPreview, AnimatedLabel};
 use buffer_diff::BufferDiff;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, MultiBuffer,
+    AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
+    EditorMode, EditorStyle, MultiBuffer,
 };
 use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
@@ -35,11 +35,11 @@ use util::ResultExt as _;
 use workspace::Workspace;
 use zed_llm_client::CompletionMode;
 
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{Thread, TokenUsageRatio};
+use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
     ActiveThread, AgentDiff, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
@@ -105,6 +105,7 @@ pub(crate) fn create_editor(
             max_entries_visible: 12,
             placement: Some(ContextMenuPlacement::Above),
         });
+        editor.register_addon(ContextCreasesAddon::new());
         editor
     });
 
@@ -290,10 +291,11 @@ impl MessageEditor {
             return;
         }
 
-        let user_message = self.editor.update(cx, |editor, cx| {
+        let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
+            let creases = extract_message_creases(editor, cx);
             let text = editor.text(cx);
             editor.clear(window, cx);
-            text
+            (text, creases)
         });
 
         self.last_estimated_token_count.take();
@@ -311,7 +313,13 @@ impl MessageEditor {
 
             thread
                 .update(cx, |thread, cx| {
-                    thread.insert_user_message(user_message, loaded_context, checkpoint.ok(), cx);
+                    thread.insert_user_message(
+                        user_message,
+                        loaded_context,
+                        checkpoint.ok(),
+                        user_message_creases,
+                        cx,
+                    );
                 })
                 .log_err();
 
@@ -1164,6 +1172,53 @@ impl MessageEditor {
     }
 }
 
+pub fn extract_message_creases(
+    editor: &mut Editor,
+    cx: &mut Context<'_, Editor>,
+) -> Vec<MessageCrease> {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut contexts_by_crease_id = editor
+        .addon_mut::<ContextCreasesAddon>()
+        .map(std::mem::take)
+        .unwrap_or_default()
+        .into_inner()
+        .into_iter()
+        .flat_map(|(key, creases)| {
+            let context = key.0;
+            creases
+                .into_iter()
+                .map(move |(id, _)| (id, context.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    // Filter the addon's list of creases based on what the editor reports,
+    // since the addon might have removed creases in it.
+    let creases = editor.display_map.update(cx, |display_map, cx| {
+        display_map
+            .snapshot(cx)
+            .crease_snapshot
+            .creases()
+            .filter_map(|(id, crease)| {
+                Some((
+                    id,
+                    (
+                        crease.range().to_offset(&buffer_snapshot),
+                        crease.metadata()?.clone(),
+                    ),
+                ))
+            })
+            .map(|(id, (range, metadata))| {
+                let context = contexts_by_crease_id.remove(&id);
+                MessageCrease {
+                    range,
+                    metadata,
+                    context,
+                }
+            })
+            .collect()
+    });
+    creases
+}
+
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
 pub enum MessageEditorEvent {
@@ -1204,6 +1259,43 @@ impl Render for MessageEditor {
     }
 }
 
+pub fn insert_message_creases(
+    editor: &mut Editor,
+    message_creases: &[MessageCrease],
+    context_store: &Entity<ContextStore>,
+    window: &mut Window,
+    cx: &mut Context<'_, Editor>,
+) {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let creases = message_creases
+        .iter()
+        .map(|crease| {
+            let start = buffer_snapshot.anchor_after(crease.range.start);
+            let end = buffer_snapshot.anchor_before(crease.range.end);
+            crease_for_mention(
+                crease.metadata.label.clone(),
+                crease.metadata.icon_path.clone(),
+                start..end,
+                cx.weak_entity(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let ids = editor.insert_creases(creases.clone(), cx);
+    editor.fold_creases(creases, false, window, cx);
+    if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+        for (crease, id) in message_creases.iter().zip(ids) {
+            if let Some(context) = crease.context.as_ref() {
+                let key = AgentContextKey(context.clone());
+                addon.add_creases(
+                    context_store,
+                    key,
+                    vec![(id, crease.metadata.label.clone())],
+                    cx,
+                );
+            }
+        }
+    }
+}
 impl Component for MessageEditor {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
