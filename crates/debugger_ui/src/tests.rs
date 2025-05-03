@@ -45,6 +45,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
+        dap_adapters::init(cx);
     });
 }
 

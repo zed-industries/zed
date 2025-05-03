@@ -21,8 +21,8 @@ async fn test_inline_values(executor: BackgroundExecutor, cx: &mut TestAppContex
     let fs = FakeFs::new(executor.clone());
     let source_code = r#"
 fn main() {
-    let x = 10; // line 52
-    let value = 42; // x * 2
+    let x = 10;
+    let value = 42;
     let tester = {
         let y = 10;
         vec![y, 20, 30]
@@ -73,7 +73,7 @@ fn main() {
                     adapter_data: None,
                     checksums: None,
                 }),
-                line: 7,
+                line: 6,
                 column: 1,
                 end_line: None,
                 end_column: None,
@@ -101,8 +101,8 @@ fn main() {
             value_location_reference: None,
         },
         Variable {
-            name: "tester".into(),
-            value: "{size = 3}".into(),
+            name: "y".into(),
+            value: "10".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -115,36 +115,7 @@ fn main() {
         },
         Variable {
             name: "value".into(),
-            value: "10".into(),
-            type_: None,
-            presentation_hint: None,
-            evaluate_name: None,
-            variables_reference: 0,
-            named_variables: None,
-            indexed_variables: None,
-            memory_reference: None,
-            declaration_location_reference: None,
-            value_location_reference: None,
-        },
-    ];
-
-    let global_variables = vec![
-        Variable {
-            name: "global_1".into(),
-            value: "global 1".into(),
-            type_: None,
-            presentation_hint: None,
-            evaluate_name: None,
-            variables_reference: 0,
-            named_variables: None,
-            indexed_variables: None,
-            memory_reference: None,
-            declaration_location_reference: None,
-            value_location_reference: None,
-        },
-        Variable {
-            name: "global 2".into(),
-            value: "global 2".into(),
+            value: "42".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -159,48 +130,28 @@ fn main() {
 
     client.on_request::<Variables, _>({
         let local_variables = Arc::new(local_variables.clone());
-        let global_variables = Arc::new(global_variables.clone());
-        move |_, args| {
+        move |_, _| {
             Ok(dap::VariablesResponse {
-                variables: match args.variables_reference {
-                    2 => (*local_variables).clone(),
-                    3 => (*global_variables).clone(),
-                    _ => unreachable!(),
-                },
+                variables: (*local_variables).clone(),
             })
         }
     });
 
     client.on_request::<dap::requests::Scopes, _>(move |_, _| {
         Ok(dap::ScopesResponse {
-            scopes: vec![
-                Scope {
-                    name: "Locale".into(),
-                    presentation_hint: None,
-                    variables_reference: 2,
-                    named_variables: None,
-                    indexed_variables: None,
-                    expensive: false,
-                    source: None,
-                    line: None,
-                    column: None,
-                    end_line: None,
-                    end_column: None,
-                },
-                Scope {
-                    name: "Global".into(),
-                    presentation_hint: None,
-                    variables_reference: 3,
-                    named_variables: None,
-                    indexed_variables: None,
-                    expensive: false,
-                    source: None,
-                    line: None,
-                    column: None,
-                    end_line: None,
-                    end_column: None,
-                },
-            ],
+            scopes: vec![Scope {
+                name: "Locale".into(),
+                presentation_hint: None,
+                variables_reference: 2,
+                named_variables: None,
+                indexed_variables: None,
+                expensive: false,
+                source: None,
+                line: None,
+                column: None,
+                end_line: None,
+                end_column: None,
+            }],
         })
     });
 
@@ -260,8 +211,10 @@ fn main() {
         }
     });
 
+    cx.run_until_parked();
+
     let inline_value_inlays = editor.read_with(cx, |editor, cx| editor.inline_value_inlays(cx));
-    assert!(!inline_value_inlays.is_empty());
+    assert_eq!(3, inline_value_inlays.len());
 }
 
 fn rust_lang() -> Language {

@@ -5,7 +5,10 @@ use gpui::{App, Global};
 use parking_lot::RwLock;
 use task::{DebugRequest, SpawnInTerminal};
 
-use crate::adapters::{DebugAdapter, DebugAdapterName};
+use crate::{
+    adapters::{DebugAdapter, DebugAdapterName},
+    inline_value::InlineValueProvider,
+};
 use std::{collections::BTreeMap, sync::Arc};
 
 /// Given a user build configuration, locator creates a fill-in debug target ([DebugRequest]) on behalf of the user.
@@ -18,8 +21,9 @@ pub trait DapLocator: Send + Sync {
 
 #[derive(Default)]
 struct DapRegistryState {
-    adapters: BTreeMap<DebugAdapterName, Arc<dyn DebugAdapter>>,
     locators: FxHashMap<String, Arc<dyn DapLocator>>,
+    adapters: BTreeMap<DebugAdapterName, Arc<dyn DebugAdapter>>,
+    inline_value_providers: FxHashMap<String, Arc<dyn InlineValueProvider>>,
 }
 
 #[derive(Clone, Default)]
@@ -56,12 +60,32 @@ impl DapRegistry {
         );
     }
 
+    pub fn add_inline_value_provider(
+        &self,
+        language: String,
+        provider: Arc<dyn InlineValueProvider>,
+    ) {
+        let _previous_value = self
+            .0
+            .write()
+            .inline_value_providers
+            .insert(language, provider);
+        debug_assert!(
+            _previous_value.is_none(),
+            "Attempted to insert a new inline value provider when one is already registered"
+        );
+    }
+
     pub fn locators(&self) -> FxHashMap<String, Arc<dyn DapLocator>> {
         self.0.read().locators.clone()
     }
 
     pub fn adapter(&self, name: &str) -> Option<Arc<dyn DebugAdapter>> {
         self.0.read().adapters.get(name).cloned()
+    }
+
+    pub fn inline_value_provider(&self, language: &str) -> Option<Arc<dyn InlineValueProvider>> {
+        self.0.read().inline_value_providers.get(language).cloned()
     }
 
     pub fn enumerate_adapters(&self) -> Vec<DebugAdapterName> {
