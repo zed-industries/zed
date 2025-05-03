@@ -64,7 +64,7 @@ pub fn init(cx: &mut App) {
         store.set_plan(zed_llm_client::Plan::Free);
         store.set_custom_prompt_usage(RequestUsage {
             limit: UsageLimit::Limited(50),
-            amount: 49,
+            amount: 50,
         });
     });
 
