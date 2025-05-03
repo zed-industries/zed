@@ -1059,7 +1059,7 @@ impl MessageEditor {
         }
 
         let debug_account = cx.debug_account().clone();
-    
+
         let mut plan = self.plan.clone();
         let mut usage = self.usage.clone();
 
@@ -1084,15 +1084,30 @@ impl MessageEditor {
             return None;
         }
 
-        let (title, message) = if let Some(plan) = &plan {
+        let limit = if let Some(usage) = usage {
+            match usage.limit {
+                UsageLimit::Unlimited => 0,
+                UsageLimit::Limited(limit) => limit,
+            }
+        } else {
+            return None;
+        };
+
+        let (title, message) = if let (Some(plan), Some(usage)) = (&plan, &usage) {
             match plan {
                 zed_llm_client::Plan::Free => (
                     "Reaching Free tier prompt limit soon",
-                    "Upgrade to increase limit, or switch to a different provider",
+                    format!(
+                        "{} remaining - Upgrade to increase limit, or switch providers",
+                        limit - usage.amount
+                    ),
                 ),
                 zed_llm_client::Plan::ZedProTrial => (
                     "Reaching Trial prompt limit soon",
-                    "Upgrade to increase limit, or switch to a different provider",
+                    format!(
+                        "{} remaining - Upgrade to increase limit, or switch providers",
+                        limit - usage.amount
+                    ),
                 ),
                 _ => return None,
             }
@@ -1101,18 +1116,17 @@ impl MessageEditor {
         };
 
         Some(
-            div()
-                .child(
-                    Callout::multi_line(
-                        title.into(),
-                        message.into(),
-                        Icon::new(IconName::Warning).color(Color::Warning).size(IconSize::XSmall),
-                        "Upgrade".into(),
-                        Box::new(move |_, _window, cx| {
-                            _ = cx.open_url("https://zed.dev/pricing");
-                        }),
-                    )
-                )
+            div().child(Callout::multi_line(
+                title.into(),
+                message.into(),
+                Icon::new(IconName::Warning)
+                    .color(Color::Warning)
+                    .size(IconSize::XSmall),
+                "Upgrade".into(),
+                Box::new(move |_, _window, cx| {
+                    _ = cx.open_url("https://zed.dev/pricing");
+                }),
+            )),
         )
     }
 
@@ -1133,28 +1147,27 @@ impl MessageEditor {
         };
 
         let message = "Start a new thread from a summary to continue the conversation.";
-        
+
         let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            Icon::new(IconName::X).color(Color::Error).size(IconSize::XSmall)
+            Icon::new(IconName::X)
+                .color(Color::Error)
+                .size(IconSize::XSmall)
         } else {
-            Icon::new(IconName::Warning).color(Color::Warning).size(IconSize::XSmall)
+            Icon::new(IconName::Warning)
+                .color(Color::Warning)
+                .size(IconSize::XSmall)
         };
 
-        Some(
-            div()
-                .child(
-                    Callout::multi_line(
-                        title.into(),
-                        message.into(),
-                        icon,
-                        "Start New Thread".into(),
-                        Box::new(cx.listener(|this, _, window, cx| {
-                            let from_thread_id = Some(this.thread.read(cx).id().clone());
-                            window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
-                        })),
-                    )
-                )
-        )
+        Some(div().child(Callout::multi_line(
+            title.into(),
+            message.into(),
+            icon,
+            "Start New Thread".into(),
+            Box::new(cx.listener(|this, _, window, cx| {
+                let from_thread_id = Some(this.thread.read(cx).id().clone());
+                window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
+            })),
+        )))
     }
 
     pub fn last_estimated_token_count(&self) -> Option<usize> {
@@ -1314,7 +1327,7 @@ impl Render for MessageEditor {
             .child(self.render_editor(font_size, line_height, window, cx))
             .children({
                 let usage_callout = self.render_usage_callout(line_height, cx);
-                
+
                 if usage_callout.is_some() {
                     usage_callout
                 } else if token_usage_ratio != TokenUsageRatio::Normal {
