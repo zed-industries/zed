@@ -124,7 +124,15 @@ pub async fn create_cache(
     let mut text = String::new();
     response.body_mut().read_to_string(&mut text).await?;
     if response.status().is_success() {
-        Ok(serde_json::from_str::<CreateCacheResponse>(&text)?)
+        let created_cache = serde_json::from_str::<CreatedCache>(&text)?;
+        Ok(CreateCacheResponse::Created(created_cache))
+    } else if response.status().as_u16() == 404 {
+        log::info!(
+            "Received 404 from Gemini cache creation, so assuming `{}` doesn't support caching: {}",
+            request.model.model_id,
+            text
+        );
+        Ok(CreateCacheResponse::CachingNotSupportedByModel)
     } else {
         Err(anyhow!(
             "error during Gemini cache creation, status code: {:?}, body: {}",
@@ -515,9 +523,14 @@ pub struct CreateCacheRequest {
     // display_name: user-generated meaningful display name of the cached content. Maximum 128 Unicode characters.
 }
 
+pub enum CreateCacheResponse {
+    Created(CreatedCache),
+    CachingNotSupportedByModel,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateCacheResponse {
+pub struct CreatedCache {
     pub name: CacheName,
     #[serde(
         serialize_with = "time::serde::rfc3339::serialize",

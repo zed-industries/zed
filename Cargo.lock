@@ -6133,6 +6133,7 @@ dependencies = [
  "clap",
  "futures 0.3.31",
  "http_client",
+ "log",
  "reqwest_client",
  "schemars",
  "serde",

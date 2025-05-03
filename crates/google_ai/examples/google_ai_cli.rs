@@ -5,9 +5,9 @@ use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use google_ai::{
-    CacheName, Content, CountTokensRequest, CreateCacheRequest, GenerateContentRequest,
-    GenerationConfig, ModelName, Part, Role, SystemInstruction, TextPart, UpdateCacheRequest,
-    count_tokens, create_cache, stream_generate_content, update_cache,
+    CacheName, Content, CountTokensRequest, CreateCacheRequest, CreateCacheResponse,
+    GenerateContentRequest, GenerationConfig, ModelName, Part, Role, SystemInstruction, TextPart,
+    UpdateCacheRequest, count_tokens, create_cache, stream_generate_content, update_cache,
 };
 use reqwest_client::ReqwestClient;
 use std::io::Write;
@@ -302,11 +302,18 @@ async fn main() -> Result<()> {
 
             let response =
                 create_cache(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
-            println!("Cache created:");
-            println!("  ID: {:?}", response.name.cache_id);
-            println!("  Expires: {}", response.expire_time);
-            if let Some(token_count) = response.usage_metadata.total_token_count {
-                println!("  Total tokens: {}", token_count);
+            match response {
+                CreateCacheResponse::Created(created_cache) => {
+                    println!("Cache created:");
+                    println!("  ID: {:?}", created_cache.name.cache_id);
+                    println!("  Expires: {}", created_cache.expire_time);
+                    if let Some(token_count) = created_cache.usage_metadata.total_token_count {
+                        println!("  Total tokens: {}", token_count);
+                    }
+                }
+                CreateCacheResponse::CachingNotSupportedByModel => {
+                    println!("Cache not created, assuming this is due to the specified model ID.");
+                }
             }
         }
 
