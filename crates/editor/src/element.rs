@@ -28,7 +28,6 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use file_icons::FileIcons;
@@ -1184,8 +1183,7 @@ impl EditorElement {
                     collaboration_hub.as_ref(),
                     cx,
                 ) {
-                    let selection_style =
-                        Self::get_participant_color(selection.participant_index, cx);
+                    let selection_style = selection.color.clone();
 
                     // Don't re-render the leader's selections, since the local selections
                     // match theirs.
@@ -1257,8 +1255,10 @@ impl EditorElement {
                 collaboration_hub.deref(),
                 cx,
             ) {
-                let color = Self::get_participant_color(remote_selection.participant_index, cx);
-                add_cursor(remote_selection.selection.head(), color.cursor);
+                add_cursor(
+                    remote_selection.selection.head(),
+                    remote_selection.color.cursor,
+                );
                 if Some(remote_selection.collaborator_id) == editor.leader_id {
                     skip_local = true;
                 }
@@ -2455,14 +2455,6 @@ impl EditorElement {
         );
 
         Some(button)
-    }
-
-    fn get_participant_color(participant_index: Option<ParticipantIndex>, cx: &App) -> PlayerColor {
-        if let Some(index) = participant_index {
-            cx.theme().players().color_for_participant(index.0)
-        } else {
-            cx.theme().players().absent()
-        }
     }
 
     fn calculate_relative_line_numbers(

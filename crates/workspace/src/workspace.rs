@@ -4429,21 +4429,41 @@ impl Workspace {
         };
 
         if let Some(agent_location) = self.project.read(cx).agent_location() {
+            let buffer_entity_id = agent_location.buffer.entity_id();
             let view_id = ViewId {
                 creator: CollaboratorId::Agent,
-                id: agent_location.buffer.entity_id().as_u64(),
+                id: buffer_entity_id.as_u64(),
             };
             follower_state.active_view_id = Some(view_id);
 
             let item = match follower_state.items_by_leader_view_id.entry(view_id) {
                 hash_map::Entry::Occupied(entry) => Some(entry.into_mut()),
                 hash_map::Entry::Vacant(entry) => {
-                    let view = agent_location.buffer.upgrade().and_then(|buffer| {
-                        cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
-                            registry.build_item(buffer, self.project.clone(), None, window, cx)
-                        })?
-                        .to_followable_item_handle(cx)
+                    let existing_view =
+                        follower_state
+                            .center_pane
+                            .read(cx)
+                            .items()
+                            .find_map(|item| {
+                                let item = item.to_followable_item_handle(cx)?;
+                                if item.is_singleton(cx)
+                                    && item.project_item_model_ids(cx).as_slice()
+                                        == [buffer_entity_id]
+                                {
+                                    Some(item)
+                                } else {
+                                    None
+                                }
+                            });
+                    let view = existing_view.or_else(|| {
+                        agent_location.buffer.upgrade().and_then(|buffer| {
+                            cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
+                                registry.build_item(buffer, self.project.clone(), None, window, cx)
+                            })?
+                            .to_followable_item_handle(cx)
+                        })
                     });
+
                     if let Some(view) = view {
                         Some(entry.insert(FollowerView {
                             view,
