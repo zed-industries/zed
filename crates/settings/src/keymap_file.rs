@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, Keystroke, NoAction, SharedString,
+    KeyBinding, KeyBindingContextPredicate, NoAction, SharedString,
 };
 use schemars::{
     JsonSchema,
@@ -597,28 +597,6 @@ impl KeymapFile {
 
     pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
         self.0.iter()
-    }
-
-    pub fn insert_keystroke(
-        &mut self,
-        context: String,
-        keystroke: Keystroke,
-        action: KeymapAction,
-    ) {
-        if let Some(section) = self.0.iter_mut().find(|section| section.context == context) {
-            section
-                .bindings
-                .get_or_insert_with(|| IndexMap::default())
-                .insert(keystroke.unparse(), action);
-        } else {
-            let mut section = KeymapSection::default();
-            section.context = context;
-            section
-                .bindings
-                .get_or_insert_with(|| IndexMap::default())
-                .insert(keystroke.unparse(), action);
-            self.0.push(section);
-        }
     }
 
     pub async fn load_keymap_file(fs: &Arc<dyn Fs>) -> Result<String> {
