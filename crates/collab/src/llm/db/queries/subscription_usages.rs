@@ -1,7 +1,7 @@
 use chrono::Timelike;
 use time::PrimitiveDateTime;
 
-use crate::db::billing_subscription::SubscriptionKind;
+use crate::db::billing_subscription::{StripeSubscriptionStatus, SubscriptionKind};
 use crate::db::{UserId, billing_subscription};
 
 use super::*;
@@ -120,12 +120,13 @@ impl LlmDatabase {
         user_id: UserId,
         existing_subscription: &billing_subscription::Model,
         new_subscription_kind: Option<SubscriptionKind>,
+        new_subscription_status: StripeSubscriptionStatus,
         new_period_start_at: DateTimeUtc,
         new_period_end_at: DateTimeUtc,
     ) -> Result<Option<subscription_usage::Model>> {
         self.transaction(|tx| async move {
-            match existing_subscription.kind {
-                Some(SubscriptionKind::ZedProTrial) => {
+            match (existing_subscription.kind, new_subscription_status) {
+                (Some(SubscriptionKind::ZedProTrial), StripeSubscriptionStatus::Active) => {
                     let trial_period_start_at = existing_subscription
                         .current_period_start_at()
                         .ok_or_else(|| anyhow!("No trial subscription period start"))?;
