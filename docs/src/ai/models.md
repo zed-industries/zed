@@ -13,6 +13,7 @@ Zed’s plans offer hosted versions of major LLM’s, generally with higher rate
 The models above can be used with the prompts included in your plan. For models not marked with [“Max Mode”](#max-mode), each prompt is counted against the monthly limit of your plan. If you’ve exceeded your limit for the month, and are on a paid plan, you can enable usage-based pricing to continue using models for the rest of the month. See [Plans and Usage](./plans-and-usage.md) for more information.
 
 ## Max Mode {#max-mode}
+
 In Max Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience. Because of the increased cost to Zed, each subsequent request beyond the initial user prompt in [Max Mode](#max-mode) models is counted as a prompt for metering. In addition, usage-based pricing per request is slightly more expensive for [Max Mode](#max-mode) models than usage-based pricing per prompt for regular models.
 
 ## Context Windows {#context-windows}
@@ -29,4 +30,23 @@ For best results, it’s recommended you take a purpose-based approach to Agent 
 
 Models can use tools to interface with your code. In [Max Mode](#max-mode), models can use an unlimited number of tools per prompt, with each tool call counting as a prompt for metering purposes. For non-Max Mode models, you’ll need to interact with the model every 25 tool calls to continue, at which point a new prompt will be counted against your plan limit.
 
-*We need a list of tools here for when we launch, with a summary of what they do? Maybe in a new page*
+## Available Tools
+
+Zed's Agent has access to a variety of tools that allow it to interact with your codebase and perform tasks:
+
+- **`copy_path`**: Copies a file or directory recursively in the project, more efficient than manually reading and writing files when duplicating content.
+- **`create_directory`**: Creates a new directory at the specified path within the project, creating all necessary parent directories (similar to `mkdir -p`).
+- **`create_file`**: Creates a new file at a specified path with given text content, the most efficient way to create new files or completely replace existing ones.
+- **`delete_path`**: Deletes a file or directory (including contents recursively) at the specified path and confirms the deletion.
+- **`diagnostics`**: Gets errors and warnings for either a specific file or the entire project, useful after making edits to determine if further changes are needed.
+- **`edit_file`**: Edits files by replacing specific text with new content.
+- **`fetch`**: Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
+- **`list_directory`**: Lists files and directories in a given path, providing an overview of filesystem contents.
+- **`move_path`**: Moves or renames a file or directory in the project, performing a rename if only the filename differs.
+- **`now`**: Returns the current date and time.
+- **`find_path`**: Quickly finds files by matching glob patterns (like "**/*.js"), returning matching file paths alphabetically.
+- **`read_file`**: Reads the content of a specified file in the project, allowing access to file contents.
+- **`grep`**: Searches file contents across the project using regular expressions, preferred for finding symbols in code without knowing exact file paths.
+- **`terminal`**: Executes shell commands and returns the combined output, creating a new shell process for each invocation.
+- **`thinking`**: Allows the Agent to work through problems, brainstorm ideas, or plan without executing actions, useful for complex problem-solving.
+- **`web_search`**: Searches the web for information, providing results with snippets and links from relevant web pages, useful for accessing real-time information.
