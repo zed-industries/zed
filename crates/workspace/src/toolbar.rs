@@ -111,6 +111,7 @@ impl Render for Toolbar {
             })
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
+            .relative()
             .bg(cx.theme().colors().toolbar_background)
             .when(has_left_items || has_right_items, |this| {
                 this.child(

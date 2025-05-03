@@ -304,6 +304,7 @@ impl EditFileToolCard {
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_scrollbars(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_read_only(true);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -640,7 +641,7 @@ impl ToolCard for EditFileToolCard {
                             .border_t_1()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .child(div().pl_1().child(editor))
+                            .child(editor)
                             .when(
                                 !self.full_height_expanded && is_collapsible,
                                 |editor_container| editor_container.child(gradient_overlay),
