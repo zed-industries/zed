@@ -1183,8 +1183,6 @@ impl EditorElement {
                     collaboration_hub.as_ref(),
                     cx,
                 ) {
-                    let selection_style = selection.color.clone();
-
                     // Don't re-render the leader's selections, since the local selections
                     // match theirs.
                     if Some(selection.collaborator_id) == editor.leader_id {
@@ -1200,7 +1198,7 @@ impl EditorElement {
 
                     remote_selections
                         .entry(selection.replica_id)
-                        .or_insert((selection_style, Vec::new()))
+                        .or_insert((selection.color, Vec::new()))
                         .1
                         .push(SelectionLayout::new(
                             selection.selection,
