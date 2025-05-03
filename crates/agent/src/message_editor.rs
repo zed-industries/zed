@@ -469,16 +469,17 @@ impl MessageEditor {
             .icon_color(Color::Muted)
             .toggle_state(following)
             .tooltip(move |window, cx| {
-                Tooltip::for_action(
-                    if following {
-                        "Stop Following Agent"
-                    } else {
-                        "Follow Agent"
-                    },
-                    &Follow,
-                    window,
-                    cx,
-                )
+                if following {
+                    Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
+                } else {
+                    Tooltip::with_meta(
+                        "Follow Agent",
+                        Some(&Follow),
+                        "Track the agent's location as it performs edits.",
+                        window,
+                        cx,
+                    )
+                }
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.workspace
