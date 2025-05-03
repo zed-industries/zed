@@ -471,7 +471,15 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // MoveToStartOfExcerpt, MoveToStartOfNextExcerpt, MoveToEndOfExcerpt, MoveToEndOfPreviousExcerpt, Newline, NextEditPrediction,
         // NextScreen, OpenContextMenu, OpenExcerpts, OpenExcerptsSplit, OpenProposedChangesEditor, OpenDocs, OpenPermalinkToLine,
         // OpenSelectionsInMultibuffer, OpenUrl, AutoIndent, PreviousEditPrediction, RedoSelection, RestartLanguageServer, ReverseLines,
-        //
+        // GoToTypeDefinition, RevertFile, ReloadFile, Rewrap, ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom,
+        // ScrollCursorTop, SelectAllMatches, SelectToStartOfExcerpt, SelectToStartOfNextExcerpt, SelectToEndOfExcerpt,
+        // SelectToEndOfPreviousExcerpt, SelectEnclosingSymbol, SelectToEndOfParagraph, SelectToStartOfParagraph, ShowCharacterPalette,
+        // ShowEditPrediction, ShowSignatureHelp, ShowWordCompletions, ShuffleLines, SortLinesCaseInsensitive, SortLinesCaseSensitive,
+        // SplitSelectionIntoLines, StopLanguageServer, SwitchSourceHeader, ToggleCase, DisableBreakpoint, EnableBreakpoint, EditLogBreakpoint,
+        // DebuggerRunToCursor, DebuggerEvaluateSelectedText, ToggleAutoSignatureHelp, ToggleGitBlameInline, OpenGitBlameCommit, ToggleIndentGuides,
+        // ToggleInlayHints, ToggleInlineValues, ToggleInlineDiagnostics, ToggleEditPrediction, ToggleLineNumbers, SwapSelectionEnds,
+        // SetMark, ToggleRelativeLineNumbers, ToggleSelectionMenu, ToggleSoftWrap, ToggleTabBar, UniqueLinesCaseInsensitive,
+        // UniqueLinesCaseSensitive, ToggleGoToLine, OpenSelectedFilename, ToggleSelectedDiffHunks, ExpandAllDiffHunks
         "acceptSelectedCodeAction" => {
             // TODO: is this the right action?
             action = ActionType::String("editor::ConfirmCodeAction");
@@ -653,10 +661,6 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
             action = ActionType::String("editor::GoToImplementation");
             context = Some("Editor");
         }
-        "editor.action.revealDefinition" => {
-            action = ActionType::String("editor::GoToTypeDefinition");
-            context = Some("Editor");
-        }
         "editor.action.showHover" => {
             action = ActionType::String("editor::Hover");
             context = Some("Editor");
@@ -725,10 +729,6 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
             action = ActionType::String("editor::MoveToPreviousWordStart");
             context = Some("Editor");
         }
-        "cursorUp" => {
-            action = ActionType::String("editor::MoveUp");
-            context = Some("Editor");
-        }
         "editor.action.insertLineBefore" => {
             action = ActionType::String("editor::NewlineAbove");
             context = Some("Editor && mode == full");
@@ -767,6 +767,106 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         }
         "workbench.action.files.revealActiveFileInWindows" => {
             action = ActionType::String("editor::RevealInFileManager");
+            context = Some("Editor");
+        }
+        "editor.action.selectAll" => {
+            action = ActionType::String("editor::SelectAll");
+            context = Some("Editor");
+        }
+        "cursorDownSelect" => {
+            action = ActionType::String("editor::SelectDown");
+            context = Some("Editor");
+        }
+        "editor.action.smartSelect.expand" => {
+            action = ActionType::String("editor::SelectLargerSyntaxNode");
+            context = Some("Editor");
+        }
+        "cursorLeftSelect" => {
+            action = ActionType::String("editor::SelectLeft");
+            context = Some("Editor");
+        }
+        "expandLineSelection" => {
+            action = ActionType::String("editor::SelectLine");
+            context = Some("Editor");
+        }
+        "cursorPageDownSelect" => {
+            action = ActionType::String("editor::SelectPageDown");
+            context = Some("Editor");
+        }
+        "cursorPageUpSelect" => {
+            action = ActionType::String("editor::SelectPageUp");
+            context = Some("Editor");
+        }
+        "cursorRightSelect" => {
+            action = ActionType::String("editor::SelectRight");
+            context = Some("Editor");
+        }
+        "editor.action.smartSelect.shrink" => {
+            action = ActionType::String("editor::SelectSmallerSyntaxNode");
+            context = Some("Editor");
+        }
+        "cursorTopSelect" => {
+            action = ActionType::String("editor::SelectToBeginning");
+            context = Some("Editor");
+        }
+        "cursorBottomSelect" => {
+            action = ActionType::String("editor::SelectToEnd");
+            context = Some("Editor");
+        }
+        "cursorWordPartRightSelect" => {
+            action = ActionType::String("editor::SelectToNextSubwordEnd");
+            context = Some("Editor");
+        }
+        "cursorWordEndRightSelect" => {
+            action = ActionType::String("editor::SelectToNextWordEnd");
+            context = Some("Editor");
+        }
+        "cursorWordPartLeftSelect" => {
+            action = ActionType::String("editor::SelectToPreviousSubwordStart");
+            context = Some("Editor");
+        }
+        "cursorWordLeftSelect" => {
+            action = ActionType::String("editor::SelectToPreviousWordStart");
+            context = Some("Editor");
+        }
+        "cursorUpSelect" => {
+            action = ActionType::String("editor::SelectUp");
+            context = Some("Editor");
+        }
+        "tab" => {
+            action = ActionType::String("editor::Tab");
+            context = Some("Editor");
+        }
+        "outdent" => {
+            action = ActionType::String("editor::Backtab");
+            context = Some("Editor");
+        }
+        "editor.debug.action.toggleBreakpoint" => {
+            action = ActionType::String("editor::ToggleBreakpoint");
+            context = Some("Editor");
+        }
+        "editor.action.transposeLetters" => {
+            action = ActionType::String("editor::Transpose");
+            context = Some("Editor");
+        }
+        "undo" => {
+            action = ActionType::String("editor::Undo");
+            context = Some("Editor");
+        }
+        "cursorUndo" => {
+            action = ActionType::String("editor::UndoSelection");
+            context = Some("Editor");
+        }
+        "editor.unfoldAll" => {
+            action = ActionType::String("editor::UnfoldAll");
+            context = Some("Editor");
+        }
+        "editor.unfold" => {
+            action = ActionType::String("editor::UnfoldLines");
+            context = Some("Editor");
+        }
+        "editor.unfoldRecursively" => {
+            action = ActionType::String("editor::UnfoldRecursive");
             context = Some("Editor");
         }
 
