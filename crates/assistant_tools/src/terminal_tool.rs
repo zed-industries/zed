@@ -120,7 +120,7 @@ impl Tool for TerminalTool {
                 })?;
                 let mut child = pair.slave.spawn_command(cmd)?;
                 let mut reader = pair.master.try_clone_reader()?;
-                pair.master.take_writer()?;
+                drop(pair);
                 let mut content = Vec::new();
                 reader.read_to_end(&mut content)?;
                 let mut content = String::from_utf8(content)?;
