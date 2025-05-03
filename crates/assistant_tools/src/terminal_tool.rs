@@ -6,11 +6,13 @@ use gpui::{
     Transformation, WeakEntity, Window, percentage,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     env,
+    os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
@@ -87,10 +89,6 @@ impl Tool for TerminalTool {
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let Some(window) = window else {
-            return Task::ready(Err(anyhow!("no window options"))).into();
-        };
-
         let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
@@ -101,12 +99,50 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
+        let command = get_system_shell();
+        let args = vec!["-c".into(), input.command.clone()];
+        let cwd = working_dir.clone();
+
+        let Some(window) = window else {
+            // Headless setup, like an eval. Our terminal subsystem requires a workspace,
+            // so bypass it and provide a convincing imitation using a pty.
+            let task = cx.background_spawn(async move {
+                let pty_system = native_pty_system();
+                let mut cmd = CommandBuilder::new(command);
+                cmd.args(args);
+                if let Some(cwd) = cwd {
+                    cmd.cwd(cwd);
+                }
+                let pair = pty_system.openpty(PtySize {
+                    rows: 24,
+                    cols: 80,
+                    ..Default::default()
+                })?;
+                let mut child = pair.slave.spawn_command(cmd)?;
+                let mut reader = pair.master.try_clone_reader()?;
+                pair.master.take_writer()?;
+                let mut content = Vec::new();
+                reader.read_to_end(&mut content)?;
+                let content = String::from_utf8(content)?;
+                let exit_status = child.wait()?;
+                let exit_status =
+                    std::process::ExitStatus::from_raw(exit_status.exit_code() as i32);
+                let (processed_content, _) =
+                    process_content(content, &input.command, Some(exit_status));
+                Ok(processed_content)
+            });
+            return ToolResult {
+                output: task,
+                card: None,
+            };
+        };
+
         let terminal = project.update(cx, |project, cx| {
             project.create_terminal(
                 TerminalKind::Task(task::SpawnInTerminal {
-                    command: get_system_shell(),
-                    args: vec!["-c".into(), input.command.clone()],
-                    cwd: working_dir.clone(),
+                    command,
+                    args,
+                    cwd,
                     ..Default::default()
                 }),
                 window,

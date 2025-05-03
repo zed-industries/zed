@@ -37,6 +37,7 @@ language.workspace = true
 language_model.workspace = true
 linkme.workspace = true
 open.workspace = true
+portable-pty.workspace = true
 project.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
