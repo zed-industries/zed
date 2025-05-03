@@ -925,15 +925,18 @@ impl ToolbarItemView for AgentDiffToolbar {
             if let Some(editor) = item.act_as::<Editor>(cx) {
                 if editor.read(cx).mode().is_full() {
                     let agent_diff = AgentDiff::global(cx);
+                    let editor_state = agent_diff.read(cx).editor_state(&editor);
 
-                    self.active_item = Some(AgentDiffToolbarItem::Editor {
-                        editor: editor.downgrade(),
-                        _diff_subscription: cx.observe(&agent_diff, |_, _, cx| {
-                            cx.notify();
-                        }),
-                    });
+                    if matches!(editor_state, EditorState::Reviewing) {
+                        self.active_item = Some(AgentDiffToolbarItem::Editor {
+                            editor: editor.downgrade(),
+                            _diff_subscription: cx.observe(&agent_diff, |_, _, cx| {
+                                cx.notify();
+                            }),
+                        });
 
-                    return ToolbarItemLocation::PrimaryLeft;
+                        return ToolbarItemLocation::PrimaryLeft;
+                    }
                 }
             }
         }
