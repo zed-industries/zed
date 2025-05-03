@@ -200,6 +200,18 @@ impl EditAgent {
         Task<Result<EditAgentOutput>>,
         mpsc::UnboundedReceiver<EditAgentOutputEvent>,
     ) {
+        self.project
+            .update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: language::Anchor::MIN,
+                    }),
+                    cx,
+                );
+            })
+            .ok();
+
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
         let output = cx.spawn(async move |cx| {
