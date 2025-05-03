@@ -93,7 +93,7 @@ impl AskPassSession {
                 let asking_for_password = prompt.to_lowercase().contains("password");
                 if let Some(password) = delegate
                     .ask_password(if asking_for_password && try_again {
-                        "Wrong password, try again:".to_string()
+                        "Incorrect credentials. Please verify your user ID or try a different password:".to_string()
                     } else {
                         prompt.to_string()
                     })
