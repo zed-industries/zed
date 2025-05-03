@@ -161,6 +161,15 @@ pub fn init(cx: &mut App) {
                         match settings::VsCodeShortcuts::load_user_shortcuts(fs.clone()).await {
                             Ok(vscode) => vscode,
                             Err(err) => {
+                                println!(
+                                    "Failed to load VsCode shortcuts: {}\n{}",
+                                    err,
+                                    format!(
+                                        "Loading VsCode settings from path: {:?}",
+                                        paths::vscode_shortcuts_file()
+                                    )
+                                );
+
                                 let _ = cx.prompt(
                                     gpui::PromptLevel::Info,
                                     "Could not find or load a VsCode shortcuts file",
@@ -218,7 +227,7 @@ pub fn init(cx: &mut App) {
                                             resolved_path,
                                             err
                                         )
-                                    });
+                                    }).ok();
                                 }
                             } else {
                                 fs.atomic_write(keymap_file.to_path_buf(), new_content)
@@ -229,7 +238,8 @@ pub fn init(cx: &mut App) {
                                             keymap_file,
                                             err
                                         )
-                                    });
+                                    })
+                                    .ok();
                             }
                         })
                         .detach();
