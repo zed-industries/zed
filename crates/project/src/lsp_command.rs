@@ -13,7 +13,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashSet;
 use futures::future;
-use gpui::{App, AsyncApp, Entity};
+use gpui::{App, AsyncApp, Entity, Task};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -966,7 +966,7 @@ fn language_server_for_buffer(
         .ok_or_else(|| anyhow!("no language server found for buffer"))
 }
 
-async fn location_links_from_proto(
+pub async fn location_links_from_proto(
     proto_links: Vec<proto::LocationLink>,
     lsp_store: Entity<LspStore>,
     mut cx: AsyncApp,
@@ -974,70 +974,72 @@ async fn location_links_from_proto(
     let mut links = Vec::new();
 
     for link in proto_links {
-        links.push(location_link_from_proto(link, &lsp_store, &mut cx).await?)
+        links.push(location_link_from_proto(link, lsp_store.clone(), &mut cx).await?)
     }
 
     Ok(links)
 }
 
-pub async fn location_link_from_proto(
+pub fn location_link_from_proto(
     link: proto::LocationLink,
-    lsp_store: &Entity<LspStore>,
+    lsp_store: Entity<LspStore>,
     cx: &mut AsyncApp,
-) -> Result<LocationLink> {
-    let origin = match link.origin {
-        Some(origin) => {
-            let buffer_id = BufferId::new(origin.buffer_id)?;
-            let buffer = lsp_store
-                .update(cx, |lsp_store, cx| {
-                    lsp_store.wait_for_remote_buffer(buffer_id, cx)
-                })?
-                .await?;
-            let start = origin
-                .start
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing origin start"))?;
-            let end = origin
-                .end
-                .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing origin end"))?;
-            buffer
-                .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
-                .await?;
-            Some(Location {
-                buffer,
-                range: start..end,
-            })
-        }
-        None => None,
-    };
+) -> Task<Result<LocationLink>> {
+    cx.spawn(async move |cx| {
+        let origin = match link.origin {
+            Some(origin) => {
+                let buffer_id = BufferId::new(origin.buffer_id)?;
+                let buffer = lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        lsp_store.wait_for_remote_buffer(buffer_id, cx)
+                    })?
+                    .await?;
+                let start = origin
+                    .start
+                    .and_then(deserialize_anchor)
+                    .ok_or_else(|| anyhow!("missing origin start"))?;
+                let end = origin
+                    .end
+                    .and_then(deserialize_anchor)
+                    .ok_or_else(|| anyhow!("missing origin end"))?;
+                buffer
+                    .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
+                    .await?;
+                Some(Location {
+                    buffer,
+                    range: start..end,
+                })
+            }
+            None => None,
+        };
 
-    let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
-    let buffer_id = BufferId::new(target.buffer_id)?;
-    let buffer = lsp_store
-        .update(cx, |lsp_store, cx| {
-            lsp_store.wait_for_remote_buffer(buffer_id, cx)
-        })?
-        .await?;
-    let start = target
-        .start
-        .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("missing target start"))?;
-    let end = target
-        .end
-        .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("missing target end"))?;
-    buffer
-        .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
-        .await?;
-    let target = Location {
-        buffer,
-        range: start..end,
-    };
-    Ok(LocationLink { origin, target })
+        let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
+        let buffer_id = BufferId::new(target.buffer_id)?;
+        let buffer = lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.wait_for_remote_buffer(buffer_id, cx)
+            })?
+            .await?;
+        let start = target
+            .start
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("missing target start"))?;
+        let end = target
+            .end
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("missing target end"))?;
+        buffer
+            .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
+            .await?;
+        let target = Location {
+            buffer,
+            range: start..end,
+        };
+        Ok(LocationLink { origin, target })
+    })
 }
 
-async fn location_links_from_lsp(
+pub async fn location_links_from_lsp(
     message: Option<lsp::GotoDefinitionResponse>,
     lsp_store: Entity<LspStore>,
     buffer: Entity<Buffer>,
@@ -1178,7 +1180,7 @@ pub async fn location_link_from_lsp(
     })
 }
 
-fn location_links_to_proto(
+pub fn location_links_to_proto(
     links: Vec<LocationLink>,
     lsp_store: &mut LspStore,
     peer_id: PeerId,

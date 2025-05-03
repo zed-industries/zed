@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, Cow},
+    collections::BTreeMap,
     sync::atomic::{self, AtomicBool},
 };
 
@@ -50,7 +51,7 @@ impl<'a> Matcher<'a> {
 
     /// Filter and score fuzzy match candidates. Results are returned unsorted, in the same order as
     /// the input candidates.
-    pub fn match_candidates<C, R, F, T>(
+    pub(crate) fn match_candidates<C, R, F, T>(
         &mut self,
         prefix: &[char],
         lowercase_prefix: &[char],
@@ -65,6 +66,7 @@ impl<'a> Matcher<'a> {
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
+        let mut extra_lowercase_chars = BTreeMap::new();
 
         for candidate in candidates {
             if !candidate.borrow().has_chars(self.query_char_bag) {
@@ -77,9 +79,14 @@ impl<'a> Matcher<'a> {
 
             candidate_chars.clear();
             lowercase_candidate_chars.clear();
-            for c in candidate.borrow().to_string().chars() {
+            extra_lowercase_chars.clear();
+            for (i, c) in candidate.borrow().to_string().chars().enumerate() {
                 candidate_chars.push(c);
-                lowercase_candidate_chars.append(&mut c.to_lowercase().collect::<Vec<_>>());
+                let mut char_lowercased = c.to_lowercase().collect::<Vec<_>>();
+                if char_lowercased.len() > 1 {
+                    extra_lowercase_chars.insert(i, char_lowercased.len() - 1);
+                }
+                lowercase_candidate_chars.append(&mut char_lowercased);
             }
 
             if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
@@ -97,6 +104,7 @@ impl<'a> Matcher<'a> {
                 &lowercase_candidate_chars,
                 prefix,
                 lowercase_prefix,
+                &extra_lowercase_chars,
             );
 
             if score > 0.0 {
@@ -131,18 +139,20 @@ impl<'a> Matcher<'a> {
     fn score_match(
         &mut self,
         path: &[char],
-        path_cased: &[char],
+        path_lowercased: &[char],
         prefix: &[char],
         lowercase_prefix: &[char],
+        extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
         let score = self.recursive_score_match(
             path,
-            path_cased,
+            path_lowercased,
             prefix,
             lowercase_prefix,
             0,
             0,
             self.query.len() as f64,
+            extra_lowercase_chars,
         ) * self.query.len() as f64;
 
         if score <= 0.0 {
@@ -173,12 +183,13 @@ impl<'a> Matcher<'a> {
     fn recursive_score_match(
         &mut self,
         path: &[char],
-        path_cased: &[char],
+        path_lowercased: &[char],
         prefix: &[char],
         lowercase_prefix: &[char],
         query_idx: usize,
         path_idx: usize,
         cur_score: f64,
+        extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
         use std::path::MAIN_SEPARATOR;
 
@@ -200,15 +211,22 @@ impl<'a> Matcher<'a> {
 
         let mut last_slash = 0;
         for j in path_idx..=limit {
-            let path_char = if j < prefix.len() {
+            let extra_lowercase_chars_count = extra_lowercase_chars
+                .iter()
+                .take_while(|(i, _)| i < &&j)
+                .map(|(_, increment)| increment)
+                .sum::<usize>();
+            let j_regular = j - extra_lowercase_chars_count;
+
+            let path_char = if j_regular < prefix.len() {
                 lowercase_prefix[j]
             } else {
-                path_cased[j - prefix.len()]
+                path_lowercased[j - prefix.len()]
             };
             let is_path_sep = path_char == MAIN_SEPARATOR;
 
             if query_idx == 0 && is_path_sep {
-                last_slash = j;
+                last_slash = j_regular;
             }
 
             #[cfg(not(target_os = "windows"))]
@@ -218,18 +236,18 @@ impl<'a> Matcher<'a> {
             #[cfg(target_os = "windows")]
             let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
             if need_to_score {
-                let curr = if j < prefix.len() {
-                    prefix[j]
+                let curr = if j_regular < prefix.len() {
+                    prefix[j_regular]
                 } else {
-                    path[j - prefix.len()]
+                    path[j_regular - prefix.len()]
                 };
 
                 let mut char_score = 1.0;
                 if j > path_idx {
-                    let last = if j - 1 < prefix.len() {
-                        prefix[j - 1]
+                    let last = if j_regular - 1 < prefix.len() {
+                        prefix[j_regular - 1]
                     } else {
-                        path[j - 1 - prefix.len()]
+                        path[j_regular - 1 - prefix.len()]
                     };
 
                     if last == MAIN_SEPARATOR {
@@ -279,17 +297,18 @@ impl<'a> Matcher<'a> {
 
                 let new_score = self.recursive_score_match(
                     path,
-                    path_cased,
+                    path_lowercased,
                     prefix,
                     lowercase_prefix,
                     query_idx + 1,
                     j + 1,
                     next_score,
+                    extra_lowercase_chars,
                 ) * multiplier;
 
                 if new_score > score {
                     score = new_score;
-                    best_position = j;
+                    best_position = j_regular;
                     // Optimization: can't score better than 1.
                     if new_score == 1.0 {
                         break;
