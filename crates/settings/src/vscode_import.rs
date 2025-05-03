@@ -1,13 +1,10 @@
 use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
-use futures::io::ReadUntil;
 use gpui::{Keystroke, PlatformKeyboardMapper};
 use serde_json::{Map, Value};
 
 use std::sync::Arc;
-
-use crate::KeymapFile;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -126,7 +123,7 @@ impl VsCodeShortcuts {
         })
     }
 
-    pub async fn load_user_shortcuts(fs: Arc<dyn Fs>) -> Result<Self> {
+    pub async fn load_user_shortcuts(_fs: Arc<dyn Fs>) -> Result<Self> {
         let content = r#"
         [
             {
