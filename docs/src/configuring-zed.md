@@ -1034,7 +1034,8 @@ List of `string` values
 "toolbar": {
   "breadcrumbs": true,
   "quick_actions": true,
-  "selections_menu": true
+  "selections_menu": true,
+  "agent_review": true
 },
 ```
 
@@ -3078,7 +3079,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "editor_model": {
     "provider": "zed.dev",
     "model": "claude-3-7-sonnet-latest"
-  }
+  },
+  "single_file_review": true,
 }
 ```
 
