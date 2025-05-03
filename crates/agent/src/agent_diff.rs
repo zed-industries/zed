@@ -927,7 +927,7 @@ impl AgentDiffToolbar {
         cx.emit(ToolbarItemEvent::ChangeLocation(location));
     }
 
-    fn location(&self, cx: &mut Context<Self>) -> ToolbarItemLocation {
+    fn location(&self, cx: &App) -> ToolbarItemLocation {
         if !EditorSettings::get_global(cx).toolbar.agent_review {
             return ToolbarItemLocation::Hidden;
         }
@@ -1755,7 +1755,7 @@ mod tests {
     use assistant_tool::ToolWorkingSet;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
@@ -1979,6 +1979,21 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        // Add the diff toolbar to the active pane
+        let diff_toolbar = cx.new_window_entity(|_, cx| AgentDiffToolbar::new(cx));
+
+        workspace.update_in(cx, {
+            let diff_toolbar = diff_toolbar.clone();
+
+            move |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.toolbar().update(cx, |toolbar, cx| {
+                        toolbar.add_item(diff_toolbar, window, cx);
+                    });
+                })
+            }
+        });
+
         // Set the active thread
         cx.update(|window, cx| {
             AgentDiff::set_active_thread(&workspace.downgrade(), &thread, window, cx)
@@ -2006,6 +2021,19 @@ mod tests {
             workspace.add_item_to_active_pane(Box::new(editor1.clone()), None, true, window, cx);
         });
         cx.run_until_parked();
+
+        // Toolbar knows about the current editor, but it's hidden since there are no changes yet
+        assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Idle,
+                ..
+            })
+        )));
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::Hidden
+        );
 
         // Make changes
         cx.update(|_, cx| {
@@ -2053,6 +2081,31 @@ mod tests {
                 .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
+        );
+
+        // The toolbar is displayed in the right state
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::PrimaryLeft
+        );
+        assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Reviewing,
+                ..
+            })
+        )));
+
+        // The toolbar respects its setting
+        override_toolbar_agent_review_setting(false, cx);
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::Hidden
+        );
+        override_toolbar_agent_review_setting(true, cx);
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::PrimaryLeft
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.
@@ -2150,5 +2203,33 @@ mod tests {
                 .range(),
             Point::new(0, 0)..Point::new(0, 0)
         );
+
+        // Editor 1 toolbar is hidden since all changes have been reviewed
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&editor1, true, true, window, cx)
+        });
+
+        assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Idle,
+                ..
+            })
+        )));
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::Hidden
+        );
+    }
+
+    fn override_toolbar_agent_review_setting(active: bool, cx: &mut VisualTestContext) {
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, _cx| {
+                let mut editor_settings = store.get::<EditorSettings>(None).clone();
+                editor_settings.toolbar.agent_review = active;
+                store.override_global(editor_settings);
+            })
+        });
+        cx.run_until_parked();
     }
 }
