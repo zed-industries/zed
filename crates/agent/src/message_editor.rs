@@ -200,8 +200,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
