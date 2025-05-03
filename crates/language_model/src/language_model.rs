@@ -26,7 +26,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use util::serde::is_default;
 use zed_llm_client::{
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+    CompletionRequestStatus, MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
+    MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 
 pub use crate::model::*;
@@ -64,18 +65,10 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: usize,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum CompletionRequestStatus {
-    Queued { position: usize },
-    Started,
-    Failed { code: String, message: String },
-}
-
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
-    QueueUpdate(CompletionRequestStatus),
+    StatusUpdate(CompletionRequestStatus),
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -119,7 +112,7 @@ pub enum StopReason {
     ToolUse,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct RequestUsage {
     pub limit: UsageLimit,
     pub amount: i32,
@@ -299,41 +292,15 @@ pub trait LanguageModel: Send + Sync {
         >,
     >;
 
-    fn stream_completion_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            Option<RequestUsage>,
-        )>,
-    > {
-        self.stream_completion(request, cx)
-            .map(|result| result.map(|stream| (stream, None)))
-            .boxed()
-    }
-
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
-        self.stream_completion_text_with_usage(request, cx)
-            .map(|result| result.map(|(stream, _usage)| stream))
-            .boxed()
-    }
-
-    fn stream_completion_text_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<(LanguageModelTextStream, Option<RequestUsage>)>> {
-        let future = self.stream_completion_with_usage(request, cx);
+        let future = self.stream_completion(request, cx);
 
         async move {
-            let (events, usage) = future.await?;
+            let events = future.await?;
             let mut events = events.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
@@ -358,7 +325,7 @@ pub trait LanguageModel: Send + Sync {
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {
-                                Ok(LanguageModelCompletionEvent::QueueUpdate { .. }) => None,
+                                Ok(LanguageModelCompletionEvent::StatusUpdate { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
@@ -375,14 +342,11 @@ pub trait LanguageModel: Send + Sync {
                 }))
                 .boxed();
 
-            Ok((
-                LanguageModelTextStream {
-                    message_id,
-                    stream,
-                    last_token_usage,
-                },
-                usage,
-            ))
+            Ok(LanguageModelTextStream {
+                message_id,
+                stream,
+                last_token_usage,
+            })
         }
         .boxed()
     }

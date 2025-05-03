@@ -9,12 +9,11 @@ use futures::{
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, CloudModel, CompletionRequestStatus, LanguageModel,
-    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
-    LanguageModelKnownError, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
-    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
+    ModelRequestLimitReachedError, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -36,8 +35,8 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use zed_llm_client::{
-    CURRENT_PLAN_HEADER_NAME, CompletionBody, CountTokensBody, CountTokensResponse,
-    EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+    CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionRequestStatus, CountTokensBody,
+    CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
     MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
 };
 
@@ -549,7 +548,11 @@ impl CloudLanguageModel {
                     .headers()
                     .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER)
                     .is_some();
-                let usage = RequestUsage::from_headers(response.headers()).ok();
+                let usage = if includes_status_messages {
+                    None
+                } else {
+                    RequestUsage::from_headers(response.headers()).ok()
+                };
 
                 return Ok((response, usage, includes_status_messages));
             } else if response
@@ -753,33 +756,17 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncApp,
+        _cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
         >,
     > {
-        self.stream_completion_with_usage(request, cx)
-            .map(|result| result.map(|(stream, _)| stream))
-            .boxed()
-    }
-
-    fn stream_completion_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            Option<RequestUsage>,
-        )>,
-    > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let mode = request.mode;
-        match &self.model {
+        let future: BoxFuture<'static, Result<_>> = match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
                     request,
@@ -902,7 +889,24 @@ impl LanguageModel for CloudLanguageModel {
                 }
                 .boxed()
             }
+        };
+
+        async move {
+            let (stream, usage) = future.await?;
+            Ok(
+                futures::stream::iter(usage.into_iter().map(|RequestUsage { limit, amount }| {
+                    Ok(LanguageModelCompletionEvent::StatusUpdate(
+                        CompletionRequestStatus::UsageUpdated {
+                            amount: amount as usize,
+                            limit,
+                        },
+                    ))
+                }))
+                .chain(stream)
+                .boxed(),
+            )
         }
+        .boxed()
     }
 }
 
@@ -930,7 +934,7 @@ where
                     vec![Err(LanguageModelCompletionError::Other(error))]
                 }
                 Ok(CloudCompletionEvent::Status(event)) => {
-                    vec![Ok(LanguageModelCompletionEvent::QueueUpdate(event))]
+                    vec![Ok(LanguageModelCompletionEvent::StatusUpdate(event))]
                 }
                 Ok(CloudCompletionEvent::Event(event)) => map_callback(event),
             })
