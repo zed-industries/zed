@@ -1497,7 +1497,7 @@ impl Thread {
                                         language_model::CompletionRequestStatus::Started => {
                                             QueueState::Started
                                         }
-                                        language_model::CompletionRequestStatus::Error {
+                                        language_model::CompletionRequestStatus::Failed {
                                             code, message
                                         } => {
                                             return Err(anyhow!("completion request failed. code: {code}, message: {message}"));

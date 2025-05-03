@@ -69,7 +69,7 @@ pub struct LanguageModelCacheConfiguration {
 pub enum CompletionRequestStatus {
     Queued { position: usize },
     Started,
-    Error { code: String, message: String },
+    Failed { code: String, message: String },
 }
 
 /// A completion event from a language model.
