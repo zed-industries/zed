@@ -108,7 +108,6 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &Follow, window, cx| {
-                    // todo!(not sure if we should have this action, but was good for testing)
                     workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {

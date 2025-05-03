@@ -130,7 +130,6 @@ impl PlayerColors {
     }
 
     pub fn agent(&self) -> PlayerColor {
-        // todo!("assign a color to the agent")
         *self.0.last().unwrap()
     }
 
