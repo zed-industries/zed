@@ -119,6 +119,7 @@ impl ExampleContext {
                     text.to_string(),
                     ContextLoadResult::default(),
                     None,
+                    Vec::new(),
                     cx,
                 );
             })
@@ -233,9 +234,11 @@ impl ExampleContext {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
                     }
                 },
-                ThreadEvent::StreamedAssistantText(_, _)
+                ThreadEvent::NewRequest
+                | ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. } => {}
+                | ThreadEvent::UsePendingTools { .. }
+                | ThreadEvent::CompletionCanceled => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,

@@ -35,7 +35,7 @@ impl Tool for CreateDirectoryTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {

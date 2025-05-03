@@ -110,18 +110,7 @@ struct ComponentPreview {
     active_page: PreviewPage,
     components: Vec<ComponentMetadata>,
     component_list: ListState,
-    agent_previews: Vec<
-        Box<
-            dyn Fn(
-                &Self,
-                WeakEntity<Workspace>,
-                Entity<ActiveThread>,
-                WeakEntity<ThreadStore>,
-                &mut Window,
-                &mut App,
-            ) -> Option<AnyElement>,
-        >,
-    >,
+    agent_previews: Vec<ComponentId>,
     cursor_index: usize,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
@@ -191,38 +180,7 @@ impl ComponentPreview {
         );
 
         // Initialize agent previews
-        let agent_previews = agent::all_agent_previews()
-            .into_iter()
-            .map(|id| {
-                Box::new(
-                    move |_self: &ComponentPreview,
-                          workspace: WeakEntity<Workspace>,
-                          active_thread: Entity<ActiveThread>,
-                          thread_store: WeakEntity<ThreadStore>,
-                          window: &mut Window,
-                          cx: &mut App| {
-                        agent::get_agent_preview(
-                            &id,
-                            workspace,
-                            active_thread,
-                            thread_store,
-                            window,
-                            cx,
-                        )
-                    },
-                )
-                    as Box<
-                        dyn Fn(
-                            &ComponentPreview,
-                            WeakEntity<Workspace>,
-                            Entity<ActiveThread>,
-                            WeakEntity<ThreadStore>,
-                            &mut Window,
-                            &mut App,
-                        ) -> Option<AnyElement>,
-                    >
-            })
-            .collect::<Vec<_>>();
+        let agent_previews = agent::all_agent_previews();
 
         let mut component_preview = Self {
             workspace_id: None,
@@ -635,44 +593,65 @@ impl ComponentPreview {
 
         let description = component.description();
 
-        v_flex()
-            .py_2()
-            .child(
-                v_flex()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_sm()
-                    .w_full()
-                    .gap_4()
-                    .py_4()
-                    .px_6()
-                    .flex_none()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                h_flex().gap_1().text_xl().child(div().child(name)).when(
-                                    !matches!(scope, ComponentScope::None),
-                                    |this| {
-                                        this.child(div().opacity(0.5).child(format!("({})", scope)))
-                                    },
-                                ),
+        // Build the content container
+        let mut preview_container = v_flex().py_2().child(
+            v_flex()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_sm()
+                .w_full()
+                .gap_4()
+                .py_4()
+                .px_6()
+                .flex_none()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .text_xl()
+                                .child(div().child(name))
+                                .when(!matches!(scope, ComponentScope::None), |this| {
+                                    this.child(div().opacity(0.5).child(format!("({})", scope)))
+                                }),
+                        )
+                        .when_some(description, |this, description| {
+                            this.child(
+                                div()
+                                    .text_ui_sm(cx)
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .max_w(px(600.0))
+                                    .child(description),
                             )
-                            .when_some(description, |this, description| {
-                                this.child(
-                                    div()
-                                        .text_ui_sm(cx)
-                                        .text_color(cx.theme().colors().text_muted)
-                                        .max_w(px(600.0))
-                                        .child(description),
-                                )
-                            }),
-                    )
-                    .when_some(component.preview(), |this, preview| {
-                        this.children(preview(window, cx))
-                    }),
-            )
-            .into_any_element()
+                        }),
+                ),
+        );
+
+        // Check if the component's scope is Agent
+        if scope == ComponentScope::Agent {
+            if let (Some(thread_store), Some(active_thread)) = (
+                self.thread_store.as_ref().map(|ts| ts.downgrade()),
+                self.active_thread.clone(),
+            ) {
+                if let Some(element) = agent::get_agent_preview(
+                    &component.id(),
+                    self.workspace.clone(),
+                    active_thread,
+                    thread_store,
+                    window,
+                    cx,
+                ) {
+                    preview_container = preview_container.child(element);
+                } else if let Some(preview) = component.preview() {
+                    preview_container = preview_container.children(preview(window, cx));
+                }
+            }
+        } else if let Some(preview) = component.preview() {
+            preview_container = preview_container.children(preview(window, cx));
+        }
+
+        preview_container.into_any_element()
     }
 
     fn render_all_components(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -711,7 +690,12 @@ impl ComponentPreview {
             v_flex()
                 .id("render-component-page")
                 .size_full()
-                .child(ComponentPreviewPage::new(component.clone()))
+                .child(ComponentPreviewPage::new(
+                    component.clone(),
+                    self.workspace.clone(),
+                    self.thread_store.as_ref().map(|ts| ts.downgrade()),
+                    self.active_thread.clone(),
+                ))
                 .into_any_element()
         } else {
             v_flex()
@@ -732,13 +716,13 @@ impl ComponentPreview {
             .id("render-active-thread")
             .size_full()
             .child(
-                v_flex().children(self.agent_previews.iter().filter_map(|preview_fn| {
+                v_flex().children(self.agent_previews.iter().filter_map(|component_id| {
                     if let (Some(thread_store), Some(active_thread)) = (
                         self.thread_store.as_ref().map(|ts| ts.downgrade()),
                         self.active_thread.clone(),
                     ) {
-                        preview_fn(
-                            self,
+                        agent::get_agent_preview(
+                            component_id,
                             self.workspace.clone(),
                             active_thread,
                             thread_store,
@@ -894,7 +878,7 @@ impl Default for ActivePageId {
 
 impl From<ComponentId> for ActivePageId {
     fn from(id: ComponentId) -> Self {
-        ActivePageId(id.0.to_string())
+        Self(id.0.to_string())
     }
 }
 
@@ -1073,16 +1057,25 @@ impl SerializableItem for ComponentPreview {
 pub struct ComponentPreviewPage {
     // languages: Arc<LanguageRegistry>,
     component: ComponentMetadata,
+    workspace: WeakEntity<Workspace>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    active_thread: Option<Entity<ActiveThread>>,
 }
 
 impl ComponentPreviewPage {
     pub fn new(
         component: ComponentMetadata,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
+        active_thread: Option<Entity<ActiveThread>>,
         // languages: Arc<LanguageRegistry>
     ) -> Self {
         Self {
             // languages,
             component,
+            workspace,
+            thread_store,
+            active_thread,
         }
     }
 
@@ -1113,12 +1106,32 @@ impl ComponentPreviewPage {
     }
 
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // Try to get agent preview first if we have an active thread
+        let maybe_agent_preview = if let (Some(thread_store), Some(active_thread)) =
+            (self.thread_store.as_ref(), self.active_thread.as_ref())
+        {
+            agent::get_agent_preview(
+                &self.component.id(),
+                self.workspace.clone(),
+                active_thread.clone(),
+                thread_store.clone(),
+                window,
+                cx,
+            )
+        } else {
+            None
+        };
+
         v_flex()
             .flex_1()
             .px_12()
             .py_6()
             .bg(cx.theme().colors().editor_background)
-            .child(if let Some(preview) = self.component.preview() {
+            .child(if let Some(element) = maybe_agent_preview {
+                // Use agent preview if available
+                element
+            } else if let Some(preview) = self.component.preview() {
+                // Fall back to component preview
                 preview(window, cx).unwrap_or_else(|| {
                     div()
                         .child("Failed to load preview. This path should be unreachable")

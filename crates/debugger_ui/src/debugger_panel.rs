@@ -353,7 +353,6 @@ impl DebugPanel {
         };
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
-        let breakpoint_store = self.project.read(cx).breakpoint_store();
         let definition = parent_session.read(cx).definition().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
@@ -364,13 +363,7 @@ impl DebugPanel {
                     dap_store.new_session(definition.clone(), Some(parent_session.clone()), cx);
 
                 let task = session.update(cx, |session, cx| {
-                    session.boot(
-                        binary,
-                        worktree,
-                        breakpoint_store,
-                        dap_store_handle.downgrade(),
-                        cx,
-                    )
+                    session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
             })?;

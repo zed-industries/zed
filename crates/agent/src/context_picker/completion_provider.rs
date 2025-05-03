@@ -19,9 +19,11 @@ use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
+use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::RULES_ICON;
+use crate::Thread;
+use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
@@ -235,6 +237,7 @@ pub struct ContextPickerCompletionProvider {
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     editor: WeakEntity<Editor>,
+    excluded_buffer: Option<WeakEntity<Buffer>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -243,12 +246,14 @@ impl ContextPickerCompletionProvider {
         context_store: WeakEntity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         editor: WeakEntity<Editor>,
+        exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
         Self {
             workspace,
             context_store,
             thread_store,
             editor,
+            excluded_buffer: exclude_buffer,
         }
     }
 
@@ -310,7 +315,7 @@ impl ContextPickerCompletionProvider {
                             let context_store = context_store.clone();
                             let selections = selections.clone();
                             let selection_infos = selection_infos.clone();
-                            move |_, _: &mut Window, cx: &mut App| {
+                            move |_, window: &mut Window, cx: &mut App| {
                                 context_store.update(cx, |context_store, cx| {
                                     for (buffer, range) in &selections {
                                         context_store.add_selection(
@@ -323,7 +328,7 @@ impl ContextPickerCompletionProvider {
 
                                 let editor = editor.clone();
                                 let selection_infos = selection_infos.clone();
-                                cx.defer(move |cx| {
+                                window.defer(cx, move |window, cx| {
                                     let mut current_offset = 0;
                                     for (file_name, link, line_range) in selection_infos.iter() {
                                         let snapshot =
@@ -354,9 +359,8 @@ impl ContextPickerCompletionProvider {
                                         );
 
                                         editor.update(cx, |editor, cx| {
-                                            editor.display_map.update(cx, |display_map, cx| {
-                                                display_map.fold(vec![crease], cx);
-                                            });
+                                            editor.insert_creases(vec![crease.clone()], cx);
+                                            editor.fold_creases(vec![crease], false, window, cx);
                                         });
 
                                         current_offset += text_len + 1;
@@ -419,21 +423,26 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let thread_id = thread_entry.id.clone();
                     let context_store = context_store.clone();
                     let thread_store = thread_store.clone();
-                    cx.spawn(async move |cx| {
-                        let thread = thread_store
+                    cx.spawn::<_, Option<_>>(async move |cx| {
+                        let thread: Entity<Thread> = thread_store
                             .update(cx, |thread_store, cx| {
                                 thread_store.open_thread(&thread_id, cx)
-                            })?
-                            .await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_thread(thread, false, cx)
-                        })
+                            })
+                            .ok()?
+                            .await
+                            .log_err()?;
+                        let context = context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_thread(thread, false, cx)
+                            })
+                            .ok()??;
+                        Some(context)
                     })
-                    .detach_and_log_err(cx);
                 },
             )),
         }
@@ -463,11 +472,13 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let user_prompt_id = rules.prompt_id;
-                    context_store.update(cx, |context_store, cx| {
-                        context_store.add_rules(user_prompt_id, false, cx);
+                    let context = context_store.update(cx, |context_store, cx| {
+                        context_store.add_rules(user_prompt_id, false, cx)
                     });
+                    Task::ready(context)
                 },
             )),
         }
@@ -498,27 +509,33 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let context_store = context_store.clone();
                     let http_client = http_client.clone();
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
-                        if context_store.update(cx, |context_store, _| {
-                            context_store.includes_url(&url_to_fetch)
-                        })? {
-                            return Ok(());
+                        if let Some(context) = context_store
+                            .update(cx, |context_store, _| {
+                                context_store.get_url_context(url_to_fetch.clone())
+                            })
+                            .ok()?
+                        {
+                            return Some(context);
                         }
                         let content = cx
                             .background_spawn(fetch_url_content(
                                 http_client,
                                 url_to_fetch.to_string(),
                             ))
-                            .await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
-                        })
+                            .await
+                            .log_err()?;
+                        context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
+                            })
+                            .ok()
                     })
-                    .detach_and_log_err(cx);
                 },
             )),
         }
@@ -577,15 +594,23 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor,
+                context_store.clone(),
                 move |cx| {
-                    context_store.update(cx, |context_store, cx| {
-                        let task = if is_directory {
-                            Task::ready(context_store.add_directory(&project_path, false, cx))
-                        } else {
+                    if is_directory {
+                        Task::ready(
+                            context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_directory(&project_path, false, cx)
+                                })
+                                .log_err()
+                                .flatten(),
+                        )
+                    } else {
+                        let result = context_store.update(cx, |context_store, cx| {
                             context_store.add_file_from_path(project_path.clone(), false, cx)
-                        };
-                        task.detach_and_log_err(cx);
-                    })
+                        });
+                        cx.spawn(async move |_| result.await.log_err().flatten())
+                    }
                 },
             )),
         }
@@ -640,18 +665,19 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let symbol = symbol.clone();
                     let context_store = context_store.clone();
                     let workspace = workspace.clone();
-                    super::symbol_context_picker::add_symbol(
+                    let result = super::symbol_context_picker::add_symbol(
                         symbol.clone(),
                         false,
                         workspace.clone(),
                         context_store.downgrade(),
                         cx,
-                    )
-                    .detach_and_log_err(cx);
+                    );
+                    cx.spawn(async move |_| result.await.log_err()?.0)
                 },
             )),
         })
@@ -713,10 +739,18 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
+        let excluded_path = self
+            .excluded_buffer
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .and_then(|b| b.read(cx).file())
+            .map(|file| ProjectPath::from_file(file.as_ref(), cx));
+
         let recent_entries = recent_context_picker_entries(
             context_store.clone(),
             thread_store.clone(),
             workspace.clone(),
+            excluded_path.clone(),
             cx,
         );
 
@@ -749,11 +783,17 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                     .into_iter()
                     .filter_map(|mat| match mat {
                         Match::File(FileMatch { mat, is_recent }) => {
+                            let project_path = ProjectPath {
+                                worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                path: mat.path.clone(),
+                            };
+
+                            if excluded_path.as_ref() == Some(&project_path) {
+                                return None;
+                            }
+
                             Some(Self::completion_for_path(
-                                ProjectPath {
-                                    worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                    path: mat.path.clone(),
-                                },
+                                project_path,
                                 &mat.path_prefix,
                                 is_recent,
                                 mat.is_dir,
@@ -873,24 +913,44 @@ fn confirm_completion_callback(
     start: Anchor,
     content_len: usize,
     editor: Entity<Editor>,
-    add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
+    context_store: Entity<ContextStore>,
+    add_context_fn: impl Fn(&mut App) -> Task<Option<AgentContextHandle>> + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, _, cx| {
-        add_context_fn(cx);
+    Arc::new(move |_, window, cx| {
+        let context = add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        cx.defer(move |cx| {
-            crate::context_picker::insert_fold_for_mention(
+        let context_store = context_store.clone();
+        window.defer(cx, move |window, cx| {
+            let crease_id = crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
                 start,
                 content_len,
-                crease_text,
+                crease_text.clone(),
                 crease_icon_path,
-                editor,
+                editor.clone(),
+                window,
                 cx,
             );
+            cx.spawn(async move |cx| {
+                let crease_id = crease_id?;
+                let context = context.await?;
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+                            addon.add_creases(
+                                &context_store,
+                                AgentContextKey(context),
+                                [(crease_id, crease_text)],
+                                cx,
+                            );
+                        }
+                    })
+                    .ok()
+            })
+            .detach();
         });
         false
     })
@@ -1095,6 +1155,7 @@ mod tests {
                         "five.txt": "",
                         "six.txt": "",
                         "seven.txt": "",
+                        "eight.txt": "",
                     }
                 }),
             )
@@ -1121,9 +1182,12 @@ mod tests {
             separator!("b/five.txt"),
             separator!("b/six.txt"),
             separator!("b/seven.txt"),
+            separator!("b/eight.txt"),
         ];
+
+        let mut opened_editors = Vec::new();
         for path in paths {
-            workspace
+            let buffer = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     workspace.open_path(
                         ProjectPath {
@@ -1138,6 +1202,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            opened_editors.push(buffer);
         }
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1167,12 +1232,23 @@ mod tests {
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
+            let last_opened_buffer = opened_editors.last().and_then(|editor| {
+                editor
+                    .downcast::<Editor>()?
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .as_ref()
+                    .map(Entity::downgrade)
+            });
             window.focus(&editor.focus_handle(cx));
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,
                 editor_entity,
+                last_opened_buffer,
             ))));
         });
 
