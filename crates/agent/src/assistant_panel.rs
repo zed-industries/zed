@@ -63,10 +63,10 @@ pub fn init(cx: &mut App) {
     // todo!("remove")
     GlobalDebugAccountState::update_global(cx, |store, _| {
         store.set_enabled(true);
-        store.set_plan(zed_llm_client::Plan::ZedPro);
+        store.set_plan(zed_llm_client::Plan::Free);
         store.set_custom_prompt_usage(RequestUsage {
-            limit: UsageLimit::Limited(500),
-            amount: 487,
+            limit: UsageLimit::Limited(50),
+            amount: 49,
         });
     });
 

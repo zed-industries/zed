@@ -5,7 +5,7 @@ use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::assistant_panel::DebugAccount;
 use crate::context::{ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::{AgentPreview, AnimatedLabel};
+use crate::ui::{AgentPreview, AnimatedLabel, Callout};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -31,10 +31,7 @@ use prompt_store::PromptStore;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{
-    ButtonLike, Disclosure, Indicator, KeyBinding, PopoverMenuHandle, ProgressBar, Tooltip,
-    prelude::*,
-};
+use ui::{ButtonLike, Disclosure, Indicator, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 use zed_llm_client::{CompletionMode, Plan, UsageLimit};
@@ -468,7 +465,7 @@ impl MessageEditor {
                         Plan::ZedProTrial => "Zed Pro (Trial)",
                         Plan::Free => "Zed Free",
                     };
-                    (Color::Muted, message)
+                    (Color::Info, message)
                 }
             };
 
@@ -477,30 +474,20 @@ impl MessageEditor {
                 UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
             };
 
-            let indicator = div()
-                .size(px(13.))
-                .flex_none()
-                .border(px(2.))
-                .p(px(2.))
-                .border_color(severity_color.color(cx).opacity(0.32))
-                .rounded_full()
-                .child(
-                    div()
-                        .rounded_full()
-                        .size_full()
-                        .bg(severity_color.color(cx)),
-                );
+            let indicator = Indicator::dot()
+                .color(severity_color)
+                .border_color(Color::Custom(cx.theme().colors().editor_background));
 
             return Some(
                 ButtonLike::new("usage-indicator")
                     .child(h_flex().gap_1().child(indicator).when_some(
                         used_percentage,
-                        |this, percent| {
+                        |this, _percent| {
                             this.child(h_flex().gap_0p5().items_center().child(usage_text))
                         },
                     ))
                     .tooltip(Tooltip::text(SharedString::new(tooltip_text)))
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                    .on_click(cx.listener(move |_this, _event, _window, cx| {
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -1066,79 +1053,108 @@ impl MessageEditor {
             })
     }
 
+    fn render_usage_callout(&self, _line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
+        if !cx.has_flag::<NewBillingFeatureFlag>() {
+            return None;
+        }
+
+        let debug_account = cx.debug_account().clone();
+    
+        let mut plan = self.plan.clone();
+        let mut usage = self.usage.clone();
+
+        if debug_account.enabled() {
+            plan = Some(debug_account.plan.clone());
+            usage = Some(debug_account.custom_prompt_usage.clone());
+        }
+
+        let is_approaching_limit = if let (Some(_plan), Some(usage)) = (&plan, &usage) {
+            match usage.limit {
+                UsageLimit::Limited(limit) => {
+                    let percentage = usage.amount as f32 / limit as f32;
+                    percentage >= 0.9 && percentage < 1.0
+                }
+                UsageLimit::Unlimited => false,
+            }
+        } else {
+            false
+        };
+
+        if !is_approaching_limit {
+            return None;
+        }
+
+        let (title, message) = if let Some(plan) = &plan {
+            match plan {
+                zed_llm_client::Plan::Free => (
+                    "Reaching Free tier prompt limit soon",
+                    "Upgrade to increase limit, or switch to a different provider",
+                ),
+                zed_llm_client::Plan::ZedProTrial => (
+                    "Reaching Trial prompt limit soon",
+                    "Upgrade to increase limit, or switch to a different provider",
+                ),
+                _ => return None,
+            }
+        } else {
+            return None;
+        };
+
+        Some(
+            div()
+                .child(
+                    Callout::multi_line(
+                        title.into(),
+                        message.into(),
+                        Icon::new(IconName::Warning).color(Color::Warning).size(IconSize::XSmall),
+                        "Upgrade".into(),
+                        Box::new(move |_, _window, cx| {
+                            _ = cx.open_url("https://zed.dev/pricing");
+                        }),
+                    )
+                )
+        )
+    }
+
     fn render_token_limit_callout(
         &self,
-        line_height: Pixels,
+        _line_height: Pixels,
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
-    ) -> Div {
-        let heading = if token_usage_ratio == TokenUsageRatio::Exceeded {
+    ) -> Option<Div> {
+        if !cx.has_flag::<NewBillingFeatureFlag>() {
+            return None;
+        }
+
+        let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
             "Thread reached the token limit"
         } else {
             "Thread reaching the token limit soon"
         };
 
-        h_flex()
-            .p_2()
-            .gap_2()
-            .flex_wrap()
-            .justify_between()
-            .bg(
-                if token_usage_ratio == TokenUsageRatio::Exceeded {
-                    cx.theme().status().error_background.opacity(0.1)
-                } else {
-                    cx.theme().status().warning_background.opacity(0.1)
-                })
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_start()
-                    .child(
-                        h_flex()
-                            .h(line_height)
-                            .justify_center()
-                            .child(
-                                if token_usage_ratio == TokenUsageRatio::Exceeded {
-                                    Icon::new(IconName::X)
-                                        .color(Color::Error)
-                                        .size(IconSize::XSmall)
-                                } else {
-                                    Icon::new(IconName::Warning)
-                                        .color(Color::Warning)
-                                        .size(IconSize::XSmall)
-                                }
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .mr_auto()
-                            .child(Label::new(heading).size(LabelSize::Small))
-                            .child(
-                                Label::new(
-                                    "Start a new thread from a summary to continue the conversation.",
-                                )
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            ),
-                    ),
-            )
-            .child(
-                Button::new("new-thread", "Start New Thread")
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        let from_thread_id = Some(this.thread.read(cx).id().clone());
+        let message = "Start a new thread from a summary to continue the conversation.";
+        
+        let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
+            Icon::new(IconName::X).color(Color::Error).size(IconSize::XSmall)
+        } else {
+            Icon::new(IconName::Warning).color(Color::Warning).size(IconSize::XSmall)
+        };
 
-                        window.dispatch_action(Box::new(NewThread {
-                            from_thread_id
-                        }), cx);
-                    }))
-                    .icon(IconName::Plus)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .label_size(LabelSize::Small),
-            )
+        Some(
+            div()
+                .child(
+                    Callout::multi_line(
+                        title.into(),
+                        message.into(),
+                        icon,
+                        "Start New Thread".into(),
+                        Box::new(cx.listener(|this, _, window, cx| {
+                            let from_thread_id = Some(this.thread.read(cx).id().clone());
+                            window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
+                        })),
+                    )
+                )
+        )
     }
 
     pub fn last_estimated_token_count(&self) -> Option<usize> {
@@ -1296,8 +1312,9 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(font_size, line_height, window, cx))
+            .children(self.render_usage_callout(line_height, cx))
             .when(token_usage_ratio != TokenUsageRatio::Normal, |parent| {
-                parent.child(self.render_token_limit_callout(line_height, token_usage_ratio, cx))
+                parent.children(self.render_token_limit_callout(line_height, token_usage_ratio, cx))
             })
     }
 }
