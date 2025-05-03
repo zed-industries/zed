@@ -1057,7 +1057,7 @@ pub struct RemoteSelection {
     pub replica_id: ReplicaId,
     pub selection: Selection<Anchor>,
     pub cursor_shape: CursorShape,
-    pub peer_id: PeerId,
+    pub collaborator_id: CollaboratorId,
     pub line_mode: bool,
     pub participant_index: Option<ParticipantIndex>,
     pub user_name: Option<SharedString>,
@@ -19898,7 +19898,7 @@ impl EditorSnapshot {
                     cursor_shape,
                     line_mode,
                     participant_index,
-                    peer_id: collaborator.peer_id,
+                    collaborator_id: CollaboratorId::PeerId(collaborator.peer_id),
                     user_name,
                 })
             })

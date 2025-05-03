@@ -1189,8 +1189,7 @@ impl EditorElement {
 
                     // Don't re-render the leader's selections, since the local selections
                     // match theirs.
-                    // todo!("what about the selections of the agent, where do we set them?")
-                    if Some(CollaboratorId::PeerId(selection.peer_id)) == editor.leader_id {
+                    if Some(selection.collaborator_id) == editor.leader_id {
                         continue;
                     }
                     let key = HoveredCursor {
@@ -1260,19 +1259,14 @@ impl EditorElement {
             ) {
                 let color = Self::get_participant_color(remote_selection.participant_index, cx);
                 add_cursor(remote_selection.selection.head(), color.cursor);
-                // todo!("think about *the* selection coming from the agent")
-                if Some(CollaboratorId::PeerId(remote_selection.peer_id)) == editor.leader_id {
+                if Some(remote_selection.collaborator_id) == editor.leader_id {
                     skip_local = true;
                 }
             }
         }
         // Local cursors
         if !skip_local {
-            let color = if editor.leader_id == Some(CollaboratorId::Agent) {
-                cx.theme().players().agent().cursor
-            } else {
-                cx.theme().players().local().cursor
-            };
+            let color = cx.theme().players().local().cursor;
             editor.selections.disjoint.iter().for_each(|selection| {
                 add_cursor(selection.head(), color);
             });
