@@ -1055,7 +1055,17 @@ impl Workspace {
                 }
 
                 project::Event::AgentLocationChanged => {
-                    this.leader_updated(CollaboratorId::Agent, window, cx);
+                    if let Some(item) = this.leader_updated(CollaboratorId::Agent, window, cx) {
+                        if let Some(followable_item) = item.to_followable_item_handle(cx) {
+                            if let Some(agent_location) = this.project.read(cx).agent_location() {
+                                followable_item.update_agent_location(
+                                    agent_location.position,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }
                 }
 
                 _ => {}
@@ -4542,7 +4552,7 @@ impl Workspace {
         leader_id: impl Into<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<()> {
+    ) -> Option<Box<dyn ItemHandle>> {
         cx.notify();
 
         let leader_id = leader_id.into();
@@ -4581,7 +4591,7 @@ impl Workspace {
             }
         });
 
-        None
+        Some(item)
     }
 
     fn active_view_for_agent(
@@ -4604,6 +4614,7 @@ impl Workspace {
                 registry.build_item(buffer, self.project.clone(), None, window, cx)
             })
         })?;
+
         Some(item)
     }
 

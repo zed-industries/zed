@@ -350,6 +350,30 @@ impl FollowableItem for Editor {
             None
         }
     }
+
+    fn update_agent_location(
+        &mut self,
+        location: language::Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let buffer = buffer.read(cx);
+        let Some((excerpt_id, _, _)) = buffer.as_singleton() else {
+            return;
+        };
+        let position = buffer.anchor_in_excerpt(*excerpt_id, location).unwrap();
+        let selection = Selection {
+            id: 0,
+            reversed: false,
+            start: position,
+            end: position,
+            goal: SelectionGoal::None,
+        };
+        drop(buffer);
+        self.set_selections_from_remote(vec![selection], None, window, cx);
+        self.request_autoscroll_remotely(Autoscroll::newest(), cx);
+    }
 }
 
 async fn update_editor_from_message(
