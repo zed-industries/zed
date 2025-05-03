@@ -20,6 +20,8 @@ As well as Zed preview:
 brew install --cask zed@preview
 ```
 
+If Zed is installed using Homebrew, it can be uninstalled at any time using the command `brew uninstall --cask zed`.
+
 ### Linux
 
 For most Linux users, the easiest way to install Zed is through our installation script:
@@ -36,7 +38,9 @@ curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 
 This script supports `x86_64` and `AArch64`, as well as common Linux distributions: Ubuntu, Arch, Debian, RedHat, CentOS, Fedora, and more.
 
-If this script is insufficient for your use case or you run into problems running Zed, please see our [Linux-specific documentation](./linux.md).
+If Zed is installed using this installation script, it can be uninstalled at any time by running the shell command `zed --uninstall`. The shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
+
+If this script is insufficient for your use case, you run into problems running Zed, or there are errors in uninstalling Zed, please see our [Linux-specific documentation](./linux.md).
 
 ## Command Palette
 
