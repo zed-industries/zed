@@ -182,7 +182,7 @@ impl VsCodeShortcuts {
             let args = content.get("args").and_then(|args| args.as_str());
             let (action, _) = vscode_shortcut_command_to_zed_action(command, context, args)
                 .unwrap_or((ActionType::String(command), None));
-            let Ok(action) = serde_json_lenient::from_str(&action.to_string()) else {
+            let Ok(action) = serde_json_lenient::from_str(action.as_str()) else {
                 skipped.push((
                     shortcut.to_string(),
                     format!("Unable to parse command: {}, action: {:?}", command, action),
@@ -208,12 +208,12 @@ enum ActionType<'t> {
     Other(&'t str),
 }
 
-impl ActionType<'_> {
-    fn to_string(&self) -> String {
+impl<'t> ActionType<'t> {
+    fn as_str(&'t self) -> &'t str {
         match self {
-            ActionType::String(s) => format!("\"{}\"", s),
-            ActionType::WithArgs(s) => s.clone(),
-            ActionType::Other(s) => s.to_string(),
+            ActionType::String(s) => *s,
+            ActionType::WithArgs(s) => s,
+            ActionType::Other(s) => *s,
         }
     }
 }
@@ -307,40 +307,36 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
             action = ActionType::String("workspace::ToggleRightDock");
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex1" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 0]");
+        "workbench.action.focusFirstEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 0]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex2" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 1]");
+        "workbench.action.focusSecondEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 1]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex3" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 2]");
+        "workbench.action.focusThirdEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 2]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex4" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 3]");
+        "workbench.action.focusFourthEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 3]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex5" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 4]");
+        "workbench.action.focusFifthEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 4]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex6" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 5]");
+        "workbench.action.focusSixthEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 5]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex7" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 6]");
+        "workbench.action.focusSeventhEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 6]"#);
             context = Some("Workspace");
         }
-        "workbench.action.openEditorAtIndex8" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 7]");
-            context = Some("Workspace");
-        }
-        "workbench.action.openEditorAtIndex9" => {
-            action = ActionType::Other("[\"workspace::ActivatePane\", 8]");
+        "workbench.action.focusEighthEditorGroup" => {
+            action = ActionType::Other(r#"["workspace::ActivatePane", 7]"#);
             context = Some("Workspace");
         }
         "workbench.action.closeAllEditors" => {
@@ -1022,7 +1018,7 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
 
         // crates/workspace/src/pane.rs
         // Missing:
-        // DeploySearch, AlternateFile, JoinIntoNext, JoinAll
+        // DeploySearch, AlternateFile, JoinIntoNext, JoinAll, RevealInProjectPanel
         "workbench.action.closeEditorsInGroup" => {
             action = ActionType::Other(r#"["pane::CloseAllItems", { "close_pinned": false }]"#);
             context = Some("Pane");
@@ -1085,10 +1081,6 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         "workbench.action.openEditorAtIndex9" => {
             action = ActionType::Other(r#"["pane::ActivateItem", 8]"#);
             context = Some("Pane");
-        }
-        "workbench.view.explorer" => {
-            action = ActionType::String("pane::RevealInProjectPanel");
-            context = Some("!ContextEditor > Editor && mode == full");
         }
         "workbench.action.previousEditor" => {
             action = ActionType::String("pane::ActivatePreviousItem");
@@ -1155,7 +1147,7 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // Missing:
         // CollapseAllEntries, NewDirectory, NewFile, Duplicate, RemoveFromProject, OpenWithSystem, Rename, Open, OpenPermanent,
         // ToggleHideGitIgnore, NewSearchInDirectory, UnfoldDirectory, FoldDirectory, SelectParent, SelectNextGitEntry, SelectPrevGitEntry,
-        // SelectNextDiagnostic, SelectPrevDiagnostic, SelectNextDirectory, SelectPrevDirectory
+        // SelectNextDiagnostic, SelectPrevDiagnostic, SelectNextDirectory, SelectPrevDirectory, ToggleFocus
         "deleteFile" => {
             action = ActionType::Other(r#"["project_panel::Delete", { "skip_prompt": false }]"#);
             context = Some("ProjectPanel");
