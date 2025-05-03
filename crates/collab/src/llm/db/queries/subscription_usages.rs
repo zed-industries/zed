@@ -69,7 +69,7 @@ impl LlmDatabase {
 
         Ok(
             subscription_usage::Entity::insert(subscription_usage::ActiveModel {
-                id: ActiveValue::not_set(),
+                id: ActiveValue::set(Uuid::now_v7()),
                 user_id: ActiveValue::set(user_id),
                 period_start_at: ActiveValue::set(period_start_at),
                 period_end_at: ActiveValue::set(period_end_at),
