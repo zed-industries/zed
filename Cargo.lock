@@ -737,6 +737,7 @@ dependencies = [
  "language_models",
  "linkme",
  "open",
+ "paths",
  "portable-pty",
  "pretty_assertions",
  "project",
@@ -755,6 +756,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "terminal_view",
+ "theme",
  "tree-sitter-rust",
  "ui",
  "unindent",
@@ -763,6 +765,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
