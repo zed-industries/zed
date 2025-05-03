@@ -96,7 +96,7 @@ impl ProfileSelector {
         let documentation = match profile.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
-            builtin_profiles::MANUAL => Some("Chat about anything with no tools."),
+            builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
             _ => None,
         };
 
@@ -149,7 +149,7 @@ impl Render for ProfileSelector {
         let icon = match profile_id.as_str() {
             builtin_profiles::WRITE => IconName::Pencil,
             builtin_profiles::ASK => IconName::MessageBubbles,
-            builtin_profiles::MANUAL => IconName::MessageBubbleDashed,
+            builtin_profiles::MINIMAL => IconName::MessageBubbleDashed,
             _ => IconName::UserRoundPen,
         };
 
