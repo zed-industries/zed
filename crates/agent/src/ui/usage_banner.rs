@@ -66,7 +66,7 @@ impl RenderOnce for UsageBanner {
             }),
         };
 
-        Banner::new().severity(severity).children(
+        Banner::new().severity(severity).child(
             h_flex().flex_1().gap_1().child(Label::new(message)).child(
                 h_flex()
                     .flex_1()
