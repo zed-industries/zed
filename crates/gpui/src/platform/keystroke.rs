@@ -613,10 +613,8 @@ mod tests {
             let key1 = format!("[Key{}]", letter.to_uppercase());
             let key2 = format!("[{}]", letter.to_uppercase());
 
-            let source1 = format!("{}", key1);
-            let source2 = format!("{}", key2);
-            let keystroke1 = Keystroke::parse(&source1, &keyboard_mapper).unwrap();
-            let keystroke2 = Keystroke::parse(&source2, &keyboard_mapper).unwrap();
+            let keystroke1 = Keystroke::parse(&key1, &keyboard_mapper).unwrap();
+            let keystroke2 = Keystroke::parse(&key2, &keyboard_mapper).unwrap();
             assert_eq!(
                 keystroke1,
                 Keystroke {
@@ -689,7 +687,7 @@ mod tests {
         ];
         for (code, key, shifted_key) in other_keys {
             assert_eq!(
-                Keystroke::parse(&format!("{}", code), &keyboard_mapper).unwrap(),
+                Keystroke::parse(code, &keyboard_mapper).unwrap(),
                 Keystroke {
                     modifiers: Modifiers::default(),
                     key: key.to_string(),

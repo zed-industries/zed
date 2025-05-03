@@ -159,7 +159,7 @@ mod tests {
     fn test_get_shifted_key() {
         let mapper = TestKeyboardMapper::new();
 
-        for ch in 'a'..'z' {
+        for ch in 'a'..='z' {
             let key = ch.to_string();
             let shifted_key = key.to_uppercase();
             assert_eq!(mapper.get_shifted_key(&key).unwrap(), shifted_key);
