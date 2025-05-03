@@ -355,6 +355,7 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
+    tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
@@ -417,6 +418,7 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
+            tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -524,6 +526,7 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
+            tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -812,6 +815,10 @@ impl Thread {
                     .map(|next_message| next_message.role == Role::User)
             })
             .unwrap_or(false)
+    }
+
+    pub fn tool_use_limit_reached(&self) -> bool {
+        self.tool_use_limit_reached
     }
 
     /// Returns whether all of the tool uses have finished running.
@@ -1331,6 +1338,8 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        self.tool_use_limit_reached = false;
+
         let pending_completion_id = post_inc(&mut self.completion_count);
         let mut request_callback_parameters = if self.request_callback.is_some() {
             Some((request.clone(), Vec::new()))
@@ -1506,17 +1515,27 @@ impl Thread {
                                     });
                                 }
                             }
-                            LanguageModelCompletionEvent::QueueUpdate(queue_event) => {
+                            LanguageModelCompletionEvent::QueueUpdate(status) => {
                                 if let Some(completion) = thread
                                     .pending_completions
                                     .iter_mut()
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
-                                    completion.queue_state = match queue_event {
-                                        language_model::QueueState::Queued { position } => {
-                                            QueueState::Queued { position }
+                                    let queue_state = match status {
+                                        language_model::CompletionRequestStatus::Queued {
+                                            position,
+                                        } => Some(QueueState::Queued { position }),
+                                        language_model::CompletionRequestStatus::Started => {
+                                            Some(QueueState::Started)
                                         }
-                                        language_model::QueueState::Started => QueueState::Started,
+                                        language_model::CompletionRequestStatus::ToolUseLimitReached => {
+                                            thread.tool_use_limit_reached = true;
+                                            None
+                                        }
+                                    };
+
+                                    if let Some(queue_state) = queue_state {
+                                        completion.queue_state = queue_state;
                                     }
                                 }
                             }
