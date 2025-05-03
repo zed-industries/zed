@@ -2,10 +2,9 @@ use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::message_editor::insert_message_creases;
 use crate::thread::{
-    LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, QueueState, Thread,
-    ThreadError, ThreadEvent, ThreadFeedback,
+    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
+    ThreadFeedback,
 };
 use crate::thread_store::{RulesLoadingError, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -1243,7 +1242,6 @@ impl ActiveThread {
         &mut self,
         message_id: MessageId,
         message_segments: &[MessageSegment],
-        message_creases: &[MessageCrease],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1262,7 +1260,6 @@ impl ActiveThread {
         );
         editor.update(cx, |editor, cx| {
             editor.set_text(message_text.clone(), window, cx);
-            insert_message_creases(editor, message_creases, &self.context_store, window, cx);
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
         });
@@ -1710,7 +1707,6 @@ impl ActiveThread {
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
-        let message_creases = message.creases.clone();
 
         let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
             return Empty.into_any();
@@ -1729,33 +1725,13 @@ impl ActiveThread {
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
         let is_generating = thread.is_generating();
+        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let show_feedback = thread.is_turn_end(ix);
-
-        let generating_label = is_last_message
-            .then(|| match (thread.queue_state(), is_generating) {
-                (Some(QueueState::Sending), _) => Some(
-                    AnimatedLabel::new("Sending")
-                        .size(LabelSize::Small)
-                        .into_any_element(),
-                ),
-                (Some(QueueState::Queued { position }), _) => Some(
-                    Label::new(format!("Queue position: {position}"))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .into_any_element(),
-                ),
-                (_, true) => Some(
-                    AnimatedLabel::new("Generating")
-                        .size(LabelSize::Small)
-                        .into_any_element(),
-                ),
-                _ => None,
-            })
-            .flatten();
+        let loading_dots = (is_generating_stale && is_last_message)
+            .then(|| AnimatedLabel::new("").size(LabelSize::Small));
 
         let editing_message_state = self
             .editing_message
@@ -1777,6 +1753,8 @@ impl ActiveThread {
 
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
+
+        let show_feedback = thread.is_turn_end(ix);
 
         let feedback_container = h_flex()
             .group("feedback_container")
@@ -1925,7 +1903,6 @@ impl ActiveThread {
                                                 open_context(&context, workspace, window, cx);
                                                 cx.notify();
                                             }
-                                            cx.stop_propagation();
                                         }
                                     })),
                                 )
@@ -2011,13 +1988,15 @@ impl ActiveThread {
                                     )
                                 }),
                         )
+                        .when(editing_message_state.is_none(), |this| {
+                            this.tooltip(Tooltip::text("Click To Edit"))
+                        })
                         .on_click(cx.listener({
                             let message_segments = message.segments.clone();
                             move |this, _, window, cx| {
                                 this.start_editing_message(
                                     message_id,
                                     &message_segments,
-                                    &message_creases,
                                     window,
                                     cx,
                                 );
@@ -2053,80 +2032,84 @@ impl ActiveThread {
 
         v_flex()
             .w_full()
-            .when_some(checkpoint, |parent, checkpoint| {
-                let mut is_pending = false;
-                let mut error = None;
-                if let Some(last_restore_checkpoint) =
-                    self.thread.read(cx).last_restore_checkpoint()
-                {
-                    if last_restore_checkpoint.message_id() == message_id {
-                        match last_restore_checkpoint {
-                            LastRestoreCheckpoint::Pending { .. } => is_pending = true,
-                            LastRestoreCheckpoint::Error { error: err, .. } => {
-                                error = Some(err.clone());
+            .map(|parent| {
+                if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                    let mut is_pending = false;
+                    let mut error = None;
+                    if let Some(last_restore_checkpoint) =
+                        self.thread.read(cx).last_restore_checkpoint()
+                    {
+                        if last_restore_checkpoint.message_id() == message_id {
+                            match last_restore_checkpoint {
+                                LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+                                LastRestoreCheckpoint::Error { error: err, .. } => {
+                                    error = Some(err.clone());
+                                }
                             }
                         }
                     }
-                }
 
-                let restore_checkpoint_button =
-                    Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                        .icon(if error.is_some() {
-                            IconName::XCircle
-                        } else {
-                            IconName::Undo
-                        })
-                        .icon_size(IconSize::XSmall)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(if error.is_some() {
-                            Some(Color::Error)
-                        } else {
-                            None
-                        })
-                        .label_size(LabelSize::XSmall)
-                        .disabled(is_pending)
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.thread.update(cx, |thread, cx| {
-                                thread
-                                    .restore_checkpoint(checkpoint.clone(), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }));
+                    let restore_checkpoint_button =
+                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                            .icon(if error.is_some() {
+                                IconName::XCircle
+                            } else {
+                                IconName::Undo
+                            })
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(if error.is_some() {
+                                Some(Color::Error)
+                            } else {
+                                None
+                            })
+                            .label_size(LabelSize::XSmall)
+                            .disabled(is_pending)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }));
 
-                let restore_checkpoint_button = if is_pending {
-                    restore_checkpoint_button
-                        .with_animation(
-                            ("pulsating-restore-checkpoint-button", ix),
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.6, 1.)),
-                            |label, delta| label.alpha(delta),
-                        )
-                        .into_any_element()
-                } else if let Some(error) = error {
-                    restore_checkpoint_button
-                        .tooltip(Tooltip::text(error.to_string()))
-                        .into_any_element()
+                    let restore_checkpoint_button = if is_pending {
+                        restore_checkpoint_button
+                            .with_animation(
+                                ("pulsating-restore-checkpoint-button", ix),
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.6, 1.)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else if let Some(error) = error {
+                        restore_checkpoint_button
+                            .tooltip(Tooltip::text(error.to_string()))
+                            .into_any_element()
+                    } else {
+                        restore_checkpoint_button.into_any_element()
+                    };
+
+                    parent.child(
+                        h_flex()
+                            .pt_2p5()
+                            .px_2p5()
+                            .w_full()
+                            .gap_1()
+                            .child(ui::Divider::horizontal())
+                            .child(restore_checkpoint_button)
+                            .child(ui::Divider::horizontal()),
+                    )
                 } else {
-                    restore_checkpoint_button.into_any_element()
-                };
-
-                parent.child(
-                    h_flex()
-                        .pt_2p5()
-                        .px_2p5()
-                        .w_full()
-                        .gap_1()
-                        .child(ui::Divider::horizontal())
-                        .child(restore_checkpoint_button)
-                        .child(ui::Divider::horizontal()),
-                )
+                    parent
+                }
             })
             .when(is_first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when_some(generating_label, |this, generating_label| {
+            .when(is_generating && is_last_message, |this| {
                 this.child(
                     h_flex()
                         .h_8()
@@ -2134,7 +2117,7 @@ impl ActiveThread {
                         .mb_4()
                         .ml_4()
                         .py_1p5()
-                        .child(generating_label),
+                        .when_some(loading_dots, |this, loading_dots| this.child(loading_dots)),
                 )
             })
             .when(show_feedback, move |parent| {
@@ -2385,7 +2368,6 @@ impl ActiveThread {
                                     let workspace = self.workspace.clone();
                                     move |text, window, cx| {
                                         open_markdown_link(text, workspace.clone(), window, cx);
-                                        cx.stop_propagation();
                                     }
                                 }))
                                 .into_any_element()

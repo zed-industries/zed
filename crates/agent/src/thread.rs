@@ -358,6 +358,7 @@ pub struct Thread {
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_auto_capture_at: Option<Instant>,
+    last_received_chunk_at: Option<Instant>,
     request_callback: Option<
         Box<dyn FnMut(&LanguageModelRequest, &[Result<LanguageModelCompletionEvent, String>])>,
     >,
@@ -419,6 +420,7 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
@@ -525,6 +527,7 @@ impl Thread {
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
+            last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
@@ -630,6 +633,19 @@ impl Thread {
 
     pub fn is_generating(&self) -> bool {
         !self.pending_completions.is_empty() || !self.all_tools_finished()
+    }
+
+    /// Indicates whether streaming of language model events is stale.
+    /// When `is_generating()` is false, this method returns `None`.
+    pub fn is_generation_stale(&self) -> Option<bool> {
+        const STALE_THRESHOLD: u128 = 250;
+
+        self.last_received_chunk_at
+            .map(|instant| instant.elapsed().as_millis() > STALE_THRESHOLD)
+    }
+
+    fn received_chunk(&mut self) {
+        self.last_received_chunk_at = Some(Instant::now());
     }
 
     pub fn queue_state(&self) -> Option<QueueState> {
@@ -1328,6 +1344,8 @@ impl Thread {
             prompt_id: prompt_id.clone(),
         };
 
+        self.last_received_chunk_at = Some(Instant::now());
+
         let task = cx.spawn(async move |thread, cx| {
             let stream_completion_future = model.stream_completion_with_usage(request, &cx);
             let initial_token_usage =
@@ -1398,6 +1416,8 @@ impl Thread {
                                 current_token_usage = token_usage;
                             }
                             LanguageModelCompletionEvent::Text(chunk) => {
+                                thread.received_chunk();
+
                                 cx.emit(ThreadEvent::ReceivedTextChunk);
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
@@ -1426,6 +1446,8 @@ impl Thread {
                                 text: chunk,
                                 signature,
                             } => {
+                                thread.received_chunk();
+
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant
                                         && !thread.tool_use.has_tool_results(last_message.id)
@@ -1512,6 +1534,7 @@ impl Thread {
                 }
 
                 thread.update(cx, |thread, cx| {
+                    thread.last_received_chunk_at = None;
                     thread
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);

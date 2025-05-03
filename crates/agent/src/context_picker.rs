@@ -482,7 +482,13 @@ impl ContextPicker {
             return vec![];
         };
 
-        recent_context_picker_entries(context_store, self.thread_store.clone(), workspace, cx)
+        recent_context_picker_entries(
+            context_store,
+            self.thread_store.clone(),
+            workspace,
+            None,
+            cx,
+        )
     }
 
     fn notify_current_picker(&mut self, cx: &mut Context<Self>) {
@@ -578,11 +584,12 @@ fn recent_context_picker_entries(
     context_store: Entity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     workspace: Entity<Workspace>,
+    exclude_path: Option<ProjectPath>,
     cx: &App,
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
-
-    let current_files = context_store.read(cx).file_paths(cx);
+    let mut current_files = context_store.read(cx).file_paths(cx);
+    current_files.extend(exclude_path);
     let workspace = workspace.read(cx);
     let project = workspace.project().read(cx);
 
