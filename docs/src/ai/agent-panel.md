@@ -25,14 +25,9 @@ Reviewing includes the option to accept or reject each edit, or accept or reject
 
 You'll also notice that the agent panel will start to use checkpoints as it alters the contents of your project. You can revert to these checkpoints to undo both changes to the project and the associated history in the agent panel, up to the checkpoint.
 
-You can swap between recent threads via the Panel Menu, or view all historical conversations with the `View All` option from within the same menu.
+You can toggle between recent threads via the Panel Menu, or view all historical conversations with the `View All` option from within the same menu.
 
-
-- Tool cards
-  - Edit tool card
-  - Terminal tool card
-- Feedback and rating
-  - Cross link it to "model improvement"
+Feedback about your interaction with the agent panel can be provided from within the panel itself. After initiating a conversation with the agent panel, you are presented with 👍 and 👎 buttons. Ranking thread interactions opts you into sharing the thread with the Zed team. If you rank an interaction as 👎, you'll be presented with an input box to write an optional summary explaining why the interaction wasn't ideal. This feedback helps the Zed team improve agent interactions. You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.
 
 ## Adding Context
 
