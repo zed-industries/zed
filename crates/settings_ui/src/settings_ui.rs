@@ -162,12 +162,9 @@ pub fn init(cx: &mut App) {
                             Ok(vscode) => vscode,
                             Err(err) => {
                                 println!(
-                                    "Failed to load VsCode shortcuts: {}\n{}",
+                                    "Failed to load VsCode shortcuts: {}\nLoading VsCode settings from path: {:?}",
                                     err,
-                                    format!(
-                                        "Loading VsCode settings from path: {:?}",
-                                        paths::vscode_shortcuts_file()
-                                    )
+                                    paths::vscode_shortcuts_file(),
                                 );
 
                                 let _ = cx.prompt(
