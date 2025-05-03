@@ -79,7 +79,6 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
- "indexmap",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
@@ -18827,7 +18826,7 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "serde",

@@ -237,6 +237,7 @@ pub struct ContextPickerCompletionProvider {
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     editor: WeakEntity<Editor>,
+    excluded_buffer: Option<WeakEntity<Buffer>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -245,12 +246,14 @@ impl ContextPickerCompletionProvider {
         context_store: WeakEntity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         editor: WeakEntity<Editor>,
+        exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
         Self {
             workspace,
             context_store,
             thread_store,
             editor,
+            excluded_buffer: exclude_buffer,
         }
     }
 
@@ -736,10 +739,18 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
+        let excluded_path = self
+            .excluded_buffer
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .and_then(|b| b.read(cx).file())
+            .map(|file| ProjectPath::from_file(file.as_ref(), cx));
+
         let recent_entries = recent_context_picker_entries(
             context_store.clone(),
             thread_store.clone(),
             workspace.clone(),
+            excluded_path.clone(),
             cx,
         );
 
@@ -772,11 +783,17 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                     .into_iter()
                     .filter_map(|mat| match mat {
                         Match::File(FileMatch { mat, is_recent }) => {
+                            let project_path = ProjectPath {
+                                worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                path: mat.path.clone(),
+                            };
+
+                            if excluded_path.as_ref() == Some(&project_path) {
+                                return None;
+                            }
+
                             Some(Self::completion_for_path(
-                                ProjectPath {
-                                    worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                    path: mat.path.clone(),
-                                },
+                                project_path,
                                 &mat.path_prefix,
                                 is_recent,
                                 mat.is_dir,
@@ -1138,6 +1155,7 @@ mod tests {
                         "five.txt": "",
                         "six.txt": "",
                         "seven.txt": "",
+                        "eight.txt": "",
                     }
                 }),
             )
@@ -1164,9 +1182,12 @@ mod tests {
             separator!("b/five.txt"),
             separator!("b/six.txt"),
             separator!("b/seven.txt"),
+            separator!("b/eight.txt"),
         ];
+
+        let mut opened_editors = Vec::new();
         for path in paths {
-            workspace
+            let buffer = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     workspace.open_path(
                         ProjectPath {
@@ -1181,6 +1202,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            opened_editors.push(buffer);
         }
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1210,12 +1232,23 @@ mod tests {
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
+            let last_opened_buffer = opened_editors.last().and_then(|editor| {
+                editor
+                    .downcast::<Editor>()?
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .as_ref()
+                    .map(Entity::downgrade)
+            });
             window.focus(&editor.focus_handle(cx));
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,
                 editor_entity,
+                last_opened_buffer,
             ))));
         });
 
