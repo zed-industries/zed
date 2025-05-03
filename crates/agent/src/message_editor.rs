@@ -1312,9 +1312,16 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(font_size, line_height, window, cx))
-            .children(self.render_usage_callout(line_height, cx))
-            .when(token_usage_ratio != TokenUsageRatio::Normal, |parent| {
-                parent.children(self.render_token_limit_callout(line_height, token_usage_ratio, cx))
+            .children({
+                let usage_callout = self.render_usage_callout(line_height, cx);
+                
+                if usage_callout.is_some() {
+                    usage_callout
+                } else if token_usage_ratio != TokenUsageRatio::Normal {
+                    self.render_token_limit_callout(line_height, token_usage_ratio, cx)
+                } else {
+                    None
+                }
             })
     }
 }
