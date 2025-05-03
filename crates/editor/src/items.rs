@@ -372,7 +372,7 @@ impl FollowableItem for Editor {
         };
         drop(buffer);
         self.set_selections_from_remote(vec![selection], None, window, cx);
-        self.request_autoscroll_remotely(Autoscroll::newest(), cx);
+        self.request_autoscroll_remotely(Autoscroll::center(), cx);
     }
 }
 

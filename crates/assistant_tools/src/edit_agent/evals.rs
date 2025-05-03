@@ -27,7 +27,7 @@ use std::{
 use util::path;
 
 #[test]
-#[cfg_attr(not(feature = "eval"), ignore)]
+// #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_extract_handle_command_output() {
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -333,7 +333,7 @@ fn eval_disable_cursor_blinking() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "eval"), ignore)]
+// #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
@@ -517,7 +517,7 @@ fn eval_from_pixels_constructor() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(indoc! {"
+            assertion: EvalAssertion::judge_diff(indoc! {"
                 - The diff contains a new `from_pixels` constructor
                 - The diff contains new tests for the `from_pixels` constructor
             "}),
@@ -957,7 +957,7 @@ impl EditAgentTest {
 
                 cx.spawn(async move |cx| {
                     let agent_model =
-                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
+                        Self::load_model("google", "gemini-2.5-pro-preview-03-25", cx).await;
                     let judge_model =
                         Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
                     (agent_model.unwrap(), judge_model.unwrap())
