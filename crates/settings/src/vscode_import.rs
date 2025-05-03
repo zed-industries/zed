@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fs::Fs;
+use futures::io::ReadUntil;
 use gpui::{Keystroke, PlatformKeyboardMapper};
 use serde_json::{Map, Value};
 
@@ -216,40 +217,43 @@ impl<'t> ActionType<'t> {
     }
 }
 
-fn vscode_shortcut_command_to_zed_action<'t, 's>(
-    command: &'t str,
-    when: Option<&'s str>,
+struct ActionContent {
+    context: Option<String>,
+    bindings: Vec<ZedBindingContent>,
+}
+
+struct ZedBindingContent {
+    binding: String,
+    action: String,
+    comments: String,
+}
+
+fn vscode_shortcut_command_to_zed_action(
+    command: &str,
+    when: Option<&str>,
     args: Option<&str>,
-) -> Option<(ActionType<'t>, Option<&'s str>)> {
-    let action;
-    let mut context = None;
+) -> Option<(String, Option<String>)> {
     match command {
         // crates/menu/src/menu.rs
         // Missing:
         // SecondaryConfirm, Restart, EndSlot
         "list.focusFirst" | "list.focusAnyFirst" => {
-            action = ActionType::String("menu::SelectFirst");
-            context = Some("menu");
+            Some(("menu::SelectFirst".into(), Some("menu".into())))
         }
         "list.focusLast" | "list.focusAnyLast" => {
-            action = ActionType::String("menu::SelectLast");
-            context = Some("menu");
+            Some(("menu::SelectLast".into(), Some("menu".into())))
         }
         "list.focusUp" | "list.focusAnyUp" => {
-            action = ActionType::String("menu::SelectPrevious");
-            context = Some("menu");
+            Some(("menu::SelectPrevious".into(), Some("menu".into())))
         }
         "list.focusDown" | "list.focusAnyDown" => {
-            action = ActionType::String("menu::SelectNext");
-            context = Some("menu");
+            Some(("menu::SelectNext".into(), Some("menu".into())))
         }
         "list.select" => {
-            action = ActionType::String("menu::Confirm");
-            context = Some("menu");
+            Some(("menu::Confirm".into(), Some("menu".into())))
         }
         "list.clear" => {
-            action = ActionType::String("menu::Cancel");
-            context = Some("menu");
+            Some(("menu::Cancel".into(), Some("menu".into())))
         }
         // crates/picker/src/picker.rs
         // Missing:
@@ -263,115 +267,94 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // RestoreBanner, CloseInactiveTabsAndPanes, MoveItemToPane, MoveItemToPaneInDirection, OpenTerminal, Reload, SendKeystrokes,
         // SwapPaneLeft, SwapPaneRight, SwapPaneUp, SwapPaneDown
         "addRootFolder" => {
-            // https://github.com/microsoft/vscode/blob/e9daa2e0f3dd86459eea57aac3f5f181d065c06d/src/vs/workbench/browser/actions/workspaceCommands.ts#L28
-            action = ActionType::String("workspace::AddFolderToProject");
+            Some(("workspace::AddFolderToProject".into(), None))
         }
         "workbench.action.closeWindow" => {
-            action = ActionType::String("workspace::CloseWindow");
+            Some(("workspace::CloseWindow".into(), None))
         }
         "workbench.action.files.newUntitledFile" => {
-            action = ActionType::String("workspace::NewFile");
+            Some(("workspace::NewFile".into(), None))
         }
         "workbench.view.search" => {
-            action = ActionType::String("workspace::NewSearch");
+            Some(("workspace::NewSearch".into(), None))
         }
         "workbench.action.terminal.new" => {
-            action = ActionType::String("workspace::NewTerminal");
+            Some(("workspace::NewTerminal".into(), None))
         }
         "workbench.action.newWindow" => {
-            action = ActionType::String("workspace::NewWindow");
+            Some(("workspace::NewWindow".into(), None))
         }
         "workbench.action.files.openFolder" => {
-            action = ActionType::String("workspace::Open");
+            Some(("workspace::Open".into(), None))
         }
         "workbench.action.files.openFile" => {
-            action = ActionType::String("workspace::OpenFiles");
+            Some(("workspace::OpenFiles".into(), None))
         }
         "workbench.action.files.saveAs" => {
-            action = ActionType::String("workspace::SaveAs");
+            Some(("workspace::SaveAs".into(), None))
         }
         "workbench.action.files.saveWithoutFormatting" => {
-            action = ActionType::String("workspace::SaveWithoutFormat");
+            Some(("workspace::SaveWithoutFormat".into(), None))
         }
         "workbench.action.togglePanel" => {
-            action = ActionType::String("workspace::ToggleBottomDock");
-            context = Some("Workspace");
+            Some(("workspace::ToggleBottomDock".into(), Some("Workspace".into())))
         }
         "workbench.action.toggleSidebarVisibility" => {
-            action = ActionType::String("workspace::ToggleLeftDock");
-            context = Some("Workspace");
+            Some(("workspace::ToggleLeftDock".into(), Some("Workspace".into())))
         }
         "workbench.action.toggleAuxiliaryBar" => {
-            action = ActionType::String("workspace::ToggleRightDock");
-            context = Some("Workspace");
+            Some(("workspace::ToggleRightDock".into(), Some("Workspace".into())))
         }
         "workbench.action.focusFirstEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 0]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 0]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusSecondEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 1]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 1]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusThirdEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 2]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 2]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusFourthEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 3]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 3]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusFifthEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 4]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 4]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusSixthEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 5]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 5]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusSeventhEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 6]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 6]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.focusEighthEditorGroup" => {
-            action = ActionType::Other(r#"["workspace::ActivatePane", 7]"#);
-            context = Some("Workspace");
+            Some((r#"["workspace::ActivatePane", 7]"#.into(), Some("Workspace".into())))
         }
         "workbench.action.closeAllEditors" => {
-            action = ActionType::String("workspace::CloseAllItemsAndPanes");
-            context = Some("Pane");
+            Some(("workspace::CloseAllItemsAndPanes".into(), Some("Pane".into())))
         }
         "workbench.action.files.save" => {
-            action = ActionType::String("workspace::Save");
-            context = Some("Workspace");
+            Some(("workspace::Save".into(), Some("Workspace".into())))
         }
         "saveAll" => {
-            action = ActionType::String("workspace::SaveAll");
-            context = Some("Workspace");
+            Some(("workspace::SaveAll".into(), Some("Workspace".into())))
         }
         "workbench.action.focusLeftGroup" => {
-            action = ActionType::String("workspace::ActivatePaneLeft");
-            context = Some("Workspace");
+            Some(("workspace::ActivatePaneLeft".into(), Some("Workspace".into())))
         }
         "workbench.action.focusRightGroup" => {
-            action = ActionType::String("workspace::ActivatePaneRight");
-            context = Some("Workspace");
+            Some(("workspace::ActivatePaneRight".into(), Some("Workspace".into())))
         }
         "workbench.action.focusAboveGroup" => {
-            action = ActionType::String("workspace::ActivatePaneUp");
-            context = Some("Workspace");
+            Some(("workspace::ActivatePaneUp".into(), Some("Workspace".into())))
         }
         "workbench.action.focusBelowGroup" => {
-            action = ActionType::String("workspace::ActivatePaneDown");
-            context = Some("Workspace");
+            Some(("workspace::ActivatePaneDown".into(), Some("Workspace".into())))
         }
         "workbench.action.showAllSymbols" => {
-            action = ActionType::String("project_symbols::Toggle");
-            context = Some("Workspace");
+            Some(("project_symbols::Toggle".into(), Some("Workspace".into())))
         }
         "workbench.action.quickOpen" => {
-            action = ActionType::String("file_finder::Toggle");
-            context = Some("Workspace");
+            Some(("file_finder::Toggle".into(), Some("Workspace".into())))
         }
         // crates/zed_actions/src/lib.rs
         // Missing:
@@ -380,83 +363,78 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // feadback::*, icon_theme_selector::Toggle, agent::OpenConfiguration, assistant::*, assistant::InlineAssist, projects::OpenRemote,
         // task::*, outline::*, zed_predict_onboarding::*, git_onboarding::*,
         "workbench.action.openSettings" => {
-            action = ActionType::String("zed::OpenSettings");
+            Some(("zed::OpenSettings".into(), None))
         }
         "workbench.action.openDefaultKeybindingsFile" => {
-            action = ActionType::String("zed::OpenDefaultKeymap");
+            Some(("zed::OpenDefaultKeymap".into(), None))
         }
         "workbench.action.quit" => {
-            action = ActionType::String("zed::Quit");
+            Some(("zed::Quit".into(), None))
         }
         "workbench.action.openGlobalKeybindings" => {
-            action = ActionType::String("zed::OpenKeymap");
-            context = Some("Workspace");
+            Some(("zed::OpenKeymap".into(), Some("Workspace".into())))
         }
         "workbench.view.extensions" => {
-            action = ActionType::String("zed::OpenExtensions");
-            context = Some("Workspace");
+            Some(("zed::OpenExtensions".into(), Some("Workspace".into())))
         }
         "workbench.action.zoomOut" => {
-            action = ActionType::Other(r#"["zed::DecreaseBufferFontSize", { "persist": false }]"#);
+            Some((r#"["zed::DecreaseBufferFontSize", { "persist": false }]"#.into(), None))
         }
         "workbench.action.zoomIn" => {
-            action = ActionType::Other(r#"["zed::IncreaseBufferFontSize", { "persist": false }]"#);
+            Some((r#"["zed::IncreaseBufferFontSize", { "persist": false }]"#.into(), None))
         }
         "workbench.action.zoomReset" => {
-            action = ActionType::Other(r#"["zed::ResetBufferFontSize", { "persist": false }]"#);
+            Some((r#"["zed::ResetBufferFontSize", { "persist": false }]"#.into(), None))
         }
         "workbench.action.showCommands" => {
-            action = ActionType::String("command_palette::Toggle");
-            context = Some("Workspace");
+            Some(("command_palette::Toggle".into(), Some("Workspace".into())))
         }
         "workbench.action.selectTheme" => {
-            action = ActionType::String("theme_selector::Toggle");
-            context = Some("Workspace");
+            Some(("theme_selector::Toggle".into(), Some("Workspace".into())))
         }
         "workbench.action.openRecent" => {
-            action = ActionType::String("projects::OpenRecent");
-            context = Some("Workspace");
+            Some(("projects::OpenRecent".into(), Some("Workspace".into())))
         }
         // crates/debugger_ui/src/debugger_ui.rs
         // Missing:
         // ToggleIgnoreBreakpoints, ClearAllBreakpoints, CreateDebuggingSession, FocusConsole, FocusVariables, FocusBreakpointList,
         // FocusFrames, FocusModules, FocusLoadedSources, FocusTerminal,
         "workbench.action.debug.start" => {
-            action = ActionType::String("debugger::Start");
+            Some(("debugger::Start".into(), None))
         }
         "workbench.action.debug.continue" => {
-            action = ActionType::String("debugger::Continue");
+            Some(("debugger::Continue".into(), None))
         }
         "workbench.action.debug.disconnect" => {
-            action = ActionType::String("debugger::Disconnect");
+            Some(("debugger::Disconnect".into(), None))
         }
         "workbench.action.debug.pause" => {
-            action = ActionType::String("debugger::Pause");
+            Some(("debugger::Pause".into(), None))
         }
         "workbench.action.debug.restart" => {
-            action = ActionType::String("debugger::Restart");
+            Some(("debugger::Restart".into(), None))
         }
         "workbench.action.debug.stepInto" => {
-            action = ActionType::String("debugger::StepInto");
+            Some(("debugger::StepInto".into(), None))
         }
         "workbench.action.debug.stepOver" => {
-            action = ActionType::String("debugger::StepOver");
+            Some(("debugger::StepOver".into(), None))
         }
         "workbench.action.debug.stepOut" => {
-            action = ActionType::String("debugger::StepOut");
+            Some(("debugger::StepOut".into(), None))
         }
         "workbench.action.debug.stepBack" => {
-            action = ActionType::String("debugger::StepBack");
+            Some(("debugger::StepBack".into(), None))
         }
         "workbench.action.debug.stop" => {
-            action = ActionType::String("debugger::Stop");
+            Some(("debugger::Stop".into(), None))
         }
         // crates/zed/src/zed.rs
         // Missing:
         // DebugElements, Hide, HideOthers, Minimize, OpenDefaultSettings, OpenProjectSettings, OpenProjectTasks, OpenProjectDebugTasks,
         // OpenTasks, OpenDebugTasks, ResetDatabase, ShowAll, Zoom, TestPanic,
         "workbench.action.toggleFullScreen" => {
-            action = ActionType::String("zed::ToggleFullScreen");
+            Some(("zed::ToggleFullScreen".into(), None))
         }
         // crates/zeta/src/init.rs
         // Missing: All
@@ -487,404 +465,298 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // SetMark, ToggleRelativeLineNumbers, ToggleSelectionMenu, ToggleSoftWrap, ToggleTabBar, UniqueLinesCaseInsensitive,
         // UniqueLinesCaseSensitive, ToggleGoToLine, OpenSelectedFilename, ToggleSelectedDiffHunks, ExpandAllDiffHunks
         "acceptSelectedCodeAction" => {
-            // TODO: is this the right action?
-            action = ActionType::String("editor::ConfirmCodeAction");
-            context = Some("Editor && showing_code_actions");
+            Some(("editor::ConfirmCodeAction".into(), Some("Editor && showing_code_actions".into())))
         }
         "deleteWordLeft" => {
-            action = ActionType::String("editor::DeleteToPreviousWordStart");
-            context = Some("Editor");
+            Some(("editor::DeleteToPreviousWordStart".into(), Some("Editor".into())))
         }
         "deleteWordRight" => {
-            action = ActionType::String("editor::DeleteToNextWordEnd");
-            context = Some("Editor");
+            Some(("editor::DeleteToNextWordEnd".into(), Some("Editor".into())))
         }
         "cursorPageDown" => {
-            action = ActionType::String("editor::MovePageDown");
-            context = Some("Editor");
+            Some(("editor::MovePageDown".into(), Some("Editor".into())))
         }
         "cursorPageUp" => {
-            action = ActionType::String("editor::MovePageUp");
-            context = Some("Editor");
+            Some(("editor::MovePageUp".into(), Some("Editor".into())))
         }
         "cursorHome" => {
-            action = ActionType::Other(
-                r#"["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }]"#,
-            );
-            context = Some("Editor");
+            Some((r#"["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }]"#.into(), Some("Editor".into())))
         }
         "cursorEnd" => {
-            action =
-                ActionType::Other(r#"["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }]"#);
-            context = Some("Editor");
+            Some((r#"["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }]"#.into(), Some("Editor".into())))
         }
         "editor.action.addSelectionToNextFindMatch" => {
-            action = ActionType::Other(r#"["editor::SelectNext", { "replace_newest": false }]"#);
-            context = Some("Editor");
+            Some((r#"["editor::SelectNext", { "replace_newest": false }]"#.into(), Some("Editor".into())))
         }
         "editor.action.moveSelectionToNextFindMatch" => {
-            action = ActionType::Other(r#"["editor::SelectNext", { "replace_newest": true }]"#);
-            context = Some("Editor");
+            Some((r#"["editor::SelectNext", { "replace_newest": true }]"#.into(), Some("Editor".into())))
         }
         "editor.action.addSelectionToPreviousFindMatch" => {
-            action =
-                ActionType::Other(r#"["editor::SelectPrevious", { "replace_newest": false }]"#);
-            context = Some("Editor");
+            Some((r#"["editor::SelectPrevious", { "replace_newest": false }]"#.into(), Some("Editor".into())))
         }
         "editor.action.moveSelectionToPreviousFindMatch" => {
-            action = ActionType::Other(r#"["editor::SelectPrevious", { "replace_newest": true }]"#);
-            context = Some("Editor");
+            Some((r#"["editor::SelectPrevious", { "replace_newest": true }]"#.into(), Some("Editor".into())))
         }
         "cursorHomeSelect" => {
-            action = ActionType::Other(
-                r#"["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }]"#,
-            );
-            context = Some("Editor");
+            Some((r#"["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }]"#.into(), Some("Editor".into())))
         }
         "cursorEndSelect" => {
-            action = ActionType::Other(
-                r#"["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }]"#,
-            );
-            context = Some("Editor");
+            Some((r#"["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }]"#.into(), Some("Editor".into())))
         }
         "editor.action.triggerSuggest" => {
-            action = ActionType::String("editor::ShowCompletions");
-            context = Some("Editor");
+            Some(("editor::ShowCompletions".into(), Some("Editor".into())))
         }
         "editor.action.quickFix" => {
-            action = ActionType::String("editor::ToggleCodeActions");
-            context = Some("Editor");
+            Some(("editor::ToggleCodeActions".into(), Some("Editor".into())))
         }
         "editor.action.commentLine" => {
-            action = ActionType::String("editor::ToggleComments");
-            context = Some("Editor");
+            Some(("editor::ToggleComments".into(), Some("Editor".into())))
         }
         "editor.foldLevel1" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 1]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 1]"#.into(), Some("Editor".into())))
         }
         "editor.foldLevel2" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 2]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 2]"#.into(), Some("Editor".into())))
         }
         "editor.foldLevel3" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 3]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 3]"#.into(), Some("Editor".into())))
         }
         "editor.foldLevel4" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 4]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 4]"#.into(), Some("Editor".into())))
         }
         "editor.foldLevel5" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 5]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 5]"#.into(), Some("Editor".into())))
         }
         "editor.foldLevel6" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 6]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 6]"#.into(), Some("Editor".into())))
         }
         "editor.foldLevel7" => {
-            action = ActionType::Other(r#"["editor::FoldAtLevel", 7]"#);
-            context = Some("Editor");
+            Some((r#"["editor::FoldAtLevel", 7]"#.into(), Some("Editor".into())))
         }
         "editor.action.insertCursorAbove" => {
-            action = ActionType::String("editor::AddSelectionAbove");
-            context = Some("Editor");
+            Some(("editor::AddSelectionAbove".into(), Some("Editor".into())))
         }
         "editor.action.insertCursorBelow" => {
-            action = ActionType::String("editor::AddSelectionBelow");
-            context = Some("Editor");
+            Some(("editor::AddSelectionBelow".into(), Some("Editor".into())))
         }
         "deleteLeft" => {
-            action = ActionType::String("editor::Backspace");
-            context = Some("Editor");
+            Some(("editor::Backspace".into(), Some("Editor".into())))
         }
         "acceptRenameInput" => {
-            action = ActionType::String("editor::ConfirmRename");
-            context = Some("Editor && renaming");
+            Some(("editor::ConfirmRename".into(), Some("Editor && renaming".into())))
         }
         "editor.action.clipboardCopyAction" => {
-            action = ActionType::String("editor::Copy");
-            context = Some("Editor");
+            Some(("editor::Copy".into(), Some("Editor".into())))
         }
         "editor.action.clipboardCutAction" => {
-            action = ActionType::String("editor::Cut");
-            context = Some("Editor");
+            Some(("editor::Cut".into(), Some("Editor".into())))
         }
         "deleteRight" => {
-            action = ActionType::String("editor::Delete");
-            context = Some("Editor");
+            Some(("editor::Delete".into(), Some("Editor".into())))
         }
         "editor.action.deleteLines" => {
-            action = ActionType::String("editor::DeleteLine");
-            context = Some("Editor");
+            Some(("editor::DeleteLine".into(), Some("Editor".into())))
         }
         "editor.action.copyLinesDownAction" => {
-            action = ActionType::String("editor::DuplicateLineDown");
-            context = Some("Editor");
+            Some(("editor::DuplicateLineDown".into(), Some("Editor".into())))
         }
         "editor.action.copyLinesUpAction" => {
-            action = ActionType::String("editor::DuplicateLineUp");
-            context = Some("Editor");
+            Some(("editor::DuplicateLineUp".into(), Some("Editor".into())))
         }
         "references-view.findReferences" => {
-            action = ActionType::String("editor::FindAllReferences");
-            context = Some("Editor");
+            Some(("editor::FindAllReferences".into(), Some("Editor".into())))
         }
         "editor.fold" => {
-            action = ActionType::String("editor::Fold");
-            context = Some("Editor");
+            Some(("editor::Fold".into(), Some("Editor".into())))
         }
         "editor.foldAll" => {
-            action = ActionType::String("editor::FoldAll");
-            context = Some("Editor");
+            Some(("editor::FoldAll".into(), Some("Editor".into())))
         }
         "editor.foldRecursively" => {
-            action = ActionType::String("editor::FoldRecursive");
-            context = Some("Editor");
+            Some(("editor::FoldRecursive".into(), Some("Editor".into())))
         }
         "editor.toggleFold" => {
-            action = ActionType::String("editor::ToggleFold");
-            context = Some("Editor");
+            Some(("editor::ToggleFold".into(), Some("Editor".into())))
         }
         "editor.action.formatDocument" => {
-            action = ActionType::String("editor::Format");
-            context = Some("Editor");
+            Some(("editor::Format".into(), Some("Editor".into())))
         }
         "editor.action.goToDeclaration" => {
-            action = ActionType::String("editor::GoToDeclaration");
-            context = Some("Editor && !menu");
+            Some(("editor::GoToDeclaration".into(), Some("Editor && !menu".into())))
         }
         "editor.action.revealDefinition" => {
-            action = ActionType::String("editor::GoToDefinition");
-            context = Some("Editor");
+            Some(("editor::GoToDefinition".into(), Some("Editor".into())))
         }
         "editor.action.peekDefinition" => {
-            action = ActionType::String("editor::GoToDefinitionSplit");
-            context = Some("Editor");
+            Some(("editor::GoToDefinitionSplit".into(), Some("Editor".into())))
         }
         "editor.action.goToImplementation" => {
-            action = ActionType::String("editor::GoToImplementation");
-            context = Some("Editor");
+            Some(("editor::GoToImplementation".into(), Some("Editor".into())))
         }
         "editor.action.showHover" => {
-            action = ActionType::String("editor::Hover");
-            context = Some("Editor");
+            Some(("editor::Hover".into(), Some("Editor".into())))
         }
         "editor.action.indentLines" => {
-            action = ActionType::String("editor::Indent");
-            context = Some("Editor");
+            Some(("editor::Indent".into(), Some("Editor".into())))
         }
         "editor.action.joinLines" => {
-            action = ActionType::String("editor::JoinLines");
-            context = Some("Editor");
+            Some(("editor::JoinLines".into(), Some("Editor".into())))
         }
         "deleteAllRight" => {
-            action = ActionType::String("editor::KillRingCut");
-            context = Some("Editor");
+            Some(("editor::KillRingCut".into(), Some("Editor".into())))
         }
         "scrollLineDown" => {
-            action = ActionType::String("editor::LineDown");
-            context = Some("Editor");
+            Some(("editor::LineDown".into(), Some("Editor".into())))
         }
         "scrollLineUp" => {
-            action = ActionType::String("editor::LineUp");
-            context = Some("Editor");
+            Some(("editor::LineUp".into(), Some("Editor".into())))
         }
         "cursorDown" => {
-            action = ActionType::String("editor::MoveDown");
-            context = Some("Editor");
+            Some(("editor::MoveDown".into(), Some("Editor".into())))
         }
         "cursorUp" => {
-            action = ActionType::String("editor::MoveUp");
-            context = Some("Editor");
+            Some(("editor::MoveUp".into(), Some("Editor".into())))
         }
         "cursorLeft" => {
-            action = ActionType::String("editor::MoveLeft");
-            context = Some("Editor");
+            Some(("editor::MoveLeft".into(), Some("Editor".into())))
         }
         "cursorRight" => {
-            action = ActionType::String("editor::MoveRight");
-            context = Some("Editor");
+            Some(("editor::MoveRight".into(), Some("Editor".into())))
         }
         "cursorTop" => {
-            action = ActionType::String("editor::MoveToBeginning");
-            context = Some("Editor");
+            Some(("editor::MoveToBeginning".into(), Some("Editor".into())))
         }
         "editor.action.jumpToBracket" => {
-            action = ActionType::String("editor::MoveToEnclosingBracket");
-            context = Some("Editor");
+            Some(("editor::MoveToEnclosingBracket".into(), Some("Editor".into())))
         }
         "cursorBottom" => {
-            action = ActionType::String("editor::MoveToEnd");
-            context = Some("Editor");
+            Some(("editor::MoveToEnd".into(), Some("Editor".into())))
         }
         "cursorWordPartRight" => {
-            action = ActionType::String("editor::MoveToNextSubwordEnd");
-            context = Some("Editor");
+            Some(("editor::MoveToNextSubwordEnd".into(), Some("Editor".into())))
         }
         "cursorWordEndRight" => {
-            action = ActionType::String("editor::MoveToNextWordEnd");
-            context = Some("Editor");
+            Some(("editor::MoveToNextWordEnd".into(), Some("Editor".into())))
         }
         "cursorWordPartLeft" => {
-            action = ActionType::String("editor::MoveToPreviousSubwordStart");
-            context = Some("Editor");
+            Some(("editor::MoveToPreviousSubwordStart".into(), Some("Editor".into())))
         }
         "cursorWordLeft" => {
-            action = ActionType::String("editor::MoveToPreviousWordStart");
-            context = Some("Editor");
+            Some(("editor::MoveToPreviousWordStart".into(), Some("Editor".into())))
         }
         "editor.action.insertLineBefore" => {
-            action = ActionType::String("editor::NewlineAbove");
-            context = Some("Editor && mode == full");
+            Some(("editor::NewlineAbove".into(), Some("Editor && mode == full".into())))
         }
         "editor.action.insertLineAfter" => {
-            action = ActionType::String("editor::NewlineBelow");
-            context = Some("Editor && mode == full");
+            Some(("editor::NewlineBelow".into(), Some("Editor && mode == full".into())))
         }
         "editor.action.organizeImports" => {
-            action = ActionType::String("editor::OrganizeImports");
-            context = Some("Editor");
+            Some(("editor::OrganizeImports".into(), Some("Editor".into())))
         }
         "editor.action.outdentLines" => {
-            action = ActionType::String("editor::Outdent");
-            context = Some("Editor");
+            Some(("editor::Outdent".into(), Some("Editor".into())))
         }
         "scrollPageDown" => {
-            action = ActionType::String("editor::PageDown");
-            context = Some("Editor");
+            Some(("editor::PageDown".into(), Some("Editor".into())))
         }
         "scrollPageUp" => {
-            action = ActionType::String("editor::PageUp");
-            context = Some("Editor");
+            Some(("editor::PageUp".into(), Some("Editor".into())))
         }
         "editor.action.clipboardPasteAction" => {
-            action = ActionType::String("editor::Paste");
-            context = Some("Editor");
+            Some(("editor::Paste".into(), Some("Editor".into())))
         }
         "redo" => {
-            action = ActionType::String("editor::Redo");
-            context = Some("Editor");
+            Some(("editor::Redo".into(), Some("Editor".into())))
         }
         "editor.action.rename" => {
-            action = ActionType::String("editor::Rename");
-            context = Some("Editor");
+            Some(("editor::Rename".into(), Some("Editor".into())))
         }
         "workbench.action.files.revealActiveFileInWindows" => {
-            action = ActionType::String("editor::RevealInFileManager");
-            context = Some("Editor");
+            Some(("editor::RevealInFileManager".into(), Some("Editor".into())))
         }
         "editor.action.selectAll" => {
-            action = ActionType::String("editor::SelectAll");
-            context = Some("Editor");
+            Some(("editor::SelectAll".into(), Some("Editor".into())))
         }
         "cursorDownSelect" => {
-            action = ActionType::String("editor::SelectDown");
-            context = Some("Editor");
+            Some(("editor::SelectDown".into(), Some("Editor".into())))
         }
         "editor.action.smartSelect.expand" => {
-            action = ActionType::String("editor::SelectLargerSyntaxNode");
-            context = Some("Editor");
+            Some(("editor::SelectLargerSyntaxNode".into(), Some("Editor".into())))
         }
         "cursorLeftSelect" => {
-            action = ActionType::String("editor::SelectLeft");
-            context = Some("Editor");
+            Some(("editor::SelectLeft".into(), Some("Editor".into())))
         }
         "expandLineSelection" => {
-            action = ActionType::String("editor::SelectLine");
-            context = Some("Editor");
+            Some(("editor::SelectLine".into(), Some("Editor".into())))
         }
         "cursorPageDownSelect" => {
-            action = ActionType::String("editor::SelectPageDown");
-            context = Some("Editor");
+            Some(("editor::SelectPageDown".into(), Some("Editor".into())))
         }
         "cursorPageUpSelect" => {
-            action = ActionType::String("editor::SelectPageUp");
-            context = Some("Editor");
+            Some(("editor::SelectPageUp".into(), Some("Editor".into())))
         }
         "cursorRightSelect" => {
-            action = ActionType::String("editor::SelectRight");
-            context = Some("Editor");
+            Some(("editor::SelectRight".into(), Some("Editor".into())))
         }
         "editor.action.smartSelect.shrink" => {
-            action = ActionType::String("editor::SelectSmallerSyntaxNode");
-            context = Some("Editor");
+            Some(("editor::SelectSmallerSyntaxNode".into(), Some("Editor".into())))
         }
         "cursorTopSelect" => {
-            action = ActionType::String("editor::SelectToBeginning");
-            context = Some("Editor");
+            Some(("editor::SelectToBeginning".into(), Some("Editor".into())))
         }
         "cursorBottomSelect" => {
-            action = ActionType::String("editor::SelectToEnd");
-            context = Some("Editor");
+            Some(("editor::SelectToEnd".into(), Some("Editor".into())))
         }
         "cursorWordPartRightSelect" => {
-            action = ActionType::String("editor::SelectToNextSubwordEnd");
-            context = Some("Editor");
+            Some(("editor::SelectToNextSubwordEnd".into(), Some("Editor".into())))
         }
         "cursorWordEndRightSelect" => {
-            action = ActionType::String("editor::SelectToNextWordEnd");
-            context = Some("Editor");
+            Some(("editor::SelectToNextWordEnd".into(), Some("Editor".into())))
         }
         "cursorWordPartLeftSelect" => {
-            action = ActionType::String("editor::SelectToPreviousSubwordStart");
-            context = Some("Editor");
+            Some(("editor::SelectToPreviousSubwordStart".into(), Some("Editor".into())))
         }
         "cursorWordLeftSelect" => {
-            action = ActionType::String("editor::SelectToPreviousWordStart");
-            context = Some("Editor");
+            Some(("editor::SelectToPreviousWordStart".into(), Some("Editor".into())))
         }
         "cursorUpSelect" => {
-            action = ActionType::String("editor::SelectUp");
-            context = Some("Editor");
+            Some(("editor::SelectUp".into(), Some("Editor".into())))
         }
         "tab" => {
-            action = ActionType::String("editor::Tab");
-            context = Some("Editor");
+            Some(("editor::Tab".into(), Some("Editor".into())))
         }
         "outdent" => {
-            action = ActionType::String("editor::Backtab");
-            context = Some("Editor");
+            Some(("editor::Backtab".into(), Some("Editor".into())))
         }
         "editor.debug.action.toggleBreakpoint" => {
-            action = ActionType::String("editor::ToggleBreakpoint");
-            context = Some("Editor");
+            Some(("editor::ToggleBreakpoint".into(), Some("Editor".into())))
         }
         "editor.action.transposeLetters" => {
-            action = ActionType::String("editor::Transpose");
-            context = Some("Editor");
+            Some(("editor::Transpose".into(), Some("Editor".into())))
         }
         "undo" => {
-            action = ActionType::String("editor::Undo");
-            context = Some("Editor");
+            Some(("editor::Undo".into(), Some("Editor".into())))
         }
         "cursorUndo" => {
-            action = ActionType::String("editor::UndoSelection");
-            context = Some("Editor");
+            Some(("editor::UndoSelection".into(), Some("Editor".into())))
         }
         "editor.unfoldAll" => {
-            action = ActionType::String("editor::UnfoldAll");
-            context = Some("Editor");
+            Some(("editor::UnfoldAll".into(), Some("Editor".into())))
         }
         "editor.unfold" => {
-            action = ActionType::String("editor::UnfoldLines");
-            context = Some("Editor");
+            Some(("editor::UnfoldLines".into(), Some("Editor".into())))
         }
         "editor.unfoldRecursively" => {
-            action = ActionType::String("editor::UnfoldRecursive");
-            context = Some("Editor");
+            Some(("editor::UnfoldRecursive".into(), Some("Editor".into())))
         }
         // crates/search/src/buffer_search.rs
         // Missing:
         // Dismiss, FocusEditor
         "actions.find" => {
-            action = ActionType::String("buffer_search::Deploy");
-            context = Some("Editor && mode == full");
+            Some(("buffer_search::Deploy".into(), Some("Editor && mode == full".into())))
         }
         "editor.action.startFindReplaceAction" => {
-            action = ActionType::String("buffer_search::DeployReplace");
-            context = Some("Editor && mode == full");
+            Some(("buffer_search::DeployReplace".into(), Some("Editor && mode == full".into())))
         }
         // crates/assistant_context_editor/src/context_editor.rs
         // Missing:
@@ -898,8 +770,7 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // Missing:
         // RunInPlace, ClearOutputs, Sessions, Interrupt, Shutdown, RefreshKernelspecs
         "jupyter.runAndDebugCell" => {
-            action = ActionType::String("repl::Run");
-            context = Some("Editor && jupyter && !ContextEditor");
+            Some(("repl::Run".into(), Some("Editor && jupyter && !ContextEditor".into())))
         }
         // crates/git/src/git.rs
         // Missing:
@@ -919,87 +790,80 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // FocusSearch, ToggleIncludeIgnored, ToggleReplace, NextHistoryQuery, PreviousHistoryQuery, SplitLeft, SplitUp,
         // SplitRight, SplitDown, SplitHorizontal, SplitVertical, SwapItemLeft, SwapItemRight, TogglePreviewTab
         "toggleFindWholeWord" | "toggleSearchWholeWord" | "toggleSearchEditorWholeWord" => {
-            action = ActionType::String("search::ToggleWholeWord");
-            context = Some("Pane");
+            Some(("search::ToggleWholeWord".into(), Some("Pane".into())))
         }
-        "toggleFindCaseSensitive"
-        | "toggleSearchCaseSensitive"
-        | "toggleSearchEditorCaseSensitive" => {
-            action = ActionType::String("search::ToggleCaseSensitive");
-            context = Some("Pane");
+        "toggleFindCaseSensitive" | "toggleSearchCaseSensitive" | "toggleSearchEditorCaseSensitive" => {
+            Some(("search::ToggleCaseSensitive".into(), Some("Pane".into())))
         }
         "toggleFindInSelection" => {
-            action = ActionType::String("search::ToggleSelection");
-            context = Some("BufferSearchBar");
+            Some(("search::ToggleSelection".into(), Some("BufferSearchBar".into())))
         }
         "toggleFindRegex" => {
-            action = ActionType::String("search::ToggleRegex");
-            context = Some("BufferSearchBar");
+            Some(("search::ToggleRegex".into(), Some("BufferSearchBar".into())))
         }
         "editor.action.nextMatchFindAction" => {
-            action = ActionType::String("search::SelectNextMatch");
             if let Some(when) = when {
                 match when {
                     "editorFocus" => {
-                        context = Some("Pane");
+                        Some(("search::SelectNextMatch".into(), Some("Pane".into())))
                     }
                     "editorFocus && findInputFocussed" => {
-                        context = Some("BufferSearchBar");
+                        Some(("search::SelectNextMatch".into(), Some("BufferSearchBar".into())))
                     }
-                    _ => return None,
+                    _ => None,
                 }
+            } else {
+                Some(("search::SelectNextMatch".into(), None))
             }
         }
         "editor.action.previousMatchFindAction" => {
-            action = ActionType::String("search::SelectPreviousMatch");
             if let Some(when) = when {
                 match when {
                     "editorFocus" => {
-                        context = Some("Pane");
+                        Some(("search::SelectPreviousMatch".into(), Some("Pane".into())))
                     }
                     "editorFocus && findInputFocussed" => {
-                        context = Some("BufferSearchBar");
+                        Some(("search::SelectPreviousMatch".into(), Some("BufferSearchBar".into())))
                     }
-                    _ => return None,
+                    _ => None,
                 }
             } else {
-                return None;
+                None
             }
         }
         "editor.action.selectAllMatches" => {
-            action = ActionType::String("search::SelectAllMatches");
             if when.is_some_and(|when| when == "editorFocus && findWidgetVisible") {
-                context = Some("BufferSearchBar");
+                Some(("search::SelectAllMatches".into(), Some("BufferSearchBar".into())))
             } else {
-                context = Some("Pane");
+                Some(("search::SelectAllMatches".into(), Some("Pane".into())))
             }
         }
         "editor.action.replaceAll" => {
-            action = ActionType::String("search::ReplaceAll");
             if let Some(when) = when {
                 match when {
-                    "editorFocus && findWidgetVisible" => context = Some("BufferSearchBar"),
+                    "editorFocus && findWidgetVisible" => 
+                        Some(("search::ReplaceAll".into(), Some("BufferSearchBar".into()))),
                     "editorFocus && findWidgetVisible && replaceInputFocussed" => {
-                        context = Some("BufferSearchBar && in_replace > Editor")
+                        Some(("search::ReplaceAll".into(), Some("BufferSearchBar && in_replace > Editor".into())))
                     }
-                    _ => return None,
+                    _ => None,
                 }
             } else {
-                return None;
+                None
             }
         }
         "editor.action.replaceOne" => {
-            action = ActionType::String("search::Replace");
             if let Some(when) = when {
                 match when {
-                    "editorFocus && findWidgetVisible" => context = Some("BufferSearchBar"),
+                    "editorFocus && findWidgetVisible" => 
+                        Some(("search::Replace".into(), Some("BufferSearchBar".into()))),
                     "editorFocus && findWidgetVisible && replaceInputFocussed" => {
-                        context = Some("BufferSearchBar && in_replace > Editor")
+                        Some(("search::Replace".into(), Some("BufferSearchBar && in_replace > Editor".into())))
                     }
-                    _ => return None,
+                    _ => None,
                 }
             } else {
-                return None;
+                None
             }
         }
         // crates/language_model_selector/src/language_model_selector.rs
@@ -1018,109 +882,80 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // Missing:
         // DeploySearch, AlternateFile, JoinIntoNext, JoinAll, RevealInProjectPanel
         "workbench.action.closeEditorsInGroup" => {
-            action = ActionType::Other(r#"["pane::CloseAllItems", { "close_pinned": false }]"#);
-            context = Some("Pane");
+            Some((r#"["pane::CloseAllItems", { "close_pinned": false }]"#.into(), Some("Pane".into())))
         }
         "workbench.action.closeActiveEditor" => {
-            action = ActionType::Other(r#"["pane::CloseActiveItem", { "close_pinned": false }]"#);
-            context = Some("Pane");
+            Some((r#"["pane::CloseActiveItem", { "close_pinned": false }]"#.into(), Some("Pane".into())))
         }
         "workbench.action.closeUnmodifiedEditors" => {
-            action = ActionType::Other(r#"["pane::CloseCleanItems", { "close_pinned": false }]"#);
-            context = Some("Pane");
+            Some((r#"["pane::CloseCleanItems", { "close_pinned": false }]"#.into(), Some("Pane".into())))
         }
         "workbench.action.closeEditorsToTheLeft" => {
-            action =
-                ActionType::Other(r#"["pane::CloseItemsToTheLeft", { "close_pinned": false }]"#);
-            context = Some("Pane");
+            Some((r#"["pane::CloseItemsToTheLeft", { "close_pinned": false }]"#.into(), Some("Pane".into())))
         }
         "workbench.action.closeEditorsToTheRight" => {
-            action =
-                ActionType::Other(r#"["pane::CloseItemsToTheRight", { "close_pinned": false }]"#);
-            context = Some("Pane");
+            Some((r#"["pane::CloseItemsToTheRight", { "close_pinned": false }]"#.into(), Some("Pane".into())))
         }
         "workbench.action.closeOtherEditors" => {
-            action =
-                ActionType::Other(r#"["pane::CloseInactiveItems", { "close_pinned": false }]"#);
-            context = Some("Pane");
+            Some((r#"["pane::CloseInactiveItems", { "close_pinned": false }]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex1" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 0]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 0]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex2" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 1]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 1]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex3" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 2]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 2]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex4" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 3]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 3]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex5" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 4]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 4]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex6" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 5]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 5]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex7" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 6]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 6]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex8" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 7]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 7]"#.into(), Some("Pane".into())))
         }
         "workbench.action.openEditorAtIndex9" => {
-            action = ActionType::Other(r#"["pane::ActivateItem", 8]"#);
-            context = Some("Pane");
+            Some((r#"["pane::ActivateItem", 8]"#.into(), Some("Pane".into())))
         }
         "workbench.action.previousEditor" => {
-            action = ActionType::String("pane::ActivatePreviousItem");
-            context = Some("Pane");
+            Some(("pane::ActivatePreviousItem".into(), Some("Pane".into())))
         }
         "workbench.action.nextEditor" => {
-            action = ActionType::String("pane::ActivateNextItem");
-            context = Some("Pane");
+            Some(("pane::ActivateNextItem".into(), Some("Pane".into())))
         }
         "workbench.action.lastEditorInGroup" => {
-            action = ActionType::String("pane::ActivateLastItem");
-            context = Some("Pane");
+            Some(("pane::ActivateLastItem".into(), Some("Pane".into())))
         }
         "workbench.action.navigateBack" => {
-            action = ActionType::String("pane::GoBack");
-            context = Some("Pane");
+            Some(("pane::GoBack".into(), Some("Pane".into())))
         }
         "workbench.action.navigateForward" => {
-            action = ActionType::String("pane::GoForward");
-            context = Some("Pane");
+            Some(("pane::GoForward".into(), Some("Pane".into())))
         }
         "workbench.action.reopenClosedEditor" => {
-            action = ActionType::String("pane::ReopenClosedItem");
-            context = Some("Workspace");
+            Some(("pane::ReopenClosedItem".into(), Some("Workspace".into())))
         }
         "workbench.action.pinEditor" | "workbench.action.unpinEditor" => {
-            action = ActionType::String("pane::TogglePinTab");
-            context = Some("Pane");
+            Some(("pane::TogglePinTab".into(), Some("Pane".into())))
         }
-        // crates/markdown_preview/src/markdown_preview.rs
         "markdown.showPreviewToSide" => {
-            action = ActionType::String("markdown::OpenPreviewToTheSide");
-            context = Some("Editor");
+            Some(("markdown::OpenPreviewToTheSide".into(), Some("Editor".into())))
         }
         "markdown.showPreview" => {
-            action = ActionType::String("markdown::OpenPreview");
-            context = Some("Editor");
+            Some(("markdown::OpenPreview".into(), Some("Editor".into())))
         }
         // go_to_line
         "workbench.action.gotoLine" => {
-            action = ActionType::String("go_to_line::Toggle");
-            context = Some("Editor && mode == full");
+            Some(("go_to_line::Toggle".into(), Some("Editor && mode == full".into())))
         }
         // crates/workspace/src/toast_layer.rs
         // Missing:
@@ -1134,12 +969,10 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // Missing:
         // CloseSelectedItem, ToggleAll
         "workbench.action.quickOpenNavigateNextInEditorPicker" => {
-            action = ActionType::String("tab_switcher::Toggle");
-            context = Some("Workspace");
+            Some(("tab_switcher::Toggle".into(), Some("Workspace".into())))
         }
         "workbench.action.quickOpenNavigatePreviousInEditorPicker" => {
-            action = ActionType::Other(r#"["tab_switcher::Toggle", { "select_last": true }]"#);
-            context = Some("Workspace");
+            Some((r#"["tab_switcher::Toggle", { "select_last": true }]"#.into(), Some("Workspace".into())))
         }
         // crates/project_panel/src/project_panel.rs
         // Missing:
@@ -1147,47 +980,37 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // ToggleHideGitIgnore, NewSearchInDirectory, UnfoldDirectory, FoldDirectory, SelectParent, SelectNextGitEntry, SelectPrevGitEntry,
         // SelectNextDiagnostic, SelectPrevDiagnostic, SelectNextDirectory, SelectPrevDirectory, ToggleFocus
         "deleteFile" => {
-            action = ActionType::Other(r#"["project_panel::Delete", { "skip_prompt": false }]"#);
-            context = Some("ProjectPanel");
+            Some((r#"["project_panel::Delete", { "skip_prompt": false }]"#.into(), Some("ProjectPanel".into())))
         }
         "moveFileToTrash" => {
-            action = ActionType::Other(r#"["project_panel::Trash", { "skip_prompt": true }]"#);
-            context = Some("ProjectPanel");
+            Some((r#"["project_panel::Trash", { "skip_prompt": true }]"#.into(), Some("ProjectPanel".into())))
         }
         "list.expand" => {
-            action = ActionType::String("project_panel::ExpandSelectedEntry");
-            context = Some("ProjectPanel");
+            Some(("project_panel::ExpandSelectedEntry".into(), Some("ProjectPanel".into())))
         }
         "list.collapse" => {
-            action = ActionType::String("project_panel::CollapseSelectedEntry");
-            context = Some("ProjectPanel");
+            Some(("project_panel::CollapseSelectedEntry".into(), Some("ProjectPanel".into())))
         }
         "filesExplorer.copy" => {
-            action = ActionType::String("project_panel::Copy");
-            context = Some("ProjectPanel");
+            Some(("project_panel::Copy".into(), Some("ProjectPanel".into())))
         }
         "revealFileInOS" => {
-            action = ActionType::String("project_panel::RevealInFileManager");
-            context = Some("ProjectPanel");
+            Some(("project_panel::RevealInFileManager".into(), Some("ProjectPanel".into())))
         }
         "filesExplorer.cut" => {
-            action = ActionType::String("project_panel::Cut");
-            context = Some("ProjectPanel");
+            Some(("project_panel::Cut".into(), Some("ProjectPanel".into())))
         }
         "filesExplorer.paste" => {
-            action = ActionType::String("project_panel::Paste");
-            context = Some("ProjectPanel");
+            Some(("project_panel::Paste".into(), Some("ProjectPanel".into())))
         }
         "workbench.view.explorer" => {
-            action = ActionType::String("project_panel::ToggleFocus");
-            context = Some("Workspace");
+            Some(("project_panel::ToggleFocus".into(), Some("Workspace".into())))
         }
         // crates/git_ui/src/git_panel.rs
         // Missing:
         // Close, OpenMenu, FocusEditor, FocusChanges, ToggleFillCoAuthors, GenerateCommitMessage
         "workbench.view.scm" => {
-            action = ActionType::String("git_panel::ToggleFocus");
-            context = Some("Workspace");
+            Some(("git_panel::ToggleFocus".into(), Some("Workspace".into())))
         }
         // crates/collab_ui/src/collab_panel.rs
         // Missing:
@@ -1202,66 +1025,113 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
         // Missing:
         // ShowCharacterPalette, SearchTest, ToggleViMode
         "workbench.action.terminal.clear" => {
-            action = ActionType::String("terminal::Clear");
-            context = Some("Terminal");
+            Some(("terminal::Clear".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.copySelection" => {
-            action = ActionType::String("terminal::Copy");
-            context = Some("Terminal");
+            Some(("terminal::Copy".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.paste" => {
-            action = ActionType::String("terminal::Paste");
-            context = Some("Terminal");
+            Some(("terminal::Paste".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.scrollUp" => {
-            action = ActionType::String("terminal::ScrollLineUp");
-            context = Some("Terminal");
+            Some(("terminal::ScrollLineUp".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.scrollDown" => {
-            action = ActionType::String("terminal::ScrollLineDown");
-            context = Some("Terminal");
+            Some(("terminal::ScrollLineDown".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.scrollUpPage" => {
-            action = ActionType::String("terminal::ScrollPageUp");
-            context = Some("Terminal");
+            Some(("terminal::ScrollPageUp".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.scrollDownPage" => {
-            action = ActionType::String("terminal::ScrollPageDown");
-            context = Some("Terminal");
+            Some(("terminal::ScrollPageDown".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.scrollToTop" => {
-            action = ActionType::String("terminal::ScrollToTop");
-            context = Some("Terminal");
+            Some(("terminal::ScrollToTop".into(), Some("Terminal".into())))
         }
         "workbench.action.terminal.scrollToBottom" => {
-            action = ActionType::String("terminal::ScrollToBottom");
-            context = Some("Terminal");
+            Some(("terminal::ScrollToBottom".into(), Some("Terminal".into())))
         }
         // crates/terminal_view/src/terminal_view.rs
         // Missing:
         // SendKeystroke
         "workbench.action.terminal.sendSequence" => {
-            action = if let Some(args) = args {
-                ActionType::WithArgs(format!(r#"["terminal::SendText", "{}"]"#, args))
+            if let Some(args) = args {
+                Some((format!(r#"["terminal::SendText", "{}"]"#, args), Some("Terminal".into())))
             } else {
-                return None;
-            };
-            context = Some("Terminal");
+                None
+            }
         }
-        _ => return None,
+        _ => None,
     }
-    Some((action, context))
 }
 
-fn serialize_actions() {}
+fn push_str_with_indent(result: &mut String, indent_level: usize, content: &str) {
+    #[cfg(target_os = "windows")]
+    result.push_str(&format!("{}{}\r\n", " ".repeat(indent_level * 2), content));
+}
+
+fn serialize_actions(actions: &[ActionContent]) -> String {
+    let mut result = String::new();
+    let mut indent_level = 0;
+    push_str_with_indent(&mut result, indent_level, "[");
+    indent_level += 1;
+    for (action_idx, action) in actions.iter().enumerate() {
+        let is_last_action = action_idx == actions.len() - 1;
+        push_str_with_indent(&mut result, indent_level, "{");
+        indent_level += 1;
+        if let Some(context) = &action.context {
+            push_str_with_indent(
+                &mut result,
+                indent_level,
+                &format!(r#""{}": "{}","#, "context", context),
+            );
+        }
+        push_str_with_indent(&mut result, indent_level, r#""bindings": {"#);
+        indent_level += 1;
+
+        for (binding_idx, binding) in action.bindings.iter().enumerate() {
+            let is_last_binding = binding_idx == action.bindings.len() - 1;
+            for comment in binding.comments.lines() {
+                push_str_with_indent(&mut result, indent_level, &format!("// {}", comment));
+            }
+            if is_last_binding {
+                push_str_with_indent(
+                    &mut result,
+                    indent_level,
+                    &format!(r#""{}": "{}""#, binding.binding, binding.action),
+                );
+            } else {
+                push_str_with_indent(
+                    &mut result,
+                    indent_level,
+                    &format!(r#""{}": "{}","#, binding.binding, binding.action),
+                );
+            }
+        }
+
+        indent_level -= 1;
+        push_str_with_indent(&mut result, indent_level, "}");
+        indent_level -= 1;
+        if is_last_action {
+            push_str_with_indent(&mut result, indent_level, "}");
+        } else {
+            push_str_with_indent(&mut result, indent_level, "},");
+        }
+    }
+    indent_level -= 1;
+    push_str_with_indent(&mut result, indent_level, "]");
+    result
+}
 
 #[cfg(test)]
 mod tests {
     use gpui::TestKeyboardMapper;
 
-    use crate::KeymapFile;
+    use crate::{KeymapFile, vscode_import::serialize_actions};
 
-    use super::{VsCodeShortcuts, vscode_shortcut_command_to_zed_action};
+    use super::{
+        ActionContent, VsCodeShortcuts, ZedBindingContent, vscode_shortcut_command_to_zed_action,
+    };
 
     fn collect_bindings(keymap: &KeymapFile) -> Vec<String> {
         let mut result = Vec::new();
@@ -1271,6 +1141,30 @@ mod tests {
             }
         }
         result
+    }
+
+    #[test]
+    fn test_serialization() {
+        let actions = vec![
+            ActionContent {
+                context: None,
+                bindings: vec![ZedBindingContent {
+                    binding: "ctrl+shift+f".to_string(),
+                    action: "editor::Find".to_string(),
+                    comments: "Find in editor".to_string(),
+                }],
+            },
+            ActionContent {
+                context: Some("Editor".to_string()),
+                bindings: vec![ZedBindingContent {
+                    binding: "ctrl+shift+r".to_string(),
+                    action: "editor::Replace".to_string(),
+                    comments: "Replace in editor\r\nHello".to_string(),
+                }],
+            },
+        ];
+        let result = serialize_actions(&actions);
+        println!("Serialized actions:\n{}", result);
     }
 
     #[test]
