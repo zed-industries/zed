@@ -30,6 +30,7 @@ pub struct LlmTokenClaims {
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
     pub has_llm_subscription: bool,
+    pub use_llm_request_queue: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
     #[serde(default)]
@@ -83,6 +84,7 @@ impl LlmTokenClaims {
                 .iter()
                 .any(|flag| flag == "bypass-account-age-check"),
             can_use_web_search_tool: feature_flags.iter().any(|flag| flag == "assistant2"),
+            use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
             has_llm_subscription: has_legacy_llm_subscription,
             max_monthly_spend_in_cents: billing_preferences
                 .as_ref()
