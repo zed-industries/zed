@@ -367,6 +367,14 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
             action = ActionType::String("workspace::ActivatePaneDown");
             context = Some("Workspace");
         }
+        "workbench.action.showAllSymbols" => {
+            action = ActionType::String("project_symbols::Toggle");
+            context = Some("Workspace");
+        }
+        "workbench.action.quickOpen" => {
+            action = ActionType::String("file_finder::Toggle");
+            context = Some("Workspace");
+        }
         // crates/zed_actions/src/lib.rs
         // Missing:
         // OpenBrowser, OpenZedUrl, OpenAccountSettings, OpenServerSettings, About, OpenLicenses, OpenTelemetryLog, DecreaseUiFontSize,
@@ -869,7 +877,340 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
             action = ActionType::String("editor::UnfoldRecursive");
             context = Some("Editor");
         }
+        // crates/search/src/buffer_search.rs
+        // Missing:
+        // Dismiss, FocusEditor
+        "actions.find" => {
+            action = ActionType::String("buffer_search::Deploy");
+            context = Some("Editor && mode == full");
+        }
+        "editor.action.startFindReplaceAction" => {
+            action = ActionType::String("buffer_search::DeployReplace");
+            context = Some("Editor && mode == full");
+        }
+        // crates/assistant_context_editor/src/context_editor.rs
+        // Missing:
+        // Assist, ConfirmCommand, CopyCode, CycleMessageRole, Edit, InsertIntoEditor, QuoteSelection, Split
 
+        // crates/markdown/src/markdown.rs
+        // Missing:
+        // Copy, CopyAsMarkdown
+
+        // crates/repl/src/repl_sessions_ui.rs
+        // Missing:
+        // RunInPlace, ClearOutputs, Sessions, Interrupt, Shutdown, RefreshKernelspecs
+        "jupyter.runAndDebugCell" => {
+            action = ActionType::String("repl::Run");
+            context = Some("Editor && jupyter && !ContextEditor");
+        }
+        // crates/git/src/git.rs
+        // Missing:
+        // ToggleStaged, StageAndNext, UnstageAndNext, StageFile, StageAll, UnstageAll, RestoreTrackedFiles, TrashUntrackedFiles,
+        // Uncommit, Push, ForcePush, Pull, Fetch, Commit, Amend, Cancel, ExpandCommitEditor, GenerateCommitMessage, Init, RestoreFile,
+        // Restore, Blame
+
+        // crates/agent/src/assistant.rs
+        // Missing:
+        // NewTextThread, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu, DeleteRecentlyOpenThread, ToggleProfileSelector,
+        // RemoveAllContext, ExpandMessageEditor, OpenHistory, AddContextServer, RemoveSelectedThread, Chat, ChatMode, CycleNextInlineAssist,
+        // CyclePreviousInlineAssist, FocusUp, FocusDown, FocusLeft, FocusRight, RemoveFocusedContext, AcceptSuggestedContext,
+        // OpenActiveThreadAsMarkdown, OpenAgentDiff, Keep, Reject, RejectAll, KeepAll
+
+        // crates/search/src/search.rs
+        // Missing:
+        // FocusSearch, ToggleIncludeIgnored, ToggleReplace, NextHistoryQuery, PreviousHistoryQuery, SplitLeft, SplitUp,
+        // SplitRight, SplitDown, SplitHorizontal, SplitVertical, SwapItemLeft, SwapItemRight, TogglePreviewTab
+        "toggleFindWholeWord" | "toggleSearchWholeWord" | "toggleSearchEditorWholeWord" => {
+            action = ActionType::String("search::ToggleWholeWord");
+            context = Some("Pane");
+        }
+        "toggleFindCaseSensitive"
+        | "toggleSearchCaseSensitive"
+        | "toggleSearchEditorCaseSensitive" => {
+            action = ActionType::String("search::ToggleCaseSensitive");
+            context = Some("Pane");
+        }
+        "toggleFindInSelection" => {
+            action = ActionType::String("search::ToggleSelection");
+            context = Some("BufferSearchBar");
+        }
+        "toggleFindRegex" => {
+            action = ActionType::String("search::ToggleRegex");
+            context = Some("BufferSearchBar");
+        }
+        "editor.action.nextMatchFindAction" => {
+            action = ActionType::String("search::SelectNextMatch");
+            if let Some(when) = when {
+                match when {
+                    "editorFocus" => {
+                        context = Some("Pane");
+                    }
+                    "editorFocus && findInputFocussed" => {
+                        context = Some("BufferSearchBar");
+                    }
+                    _ => return None,
+                }
+            }
+        }
+        "editor.action.previousMatchFindAction" => {
+            action = ActionType::String("search::SelectPreviousMatch");
+            if let Some(when) = when {
+                match when {
+                    "editorFocus" => {
+                        context = Some("Pane");
+                    }
+                    "editorFocus && findInputFocussed" => {
+                        context = Some("BufferSearchBar");
+                    }
+                    _ => return None,
+                }
+            } else {
+                return None;
+            }
+        }
+        "editor.action.selectAllMatches" => {
+            action = ActionType::String("search::SelectAllMatches");
+            if when.is_some_and(|when| when == "editorFocus && findWidgetVisible") {
+                context = Some("BufferSearchBar");
+            } else {
+                context = Some("Pane");
+            }
+        }
+        "editor.action.replaceAll" => {
+            action = ActionType::String("search::ReplaceAll");
+            if let Some(when) = when {
+                match when {
+                    "editorFocus && findWidgetVisible" => context = Some("BufferSearchBar"),
+                    "editorFocus && findWidgetVisible && replaceInputFocussed" => {
+                        context = Some("BufferSearchBar && in_replace > Editor")
+                    }
+                    _ => return None,
+                }
+            } else {
+                return None;
+            }
+        }
+        "editor.action.replaceOne" => {
+            action = ActionType::String("search::Replace");
+            if let Some(when) = when {
+                match when {
+                    "editorFocus && findWidgetVisible" => context = Some("BufferSearchBar"),
+                    "editorFocus && findWidgetVisible && replaceInputFocussed" => {
+                        context = Some("BufferSearchBar && in_replace > Editor")
+                    }
+                    _ => return None,
+                }
+            } else {
+                return None;
+            }
+        }
+        // crates/language_model_selector/src/language_model_selector.rs
+        // Missing:
+        // ToggleModelSelector
+
+        // crates/rules_library/src/rules_library.rs
+        // Missing:
+        // NewRule, DeleteRule, DuplicateRule, ToggleDefaultRule
+
+        // crates/search/src/project_search.rs
+        // Missing:
+        // SearchInNew, ToggleFocus, NextField, ToggleFilters
+
+        // crates/workspace/src/pane.rs
+        // Missing:
+        // DeploySearch, AlternateFile, JoinIntoNext, JoinAll
+        "workbench.action.closeEditorsInGroup" => {
+            action = ActionType::Other(r#"["pane::CloseAllItems", { "close_pinned": false }]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.closeActiveEditor" => {
+            action = ActionType::Other(r#"["pane::CloseActiveItem", { "close_pinned": false }]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.closeUnmodifiedEditors" => {
+            action = ActionType::Other(r#"["pane::CloseCleanItems", { "close_pinned": false }]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.closeEditorsToTheLeft" => {
+            action =
+                ActionType::Other(r#"["pane::CloseItemsToTheLeft", { "close_pinned": false }]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.closeEditorsToTheRight" => {
+            action =
+                ActionType::Other(r#"["pane::CloseItemsToTheRight", { "close_pinned": false }]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.closeOtherEditors" => {
+            action =
+                ActionType::Other(r#"["pane::CloseInactiveItems", { "close_pinned": false }]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex1" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 0]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex2" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 1]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex3" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 2]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex4" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 3]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex5" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 4]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex6" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 5]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex7" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 6]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex8" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 7]"#);
+            context = Some("Pane");
+        }
+        "workbench.action.openEditorAtIndex9" => {
+            action = ActionType::Other(r#"["pane::ActivateItem", 8]"#);
+            context = Some("Pane");
+        }
+        "workbench.view.explorer" => {
+            action = ActionType::String("pane::RevealInProjectPanel");
+            context = Some("!ContextEditor > Editor && mode == full");
+        }
+        "workbench.action.previousEditor" => {
+            action = ActionType::String("pane::ActivatePreviousItem");
+            context = Some("Pane");
+        }
+        "workbench.action.nextEditor" => {
+            action = ActionType::String("pane::ActivateNextItem");
+            context = Some("Pane");
+        }
+        "workbench.action.lastEditorInGroup" => {
+            action = ActionType::String("pane::ActivateLastItem");
+            context = Some("Pane");
+        }
+        "workbench.action.navigateBack" => {
+            action = ActionType::String("pane::GoBack");
+            context = Some("Pane");
+        }
+        "workbench.action.navigateForward" => {
+            action = ActionType::String("pane::GoForward");
+            context = Some("Pane");
+        }
+        "workbench.action.reopenClosedEditor" => {
+            action = ActionType::String("pane::ReopenClosedItem");
+            context = Some("Workspace");
+        }
+        "workbench.action.pinEditor" | "workbench.action.unpinEditor" => {
+            action = ActionType::String("pane::TogglePinTab");
+            context = Some("Pane");
+        }
+        // crates/markdown_preview/src/markdown_preview.rs
+        "markdown.showPreviewToSide" => {
+            action = ActionType::String("markdown::OpenPreviewToTheSide");
+            context = Some("Editor");
+        }
+        "markdown.showPreview" => {
+            action = ActionType::String("markdown::OpenPreview");
+            context = Some("Editor");
+        }
+        // go_to_line
+        "workbench.action.gotoLine" => {
+            action = ActionType::String("go_to_line::Toggle");
+            context = Some("Editor && mode == full");
+        }
+        // crates/workspace/src/toast_layer.rs
+        // Missing:
+        // RunAction
+
+        // crates/title_bar/src/application_menu.rs
+        // Missing:
+        // OpenApplicationMenu, ActivateMenuRight, ActivateMenuLeft
+
+        // crates/tab_switcher/src/tab_switcher.rs
+        // Missing:
+        // CloseSelectedItem, ToggleAll
+        "workbench.action.quickOpenNavigateNextInEditorPicker" => {
+            action = ActionType::String("tab_switcher::Toggle");
+            context = Some("Workspace");
+        }
+        "workbench.action.quickOpenNavigatePreviousInEditorPicker" => {
+            action = ActionType::Other(r#"["tab_switcher::Toggle", { "select_last": true }]"#);
+            context = Some("Workspace");
+        }
+        // crates/project_panel/src/project_panel.rs
+        // Missing:
+        // CollapseAllEntries, NewDirectory, NewFile, Duplicate, RemoveFromProject, OpenWithSystem, Rename, Open, OpenPermanent,
+        // ToggleHideGitIgnore, NewSearchInDirectory, UnfoldDirectory, FoldDirectory, SelectParent, SelectNextGitEntry, SelectPrevGitEntry,
+        // SelectNextDiagnostic, SelectPrevDiagnostic, SelectNextDirectory, SelectPrevDirectory
+        "deleteFile" => {
+            action = ActionType::Other(r#"["project_panel::Delete", { "skip_prompt": false }]"#);
+            context = Some("ProjectPanel");
+        }
+        "moveFileToTrash" => {
+            action = ActionType::Other(r#"["project_panel::Trash", { "skip_prompt": true }]"#);
+            context = Some("ProjectPanel");
+        }
+        "list.expand" => {
+            action = ActionType::String("project_panel::ExpandSelectedEntry");
+            context = Some("ProjectPanel");
+        }
+        "list.collapse" => {
+            action = ActionType::String("project_panel::CollapseSelectedEntry");
+            context = Some("ProjectPanel");
+        }
+        "filesExplorer.copy" => {
+            action = ActionType::String("project_panel::Copy");
+            context = Some("ProjectPanel");
+        }
+        "revealFileInOS" => {
+            action = ActionType::String("project_panel::RevealInFileManager");
+            context = Some("ProjectPanel");
+        }
+        "filesExplorer.cut" => {
+            action = ActionType::String("project_panel::Cut");
+            context = Some("ProjectPanel");
+        }
+        "filesExplorer.paste" => {
+            action = ActionType::String("project_panel::Paste");
+            context = Some("ProjectPanel");
+        }
+        "workbench.view.explorer" => {
+            action = ActionType::String("project_panel::ToggleFocus");
+            context = Some("Workspace");
+        }
+        // crates/git_ui/src/git_panel.rs
+        // Missing:
+        // Close, OpenMenu, FocusEditor, FocusChanges, ToggleFillCoAuthors, GenerateCommitMessage
+        "workbench.view.scm" => {
+            action = ActionType::String("git_panel::ToggleFocus");
+            context = Some("Workspace");
+        }
+        // crates/collab_ui/src/collab_panel.rs
+        // Missing:
+        // ToggleFocus, Remove, Secondary, CollapseSelectedChannel, ExpandSelectedChannel, StartMoveChannel, MoveSelected, InsertSpace,
+
+        // crates/outline_panel/src/outline_panel.rs
+        // Missing:
+        // CollapseAllEntries, CollapseSelectedEntry, ExpandAllEntries, ExpandSelectedEntry, FoldDirectory, OpenSelectedEntry,
+        // RevealInFileManager, SelectParent, ToggleActiveEditorPin, ToggleFocus, UnfoldDirectory
+
+        // crates/terminal/src/terminal.rs
+        // Missing:
+        //
+        "workbench.action.terminal.clear" => {
+            action = ActionType::String("terminal::Clear");
+            context = Some("Terminal");
+        }
         _ => return None,
     }
     Some((action, context))
