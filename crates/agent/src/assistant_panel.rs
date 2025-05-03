@@ -1890,7 +1890,7 @@ impl AssistantPanel {
                                     .child(
                                         Banner::new()
                                             .severity(ui::Severity::Warning)
-                                            .children(
+                                            .child(
                                                 Label::new(
                                                     "Configure at least one LLM provider to start using the panel.",
                                                 )
@@ -1923,7 +1923,7 @@ impl AssistantPanel {
                                     .child(
                                         Banner::new()
                                             .severity(ui::Severity::Warning)
-                                            .children(
+                                            .child(
                                                 h_flex()
                                                     .w_full()
                                                     .children(
@@ -1985,7 +1985,7 @@ impl AssistantPanel {
         Some(
             Banner::new()
                 .severity(ui::Severity::Info)
-                .children(h_flex().child(Label::new(format!(
+                .child(h_flex().child(Label::new(format!(
                     "Consecutive tool use limit reached.{max_mode_upsell}"
                 ))))
                 .into_any_element(),
