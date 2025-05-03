@@ -5,6 +5,8 @@ use std::{
     ops::{Deref, DerefMut, Range},
 };
 
+use gpui::PlatformKeyboardMapper;
+
 #[cfg(feature = "neovim")]
 use async_compat::Compat;
 #[cfg(feature = "neovim")]
@@ -110,8 +112,12 @@ impl NeovimConnection {
 
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
-    pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+    pub async fn send_keystroke(
+        &mut self,
+        keystroke_text: &str,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) {
+        let mut keystroke = Keystroke::parse(keystroke_text, keyboard_mapper).unwrap();
 
         if keystroke.key == "<" {
             keystroke.key = "lt".to_string()
@@ -148,7 +154,11 @@ impl NeovimConnection {
     }
 
     #[cfg(not(feature = "neovim"))]
-    pub async fn send_keystroke(&mut self, keystroke_text: &str) {
+    pub async fn send_keystroke(
+        &mut self,
+        keystroke_text: &str,
+        _keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) {
         if matches!(self.data.front(), Some(NeovimData::Get { .. })) {
             self.data.pop_front();
         }
