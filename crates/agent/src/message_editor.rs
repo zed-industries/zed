@@ -97,7 +97,7 @@ pub(crate) fn create_editor(
             window,
             cx,
         );
-        editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
+        editor.set_placeholder_text("Message the agent – @ to include context", cx);
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
         editor.set_context_menu_options(ContextMenuOptions {
