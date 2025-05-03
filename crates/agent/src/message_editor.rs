@@ -468,6 +468,7 @@ impl MessageEditor {
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
             .toggle_state(following)
+            .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
             .tooltip(move |window, cx| {
                 if following {
                     Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
