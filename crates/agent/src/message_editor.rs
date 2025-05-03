@@ -1068,52 +1068,34 @@ impl MessageEditor {
             usage = Some(debug_account.custom_prompt_usage.clone());
         }
 
-        let is_approaching_limit = if let (Some(_plan), Some(usage)) = (&plan, &usage) {
-            match usage.limit {
-                UsageLimit::Limited(limit) => {
-                    let percentage = usage.amount as f32 / limit as f32;
-                    percentage >= 0.9 && percentage < 1.0
-                }
-                UsageLimit::Unlimited => false,
+        let (plan, usage) = match (&plan, &usage) {
+            (Some(p), Some(u)) => (p, u),
+            _ => return None,
+        };
+
+        let (is_approaching_limit, remaining) = match usage.limit {
+            UsageLimit::Limited(limit) => {
+                let percentage = usage.amount as f32 / limit as f32;
+                let is_near_limit = percentage >= 0.9 && percentage < 1.0;
+                (is_near_limit, limit.saturating_sub(usage.amount))
             }
-        } else {
-            false
+            UsageLimit::Unlimited => (false, 0),
         };
 
         if !is_approaching_limit {
             return None;
         }
 
-        let limit = if let Some(usage) = usage {
-            match usage.limit {
-                UsageLimit::Unlimited => 0,
-                UsageLimit::Limited(limit) => limit,
-            }
-        } else {
-            return None;
+        let title = match plan {
+            zed_llm_client::Plan::Free => "Reaching Free tier limit soon",
+            zed_llm_client::Plan::ZedProTrial => "Reaching Trial limit soon",
+            _ => return None,
         };
 
-        let (title, message) = if let (Some(plan), Some(usage)) = (&plan, &usage) {
-            match plan {
-                zed_llm_client::Plan::Free => (
-                    "Reaching Free tier prompt limit soon",
-                    format!(
-                        "{} remaining - Upgrade to increase limit, or switch providers",
-                        limit - usage.amount
-                    ),
-                ),
-                zed_llm_client::Plan::ZedProTrial => (
-                    "Reaching Trial prompt limit soon",
-                    format!(
-                        "{} remaining - Upgrade to increase limit, or switch providers",
-                        limit - usage.amount
-                    ),
-                ),
-                _ => return None,
-            }
-        } else {
-            return None;
-        };
+        let message = format!(
+            "{} remaining - Upgrade to increase limit, or switch providers",
+            remaining
+        );
 
         Some(
             div().child(Callout::multi_line(
