@@ -1268,7 +1268,11 @@ impl EditorElement {
         }
         // Local cursors
         if !skip_local {
-            let color = cx.theme().players().local().cursor;
+            let color = if editor.leader_id == Some(CollaboratorId::Agent) {
+                cx.theme().players().agent().cursor
+            } else {
+                cx.theme().players().local().cursor
+            };
             editor.selections.disjoint.iter().for_each(|selection| {
                 add_cursor(selection.head(), color);
             });

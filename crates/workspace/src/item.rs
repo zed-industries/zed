@@ -767,7 +767,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                                         proto::UpdateView {
                                             id: item
                                                 .remote_id(workspace.client(), window, cx)
-                                                .map(|id| id.to_proto()),
+                                                .and_then(|id| id.to_proto()),
                                             variant: pending_update.borrow_mut().take(),
                                             leader_id,
                                         },
@@ -1194,7 +1194,7 @@ impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
     fn remote_id(&self, client: &Arc<Client>, _: &mut Window, cx: &mut App) -> Option<ViewId> {
         self.read(cx).remote_id().or_else(|| {
             client.peer_id().map(|creator| ViewId {
-                creator,
+                creator: CollaboratorId::PeerId(creator),
                 id: self.item_id().as_u64(),
             })
         })

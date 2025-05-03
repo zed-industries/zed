@@ -953,7 +953,7 @@ impl EventEmitter<Event> for Workspace {}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ViewId {
-    pub creator: PeerId,
+    pub creator: CollaboratorId,
     pub id: u64,
 }
 
@@ -1055,17 +1055,7 @@ impl Workspace {
                 }
 
                 project::Event::AgentLocationChanged => {
-                    if let Some(item) = this.leader_updated(CollaboratorId::Agent, window, cx) {
-                        if let Some(followable_item) = item.to_followable_item_handle(cx) {
-                            if let Some(agent_location) = this.project.read(cx).agent_location() {
-                                followable_item.update_agent_location(
-                                    agent_location.position,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        }
-                    }
+                    this.handle_agent_location_changed(window, cx)
                 }
 
                 _ => {}
@@ -4222,7 +4212,7 @@ impl Workspace {
         }
 
         Some(proto::View {
-            id: Some(id.to_proto()),
+            id: id.to_proto(),
             leader_id: leader_peer_id,
             variant: Some(variant),
             panel_id: panel_id.map(|id| id as i32),
@@ -4433,6 +4423,51 @@ impl Workspace {
         Ok(())
     }
 
+    fn handle_agent_location_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(follower_state) = self.follower_states.get_mut(&CollaboratorId::Agent) else {
+            return;
+        };
+
+        if let Some(agent_location) = self.project.read(cx).agent_location() {
+            let view_id = ViewId {
+                creator: CollaboratorId::Agent,
+                id: agent_location.buffer.entity_id().as_u64(),
+            };
+            follower_state.active_view_id = Some(view_id);
+
+            let item = match follower_state.items_by_leader_view_id.entry(view_id) {
+                hash_map::Entry::Occupied(entry) => Some(entry.into_mut()),
+                hash_map::Entry::Vacant(entry) => {
+                    let view = agent_location.buffer.upgrade().and_then(|buffer| {
+                        cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
+                            registry.build_item(buffer, self.project.clone(), None, window, cx)
+                        })?
+                        .to_followable_item_handle(cx)
+                    });
+                    if let Some(view) = view {
+                        Some(entry.insert(FollowerView {
+                            view,
+                            location: None,
+                        }))
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if let Some(item) = item {
+                item.view
+                    .set_leader_id(Some(CollaboratorId::Agent), window, cx);
+                item.view
+                    .update_agent_location(agent_location.position, window, cx);
+            }
+        } else {
+            follower_state.active_view_id = None;
+        }
+
+        self.leader_updated(CollaboratorId::Agent, window, cx);
+    }
+
     pub fn update_active_view_for_followers(&mut self, window: &mut Window, cx: &mut App) {
         let mut is_project_item = true;
         let mut update = proto::UpdateActiveView::default();
@@ -4457,7 +4492,7 @@ impl Workspace {
                         if let Some(id) = id.clone() {
                             if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
-                                    id: Some(id.clone()),
+                                    id: id.clone(),
                                     leader_id: leader_peer_id,
                                     variant: Some(variant),
                                     panel_id: panel_id.map(|id| id as i32),
@@ -4467,7 +4502,7 @@ impl Workspace {
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
-                                    id: Some(id.clone()),
+                                    id: id.clone(),
                                     leader_id: leader_peer_id,
                                 };
                             }
@@ -4557,8 +4592,8 @@ impl Workspace {
 
         let leader_id = leader_id.into();
         let (panel_id, item) = match leader_id {
-            CollaboratorId::PeerId(peer_id) => self.active_view_for_peer(peer_id, window, cx)?,
-            CollaboratorId::Agent => (None, self.active_view_for_agent(window, cx)?),
+            CollaboratorId::PeerId(peer_id) => self.active_item_for_peer(peer_id, window, cx)?,
+            CollaboratorId::Agent => (None, self.active_item_for_agent()?),
         };
 
         let state = self.follower_states.get(&leader_id)?;
@@ -4594,31 +4629,19 @@ impl Workspace {
         Some(item)
     }
 
-    fn active_view_for_agent(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Box<dyn ItemHandle>> {
+    fn active_item_for_agent(&self) -> Option<Box<dyn ItemHandle>> {
         let state = self.follower_states.get(&CollaboratorId::Agent)?;
-        let agent_location = self.project.read(cx).agent_location()?;
-        let buffer = agent_location.buffer.upgrade()?;
-        let existing_item = state.center_pane.read(cx).items().find_map(|item| {
-            if item.project_item_model_ids(cx).as_slice() == [buffer.entity_id()] {
-                Some(item.boxed_clone())
-            } else {
-                None
-            }
-        });
-        let item = existing_item.or_else(|| {
-            cx.update_default_global(|registry: &mut ProjectItemRegistry, cx| {
-                registry.build_item(buffer, self.project.clone(), None, window, cx)
-            })
-        })?;
-
-        Some(item)
+        let active_view_id = state.active_view_id?;
+        Some(
+            state
+                .items_by_leader_view_id
+                .get(&active_view_id)?
+                .view
+                .boxed_clone(),
+        )
     }
 
-    fn active_view_for_peer(
+    fn active_item_for_peer(
         &self,
         peer_id: PeerId,
         window: &mut Window,
@@ -6185,15 +6208,20 @@ impl ViewId {
         Ok(Self {
             creator: message
                 .creator
+                .map(CollaboratorId::PeerId)
                 .ok_or_else(|| anyhow!("creator is missing"))?,
             id: message.id,
         })
     }
 
-    pub(crate) fn to_proto(self) -> proto::ViewId {
-        proto::ViewId {
-            creator: Some(self.creator),
-            id: self.id,
+    pub(crate) fn to_proto(self) -> Option<proto::ViewId> {
+        if let CollaboratorId::PeerId(peer_id) = self.creator {
+            Some(proto::ViewId {
+                creator: Some(peer_id),
+                id: self.id,
+            })
+        } else {
+            None
         }
     }
 }
