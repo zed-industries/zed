@@ -5,7 +5,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::future::{self, Shared};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    CacheBaseRef, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
+    CacheBaseRef, CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
     GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
 };
 use gpui::{
@@ -23,6 +23,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
+use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -35,7 +36,6 @@ use theme::ThemeSettings;
 use time::UtcDateTime;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
-use parking_lot::Mutex;
 
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
@@ -97,7 +97,11 @@ impl CacheKey {
 }
 
 impl Cache {
-    fn get_unexpired(&self, key: &CacheKey, now: UtcDateTime) -> Option<Shared<Task<Option<CacheEntry>>>> {
+    fn get_unexpired(
+        &self,
+        key: &CacheKey,
+        now: UtcDateTime,
+    ) -> Option<Shared<Task<Option<CacheEntry>>>> {
         let cache_task = self.0.get(key)?;
         match cache_task.clone().now_or_never() {
             Some(Some(created_cache)) => {
@@ -496,27 +500,32 @@ impl LanguageModel for GoogleLanguageModel {
         {
             let create_cache_future = self.create_cache(request, cx);
             let cache = self.cache.clone();
-            let background_executor = cx.background_executor();
-            let task = cx.background_spawn(
-                async move {
-                    if let Some(created_cache) = create_cache_future.await.log_err() {
-                        let now = UtcDateTime::now();
-                        let Some(remaining_time) = (created_cache.expire_time - now).try_into().ok()?;
-                        let cache_expired = background_executor.timer(remaining_time);
-                        let drop_on_expire = background_executor.spawn(async move {
+            let executor = cx.background_executor().clone();
+            let task = cx.background_spawn(async move {
+                if let Some(created_cache) = create_cache_future.await.log_err() {
+                    let now = UtcDateTime::now();
+                    let Some(remaining_time): Option<std::time::Duration> =
+                        (created_cache.expire_time - now).try_into().ok()
+                    else {
+                        cache.lock().0.remove(&cache_key);
+                        return None;
+                    };
+                    let cache_expired = executor.timer(remaining_time);
+                    let drop_on_expire = executor
+                        .spawn(async move {
                             cache_expired.await;
                             cache.lock().0.remove(&cache_key);
-                        }).shared();
-                        Some(CacheEntry {
-                            name: response.name,
-                            expire_time: response.expire_time,
-                            drop_on_expire,
                         })
-                    } else {
-                        None
-                    }
+                        .shared();
+                    Some(CacheEntry {
+                        name: created_cache.name,
+                        expire_time: created_cache.expire_time.to_utc(),
+                        drop_on_expire,
+                    })
+                } else {
+                    None
                 }
-            );
+            });
             self.cache.lock().0.insert(cache_key, task.shared());
         }
 
@@ -555,7 +564,8 @@ impl LanguageModel for GoogleLanguageModel {
                     request.tool_config = None;
                 }
                 request
-        }});
+            }
+        });
 
         let stream_request = self.stream_completion(request, cx);
 
