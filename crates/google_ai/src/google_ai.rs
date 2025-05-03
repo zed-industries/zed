@@ -515,15 +515,6 @@ pub struct CreateCacheRequest {
     // display_name: user-generated meaningful display name of the cached content. Maximum 128 Unicode characters.
 }
 
-// todo! rename CacheBaseRefs
-#[derive(Hash, PartialEq, Eq)]
-pub struct CacheBaseRef<'a> {
-    pub model: &'a ModelName,
-    pub system_instruction: &'a Option<SystemInstruction>,
-    pub tools: &'a Option<Vec<Tool>>,
-    pub tool_config: &'a Option<ToolConfig>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateCacheResponse {

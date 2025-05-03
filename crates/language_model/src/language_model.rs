@@ -318,8 +318,6 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        // todo!
-        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -331,8 +329,6 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion_with_usage(
         &self,
         request: LanguageModelRequest,
-        // todo!
-        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -349,8 +345,6 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
-        // todo!
-        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
         self.stream_completion_text_with_usage(request, cx)
@@ -361,8 +355,6 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion_text_with_usage(
         &self,
         request: LanguageModelRequest,
-        // todo!
-        // cache_state: &mut CacheState,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<(LanguageModelTextStream, Option<RequestUsage>)>> {
         let future = self.stream_completion_with_usage(request, cx);

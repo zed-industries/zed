@@ -5,8 +5,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::future::{self, Shared};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    CacheBaseRef, CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
-    GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
+    CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
+    GenerateContentRequest, GenerateContentResponse, ModelName, Part, SystemInstruction,
+    UsageMetadata,
 };
 use gpui::{
     AnyView, App, AppContext, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle,
@@ -42,6 +43,10 @@ use crate::ui::InstructionListItem;
 
 const PROVIDER_ID: &str = "google";
 const PROVIDER_NAME: &str = "Google AI";
+const CACHE_TTL: Duration = Duration::from_secs(60 * 5);
+
+/// Minimum amount of time left before a cache expires for it to be used.
+const CACHE_TTL_MINIMUM_FOR_USAGE: Duration = Duration::from_secs(2);
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct GoogleSettings {
@@ -82,13 +87,28 @@ pub struct CacheEntry {
 pub struct CacheKey(u64);
 
 impl CacheKey {
-    pub fn base(cache_base: &CacheBaseRef) -> Self {
+    pub fn base(request: &GenerateContentRequest) -> Self {
+        #[derive(Hash, PartialEq, Eq)]
+        pub struct CacheBaseRef<'a> {
+            pub model: &'a ModelName,
+            pub system_instruction: &'a Option<SystemInstruction>,
+            pub tools: &'a Option<Vec<google_ai::Tool>>,
+            pub tool_config: &'a Option<google_ai::ToolConfig>,
+        }
+
+        let cache_base = CacheBaseRef {
+            model: &request.model,
+            system_instruction: &request.system_instruction,
+            tools: &request.tools,
+            tool_config: &request.tool_config,
+        };
+
         let mut hasher = FxHasher::default();
         cache_base.hash(&mut hasher);
         Self(hasher.finish())
     }
 
-    pub fn with_message(predecessor: Self, message: &Content) -> Self {
+    pub fn for_message(predecessor: Self, message: &Content) -> Self {
         let mut hasher = FxHasher::default();
         predecessor.0.hash(&mut hasher);
         message.hash(&mut hasher);
@@ -105,8 +125,7 @@ impl Cache {
         let cache_task = self.0.get(key)?;
         match cache_task.clone().now_or_never() {
             Some(Some(created_cache)) => {
-                // todo! subtract some time from expiry time
-                if created_cache.expire_time > now {
+                if created_cache.expire_time - CACHE_TTL_MINIMUM_FOR_USAGE > now {
                     Some(cache_task.clone())
                 } else {
                     None
@@ -465,18 +484,13 @@ impl LanguageModel for GoogleLanguageModel {
 
         let mut request = into_google(request, self.model.id().to_string());
 
-        let base_cache_key = CacheKey::base(&CacheBaseRef {
-            model: &request.model,
-            system_instruction: &request.system_instruction,
-            tools: &request.tools,
-            tool_config: &request.tool_config,
-        });
+        let base_cache_key = CacheKey::base(&request);
         let mut prev_cache_key = base_cache_key;
         let content_cache_keys = request
             .contents
             .iter()
             .map(|content| {
-                let key = CacheKey::with_message(prev_cache_key, content);
+                let key = CacheKey::for_message(prev_cache_key, content);
                 prev_cache_key = key;
                 key
             })
@@ -484,8 +498,7 @@ impl LanguageModel for GoogleLanguageModel {
 
         let create_cache_request = if is_last_message_cached {
             Some(CreateCacheRequest {
-                // todo! Configuration
-                ttl: Duration::from_secs(60 * 5),
+                ttl: CACHE_TTL,
                 model: request.model.clone(),
                 contents: request.contents.clone(),
                 system_instruction: request.system_instruction.clone(),
@@ -498,11 +511,14 @@ impl LanguageModel for GoogleLanguageModel {
         if let Some((request, cache_key)) =
             create_cache_request.zip(content_cache_keys.last().copied())
         {
-            let create_cache_future = self.create_cache(request, cx);
+            let create_cache_future = self.request_limiter.run(self.create_cache(request, cx));
             let cache = self.cache.clone();
             let executor = cx.background_executor().clone();
             let task = cx.background_spawn(async move {
                 if let Some(created_cache) = create_cache_future.await.log_err() {
+                    let cache_id = created_cache.name.cache_id.clone();
+                    log::info!("created cache `{cache_id}`");
+
                     let now = UtcDateTime::now();
                     let Some(remaining_time): Option<std::time::Duration> =
                         (created_cache.expire_time - now).try_into().ok()
@@ -515,8 +531,10 @@ impl LanguageModel for GoogleLanguageModel {
                         .spawn(async move {
                             cache_expired.await;
                             cache.lock().0.remove(&cache_key);
+                            log::info!("removed cache `{cache_id}` as it expired");
                         })
                         .shared();
+
                     Some(CacheEntry {
                         name: created_cache.name,
                         expire_time: created_cache.expire_time.to_utc(),
@@ -531,32 +549,34 @@ impl LanguageModel for GoogleLanguageModel {
 
         // todo! Check speed and cost
         //
-        // todo! GC
-        //
         // todo! Retry generate content request in the case that the cache is expired.
         //
         // todo! Stop trying to cache if the responses indicate it doesn't support caching.
         //
-        // todo! Check what happens if a full request matches a cache. Update the cache expiry time in this case?
-        // todo! why is mutex guard being held across await point?! This should be use of
-        // background_spawn instead.
+        // todo! When to update cache expiry time?  Maybe only when there is a full match?
         let request = cx.foreground_executor().spawn({
             let cache = self.cache.clone();
             async move {
-                // TODO: nicer way to do this than mutation? Can a loop be used in expression position?
                 let mut prefix_len = 0;
                 let mut found_cache_entry = None;
-                let now = UtcDateTime::now();
-                for (ix, key) in content_cache_keys.iter().enumerate().rev() {
+                let mut now = UtcDateTime::now();
+                // The last key is skipped because `contents` must be non-empty.
+                for (ix, key) in content_cache_keys.iter().enumerate().rev().skip(1) {
                     if let Some(task) = cache.lock().get_unexpired(&key, now) {
                         if let Some(cache_entry) = task.await {
                             prefix_len = ix + 1;
                             found_cache_entry = Some(cache_entry);
                             break;
+                        } else {
+                            now = UtcDateTime::now();
                         }
                     }
                 }
                 if let Some(found_cache_entry) = found_cache_entry {
+                    log::info!(
+                        "using cache `{}` which has {prefix_len} messages",
+                        found_cache_entry.name.cache_id
+                    );
                     request.cached_content = Some(found_cache_entry.name);
                     request.contents.drain(..prefix_len);
                     request.system_instruction = None;
@@ -569,7 +589,6 @@ impl LanguageModel for GoogleLanguageModel {
 
         let stream_request = self.stream_completion(request, cx);
 
-        // todo! two requests in request_limiter?
         let future = self.request_limiter.stream(async move {
             let response = stream_request
                 .await
