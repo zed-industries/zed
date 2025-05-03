@@ -1,4 +1,5 @@
 use anyhow::Result;
+use collections::HashMap;
 use fs::Fs;
 use futures::io::ReadUntil;
 use gpui::{Keystroke, PlatformKeyboardMapper};
@@ -154,24 +155,21 @@ impl VsCodeShortcuts {
         })
     }
 
-    pub fn parse_shortcuts(
-        &self,
-        keyboard_mapper: &dyn PlatformKeyboardMapper,
-    ) -> (KeymapFile, Vec<(String, String)>) {
-        let mut result = KeymapFile::default();
+    pub fn parse_shortcuts(&self, keyboard_mapper: &dyn PlatformKeyboardMapper) -> String {
+        let mut normal_bindings = Vec::new();
+        let mut other_bindings = HashMap::default();
         let mut skipped = Vec::new();
         for content in self.content.iter() {
             let Some(shortcut) = content.get("key").and_then(|key| key.as_str()) else {
                 continue;
             };
+            let vscode_raw_input =
+                serde_json::to_string_pretty(content).unwrap_or(shortcut.to_string());
             let Some(keystroke) = Keystroke::parse_keystroke_components(shortcut, '+')
                 .ok()
                 .map(|keystroke| keystroke.into_gpui_style(keyboard_mapper))
             else {
-                skipped.push((
-                    shortcut.to_string(),
-                    "Unable to parse keystroke".to_string(),
-                ));
+                skipped.push((vscode_raw_input, "Unable to parse keystroke".to_string()));
                 continue;
             };
             let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
@@ -179,47 +177,34 @@ impl VsCodeShortcuts {
             };
             let when = content.get("when").and_then(|when| when.as_str());
             let args = content.get("args").and_then(|args| args.as_str());
-            let (action, context) = vscode_shortcut_command_to_zed_action(command, when, args)
-                .unwrap_or((ActionType::String(command), None));
-            let Ok(action) = serde_json_lenient::from_str(action.as_str()) else {
+            let Some((action, context)) =
+                vscode_shortcut_command_to_zed_action(command, when, args)
+            else {
                 skipped.push((
-                    shortcut.to_string(),
-                    format!("Unable to parse command: {}, action: {:?}", command, action),
+                    vscode_raw_input,
+                    format!("Unable to parse command: {}", command),
                 ));
                 continue;
             };
-            result.insert_keystroke(
-                context.map(ToString::to_string).unwrap_or_default(),
-                keystroke,
-                action,
-            );
+            if let Some(context) = context {
+                other_bindings
+                    .entry(context)
+                    .or_insert_with(Vec::new)
+                    .push(ZedBindingContent {
+                        binding: keystroke.unparse(),
+                        action,
+                        comments: vscode_raw_input,
+                    });
+            } else {
+                normal_bindings.push(ZedBindingContent {
+                    binding: keystroke.unparse(),
+                    action,
+                    comments: vscode_raw_input,
+                });
+            }
         }
-        println!("=> result: {:#?}", result);
-        println!("=> skipped: {:#?}", skipped);
-        (result, skipped)
+        serialize_all(normal_bindings, other_bindings, skipped)
     }
-}
-
-#[derive(Debug)]
-enum ActionType<'t> {
-    String(&'t str),
-    WithArgs(String),
-    Other(&'t str),
-}
-
-impl<'t> ActionType<'t> {
-    fn as_str(&'t self) -> &'t str {
-        match self {
-            ActionType::String(s) => *s,
-            ActionType::WithArgs(s) => s,
-            ActionType::Other(s) => *s,
-        }
-    }
-}
-
-struct ActionContent {
-    context: Option<String>,
-    bindings: Vec<ZedBindingContent>,
 }
 
 struct ZedBindingContent {
@@ -1066,56 +1051,140 @@ fn vscode_shortcut_command_to_zed_action(
 }
 
 fn push_str_with_indent(result: &mut String, indent_level: usize, content: &str) {
+    for _ in 0..indent_level {
+        result.push(' ');
+        result.push(' ');
+    }
+    result.push_str(content);
     #[cfg(target_os = "windows")]
-    result.push_str(&format!("{}{}\r\n", " ".repeat(indent_level * 2), content));
+    result.push_str("\r\n");
+    #[cfg(not(target_os = "windows"))]
+    result.push('\n');
 }
 
-fn serialize_actions(actions: &[ActionContent]) -> String {
-    let mut result = String::new();
-    let mut indent_level = 0;
-    push_str_with_indent(&mut result, indent_level, "[");
+fn serialize_skipped_actions(result: &mut String, skipped: Vec<(String, String)>) {
+    for (action, reason) in skipped {
+        push_str_with_indent(result, 0, "// Skipped shortcut:");
+        for line in action.lines() {
+            push_str_with_indent(result, 0, &format!("// {}", line));
+        }
+        push_str_with_indent(result, 0, &format!("// Skipped reason: {}", reason));
+        push_str_with_indent(result, 0, "//");
+    }
+}
+
+fn serialize_actions(
+    result: &mut String,
+    context: Option<String>,
+    actions: &[ZedBindingContent],
+    mut indent_level: usize,
+    has_more: bool,
+) {
+    push_str_with_indent(result, indent_level, "{");
+    indent_level += 1;
+    if let Some(ref context) = context {
+        push_str_with_indent(
+            result,
+            indent_level,
+            &format!(r#""{}": "{}","#, "context", context),
+        );
+    }
+    push_str_with_indent(result, indent_level, r#""bindings": {"#);
     indent_level += 1;
     for (action_idx, action) in actions.iter().enumerate() {
         let is_last_action = action_idx == actions.len() - 1;
-        push_str_with_indent(&mut result, indent_level, "{");
-        indent_level += 1;
-        if let Some(context) = &action.context {
+
+        for comment in action.comments.lines() {
+            push_str_with_indent(result, indent_level, &format!("// {}", comment));
+        }
+        if is_last_action {
             push_str_with_indent(
-                &mut result,
+                result,
                 indent_level,
-                &format!(r#""{}": "{}","#, "context", context),
+                &format!(r#""{}": "{}""#, action.binding, action.action),
+            );
+        } else {
+            push_str_with_indent(
+                result,
+                indent_level,
+                &format!(r#""{}": "{}","#, action.binding, action.action),
             );
         }
-        push_str_with_indent(&mut result, indent_level, r#""bindings": {"#);
-        indent_level += 1;
-
-        for (binding_idx, binding) in action.bindings.iter().enumerate() {
-            let is_last_binding = binding_idx == action.bindings.len() - 1;
-            for comment in binding.comments.lines() {
-                push_str_with_indent(&mut result, indent_level, &format!("// {}", comment));
-            }
-            if is_last_binding {
-                push_str_with_indent(
-                    &mut result,
-                    indent_level,
-                    &format!(r#""{}": "{}""#, binding.binding, binding.action),
-                );
-            } else {
-                push_str_with_indent(
-                    &mut result,
-                    indent_level,
-                    &format!(r#""{}": "{}","#, binding.binding, binding.action),
-                );
-            }
-        }
-
-        indent_level -= 1;
-        push_str_with_indent(&mut result, indent_level, "}");
         indent_level -= 1;
         if is_last_action {
-            push_str_with_indent(&mut result, indent_level, "}");
+            push_str_with_indent(result, indent_level, "}");
         } else {
-            push_str_with_indent(&mut result, indent_level, "},");
+            push_str_with_indent(result, indent_level, "},");
+        }
+    }
+    indent_level -= 1;
+    push_str_with_indent(result, indent_level, "}");
+    indent_level -= 1;
+    if has_more {
+        push_str_with_indent(result, indent_level, "},");
+    } else {
+        push_str_with_indent(result, indent_level, "}");
+    }
+}
+
+fn serialize_all(
+    normal_bindings: Vec<ZedBindingContent>,
+    other_bindings: HashMap<String, Vec<ZedBindingContent>>,
+    skipped: Vec<(String, String)>,
+) -> String {
+    let mut result = String::new();
+    let mut indent_level = 0;
+    push_str_with_indent(&mut result, indent_level, "// Zed keymap");
+    push_str_with_indent(&mut result, indent_level, "//");
+    push_str_with_indent(
+        &mut result,
+        indent_level,
+        "// For information on binding keys, see the Zed",
+    );
+    push_str_with_indent(
+        &mut result,
+        indent_level,
+        "// documentation: https://zed.dev/docs/key-bindings",
+    );
+    push_str_with_indent(&mut result, indent_level, "//");
+    push_str_with_indent(
+        &mut result,
+        indent_level,
+        "// To see the default key bindings run `zed: open default keymap`",
+    );
+    push_str_with_indent(&mut result, indent_level, "// from the command palette.");
+    push_str_with_indent(&mut result, indent_level, "//");
+    push_str_with_indent(
+        &mut result,
+        indent_level,
+        "// NOTE: This file is auto-generated by Zed.",
+    );
+    push_str_with_indent(&mut result, indent_level, "//");
+    push_str_with_indent(
+        &mut result,
+        indent_level,
+        "// The following bindings are skipped:",
+    );
+    push_str_with_indent(&mut result, indent_level, "//");
+    serialize_skipped_actions(&mut result, skipped);
+
+    push_str_with_indent(&mut result, indent_level, "[");
+    indent_level += 1;
+
+    if !normal_bindings.is_empty() {
+        serialize_actions(
+            &mut result,
+            None,
+            &normal_bindings,
+            indent_level,
+            !other_bindings.is_empty(),
+        );
+    }
+    if !other_bindings.is_empty() {
+        let last_idx = other_bindings.len() - 1;
+        for (idx, (context, actions)) in other_bindings.into_iter().enumerate() {
+            let has_more = idx != last_idx;
+            serialize_actions(&mut result, Some(context), &actions, indent_level, has_more);
         }
     }
     indent_level -= 1;
