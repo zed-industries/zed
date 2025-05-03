@@ -13,7 +13,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     env,
-    os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
@@ -133,8 +132,6 @@ impl Tool for TerminalTool {
                     .collect();
                 let content = content.trim_start().trim_start_matches("^D");
                 let exit_status = child.wait()?;
-                let exit_status =
-                    std::process::ExitStatus::from_raw(exit_status.exit_code() as i32);
                 let (processed_content, _) =
                     process_content(content, &input.command, Some(exit_status));
                 Ok(processed_content)
@@ -196,8 +193,11 @@ impl Tool for TerminalTool {
                 })?;
 
                 let previous_len = content.len();
-                let (processed_content, finished_with_empty_output) =
-                    process_content(&content, &input.command, exit_status);
+                let (processed_content, finished_with_empty_output) = process_content(
+                    &content,
+                    &input.command,
+                    exit_status.map(portable_pty::ExitStatus::from),
+                );
 
                 let _ = card.update(cx, |card, _| {
                     card.command_finished = true;
@@ -223,7 +223,7 @@ impl Tool for TerminalTool {
 fn process_content(
     content: &str,
     command: &str,
-    exit_status: Option<ExitStatus>,
+    exit_status: Option<portable_pty::ExitStatus>,
 ) -> (String, bool) {
     let should_truncate = content.len() > COMMAND_OUTPUT_LIMIT;
 
@@ -265,11 +265,16 @@ fn process_content(
             }
         }
         Some(exit_status) => {
-            let code = exit_status.code().unwrap_or(-1);
             if is_empty {
-                format!("Command \"{command}\" failed with exit code {code}.")
+                format!(
+                    "Command \"{command}\" failed with exit code {}.",
+                    exit_status.exit_code()
+                )
             } else {
-                format!("Command \"{command}\" failed with exit code {code}.\n\n{content}")
+                format!(
+                    "Command \"{command}\" failed with exit code {}.\n\n{content}",
+                    exit_status.exit_code()
+                )
             }
         }
         None => {
