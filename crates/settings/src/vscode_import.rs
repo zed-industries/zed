@@ -1,13 +1,11 @@
 use anyhow::Result;
-use collections::IndexMap;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Keystroke, PlatformKeyboardMapper};
+use gpui::{Keystroke, PlatformKeyboardMapper};
 use serde_json::{Map, Value};
-use util::ResultExt;
 
 use std::sync::Arc;
 
-use crate::{KeymapFile, keymap_file::KeymapSection};
+use crate::KeymapFile;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -178,9 +176,9 @@ impl VsCodeShortcuts {
             let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
                 continue;
             };
-            let context = content.get("when").and_then(|when| when.as_str());
+            let when = content.get("when").and_then(|when| when.as_str());
             let args = content.get("args").and_then(|args| args.as_str());
-            let (action, _) = vscode_shortcut_command_to_zed_action(command, context, args)
+            let (action, context) = vscode_shortcut_command_to_zed_action(command, when, args)
                 .unwrap_or((ActionType::String(command), None));
             let Ok(action) = serde_json_lenient::from_str(action.as_str()) else {
                 skipped.push((
