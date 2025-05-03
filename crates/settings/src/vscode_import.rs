@@ -178,12 +178,9 @@ impl VsCodeShortcuts {
             let Some(command) = content.get("command").and_then(|command| command.as_str()) else {
                 continue;
             };
-            let context = content
-                .get("when")
-                .and_then(|when| when.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let (action, _) = vscode_shortcut_command_to_zed_action(command, Some(&context))
+            let context = content.get("when").and_then(|when| when.as_str());
+            let args = content.get("args").and_then(|args| args.as_str());
+            let (action, _) = vscode_shortcut_command_to_zed_action(command, context, args)
                 .unwrap_or((ActionType::String(command), None));
             let Ok(action) = serde_json_lenient::from_str(&action.to_string()) else {
                 skipped.push((
@@ -192,7 +189,11 @@ impl VsCodeShortcuts {
                 ));
                 continue;
             };
-            result.insert_keystroke(context, keystroke, action);
+            result.insert_keystroke(
+                context.map(ToString::to_string).unwrap_or_default(),
+                keystroke,
+                action,
+            );
         }
         println!("=> result: {:#?}", result);
         println!("=> skipped: {:#?}", skipped);
@@ -203,6 +204,7 @@ impl VsCodeShortcuts {
 #[derive(Debug)]
 enum ActionType<'t> {
     String(&'t str),
+    WithArgs(String),
     Other(&'t str),
 }
 
@@ -210,6 +212,7 @@ impl ActionType<'_> {
     fn to_string(&self) -> String {
         match self {
             ActionType::String(s) => format!("\"{}\"", s),
+            ActionType::WithArgs(s) => s.clone(),
             ActionType::Other(s) => s.to_string(),
         }
     }
@@ -218,6 +221,7 @@ impl ActionType<'_> {
 fn vscode_shortcut_command_to_zed_action<'t, 's>(
     command: &'t str,
     when: Option<&'s str>,
+    args: Option<&str>,
 ) -> Option<(ActionType<'t>, Option<&'s str>)> {
     let action;
     let mut context = None;
@@ -1206,9 +1210,52 @@ fn vscode_shortcut_command_to_zed_action<'t, 's>(
 
         // crates/terminal/src/terminal.rs
         // Missing:
-        //
+        // ShowCharacterPalette, SearchTest, ToggleViMode
         "workbench.action.terminal.clear" => {
             action = ActionType::String("terminal::Clear");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.copySelection" => {
+            action = ActionType::String("terminal::Copy");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.paste" => {
+            action = ActionType::String("terminal::Paste");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.scrollUp" => {
+            action = ActionType::String("terminal::ScrollLineUp");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.scrollDown" => {
+            action = ActionType::String("terminal::ScrollLineDown");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.scrollUpPage" => {
+            action = ActionType::String("terminal::ScrollPageUp");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.scrollDownPage" => {
+            action = ActionType::String("terminal::ScrollPageDown");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.scrollToTop" => {
+            action = ActionType::String("terminal::ScrollToTop");
+            context = Some("Terminal");
+        }
+        "workbench.action.terminal.scrollToBottom" => {
+            action = ActionType::String("terminal::ScrollToBottom");
+            context = Some("Terminal");
+        }
+        // crates/terminal_view/src/terminal_view.rs
+        // Missing:
+        // SendKeystroke
+        "workbench.action.terminal.sendSequence" => {
+            action = if let Some(args) = args {
+                ActionType::WithArgs(format!(r#"["terminal::SendText", "{}"]"#, args))
+            } else {
+                return None;
+            };
             context = Some("Terminal");
         }
         _ => return None,
