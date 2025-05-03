@@ -12,7 +12,8 @@ use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
+    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
+    GutterDimensions, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
@@ -849,6 +850,7 @@ impl PromptEditor<BufferCodegen> {
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let codegen_buffer = codegen.read(cx).buffer(cx).read(cx).as_singleton();
         let mode = PromptEditorMode::Buffer {
             id,
             codegen,
@@ -872,8 +874,15 @@ impl PromptEditor<BufferCodegen> {
             editor.set_show_cursor_when_unfocused(true, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
             editor.register_addon(ContextCreasesAddon::new());
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
+
             editor
         });
+
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
@@ -881,6 +890,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.downgrade(),
                 thread_store.clone(),
                 prompt_editor_entity,
+                codegen_buffer.as_ref().map(Entity::downgrade),
             ))));
         });
 
@@ -1035,6 +1045,11 @@ impl PromptEditor<TerminalCodegen> {
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
             editor
         });
 
@@ -1045,6 +1060,7 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.downgrade(),
                 thread_store.clone(),
                 prompt_editor_entity,
+                None,
             ))));
         });
 
