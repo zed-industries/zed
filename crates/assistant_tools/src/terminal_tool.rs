@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use futures::FutureExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
     Transformation, WeakEntity, Window, percentage,
@@ -101,18 +102,6 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
-        let terminal = project.update(cx, |project, cx| {
-            project.create_terminal(
-                TerminalKind::Task(task::SpawnInTerminal {
-                    command: get_system_shell(),
-                    args: vec!["-c".into(), input.command.clone()],
-                    cwd: working_dir.clone(),
-                    ..Default::default()
-                }),
-                window,
-                cx,
-            )
-        });
 
         let card = cx.new(|cx| {
             TerminalToolCard::new(input.command.clone(), working_dir.clone(), cx.entity_id())
@@ -121,7 +110,29 @@ impl Tool for TerminalTool {
         let output = cx.spawn({
             let card = card.clone();
             async move |cx| {
-                let terminal = terminal.await?;
+                let workdir_env = project
+                    .update(cx, |project, cx| match working_dir.clone() {
+                        Some(dir) => project.directory_environment(Arc::from(dir), cx),
+                        None => Task::ready(None).shared(),
+                    })?
+                    .await;
+
+                let terminal = project
+                    .update(cx, |project, cx| {
+                        project.create_terminal(
+                            TerminalKind::Task(task::SpawnInTerminal {
+                                command: get_system_shell(),
+                                args: vec!["-c".into(), input.command.clone()],
+                                cwd: working_dir.clone(),
+                                env: workdir_env.unwrap_or_default(),
+                                ..Default::default()
+                            }),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+
                 let workspace = window
                     .downcast::<Workspace>()
                     .and_then(|handle| handle.entity(cx).ok())
