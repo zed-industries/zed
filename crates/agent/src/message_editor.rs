@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
-use crate::assistant_panel::DebugAccount;
 use crate::context::{ContextLoadResult, load_context};
+use crate::debug::DebugAccount;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{AgentPreview, AnimatedLabel, Callout};
 use buffer_diff::BufferDiff;
@@ -31,10 +31,10 @@ use prompt_store::PromptStore;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{ButtonLike, Disclosure, Indicator, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
-use zed_llm_client::{CompletionMode, Plan, UsageLimit};
+use zed_llm_client::{CompletionMode, UsageLimit};
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
@@ -418,85 +418,6 @@ impl MessageEditor {
         }
     }
 
-    fn render_usage_indicator(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
-        let debug_account = cx.debug_account().clone();
-
-        let mut plan = self.plan.clone();
-        let mut usage = self.usage.clone();
-
-        if debug_account.enabled() {
-            plan = Some(debug_account.plan.clone());
-            usage = Some(debug_account.custom_prompt_usage.clone());
-        }
-
-        if let (Some(plan), Some(usage)) = (plan, usage) {
-            let used_percentage = match usage.limit {
-                UsageLimit::Limited(limit) => Some((usage.amount as f32 / limit as f32) * 100.),
-                UsageLimit::Unlimited => None,
-            };
-
-            let (severity_color, tooltip_text) = match usage.limit {
-                UsageLimit::Limited(limit) => {
-                    if usage.amount >= limit {
-                        let message = match plan {
-                            Plan::ZedPro => "Monthly request limit reached",
-                            Plan::ZedProTrial => "Trial request limit reached",
-                            Plan::Free => "Free tier request limit reached",
-                        };
-                        (Color::Error, message)
-                    } else if (usage.amount as f32 / limit as f32) >= 0.9 {
-                        (Color::Warning, "Approaching request limit")
-                    } else {
-                        let message = match plan {
-                            Plan::ZedPro => "Zed Pro",
-                            Plan::ZedProTrial => "Zed Pro (Trial)",
-                            Plan::Free => "Zed Free",
-                        };
-                        (Color::Info, message)
-                    }
-                }
-                UsageLimit::Unlimited => {
-                    let message = match plan {
-                        Plan::ZedPro => "Zed Pro",
-                        Plan::ZedProTrial => "Zed Pro (Trial)",
-                        Plan::Free => "Zed Free",
-                    };
-                    (Color::Info, message)
-                }
-            };
-
-            let usage_text = match usage.limit {
-                UsageLimit::Limited(limit) => format!("{} / {limit}", usage.amount),
-                UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-            };
-
-            let indicator = Indicator::dot()
-                .color(severity_color)
-                .border_color(Color::Custom(cx.theme().colors().editor_background));
-
-            return Some(
-                ButtonLike::new("usage-indicator")
-                    .child(h_flex().gap_1().child(indicator).when_some(
-                        used_percentage,
-                        |this, _percent| {
-                            this.child(h_flex().gap_0p5().items_center().child(usage_text))
-                        },
-                    ))
-                    .tooltip(Tooltip::text(SharedString::new(tooltip_text)))
-                    .on_click(cx.listener(move |_this, _event, _window, cx| {
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-
-        None
-    }
-
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !cx.has_flag::<NewBillingFeatureFlag>() {
             return None;
@@ -686,7 +607,6 @@ impl MessageEditor {
                                             }),
                                         )
                                     })
-                                    .children(self.render_usage_indicator(cx))
                                     .children(self.render_max_mode_toggle(cx))
                                     .child(self.model_selector.clone())
                                     .map({

@@ -9,6 +9,7 @@ mod context_picker;
 mod context_server_configuration;
 mod context_store;
 mod context_strip;
+mod debug;
 mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;

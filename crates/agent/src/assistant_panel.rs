@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut, Range};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,13 +15,11 @@ use assistant_tool::ToolWorkingSet;
 
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
-use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
-    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
-    pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
@@ -44,12 +42,12 @@ use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
+pub use crate::debug::{DebugAccountState, GlobalDebugAccountState};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
     NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
@@ -293,124 +291,9 @@ impl ActiveView {
     }
 }
 
-/// Debug only: Used for testing various account states
-// todo!("Remove before merging, or put behind a flag or argument")
-#[allow(unused, dead_code)]
-#[derive(Clone, Debug)]
-pub struct DebugAccountState {
-    pub enabled: bool,
-    pub trial_expired: bool,
-    pub plan: zed_llm_client::Plan,
-    pub custom_prompt_usage: RequestUsage,
-    pub usage_based_billing_enabled: bool,
-    pub monthly_spending_cap: i32,
-    pub custom_edit_prediction_usage: UsageLimit,
-}
-
-#[allow(unused, dead_code)]
-impl DebugAccountState {
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn set_enabled(&mut self, enabled: bool) -> &mut Self {
-        self.enabled = enabled;
-        self
-    }
-
-    pub fn set_trial_expired(&mut self, trial_expired: bool) -> &mut Self {
-        self.trial_expired = trial_expired;
-        self
-    }
-
-    pub fn set_plan(&mut self, plan: zed_llm_client::Plan) -> &mut Self {
-        self.plan = plan;
-        self
-    }
-
-    pub fn set_custom_prompt_usage(&mut self, custom_prompt_usage: RequestUsage) -> &mut Self {
-        self.custom_prompt_usage = custom_prompt_usage;
-        self
-    }
-
-    pub fn set_usage_based_billing_enabled(
-        &mut self,
-        usage_based_billing_enabled: bool,
-    ) -> &mut Self {
-        self.usage_based_billing_enabled = usage_based_billing_enabled;
-        self
-    }
-
-    pub fn set_monthly_spending_cap(&mut self, monthly_spending_cap: i32) -> &mut Self {
-        self.monthly_spending_cap = monthly_spending_cap;
-        self
-    }
-
-    pub fn set_custom_edit_prediction_usage(
-        &mut self,
-        custom_edit_prediction_usage: UsageLimit,
-    ) -> &mut Self {
-        self.custom_edit_prediction_usage = custom_edit_prediction_usage;
-        self
-    }
-}
-
-impl Default for DebugAccountState {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            trial_expired: false,
-            plan: zed_llm_client::Plan::Free,
-            custom_prompt_usage: RequestUsage {
-                limit: UsageLimit::Unlimited,
-                amount: 0,
-            },
-            usage_based_billing_enabled: false,
-            // $50.00
-            monthly_spending_cap: 5000,
-            custom_edit_prediction_usage: UsageLimit::Unlimited,
-        }
-    }
-}
-
-impl DebugAccountState {
-    pub fn _get_global(cx: &App) -> &DebugAccountState {
-        &cx.global::<GlobalDebugAccountState>().0
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct GlobalDebugAccountState(pub DebugAccountState);
-
-impl Global for GlobalDebugAccountState {}
-
-impl Deref for GlobalDebugAccountState {
-    type Target = DebugAccountState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for GlobalDebugAccountState {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-pub trait DebugAccount {
-    fn debug_account(&self) -> &DebugAccountState;
-}
-
-impl DebugAccount for App {
-    fn debug_account(&self) -> &DebugAccountState {
-        &self.global::<GlobalDebugAccountState>().0
-    }
-}
-
 pub struct AssistantPanel {
     workspace: WeakEntity<Workspace>,
-    user_store: Entity<UserStore>,
+    _user_store: Entity<UserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -688,7 +571,7 @@ impl AssistantPanel {
         Self {
             active_view,
             workspace,
-            user_store,
+            _user_store: user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
@@ -2023,36 +1906,6 @@ impl AssistantPanel {
             })
     }
 
-    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
-        let debug_account = cx.debug_account().clone();
-
-        let mut plan = self
-            .user_store
-            .read(cx)
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::Free);
-
-        let mut usage = self.thread.read(cx).last_usage();
-
-        if debug_account.enabled() {
-            plan = debug_account.plan.clone();
-            usage = Some(debug_account.custom_prompt_usage.clone());
-        }
-
-        let usage = usage?;
-
-        Some(UsageBanner::new(plan, usage).into_any_element())
-    }
-
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
@@ -2334,7 +2187,6 @@ impl Render for AssistantPanel {
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_usage_banner(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
