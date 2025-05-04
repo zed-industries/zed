@@ -12,7 +12,7 @@ pub use context_server_settings::{ContextServerSettings, ServerCommand, ServerCo
 use gpui::{App, actions};
 
 pub use crate::context_server_tool::ContextServerTool;
-pub use crate::registry::ContextServerFactoryRegistry;
+pub use crate::registry::ContextServerDescriptorRegistry;
 
 actions!(context_servers, [Restart]);
 
@@ -21,7 +21,7 @@ pub const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
 
 pub fn init(cx: &mut App) {
     context_server_settings::init(cx);
-    ContextServerFactoryRegistry::default_global(cx);
+    ContextServerDescriptorRegistry::default_global(cx);
     extension_context_server::init(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {

@@ -3,21 +3,25 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 
-use collections::HashSet;
+use assistant_tool::outline;
+use collections::{HashMap, HashSet};
+use editor::display_map::CreaseId;
+use editor::{Addon, Editor};
 use futures::future;
 use futures::{FutureExt, future::Shared};
-use gpui::{App, AppContext as _, Entity, SharedString, Task};
-use language::Buffer;
+use gpui::{App, AppContext as _, Entity, SharedString, Subscription, Task};
+use language::{Buffer, ParseStatus};
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use ref_cast::RefCast;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt as _};
-use ui::{ElementId, IconName};
+use ui::{Context, ElementId, IconName};
 use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
+use crate::context_store::{ContextStore, ContextStoreEvent};
 use crate::thread::Thread;
 
 pub const RULES_ICON: IconName = IconName::Context;
@@ -66,7 +70,7 @@ pub enum AgentContextHandle {
 }
 
 impl AgentContextHandle {
-    fn id(&self) -> ContextId {
+    pub fn id(&self) -> ContextId {
         match self {
             Self::File(context) => context.context_id,
             Self::Directory(context) => context.context_id,
@@ -152,6 +156,7 @@ pub struct FileContext {
     pub handle: FileContextHandle,
     pub full_path: Arc<Path>,
     pub text: SharedString,
+    pub is_outline: bool,
 }
 
 impl FileContextHandle {
@@ -177,14 +182,51 @@ impl FileContextHandle {
             log::error!("file context missing path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx);
+        let full_path: Arc<Path> = file.full_path(cx).into();
         let rope = buffer_ref.as_rope().clone();
         let buffer = self.buffer.clone();
-        cx.background_spawn(async move {
+
+        cx.spawn(async move |cx| {
+            // For large files, use outline instead of full content
+            if rope.len() > outline::AUTO_OUTLINE_SIZE {
+                // Wait until the buffer has been fully parsed, so we can read its outline
+                if let Ok(mut parse_status) =
+                    buffer.read_with(cx, |buffer, _| buffer.parse_status())
+                {
+                    while *parse_status.borrow() != ParseStatus::Idle {
+                        parse_status.changed().await.log_err();
+                    }
+
+                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
+                        if let Some(outline) = snapshot.outline(None) {
+                            let items = outline
+                                .items
+                                .into_iter()
+                                .map(|item| item.to_point(&snapshot));
+
+                            if let Ok(outline_text) =
+                                outline::render_outline(items, None, 0, usize::MAX).await
+                            {
+                                let context = AgentContext::File(FileContext {
+                                    handle: self,
+                                    full_path,
+                                    text: outline_text.into(),
+                                    is_outline: true,
+                                });
+                                return Some((context, vec![buffer]));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fallback to full content if we couldn't build an outline
+            // (or didn't need to because the file was small enough)
             let context = AgentContext::File(FileContext {
                 handle: self,
-                full_path: full_path.into(),
+                full_path,
                 text: rope.to_string().into(),
+                is_outline: false,
             });
             Some((context, vec![buffer]))
         })
@@ -804,7 +846,7 @@ pub fn load_context(
         text.push_str(
             "\n<context>\n\
             The following items were attached by the user. \
-            You don't need to use other tools to read them.\n\n",
+            They are up-to-date and don't need to be re-read.\n\n",
         );
 
         if !file_context.is_empty() {
@@ -994,5 +1036,180 @@ impl Hash for AgentContextKey {
             AgentContextHandle::Rules(context) => context.hash_for_key(state),
             AgentContextHandle::Image(context) => context.hash_for_key(state),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct ContextCreasesAddon {
+    creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
+    _subscription: Option<Subscription>,
+}
+
+impl Addon for ContextCreasesAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+}
+
+impl ContextCreasesAddon {
+    pub fn new() -> Self {
+        Self {
+            creases: HashMap::default(),
+            _subscription: None,
+        }
+    }
+
+    pub fn add_creases(
+        &mut self,
+        context_store: &Entity<ContextStore>,
+        key: AgentContextKey,
+        creases: impl IntoIterator<Item = (CreaseId, SharedString)>,
+        cx: &mut Context<Editor>,
+    ) {
+        self.creases.entry(key).or_default().extend(creases);
+        self._subscription = Some(cx.subscribe(
+            &context_store,
+            |editor, _, event, cx| match event {
+                ContextStoreEvent::ContextRemoved(key) => {
+                    let Some(this) = editor.addon_mut::<Self>() else {
+                        return;
+                    };
+                    let (crease_ids, replacement_texts): (Vec<_>, Vec<_>) = this
+                        .creases
+                        .remove(key)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .unzip();
+                    let ranges = editor
+                        .remove_creases(crease_ids, cx)
+                        .into_iter()
+                        .map(|(_, range)| range)
+                        .collect::<Vec<_>>();
+                    editor.unfold_ranges(&ranges, false, false, cx);
+                    editor.edit(ranges.into_iter().zip(replacement_texts), cx);
+                    cx.notify();
+                }
+            },
+        ))
+    }
+
+    pub fn into_inner(self) -> HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>> {
+        self.creases
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    // Helper to create a test project with test files
+    async fn create_test_project(
+        cx: &mut TestAppContext,
+        files: serde_json::Value,
+    ) -> Entity<Project> {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/test"), files).await;
+        Project::test(fs, [path!("/test").as_ref()], cx).await
+    }
+
+    #[gpui::test]
+    async fn test_large_file_uses_outline(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        // Create a large file that exceeds AUTO_OUTLINE_SIZE
+        const LINE: &str = "Line with some text\n";
+        let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
+        let content_len = large_content.len();
+
+        assert!(content_len > outline::AUTO_OUTLINE_SIZE);
+
+        let file_context = file_context_for(large_content, cx).await;
+
+        assert!(
+            file_context.is_outline,
+            "Large file should use outline format"
+        );
+
+        assert!(
+            file_context.text.len() < content_len,
+            "Outline should be smaller than original content"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_small_file_uses_full_content(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let small_content = "This is a small file.\n";
+        let content_len = small_content.len();
+
+        assert!(content_len < outline::AUTO_OUTLINE_SIZE);
+
+        let file_context = file_context_for(small_content.to_string(), cx).await;
+
+        assert!(
+            !file_context.is_outline,
+            "Small files should not get an outline"
+        );
+
+        assert_eq!(file_context.text, small_content);
+    }
+
+    async fn file_context_for(content: String, cx: &mut TestAppContext) -> FileContext {
+        // Create a test project with the file
+        let project = create_test_project(
+            cx,
+            json!({
+                "file.txt": content,
+            }),
+        )
+        .await;
+
+        // Open the buffer
+        let buffer_path = project
+            .read_with(cx, |project, cx| project.find_project_path("file.txt", cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+
+        let context_handle = AgentContextHandle::File(FileContextHandle {
+            buffer: buffer.clone(),
+            context_id: ContextId::zero(),
+        });
+
+        cx.update(|cx| load_context(vec![context_handle], &project, &None, cx))
+            .await
+            .loaded_context
+            .contexts
+            .into_iter()
+            .find_map(|ctx| {
+                if let AgentContext::File(file_ctx) = ctx {
+                    Some(file_ctx)
+                } else {
+                    None
+                }
+            })
+            .expect("Should have found a file context")
     }
 }

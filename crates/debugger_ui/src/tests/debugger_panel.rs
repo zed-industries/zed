@@ -84,11 +84,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 debug_panel.update(cx, |debug_panel, _| debug_panel.active_session().unwrap());
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             debug_panel.update(cx, |this, cx| {
@@ -120,11 +116,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             assert_eq!(client.id(), running_state.read(cx).session_id());
@@ -153,11 +145,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             debug_panel.update(cx, |this, cx| {
@@ -247,11 +235,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             assert_eq!(client.id(), active_session.read(cx).session_id(cx));
@@ -284,11 +268,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             assert_eq!(client.id(), active_session.read(cx).session_id(cx));
@@ -316,11 +296,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             debug_panel.update(cx, |this, cx| {
@@ -1009,12 +985,8 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     cx.run_until_parked();
 
-    let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
-        item.mode()
-            .as_running()
-            .expect("Session should be running by this point")
-            .clone()
-    });
+    let running_state = active_debug_session_panel(workspace, cx)
+        .update(cx, |item, _| item.running_state().clone());
 
     cx.run_until_parked();
     let thread_id = ThreadId(1);
@@ -1690,6 +1662,33 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         handled_second_stacktrace.load(Ordering::SeqCst),
         "Second stacktrace request handler was not called"
     );
+
+    client
+        .fake_event(dap::messages::Events::Continued(dap::ContinuedEvent {
+            thread_id: 0,
+            all_threads_continued: Some(true),
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    second_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    main_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
 
     // Clean up
     let shutdown_session = project.update(cx, |project, cx| {

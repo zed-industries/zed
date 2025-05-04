@@ -36,16 +36,28 @@ impl HistoryEntry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) enum RecentEntry {
-    Thread(Entity<Thread>),
+    Thread(ThreadId, Entity<Thread>),
     Context(Entity<AssistantContext>),
 }
+
+impl PartialEq for RecentEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Thread(l0, _), Self::Thread(r0, _)) => l0 == r0,
+            (Self::Context(l0), Self::Context(r0)) => l0 == r0,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for RecentEntry {}
 
 impl RecentEntry {
     pub(crate) fn summary(&self, cx: &App) -> SharedString {
         match self {
-            RecentEntry::Thread(thread) => thread.read(cx).summary_or_default(),
+            RecentEntry::Thread(_, thread) => thread.read(cx).summary_or_default(),
             RecentEntry::Context(context) => context.read(cx).summary_or_default(),
         }
     }
@@ -93,9 +105,10 @@ impl HistoryStore {
                     .map(|serialized| match serialized {
                         SerializedRecentEntry::Thread(id) => thread_store
                             .update(cx, |thread_store, cx| {
+                                let thread_id = ThreadId::from(id.as_str());
                                 thread_store
-                                    .open_thread(&ThreadId::from(id.as_str()), cx)
-                                    .map_ok(RecentEntry::Thread)
+                                    .open_thread(&thread_id, cx)
+                                    .map_ok(|thread| RecentEntry::Thread(thread_id, thread))
                                     .boxed()
                             })
                             .unwrap_or_else(|_| async { Err(anyhow!("no thread store")) }.boxed()),
@@ -170,9 +183,7 @@ impl HistoryStore {
                 RecentEntry::Context(context) => Some(SerializedRecentEntry::Context(
                     context.read(cx).path()?.to_str()?.to_owned(),
                 )),
-                RecentEntry::Thread(thread) => Some(SerializedRecentEntry::Thread(
-                    thread.read(cx).id().to_string(),
-                )),
+                RecentEntry::Thread(id, _) => Some(SerializedRecentEntry::Thread(id.to_string())),
             })
             .collect::<Vec<_>>();
 
@@ -197,6 +208,14 @@ impl HistoryStore {
         self.recently_opened_entries.push_front(entry);
         self.recently_opened_entries
             .truncate(MAX_RECENTLY_OPENED_ENTRIES);
+        self.save_recently_opened_entries(cx);
+    }
+
+    pub fn remove_recently_opened_thread(&mut self, id: ThreadId, cx: &mut Context<Self>) {
+        self.recently_opened_entries.retain(|entry| match entry {
+            RecentEntry::Thread(thread_id, _) if thread_id == &id => false,
+            _ => true,
+        });
         self.save_recently_opened_entries(cx);
     }
 

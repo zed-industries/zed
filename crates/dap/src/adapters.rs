@@ -444,10 +444,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         log::info!("Getting latest version of debug adapter {}", self.name());
         delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
         if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-            log::info!(
-                "Installiing latest version of debug adapter {}",
-                self.name()
-            );
+            log::info!("Installing latest version of debug adapter {}", self.name());
             delegate.update_status(self.name(), DapStatus::Downloading);
             match self.install_binary(version, delegate).await {
                 Ok(_) => {

@@ -1472,7 +1472,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(&remote_branches, &branches_set);
@@ -1505,7 +1505,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.name, branches[2]);
+    assert_eq!(server_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx.update(|cx| {
@@ -1545,7 +1545,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.name, "totally-new-branch");
+    assert_eq!(server_branch.name(), "totally-new-branch");
 }
 
 pub async fn init_test(

@@ -81,6 +81,24 @@ impl StripeBilling {
         Ok(())
     }
 
+    pub async fn zed_pro_price_id(&self) -> Result<PriceId> {
+        self.find_price_id_by_lookup_key("zed-pro").await
+    }
+
+    pub async fn zed_free_price_id(&self) -> Result<PriceId> {
+        self.find_price_id_by_lookup_key("zed-free").await
+    }
+
+    pub async fn find_price_id_by_lookup_key(&self, lookup_key: &str) -> Result<PriceId> {
+        self.state
+            .read()
+            .await
+            .prices_by_lookup_key
+            .get(lookup_key)
+            .map(|price| price.id.clone())
+            .ok_or_else(|| crate::Error::Internal(anyhow!("no price ID found for {lookup_key:?}")))
+    }
+
     pub async fn find_price_by_lookup_key(&self, lookup_key: &str) -> Result<stripe::Price> {
         self.state
             .read()
@@ -88,7 +106,7 @@ impl StripeBilling {
             .prices_by_lookup_key
             .get(lookup_key)
             .cloned()
-            .ok_or_else(|| crate::Error::Internal(anyhow!("no price ID found for {lookup_key:?}")))
+            .ok_or_else(|| crate::Error::Internal(anyhow!("no price found for {lookup_key:?}")))
     }
 
     pub async fn register_model_for_token_based_usage(
@@ -230,21 +248,29 @@ impl StripeBilling {
     pub async fn subscribe_to_price(
         &self,
         subscription_id: &stripe::SubscriptionId,
-        price_id: &stripe::PriceId,
+        price: &stripe::Price,
     ) -> Result<()> {
         let subscription =
             stripe::Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
 
-        if subscription_contains_price(&subscription, price_id) {
+        if subscription_contains_price(&subscription, &price.id) {
             return Ok(());
         }
+
+        const BILLING_THRESHOLD_IN_CENTS: i64 = 20 * 100;
+
+        let price_per_unit = price.unit_amount.unwrap_or_default();
+        let units_for_billing_threshold = BILLING_THRESHOLD_IN_CENTS / price_per_unit;
 
         stripe::Subscription::update(
             &self.client,
             subscription_id,
             stripe::UpdateSubscription {
                 items: Some(vec![stripe::UpdateSubscriptionItems {
-                    price: Some(price_id.to_string()),
+                    price: Some(price.id.to_string()),
+                    billing_thresholds: Some(stripe::SubscriptionItemBillingThresholds {
+                        usage_gte: Some(units_for_billing_threshold),
+                    }),
                     ..Default::default()
                 }]),
                 trial_settings: Some(stripe::UpdateSubscriptionTrialSettings {
@@ -463,19 +489,20 @@ impl StripeBilling {
         Ok(session.url.context("no checkout session URL")?)
     }
 
-    pub async fn checkout_with_price(
+    pub async fn checkout_with_zed_pro(
         &self,
-        price_id: PriceId,
         customer_id: stripe::CustomerId,
         github_login: &str,
         success_url: &str,
     ) -> Result<String> {
+        let zed_pro_price_id = self.zed_pro_price_id().await?;
+
         let mut params = stripe::CreateCheckoutSession::new();
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
-            price: Some(price_id.to_string()),
+            price: Some(zed_pro_price_id.to_string()),
             quantity: Some(1),
             ..Default::default()
         }]);
@@ -487,12 +514,13 @@ impl StripeBilling {
 
     pub async fn checkout_with_zed_pro_trial(
         &self,
-        zed_pro_price_id: PriceId,
         customer_id: stripe::CustomerId,
         github_login: &str,
         feature_flags: Vec<String>,
         success_url: &str,
     ) -> Result<String> {
+        let zed_pro_price_id = self.zed_pro_price_id().await?;
+
         let eligible_for_extended_trial = feature_flags
             .iter()
             .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
@@ -529,6 +557,29 @@ impl StripeBilling {
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
             price: Some(zed_pro_price_id.to_string()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
+        params.success_url = Some(success_url);
+
+        let session = stripe::CheckoutSession::create(&self.client, params).await?;
+        Ok(session.url.context("no checkout session URL")?)
+    }
+
+    pub async fn checkout_with_zed_free(
+        &self,
+        customer_id: stripe::CustomerId,
+        github_login: &str,
+        success_url: &str,
+    ) -> Result<String> {
+        let zed_free_price_id = self.zed_free_price_id().await?;
+
+        let mut params = stripe::CreateCheckoutSession::new();
+        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
+        params.customer = Some(customer_id);
+        params.client_reference_id = Some(github_login);
+        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+            price: Some(zed_free_price_id.to_string()),
             quantity: Some(1),
             ..Default::default()
         }]);
