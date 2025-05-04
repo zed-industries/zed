@@ -18,6 +18,31 @@ use crate::{
 async fn test_inline_values(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
+    fn stack_frame_for_line(line: u64) -> dap::StackFrame {
+        StackFrame {
+            id: 1,
+            name: "Stack Frame 1".into(),
+            source: Some(dap::Source {
+                name: Some("main.rs".into()),
+                path: Some(path!("/project/main.rs").into()),
+                source_reference: None,
+                presentation_hint: None,
+                origin: None,
+                sources: None,
+                adapter_data: None,
+                checksums: None,
+            }),
+            line,
+            column: 1,
+            end_line: None,
+            end_column: None,
+            can_restart: None,
+            instruction_pointer_reference: None,
+            module_id: None,
+            presentation_hint: None,
+        }
+    }
+
     let fs = FakeFs::new(executor.clone());
     let source_code = r#"
 fn main() {
@@ -60,33 +85,12 @@ fn main() {
 
     client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
         Ok(dap::StackTraceResponse {
-            stack_frames: vec![StackFrame {
-                id: 1,
-                name: "Stack Frame 1".into(),
-                source: Some(dap::Source {
-                    name: Some("main.rs".into()),
-                    path: Some(path!("/project/main.rs").into()),
-                    source_reference: None,
-                    presentation_hint: None,
-                    origin: None,
-                    sources: None,
-                    adapter_data: None,
-                    checksums: None,
-                }),
-                line: 6,
-                column: 1,
-                end_line: None,
-                end_column: None,
-                can_restart: None,
-                instruction_pointer_reference: None,
-                module_id: None,
-                presentation_hint: None,
-            }],
+            stack_frames: vec![stack_frame_for_line(2)],
             total_frames: None,
         })
     });
 
-    let local_variables = vec![
+    let mut local_variables = vec![
         Variable {
             name: "x".into(),
             value: "10".into(),
@@ -213,8 +217,340 @@ fn main() {
 
     cx.run_until_parked();
 
-    let inline_value_inlays = editor.read_with(cx, |editor, cx| editor.inline_value_inlays(cx));
-    assert_eq!(3, inline_value_inlays.len());
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(source_code, editor.snapshot(window, cx).text());
+    });
+
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(3)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value = 42;
+        let tester = {
+            let y = 10;
+            vec![y, 20, 30]
+        };
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(4)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let tester = {
+            let y = 10;
+            vec![y, 20, 30]
+        };
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(5)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let tester = {
+            let y = 10;
+            vec![y, 20, 30]
+        };
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(6)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let tester = {
+            let y: 10 = 10;
+            vec![y, 20, 30]
+        };
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(7)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let tester = {
+            let y: 10 = 10;
+            vec![y, 20, 30]
+        };
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    local_variables.push(Variable {
+        name: "tester".into(),
+        value: "size=3".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 0,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+        declaration_location_reference: None,
+        value_location_reference: None,
+    });
+
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(9)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let tester: size=3 = {
+            let y = 10;
+            vec![y, 20, 30]
+        };
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    local_variables.push(Variable {
+        name: "result".into(),
+        value: "840".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 0,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+        declaration_location_reference: None,
+        value_location_reference: None,
+    });
+
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(10)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            r#"
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let tester: size=3 = {
+            let y = 10;
+            vec![y, 20, 30]
+        };
+
+        let result: 840 = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
 }
 
 fn rust_lang() -> Language {
