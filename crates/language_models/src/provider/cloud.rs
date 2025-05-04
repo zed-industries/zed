@@ -996,7 +996,7 @@ fn tool_use_limit_reached_event<T>(
 
 fn response_lines<T: DeserializeOwned>(
     response: Response<AsyncBody>,
-    includes_queue_events: bool,
+    includes_status_messages: bool,
 ) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
     futures::stream::try_unfold(
         (String::new(), BufReader::new(response.into_body())),
@@ -1004,7 +1004,7 @@ fn response_lines<T: DeserializeOwned>(
             match body.read_line(&mut line).await {
                 Ok(0) => Ok(None),
                 Ok(_) => {
-                    let event = if includes_queue_events {
+                    let event = if includes_status_messages {
                         serde_json::from_str::<CloudCompletionEvent<T>>(&line)?
                     } else {
                         CloudCompletionEvent::Event(serde_json::from_str::<T>(&line)?)
