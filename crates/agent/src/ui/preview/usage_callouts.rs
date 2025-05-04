@@ -1,7 +1,7 @@
 use component::{empty_example, example_group_with_title, single_example};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use language_model::RequestUsage;
-use ui::{prelude::*, Callout, Color, Icon, IconName, IconSize};
+use ui::{Callout, Color, Icon, IconName, IconSize, prelude::*};
 use zed_llm_client::{Plan, UsageLimit};
 
 #[derive(IntoElement, RegisterComponent)]
@@ -32,35 +32,32 @@ impl RenderOnce for UsageCallout {
             UsageLimit::Unlimited => (false, false, 0),
         };
 
-        // If neither limit is reached nor approaching, don't show anything
         if !is_limit_reached && !is_approaching_limit {
             return div().into_any_element();
         }
 
         let (title, message, button_text, url) = if is_limit_reached {
-            // Cap reached state
             match self.plan {
                 Plan::Free => (
-                    "Out of free requests",
-                    format!("Upgrade to continue, wait for the next reset, or change providers."),
+                    "Out of free prompts",
+                    format!("Upgrade to continue, wait for the next reset, or switch to API key."),
                     "Upgrade",
                     "https://zed.dev/pricing",
                 ),
                 Plan::ZedProTrial => (
-                    "Out of trial requests",
-                    format!("Upgrade to Zed Pro to continue, or change providers."),
+                    "Out of trial prompts",
+                    format!("Upgrade to Zed Pro to continue, or switch to API key."),
                     "Upgrade",
                     "https://zed.dev/pricing",
                 ),
                 Plan::ZedPro => (
-                    "Out of requests",
+                    "Out of included prompts",
                     format!("Enable usage based billing to continue."),
-                    "Enable Billing",
+                    "Manage",
                     "https://zed.dev/account",
                 ),
             }
         } else {
-            // Approaching limit state
             match self.plan {
                 Plan::Free => (
                     "Reaching Free tier limit soon",
@@ -117,7 +114,6 @@ impl Component for UsageCallout {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        // Free plan examples
         let free_examples = example_group_with_title(
             "Free Plan",
             vec![
@@ -146,7 +142,6 @@ impl Component for UsageCallout {
             ],
         );
 
-        // Trial plan examples
         let trial_examples = example_group_with_title(
             "Zed Pro Trial",
             vec![
@@ -175,7 +170,6 @@ impl Component for UsageCallout {
             ],
         );
 
-        // Pro plan examples
         let pro_examples = example_group_with_title(
             "Zed Pro",
             vec![
@@ -194,7 +188,6 @@ impl Component for UsageCallout {
             ],
         );
 
-        // Combine all examples
         Some(
             div()
                 .p_4()

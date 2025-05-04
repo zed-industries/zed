@@ -5,7 +5,10 @@ use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::debug::DebugAccount;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::{AnimatedLabel, preview::AgentPreview};
+use crate::ui::{
+    AnimatedLabel,
+    preview::{AgentPreview, UsageCallout},
+};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -19,9 +22,8 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, ClickEvent, ClipboardEntry, Entity, EventEmitter, Focusable,
-    Subscription, Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point,
-    pulsating_between,
+    Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
+    Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
 use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
@@ -35,7 +37,7 @@ use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
-use zed_llm_client::{CompletionMode, UsageLimit};
+use zed_llm_client::CompletionMode;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
@@ -994,98 +996,9 @@ impl MessageEditor {
             _ => return None,
         };
 
-        let (is_limit_reached, is_approaching_limit, remaining) = match usage.limit {
-            UsageLimit::Limited(limit) => {
-                let percentage = usage.amount as f32 / limit as f32;
-                let is_limit_reached = percentage >= 1.0;
-                let is_near_limit = percentage >= 0.9 && percentage < 1.0;
-                (
-                    is_limit_reached,
-                    is_near_limit,
-                    limit.saturating_sub(usage.amount),
-                )
-            }
-            UsageLimit::Unlimited => (false, false, 0),
-        };
-
-        // If neither limit is reached nor approaching, don't show anything
-        if !is_limit_reached && !is_approaching_limit {
-            return None;
-        }
-
-        fn cta(url: String) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
-            Box::new(move |_, _window, cx| {
-                _ = cx.open_url(&url);
-            })
-        }
-
-        let (title, message, button_text, button_action) = if is_limit_reached {
-            // Cap reached state
-            match plan {
-                zed_llm_client::Plan::Free => (
-                    "Out of free requests",
-                    "Upgrade to continue, wait for the next reset, or change providers."
-                        .to_string(),
-                    "Upgrade",
-                    cta("https://zed.dev/pricing".to_string()),
-                ),
-                zed_llm_client::Plan::ZedProTrial => (
-                    "Out of trial requests",
-                    "Upgrade to Zed Pro to continue, or change providers.".to_string(),
-                    "Upgrade",
-                    cta("https://zed.dev/pricing".to_string()),
-                ),
-                zed_llm_client::Plan::ZedPro => (
-                    "Out of requests",
-                    "Enable usage based billing to continue.".to_string(),
-                    "Enable Billing",
-                    cta("https://zed.dev/account".to_string()),
-                ),
-            }
-        } else {
-            // Approaching limit state
-            match plan {
-                zed_llm_client::Plan::Free => (
-                    "Reaching Free tier limit soon",
-                    format!(
-                        "{} remaining - Upgrade to increase limit, or switch providers",
-                        remaining
-                    ),
-                    "Upgrade",
-                    cta("https://zed.dev/pricing".to_string()),
-                ),
-                zed_llm_client::Plan::ZedProTrial => (
-                    "Reaching Trial limit soon",
-                    format!(
-                        "{} remaining - Upgrade to increase limit, or switch providers",
-                        remaining
-                    ),
-                    "Upgrade",
-                    cta("https://zed.dev/pricing".to_string()),
-                ),
-                _ => return None,
-            }
-        };
-
-        let icon = if is_limit_reached {
-            Icon::new(IconName::X)
-                .color(Color::Error)
-                .size(IconSize::XSmall)
-        } else {
-            Icon::new(IconName::Warning)
-                .color(Color::Warning)
-                .size(IconSize::XSmall)
-        };
-
         Some(
             div()
-                .child(ui::Callout::multi_line(
-                    title.into(),
-                    message.into(),
-                    icon,
-                    button_text.into(),
-                    button_action,
-                ))
+                .child(UsageCallout::new(plan.clone(), usage.clone()))
                 .line_height(line_height),
         )
     }
