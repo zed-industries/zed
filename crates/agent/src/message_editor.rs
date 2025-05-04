@@ -200,7 +200,8 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
+            profile_selector: cx
+                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -463,6 +464,7 @@ impl MessageEditor {
                 workspace.is_being_followed(CollaboratorId::Agent)
             })
             .unwrap_or(false);
+
         IconButton::new("follow-agent", IconName::Crosshair)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
@@ -638,7 +640,7 @@ impl MessageEditor {
                                 h_flex()
                                     .gap_1()
                                     .child(self.render_follow_toggle(cx))
-                                    .child(self.profile_selector.clone()),
+                                    .children(self.render_max_mode_toggle(cx)),
                             )
                             .child(
                                 h_flex()
@@ -662,7 +664,7 @@ impl MessageEditor {
                                             }),
                                         )
                                     })
-                                    .children(self.render_max_mode_toggle(cx))
+                                    .child(self.profile_selector.clone())
                                     .child(self.model_selector.clone())
                                     .map({
                                         let focus_handle = focus_handle.clone();
