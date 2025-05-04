@@ -783,7 +783,7 @@ impl LanguageModel for CloudLanguageModel {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let mode = request.mode;
-        let future: BoxFuture<'static, Result<_>> = match &self.model {
+        match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
                     request,
@@ -794,7 +794,7 @@ impl LanguageModel for CloudLanguageModel {
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream_with_usage(async move {
+                let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
                         usage,
@@ -830,28 +830,22 @@ impl LanguageModel for CloudLanguageModel {
                     })?;
 
                     let mut mapper = AnthropicEventMapper::new();
-                    Ok((
-                        map_cloud_completion_events(
-                            Box::pin(
-                                response_lines(response, includes_status_messages)
-                                    .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
-                            ),
-                            move |event| mapper.map_event(event),
+                    Ok(map_cloud_completion_events(
+                        Box::pin(
+                            response_lines(response, includes_status_messages)
+                                .chain(usage_updated_event(usage))
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        usage,
+                        move |event| mapper.map_event(event),
                     ))
                 });
-                async move {
-                    let (stream, usage) = future.await?;
-                    Ok((stream.boxed(), usage))
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
                 let request = into_open_ai(request, model, model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream_with_usage(async move {
+                let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
                         usage,
@@ -872,28 +866,22 @@ impl LanguageModel for CloudLanguageModel {
                     .await?;
 
                     let mut mapper = OpenAiEventMapper::new();
-                    Ok((
-                        map_cloud_completion_events(
-                            Box::pin(
-                                response_lines(response, includes_status_messages)
-                                    .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
-                            ),
-                            move |event| mapper.map_event(event),
+                    Ok(map_cloud_completion_events(
+                        Box::pin(
+                            response_lines(response, includes_status_messages)
+                                .chain(usage_updated_event(usage))
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        usage,
+                        move |event| mapper.map_event(event),
                     ))
                 });
-                async move {
-                    let (stream, usage) = future.await?;
-                    Ok((stream.boxed(), usage))
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let request = into_google(request, model.id().into());
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream_with_usage(async move {
+                let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
                         usage,
@@ -914,41 +902,18 @@ impl LanguageModel for CloudLanguageModel {
                     .await?;
 
                     let mut mapper = GoogleEventMapper::new();
-                    Ok((
-                        map_cloud_completion_events(
-                            Box::pin(
-                                response_lines(response, includes_status_messages)
-                                    .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
-                            ),
-                            move |event| mapper.map_event(event),
+                    Ok(map_cloud_completion_events(
+                        Box::pin(
+                            response_lines(response, includes_status_messages)
+                                .chain(usage_updated_event(usage))
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        usage,
+                        move |event| mapper.map_event(event),
                     ))
                 });
-                async move {
-                    let (stream, usage) = future.await?;
-                    Ok((stream.boxed(), usage))
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
-        };
-
-        async move {
-            let (stream, usage) = future.await?;
-            Ok(
-                futures::stream::iter(usage.into_iter().map(|RequestUsage { limit, amount }| {
-                    Ok(LanguageModelCompletionEvent::StatusUpdate(
-                        CompletionRequestStatus::UsageUpdated {
-                            amount: amount as usize,
-                            limit,
-                        },
-                    ))
-                }))
-                .chain(stream)
-                .boxed(),
-            )
         }
-        .boxed()
     }
 }
 
@@ -982,6 +947,19 @@ where
             })
         })
         .boxed()
+}
+
+fn usage_updated_event<T>(
+    usage: Option<RequestUsage>,
+) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
+    futures::stream::iter(usage.map(|usage| {
+        Ok(CloudCompletionEvent::Status(
+            CompletionRequestStatus::UsageUpdated {
+                amount: usage.amount as usize,
+                limit: usage.limit,
+            },
+        ))
+    }))
 }
 
 fn tool_use_limit_reached_event<T>(
