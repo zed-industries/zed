@@ -1943,6 +1943,41 @@ impl AssistantPanel {
             })
     }
 
+    fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tool_use_limit_reached = self
+            .thread
+            .read(cx)
+            .thread()
+            .read(cx)
+            .tool_use_limit_reached();
+        if !tool_use_limit_reached {
+            return None;
+        }
+
+        let model = self
+            .thread
+            .read(cx)
+            .thread()
+            .read(cx)
+            .configured_model()?
+            .model;
+
+        let max_mode_upsell = if model.supports_max_mode() {
+            " Enable max mode for unlimited tool use."
+        } else {
+            ""
+        };
+
+        Some(
+            Banner::new()
+                .severity(ui::Severity::Info)
+                .child(h_flex().child(Label::new(format!(
+                    "Consecutive tool use limit reached.{max_mode_upsell}"
+                ))))
+                .into_any_element(),
+        )
+    }
+
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
@@ -2224,6 +2259,7 @@ impl Render for AssistantPanel {
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
+                    .children(self.render_tool_use_limit_reached(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
