@@ -1040,6 +1040,7 @@ async fn handle_customer_subscription_event(
                 billing_customer.user_id,
                 &existing_subscription,
                 subscription_kind,
+                subscription.status.into(),
                 new_period_start_at,
                 new_period_end_at,
             )

@@ -1017,7 +1017,8 @@ pub fn response_events_to_markdown(
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
-                | LanguageModelCompletionEvent::StartMessage { .. },
+                | LanguageModelCompletionEvent::StartMessage { .. }
+                | LanguageModelCompletionEvent::QueueUpdate { .. },
             ) => {}
             Err(error) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
@@ -1092,6 +1093,7 @@ impl ThreadDialog {
 
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::QueueUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
 
