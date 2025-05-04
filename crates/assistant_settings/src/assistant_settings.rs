@@ -458,6 +458,14 @@ impl AssistantSettingsContent {
         .ok();
     }
 
+    pub fn set_single_file_review(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.single_file_review = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.v2_setting(|setting| {
             setting.default_profile = Some(profile_id);
