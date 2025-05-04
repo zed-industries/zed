@@ -1,7 +1,6 @@
+use crate::prelude::*;
 use gpui::ClickEvent;
-use ui::prelude::*;
 
-// todo: This can easily get moved to the ui crate so it can be used elsewhere
 #[derive(IntoElement, RegisterComponent)]
 pub struct Callout {
     title: SharedString,
@@ -9,6 +8,7 @@ pub struct Callout {
     icon: Icon,
     cta_label: SharedString,
     cta_action: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    line_height: Option<Pixels>,
 }
 
 impl Callout {
@@ -24,6 +24,7 @@ impl Callout {
             icon,
             cta_label,
             cta_action,
+            line_height: None,
         }
     }
 
@@ -40,13 +41,19 @@ impl Callout {
             icon,
             cta_label,
             cta_action,
+            line_height: None,
         }
+    }
+
+    pub fn line_height(mut self, line_height: Pixels) -> Self {
+        self.line_height = Some(line_height);
+        self
     }
 }
 
 impl RenderOnce for Callout {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let line_height = window.line_height();
+        let line_height = self.line_height.unwrap_or(window.line_height());
 
         h_flex()
             .p_2()
@@ -106,11 +113,7 @@ impl RenderOnce for Callout {
 
 impl Component for Callout {
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
-    }
-
-    fn sort_name() -> &'static str {
-        "AgentCallout"
+        ComponentScope::Notification
     }
 
     fn description() -> Option<&'static str> {
@@ -124,11 +127,11 @@ impl Component for Callout {
             single_example(
                 "Single Line",
                 Callout::single_line(
-                    "Reaching Free tier prompt limit soon".into(),
+                    "Your settings contain deprecated values, please update them.".into(),
                     Icon::new(IconName::Warning)
                         .color(Color::Warning)
                         .size(IconSize::Small),
-                    "Upgrade".into(),
+                    "Backup & Update".into(),
                     Box::new(|_, _, _| {}),
                 )
                 .into_any_element(),
