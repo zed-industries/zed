@@ -180,6 +180,10 @@ impl Session {
     }
 
     pub async fn current_plan(&self, db: &MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
+        if self.is_staff() {
+            return Ok(proto::Plan::ZedPro);
+        }
+
         let user_id = self.user_id();
 
         let subscription = db.get_active_billing_subscription(user_id).await?;

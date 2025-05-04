@@ -29,6 +29,10 @@ impl ActionLog {
         }
     }
 
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
     /// Notifies a diagnostics check
     pub fn checked_project_diagnostics(&mut self) {
         self.edited_since_project_diagnostics_check = false;

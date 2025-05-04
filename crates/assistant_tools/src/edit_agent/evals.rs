@@ -517,7 +517,7 @@ fn eval_from_pixels_constructor() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(indoc! {"
+            assertion: EvalAssertion::judge_diff(indoc! {"
                 - The diff contains a new `from_pixels` constructor
                 - The diff contains new tests for the `from_pixels` constructor
             "}),
@@ -957,7 +957,7 @@ impl EditAgentTest {
 
                 cx.spawn(async move |cx| {
                     let agent_model =
-                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
+                        Self::load_model("google", "gemini-2.5-pro-preview-03-25", cx).await;
                     let judge_model =
                         Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
                     (agent_model.unwrap(), judge_model.unwrap())
@@ -967,7 +967,7 @@ impl EditAgentTest {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
-            agent: EditAgent::new(agent_model, action_log, Templates::new()),
+            agent: EditAgent::new(agent_model, project.clone(), action_log, Templates::new()),
             project,
             judge_model,
         }

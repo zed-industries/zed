@@ -2,20 +2,20 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
-use crate::context::{ContextLoadResult, load_context};
+use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 #[allow(unused, dead_code)]
 use crate::debug::DebugAccount; // used for debugging usage-related UI states
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
-    AnimatedLabel,
+    AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
 use buffer_diff::BufferDiff;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::{
-    ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, MultiBuffer,
+    AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
+    EditorMode, EditorStyle, MultiBuffer,
 };
 use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
@@ -37,18 +37,18 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionMode;
 
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
-use crate::thread::{Thread, TokenUsageRatio};
+use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    ActiveThread, AgentDiff, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff, RemoveAllContext,
-    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
+    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -104,7 +104,7 @@ pub(crate) fn create_editor(
             window,
             cx,
         );
-        editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
+        editor.set_placeholder_text("Message the agent – @ to include context", cx);
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
         editor.set_context_menu_options(ContextMenuOptions {
@@ -112,6 +112,7 @@ pub(crate) fn create_editor(
             max_entries_visible: 12,
             placement: Some(ContextMenuPlacement::Above),
         });
+        editor.register_addon(ContextCreasesAddon::new());
         editor
     });
 
@@ -122,6 +123,7 @@ pub(crate) fn create_editor(
             context_store,
             Some(thread_store),
             editor_entity,
+            None,
         ))));
     });
     editor
@@ -174,6 +176,9 @@ impl MessageEditor {
                 // When context changes, reload it for token counting.
                 let _ = this.reload_context(cx);
             }),
+            cx.observe(&thread.read(cx).action_log().clone(), |_, _, cx| {
+                cx.notify()
+            }),
         ];
 
         let model_selector = cx.new(|cx| {
@@ -202,8 +207,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
             last_estimated_token_count: None,
             update_token_count_task: None,
             plan: None,
@@ -299,10 +303,11 @@ impl MessageEditor {
             return;
         }
 
-        let user_message = self.editor.update(cx, |editor, cx| {
+        let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
+            let creases = extract_message_creases(editor, cx);
             let text = editor.text(cx);
             editor.clear(window, cx);
-            text
+            (text, creases)
         });
 
         self.last_estimated_token_count.take();
@@ -320,7 +325,13 @@ impl MessageEditor {
 
             thread
                 .update(cx, |thread, cx| {
-                    thread.insert_user_message(user_message, loaded_context, checkpoint.ok(), cx);
+                    thread.insert_user_message(
+                        user_message,
+                        loaded_context,
+                        checkpoint.ok(),
+                        user_message_creases,
+                        cx,
+                    );
                 })
                 .log_err();
 
@@ -405,7 +416,7 @@ impl MessageEditor {
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.edits_expanded = true;
-        AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+        AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
         cx.notify();
     }
 
@@ -415,7 +426,8 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(diff) = AgentDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
+        if let Ok(diff) =
+            AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
         {
             let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
@@ -448,9 +460,47 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(Tooltip::text("Toggle Max Mode"))
+                .tooltip(|_, cx| cx.new(MaxModeTooltip::new).into())
                 .into_any_element(),
         )
+    }
+
+    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let following = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or(false);
+        IconButton::new("follow-agent", IconName::Crosshair)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(following)
+            .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
+            .tooltip(move |window, cx| {
+                if following {
+                    Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
+                } else {
+                    Tooltip::with_meta(
+                        "Follow Agent",
+                        Some(&Follow),
+                        "Track the agent's location as it reads and edits files.",
+                        window,
+                        cx,
+                    )
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        if following {
+                            workspace.unfollow(CollaboratorId::Agent, window, cx);
+                        } else {
+                            workspace.follow(CollaboratorId::Agent, window, cx);
+                        }
+                    })
+                    .ok();
+            }))
     }
 
     fn render_editor(
@@ -518,34 +568,39 @@ impl MessageEditor {
                     .items_start()
                     .justify_between()
                     .child(self.context_strip.clone())
-                    .when(focus_handle.is_focused(window), |this| {
-                        this.child(
-                            IconButton::new("toggle-height", expand_icon)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        let expand_label = if is_editor_expanded {
-                                            "Minimize Message Editor".to_string()
-                                        } else {
-                                            "Expand Message Editor".to_string()
-                                        };
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .when(focus_handle.is_focused(window), |this| {
+                                this.child(
+                                    IconButton::new("toggle-height", expand_icon)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                let expand_label = if is_editor_expanded {
+                                                    "Minimize Message Editor".to_string()
+                                                } else {
+                                                    "Expand Message Editor".to_string()
+                                                };
 
-                                        Tooltip::for_action_in(
-                                            expand_label,
-                                            &ExpandMessageEditor,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.dispatch_action(Box::new(ExpandMessageEditor), cx);
-                                })),
-                        )
-                    }),
+                                                Tooltip::for_action_in(
+                                                    expand_label,
+                                                    &ExpandMessageEditor,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(|_, _, window, cx| {
+                                            window
+                                                .dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                        })),
+                                )
+                            }),
+                    ),
             )
             .child(
                 v_flex()
@@ -588,7 +643,12 @@ impl MessageEditor {
                         h_flex()
                             .flex_none()
                             .justify_between()
-                            .child(h_flex().gap_2().child(self.profile_selector.clone()))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_follow_toggle(cx))
+                                    .child(self.profile_selector.clone()),
+                            )
                             .child(
                                 h_flex()
                                     .gap_1()
@@ -1163,6 +1223,53 @@ impl MessageEditor {
     }
 }
 
+pub fn extract_message_creases(
+    editor: &mut Editor,
+    cx: &mut Context<'_, Editor>,
+) -> Vec<MessageCrease> {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let mut contexts_by_crease_id = editor
+        .addon_mut::<ContextCreasesAddon>()
+        .map(std::mem::take)
+        .unwrap_or_default()
+        .into_inner()
+        .into_iter()
+        .flat_map(|(key, creases)| {
+            let context = key.0;
+            creases
+                .into_iter()
+                .map(move |(id, _)| (id, context.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    // Filter the addon's list of creases based on what the editor reports,
+    // since the addon might have removed creases in it.
+    let creases = editor.display_map.update(cx, |display_map, cx| {
+        display_map
+            .snapshot(cx)
+            .crease_snapshot
+            .creases()
+            .filter_map(|(id, crease)| {
+                Some((
+                    id,
+                    (
+                        crease.range().to_offset(&buffer_snapshot),
+                        crease.metadata()?.clone(),
+                    ),
+                ))
+            })
+            .map(|(id, (range, metadata))| {
+                let context = contexts_by_crease_id.remove(&id);
+                MessageCrease {
+                    range,
+                    metadata,
+                    context,
+                }
+            })
+            .collect()
+    });
+    creases
+}
+
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
 pub enum MessageEditorEvent {
@@ -1211,6 +1318,43 @@ impl Render for MessageEditor {
     }
 }
 
+pub fn insert_message_creases(
+    editor: &mut Editor,
+    message_creases: &[MessageCrease],
+    context_store: &Entity<ContextStore>,
+    window: &mut Window,
+    cx: &mut Context<'_, Editor>,
+) {
+    let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+    let creases = message_creases
+        .iter()
+        .map(|crease| {
+            let start = buffer_snapshot.anchor_after(crease.range.start);
+            let end = buffer_snapshot.anchor_before(crease.range.end);
+            crease_for_mention(
+                crease.metadata.label.clone(),
+                crease.metadata.icon_path.clone(),
+                start..end,
+                cx.weak_entity(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let ids = editor.insert_creases(creases.clone(), cx);
+    editor.fold_creases(creases, false, window, cx);
+    if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+        for (crease, id) in message_creases.iter().zip(ids) {
+            if let Some(context) = crease.context.as_ref() {
+                let key = AgentContextKey(context.clone());
+                addon.add_creases(
+                    context_store,
+                    key,
+                    vec![(id, crease.metadata.label.clone())],
+                    cx,
+                );
+            }
+        }
+    }
+}
 impl Component for MessageEditor {
     fn scope() -> ComponentScope {
         ComponentScope::Agent

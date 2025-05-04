@@ -624,7 +624,7 @@ struct MigrateToNewBillingBody {
 #[derive(Debug, Serialize)]
 struct MigrateToNewBillingResponse {
     /// The ID of the subscription that was canceled.
-    canceled_subscription_id: String,
+    canceled_subscription_id: Option<String>,
 }
 
 async fn migrate_to_new_billing(
@@ -650,39 +650,39 @@ async fn migrate_to_new_billing(
         .get_active_billing_subscriptions(HashSet::from_iter([user.id]))
         .await?;
 
-    let Some((_billing_customer, billing_subscription)) =
+    let canceled_subscription_id = if let Some((_billing_customer, billing_subscription)) =
         old_billing_subscriptions_by_user.get(&user.id)
-    else {
-        return Err(Error::http(
-            StatusCode::NOT_FOUND,
-            "No active billing subscriptions to migrate".into(),
-        ));
+    {
+        let stripe_subscription_id = billing_subscription
+            .stripe_subscription_id
+            .parse::<stripe::SubscriptionId>()
+            .context("failed to parse Stripe subscription ID from database")?;
+
+        Subscription::cancel(
+            &stripe_client,
+            &stripe_subscription_id,
+            stripe::CancelSubscription {
+                invoice_now: Some(true),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Some(stripe_subscription_id)
+    } else {
+        None
     };
 
-    let stripe_subscription_id = billing_subscription
-        .stripe_subscription_id
-        .parse::<stripe::SubscriptionId>()
-        .context("failed to parse Stripe subscription ID from database")?;
-
-    Subscription::cancel(
-        &stripe_client,
-        &stripe_subscription_id,
-        stripe::CancelSubscription {
-            invoice_now: Some(true),
-            ..Default::default()
-        },
-    )
-    .await?;
-
-    let feature_flags = app.db.list_feature_flags().await?;
+    let all_feature_flags = app.db.list_feature_flags().await?;
+    let user_feature_flags = app.db.get_user_flags(user.id).await?;
 
     for feature_flag in ["new-billing", "assistant2"] {
-        let already_in_feature_flag = feature_flags.iter().any(|flag| flag.flag == feature_flag);
+        let already_in_feature_flag = user_feature_flags.iter().any(|flag| flag == feature_flag);
         if already_in_feature_flag {
             continue;
         }
 
-        let feature_flag = feature_flags
+        let feature_flag = all_feature_flags
             .iter()
             .find(|flag| flag.flag == feature_flag)
             .context("failed to find feature flag: {feature_flag:?}")?;
@@ -691,7 +691,8 @@ async fn migrate_to_new_billing(
     }
 
     Ok(Json(MigrateToNewBillingResponse {
-        canceled_subscription_id: stripe_subscription_id.to_string(),
+        canceled_subscription_id: canceled_subscription_id
+            .map(|subscription_id| subscription_id.to_string()),
     }))
 }
 
@@ -1039,6 +1040,7 @@ async fn handle_customer_subscription_event(
                 billing_customer.user_id,
                 &existing_subscription,
                 subscription_kind,
+                subscription.status.into(),
                 new_period_start_at,
                 new_period_end_at,
             )

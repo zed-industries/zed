@@ -130,21 +130,19 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let is_directory = mat.is_dir;
 
-        let Some(task) = self
-            .context_store
+        self.context_store
             .update(cx, |context_store, cx| {
                 if is_directory {
-                    Task::ready(context_store.add_directory(&project_path, true, cx))
+                    context_store
+                        .add_directory(&project_path, true, cx)
+                        .log_err();
                 } else {
-                    context_store.add_file_from_path(project_path.clone(), true, cx)
+                    context_store
+                        .add_file_from_path(project_path.clone(), true, cx)
+                        .detach_and_log_err(cx);
                 }
             })
-            .ok()
-        else {
-            return;
-        };
-
-        task.detach_and_log_err(cx);
+            .ok();
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {

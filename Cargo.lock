@@ -79,7 +79,6 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
- "indexmap",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
@@ -7993,6 +7992,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "parking_lot",
  "paths",
  "pet",
  "pet-conda",
@@ -18093,7 +18093,6 @@ dependencies = [
  "component",
  "dap",
  "db",
- "derive_more",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -18827,9 +18826,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.1"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc9ec491b7112cb8c2fba3c17d9a349d8ab695fb1a4ef6c5c4b9fd8d7aa975c1"
+checksum = "2adf9bc80def4ec93c190f06eb78111865edc2576019a9753eaef6fd7bc3b72c"
 dependencies = [
  "anyhow",
  "serde",
