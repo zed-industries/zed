@@ -7179,6 +7179,9 @@ impl Element for EditorElement {
                             }
                         })
                         .flatten()
+                        .filter(|minimap_width| {
+                            text_width - vertical_scrollbar_width - *minimap_width > *minimap_width
+                        })
                         .unwrap_or_default();
 
                     let right_margin = minimap_width + vertical_scrollbar_width;
