@@ -981,15 +981,8 @@ impl MessageEditor {
             return None;
         }
 
-        let debug_account = cx.debug_account().clone();
-
-        let mut plan = self.plan.clone();
-        let mut usage = self.usage.clone();
-
-        if debug_account.enabled() {
-            plan = Some(debug_account.plan.clone());
-            usage = Some(debug_account.custom_prompt_usage.clone());
-        }
+        let plan = self.plan.clone();
+        let usage = self.usage.clone();
 
         let (plan, usage) = match (&plan, &usage) {
             (Some(p), Some(u)) => (p, u),
