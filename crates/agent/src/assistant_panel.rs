@@ -22,7 +22,7 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};

@@ -1,3 +1,5 @@
+#![allow(unused, dead_code)]
+
 use gpui::Global;
 use language_model::RequestUsage;
 use std::ops::{Deref, DerefMut};
@@ -10,7 +12,6 @@ use zed_llm_client::{Plan, UsageLimit};
 /// `cx.set_global(DebugAccountState::default());` somewhere
 ///
 /// Then call `cx.debug_account()` to get access
-#[allow(unused, dead_code)]
 #[derive(Clone, Debug)]
 pub struct DebugAccountState {
     pub enabled: bool,
@@ -22,7 +23,6 @@ pub struct DebugAccountState {
     pub custom_edit_prediction_usage: UsageLimit,
 }
 
-#[allow(unused, dead_code)]
 impl DebugAccountState {
     pub fn enabled(&self) -> bool {
         self.enabled
