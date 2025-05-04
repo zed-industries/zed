@@ -934,14 +934,14 @@ impl GoogleLanguageModel {
                     let cache = self.cache.clone();
                     let executor = cx.background_executor().clone();
                     let task = cx.background_spawn(async move {
-                        match create_cache_future.await.log_err()? {
+                        let result = match create_cache_future.await.log_err()? {
                             CreateCacheResponse::Created(created_cache) => {
                                 log::info!("created cache `{}`", created_cache.name);
                                 CacheEntry::new(
                                     created_cache.name,
                                     created_cache.expire_time.to_utc(),
                                     cache_key,
-                                    cache,
+                                    cache.clone(),
                                     executor,
                                 )
                             }
@@ -949,7 +949,11 @@ impl GoogleLanguageModel {
                                 cache.lock().models_not_supported.insert(model);
                                 None
                             }
+                        };
+                        if result.is_none() {
+                            cache.lock().task_map.remove(&cache_key);
                         }
+                        result
                     });
                     self.cache.lock().task_map.insert(cache_key, task.shared());
                 }
