@@ -214,47 +214,91 @@ impl AssistantConfiguration {
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
-        const HEADING: &str = "Allow running editing tools without asking for confirmation";
+        h_flex()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new("Allow running editing tools without asking for confirmation"))
+                    .child(
+                        Label::new(
+                            "The agent can perform potentially destructive actions without asking for your confirmation.",
+                        )
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Switch::new(
+                    "always-allow-tool-actions-switch",
+                    always_allow_tool_actions.into(),
+                )
+                .color(SwitchColor::Accent)
+                .on_click({
+                    let fs = self.fs.clone();
+                    move |state, _window, cx| {
+                        let allow = state == &ToggleState::Selected;
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| {
+                                settings.set_always_allow_tool_actions(allow);
+                            },
+                        );
+                    }
+                }),
+            )
+    }
 
+    fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let single_file_review = AssistantSettings::get_global(cx).single_file_review;
+
+        h_flex()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new("Enable single-file agent reviews"))
+                    .child(
+                        Label::new(
+                            "Agent edits are also displayed in single-file editors for review.",
+                        )
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Switch::new("single-file-review-switch", single_file_review.into())
+                    .color(SwitchColor::Accent)
+                    .on_click({
+                        let fs = self.fs.clone();
+                        move |state, _window, cx| {
+                            let allow = state == &ToggleState::Selected;
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| {
+                                    settings.set_single_file_review(allow);
+                                },
+                            );
+                        }
+                    }),
+            )
+    }
+
+    fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_2()
+            .gap_2p5()
             .flex_1()
             .child(Headline::new("General Settings"))
-            .child(
-                h_flex()
-                    .gap_4()
-                    .justify_between()
-                    .flex_wrap()
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .max_w_5_6()
-                            .child(Label::new(HEADING))
-                            .child(Label::new("When enabled, the agent can perform potentially destructive actions without asking for your confirmation.").color(Color::Muted)),
-                    )
-                    .child(
-                        Switch::new(
-                            "always-allow-tool-actions-switch",
-                            always_allow_tool_actions.into(),
-                        )
-                        .color(SwitchColor::Accent)
-                        .on_click({
-                            let fs = self.fs.clone();
-                            move |state, _window, cx| {
-                                let allow = state == &ToggleState::Selected;
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _| {
-                                        settings.set_always_allow_tool_actions(allow);
-                                    },
-                                );
-                            }
-                        }),
-                    ),
-            )
+            .child(self.render_command_permission(cx))
+            .child(self.render_single_file_review(cx))
     }
 
     fn render_context_servers_section(
@@ -549,7 +593,7 @@ impl Render for AssistantConfiguration {
                     .track_scroll(&self.scroll_handle)
                     .size_full()
                     .overflow_y_scroll()
-                    .child(self.render_command_permission(cx))
+                    .child(self.render_general_settings_section(cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_context_servers_section(window, cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
