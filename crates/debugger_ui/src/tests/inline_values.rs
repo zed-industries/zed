@@ -229,10 +229,4 @@ fn rust_lang() -> Language {
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
     )
-    .with_debug_variables_query(include_str!(
-        "../../../languages/src/rust/debug_variables.scm"
-    ))
-    .unwrap()
-    .with_text_object_query(include_str!("../../../languages/src/rust/textobjects.scm"))
-    .unwrap()
 }
