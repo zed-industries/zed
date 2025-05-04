@@ -338,7 +338,7 @@ impl GoogleLanguageModel {
     }
 
     fn api_url_and_key(&self, cx: &AsyncApp) -> Result<(String, String)> {
-        let Ok((api_url, api_key)) = cx.read_entity(&self.state, |state, cx| {
+        let Ok((api_url, api_key)) = self.state.read_with(cx, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
             (settings.api_url.clone(), state.api_key.clone())
         }) else {
@@ -901,23 +901,22 @@ impl GoogleLanguageModel {
                     let update_cache_future = self.update_cache(update_cache_request, cx);
                     let cache = self.cache.clone();
                     let executor = cx.background_executor().clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            if let Some(response) = update_cache_future.await.log_err() {
-                                let cache_entry = CacheEntry::new(
-                                    name,
-                                    response.expire_time.to_utc(),
-                                    cache_key,
-                                    cache.clone(),
-                                    executor,
-                                );
-                                cache
-                                    .lock()
-                                    .task_map
-                                    .insert(cache_key, Task::ready(cache_entry).shared());
-                            }
-                        })
-                        .detach();
+                    cx.background_spawn(async move {
+                        if let Some(response) = update_cache_future.await.log_err() {
+                            let cache_entry = CacheEntry::new(
+                                name,
+                                response.expire_time.to_utc(),
+                                cache_key,
+                                cache.clone(),
+                                executor,
+                            );
+                            cache
+                                .lock()
+                                .task_map
+                                .insert(cache_key, Task::ready(cache_entry).shared());
+                        }
+                    })
+                    .detach();
                 }
                 CacheStatus::Absent | CacheStatus::Expired | CacheStatus::Failed => {
                     let create_request = CreateCacheRequest {
@@ -957,7 +956,7 @@ impl GoogleLanguageModel {
             }
         }
 
-        cx.foreground_executor().spawn({
+        cx.background_spawn({
             let cache = self.cache.clone();
             async move {
                 let mut prefix_len = 0;
@@ -965,8 +964,9 @@ impl GoogleLanguageModel {
                 let mut now = UtcDateTime::now();
                 // The last key is skipped because `contents` must be non-empty.
                 for (ix, key) in content_cache_keys.iter().enumerate().rev().skip(1) {
+                    let task = cache.lock().get_unexpired(&key, now);
                     // TODO: Measure if it's worth it to await on caches vs using ones that are already ready.
-                    if let Some(task) = cache.lock().get_unexpired(&key, now) {
+                    if let Some(task) = task {
                         if let Some(cache_entry) = task.await {
                             prefix_len = ix + 1;
                             found_cache_entry = Some(cache_entry);
