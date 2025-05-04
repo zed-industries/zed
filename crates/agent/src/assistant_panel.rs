@@ -37,8 +37,8 @@ use ui::{
     Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
+use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
@@ -52,7 +52,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::UsageBanner;
 use crate::{
-    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor,
+    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
     InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
     OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
@@ -106,6 +106,9 @@ pub fn init(cx: &mut App) {
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
+                })
+                .register_action(|workspace, _: &Follow, window, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {

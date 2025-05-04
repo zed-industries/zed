@@ -300,8 +300,10 @@
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
-    // Whether to show the Selections menu in the editor toolbar
-    "selections_menu": true
+    // Whether to show the Selections menu in the editor toolbar.
+    "selections_menu": true,
+    // Whether to show agent review buttons in the editor toolbar.
+    "agent_review": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -659,6 +661,8 @@
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
     "stream_edits": false,
+    // When enabled, agent edits will be displayed in single-file editors for review
+    "single_file_review": true,
     "default_profile": "write",
     "profiles": {
       "ask": {

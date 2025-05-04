@@ -19,8 +19,8 @@ pub use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
-use clock::Lamport;
 pub use clock::ReplicaId;
+use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -2130,6 +2130,31 @@ impl Buffer {
         {
             self.set_active_selections(Arc::default(), false, Default::default(), cx);
         }
+    }
+
+    pub fn set_agent_selections(
+        &mut self,
+        selections: Arc<[Selection<Anchor>]>,
+        line_mode: bool,
+        cursor_shape: CursorShape,
+        cx: &mut Context<Self>,
+    ) {
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.remote_selections.insert(
+            AGENT_REPLICA_ID,
+            SelectionSet {
+                selections: selections.clone(),
+                lamport_timestamp,
+                line_mode,
+                cursor_shape,
+            },
+        );
+        self.non_text_state_update_count += 1;
+        cx.notify();
+    }
+
+    pub fn remove_agent_selections(&mut self, cx: &mut Context<Self>) {
+        self.set_agent_selections(Arc::default(), false, Default::default(), cx);
     }
 
     /// Replaces the buffer's entire text.
