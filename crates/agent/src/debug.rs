@@ -5,7 +5,11 @@ use ui::prelude::*;
 use zed_llm_client::{Plan, UsageLimit};
 
 /// Debug only: Used for testing various account states
-// todo!("Remove before merging, or put behind a flag or argument")
+///
+/// Use this by initializing it with
+/// `cx.set_global(DebugAccountState::default());` somewhere
+///
+/// Then call `cx.debug_account()` to get access
 #[allow(unused, dead_code)]
 #[derive(Clone, Debug)]
 pub struct DebugAccountState {

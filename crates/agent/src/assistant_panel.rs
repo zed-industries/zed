@@ -38,11 +38,9 @@ use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
-use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
-pub use crate::debug::{DebugAccountState, GlobalDebugAccountState};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
@@ -55,19 +53,6 @@ use crate::{
 };
 
 pub fn init(cx: &mut App) {
-    // todo!("remove?")
-    cx.set_global(GlobalDebugAccountState(DebugAccountState::default()));
-
-    // todo!("remove")
-    GlobalDebugAccountState::update_global(cx, |store, _| {
-        store.set_enabled(true);
-        store.set_plan(zed_llm_client::Plan::ZedPro);
-        store.set_custom_prompt_usage(RequestUsage {
-            limit: UsageLimit::Limited(500),
-            amount: 500,
-        });
-    });
-
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
