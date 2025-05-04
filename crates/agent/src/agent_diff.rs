@@ -2081,7 +2081,7 @@ mod tests {
         // The toolbar is displayed in the right state
         assert_eq!(
             diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryRight
         );
         assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
             toolbar.active_item,
@@ -2100,7 +2100,7 @@ mod tests {
         override_toolbar_agent_review_setting(true, cx);
         assert_eq!(
             diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryRight
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.
