@@ -1398,7 +1398,7 @@ impl AgentPreview for MessageEditor {
                 v_flex()
                     .gap_4()
                     .children(vec![single_example(
-                        "Default Messsage Editor",
+                        "Default Message Editor",
                         div()
                             .w(px(540.))
                             .pt_12()
