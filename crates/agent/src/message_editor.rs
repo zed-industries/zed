@@ -475,7 +475,7 @@ impl MessageEditor {
                     Tooltip::with_meta(
                         "Follow Agent",
                         Some(&Follow),
-                        "Track the agent's location as it performs edits.",
+                        "Track the agent's location as it reads and edits files.",
                         window,
                         cx,
                     )
