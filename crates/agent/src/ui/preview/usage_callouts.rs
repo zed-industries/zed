@@ -40,7 +40,8 @@ impl RenderOnce for UsageCallout {
             match self.plan {
                 Plan::Free => (
                     "Out of free prompts",
-                    "Upgrade to continue, wait for the next reset, or switch to API key.".to_string(),
+                    "Upgrade to continue, wait for the next reset, or switch to API key."
+                        .to_string(),
                     "Upgrade",
                     "https://zed.dev/pricing",
                 ),
