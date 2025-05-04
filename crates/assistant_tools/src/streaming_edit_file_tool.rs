@@ -170,7 +170,7 @@ impl Tool for StreamingEditFileTool {
                 .update(|cx| LanguageModelRegistry::read_global(cx).default_model())?
                 .context("default model not set")?
                 .model;
-            let edit_agent = EditAgent::new(model, action_log, Templates::new());
+            let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {

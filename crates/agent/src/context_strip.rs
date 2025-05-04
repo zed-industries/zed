@@ -11,7 +11,7 @@ use gpui::{
 use itertools::Itertools;
 use language::Buffer;
 use project::ProjectItem;
-use ui::{KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
 
 use crate::context::{AgentContextHandle, ContextKind};
@@ -357,7 +357,7 @@ impl Focusable for ContextStrip {
 }
 
 impl Render for ContextStrip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
@@ -434,30 +434,6 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .when(no_added_context && suggested_context.is_none(), {
-                |parent| {
-                    parent.child(
-                        h_flex()
-                            .ml_1p5()
-                            .gap_2()
-                            .child(
-                                Label::new("Add Context")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .opacity(0.5)
-                            .children(
-                                KeyBinding::for_action_in(
-                                    &ToggleContextPicker,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|binding| binding.into_any_element()),
-                            ),
-                    )
-                }
-            })
             .children(
                 added_contexts
                     .into_iter()

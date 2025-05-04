@@ -1582,10 +1582,17 @@ impl Thread {
                                 let tool_uses = thread.use_pending_tools(window, cx, model.clone());
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
+                            StopReason::EndTurn | StopReason::MaxTokens  => {
+                                thread.project.update(cx, |project, cx| {
+                                    project.set_agent_location(None, cx);
+                                });
+                            }
                         },
                         Err(error) => {
+                            thread.project.update(cx, |project, cx| {
+                                project.set_agent_location(None, cx);
+                            });
+
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
                             } else if error.is::<MaxMonthlySpendReachedError>() {
