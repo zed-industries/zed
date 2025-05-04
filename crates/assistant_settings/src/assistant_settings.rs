@@ -6,7 +6,7 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use anyhow::{Result, bail};
 use deepseek::Model as DeepseekModel;
-use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
+use feature_flags::{AgentStreamEditsFeatureFlag, Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels};
 use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
@@ -69,7 +69,7 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default, Clone, Debug)]
 pub struct AssistantSettings {
     pub enabled: bool,
     pub button: bool,
@@ -87,9 +87,15 @@ pub struct AssistantSettings {
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
+    pub stream_edits: bool,
+    pub single_file_review: bool,
 }
 
 impl AssistantSettings {
+    pub fn stream_edits(&self, cx: &App) -> bool {
+        cx.has_flag::<AgentStreamEditsFeatureFlag>() || self.stream_edits
+    }
+
     pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
         if cx.has_flag::<Assistant2FeatureFlag>() {
             return false;
@@ -218,6 +224,8 @@ impl AssistantSettingsContent {
                     profiles: None,
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
+                    stream_edits: None,
+                    single_file_review: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -245,6 +253,8 @@ impl AssistantSettingsContent {
                 profiles: None,
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
+                stream_edits: None,
+                single_file_review: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -423,6 +433,14 @@ impl AssistantSettingsContent {
         .ok();
     }
 
+    pub fn set_single_file_review(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.single_file_review = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.v2_setting(|setting| {
             setting.default_profile = Some(profile_id);
@@ -495,6 +513,8 @@ impl Default for VersionedAssistantSettingsContent {
             profiles: None,
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
+            stream_edits: None,
+            single_file_review: None,
         })
     }
 }
@@ -550,6 +570,14 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: "primary_screen"
     notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
+    /// Whether to stream edits from the agent as they are received.
+    ///
+    /// Default: false
+    stream_edits: Option<bool>,
+    /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
+    ///
+    /// Default: true
+    single_file_review: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -712,6 +740,8 @@ impl Settings for AssistantSettings {
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
+            merge(&mut settings.stream_edits, value.stream_edits);
+            merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
 
             if let Some(profiles) = value.profiles {
@@ -843,6 +873,8 @@ mod tests {
                                 profiles: None,
                                 always_allow_tool_actions: None,
                                 notify_when_agent_waiting: None,
+                                stream_edits: None,
+                                single_file_review: None,
                             },
                         )),
                     }

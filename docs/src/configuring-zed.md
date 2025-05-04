@@ -1034,7 +1034,8 @@ List of `string` values
 "toolbar": {
   "breadcrumbs": true,
   "quick_actions": true,
-  "selections_menu": true
+  "selections_menu": true,
+  "agent_review": true
 },
 ```
 
@@ -2037,11 +2038,23 @@ Or to set a `socks5` proxy:
 
 ## File Finder
 
+### File Icons
+
+- Description: Whether to show file icons in the file finder.
+- Setting: `file_icons`
+- Default: `true`
+
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
 - Setting: `modal_max_width`
 - Default: `small`
+
+### Skip Focus For Active In Search
+
+- Description: Determines whether the file finder should skip focus for the active file in search results.
+- Setting: `skip_focus_for_active_in_search`
+- Default: `true`
 
 ## Preferred Line Length
 
@@ -3078,7 +3091,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "editor_model": {
     "provider": "zed.dev",
     "model": "claude-3-7-sonnet-latest"
-  }
+  },
+  "single_file_review": true,
 }
 ```
 

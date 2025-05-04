@@ -2371,6 +2371,7 @@ impl AssistantContext {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StatusUpdate { .. } => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
@@ -2428,8 +2429,8 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(_) => {}
-                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
+                                    LanguageModelCompletionEvent::ToolUse(_) |
+                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
                                 }
                             });
 

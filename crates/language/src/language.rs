@@ -239,6 +239,10 @@ impl CachedLspAdapter {
             .process_diagnostics(params, server_id, existing_diagnostics)
     }
 
+    pub fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, cx: &App) -> bool {
+        self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
+    }
+
     pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         self.adapter.diagnostic_message_to_markdown(message)
     }
@@ -459,6 +463,11 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: LanguageServerId,
         _: Option<&'_ Buffer>,
     ) {
+    }
+
+    /// When processing new `lsp::PublishDiagnosticsParams` diagnostics, whether to retain previous one(s) or not.
+    fn retain_old_diagnostic(&self, _previous_diagnostic: &Diagnostic, _cx: &App) -> bool {
+        false
     }
 
     /// Post-processes completions provided by the language server.

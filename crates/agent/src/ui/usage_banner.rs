@@ -66,7 +66,7 @@ impl RenderOnce for UsageBanner {
             }),
         };
 
-        Banner::new().severity(severity).children(
+        Banner::new().severity(severity).child(
             h_flex().flex_1().gap_1().child(Label::new(message)).child(
                 h_flex()
                     .flex_1()
@@ -98,6 +98,10 @@ impl RenderOnce for UsageBanner {
 }
 
 impl Component for UsageBanner {
+    fn scope() -> ComponentScope {
+        ComponentScope::Agent
+    }
+
     fn sort_name() -> &'static str {
         "AgentUsageBanner"
     }

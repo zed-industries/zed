@@ -1,9 +1,21 @@
 use std::sync::Arc;
 
-use extension::{Extension, ExtensionContextServerProxy, ExtensionHostProxy, ProjectDelegate};
-use gpui::{App, Entity};
+use anyhow::Result;
+use extension::{
+    ContextServerConfiguration, Extension, ExtensionContextServerProxy, ExtensionHostProxy,
+    ProjectDelegate,
+};
+use gpui::{App, AsyncApp, Entity, Task};
+use project::Project;
 
-use crate::{ContextServerFactoryRegistry, ServerCommand};
+use crate::{ContextServerDescriptorRegistry, ServerCommand, registry};
+
+pub fn init(cx: &mut App) {
+    let proxy = ExtensionHostProxy::default_global(cx);
+    proxy.register_context_server_proxy(ContextServerDescriptorRegistryProxy {
+        context_server_factory_registry: ContextServerDescriptorRegistry::global(cx),
+    });
+}
 
 struct ExtensionProject {
     worktree_ids: Vec<u64>,
@@ -15,60 +27,78 @@ impl ProjectDelegate for ExtensionProject {
     }
 }
 
-pub fn init(cx: &mut App) {
-    let proxy = ExtensionHostProxy::default_global(cx);
-    proxy.register_context_server_proxy(ContextServerFactoryRegistryProxy {
-        context_server_factory_registry: ContextServerFactoryRegistry::global(cx),
-    });
+struct ContextServerDescriptor {
+    id: Arc<str>,
+    extension: Arc<dyn Extension>,
 }
 
-struct ContextServerFactoryRegistryProxy {
-    context_server_factory_registry: Entity<ContextServerFactoryRegistry>,
+fn extension_project(project: Entity<Project>, cx: &mut AsyncApp) -> Result<Arc<ExtensionProject>> {
+    project.update(cx, |project, cx| {
+        Arc::new(ExtensionProject {
+            worktree_ids: project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).id().to_proto())
+                .collect(),
+        })
+    })
 }
 
-impl ExtensionContextServerProxy for ContextServerFactoryRegistryProxy {
+impl registry::ContextServerDescriptor for ContextServerDescriptor {
+    fn command(&self, project: Entity<Project>, cx: &AsyncApp) -> Task<Result<ServerCommand>> {
+        let id = self.id.clone();
+        let extension = self.extension.clone();
+        cx.spawn(async move |cx| {
+            let extension_project = extension_project(project, cx)?;
+            let mut command = extension
+                .context_server_command(id.clone(), extension_project.clone())
+                .await?;
+            command.command = extension
+                .path_from_extension(command.command.as_ref())
+                .to_string_lossy()
+                .to_string();
+
+            log::info!("loaded command for context server {id}: {command:?}");
+
+            Ok(ServerCommand {
+                path: command.command,
+                args: command.args,
+                env: Some(command.env.into_iter().collect()),
+            })
+        })
+    }
+
+    fn configuration(
+        &self,
+        project: Entity<Project>,
+        cx: &AsyncApp,
+    ) -> Task<Result<Option<ContextServerConfiguration>>> {
+        let id = self.id.clone();
+        let extension = self.extension.clone();
+        cx.spawn(async move |cx| {
+            let extension_project = extension_project(project, cx)?;
+            let configuration = extension
+                .context_server_configuration(id.clone(), extension_project)
+                .await?;
+
+            log::debug!("loaded configuration for context server {id}: {configuration:?}");
+
+            Ok(configuration)
+        })
+    }
+}
+
+struct ContextServerDescriptorRegistryProxy {
+    context_server_factory_registry: Entity<ContextServerDescriptorRegistry>,
+}
+
+impl ExtensionContextServerProxy for ContextServerDescriptorRegistryProxy {
     fn register_context_server(&self, extension: Arc<dyn Extension>, id: Arc<str>, cx: &mut App) {
         self.context_server_factory_registry
             .update(cx, |registry, _| {
-                registry.register_server_factory(
+                registry.register_context_server_descriptor(
                     id.clone(),
-                    Arc::new({
-                        move |project, cx| {
-                            log::info!(
-                                "loading command for context server {id} from extension {}",
-                                extension.manifest().id
-                            );
-
-                            let id = id.clone();
-                            let extension = extension.clone();
-                            cx.spawn(async move |cx| {
-                                let extension_project = project.update(cx, |project, cx| {
-                                    Arc::new(ExtensionProject {
-                                        worktree_ids: project
-                                            .visible_worktrees(cx)
-                                            .map(|worktree| worktree.read(cx).id().to_proto())
-                                            .collect(),
-                                    })
-                                })?;
-
-                                let mut command = extension
-                                    .context_server_command(id.clone(), extension_project)
-                                    .await?;
-                                command.command = extension
-                                    .path_from_extension(command.command.as_ref())
-                                    .to_string_lossy()
-                                    .to_string();
-
-                                log::info!("loaded command for context server {id}: {command:?}");
-
-                                Ok(ServerCommand {
-                                    path: command.command,
-                                    args: command.args,
-                                    env: Some(command.env.into_iter().collect()),
-                                })
-                            })
-                        }
-                    }),
+                    Arc::new(ContextServerDescriptor { id, extension })
+                        as Arc<dyn registry::ContextServerDescriptor>,
                 )
             });
     }

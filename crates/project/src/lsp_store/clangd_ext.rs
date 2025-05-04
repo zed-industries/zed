@@ -75,7 +75,7 @@ pub fn register_notifications(
                         server_id,
                         mapped_diagnostics,
                         &adapter.disk_based_diagnostic_sources,
-                        |diag| !is_inactive_region(diag),
+                        |diag, _| !is_inactive_region(diag),
                         cx,
                     )
                     .log_err();

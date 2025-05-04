@@ -56,7 +56,7 @@ use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
-    future::try_join_all,
+    future::{Shared, try_join_all},
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -68,9 +68,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, Language, LanguageName, LanguageRegistry,
-    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
-    language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
+    Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -138,7 +138,7 @@ const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
-pub trait ProjectItem {
+pub trait ProjectItem: 'static {
     fn try_open(
         project: &Entity<Project>,
         path: &ProjectPath,
@@ -197,6 +197,13 @@ pub struct Project {
     environment: Entity<ProjectEnvironment>,
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
+    agent_location: Option<AgentLocation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentLocation {
+    pub buffer: WeakEntity<Buffer>,
+    pub position: Anchor,
 }
 
 #[derive(Default)]
@@ -304,7 +311,10 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    AgentLocationChanged,
 }
+
+pub struct AgentLocationChanged;
 
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
@@ -318,6 +328,13 @@ pub struct ProjectPath {
 }
 
 impl ProjectPath {
+    pub fn from_file(value: &dyn language::File, cx: &App) -> Self {
+        ProjectPath {
+            worktree_id: value.worktree_id(cx),
+            path: value.path().clone(),
+        }
+    }
+
     pub fn from_proto(p: proto::ProjectPath) -> Self {
         Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
@@ -979,6 +996,8 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+
+                agent_location: None,
             }
         })
     }
@@ -1135,6 +1154,7 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+                agent_location: None,
             };
 
             // ssh -> local machine handlers
@@ -1374,6 +1394,7 @@ impl Project {
                 environment,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
+                agent_location: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1603,6 +1624,17 @@ impl Project {
 
     pub fn cli_environment(&self, cx: &App) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
+    }
+
+    pub fn buffer_environment<'a>(
+        &'a self,
+        buffer: &Entity<Buffer>,
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &'a mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_buffer_environment(&buffer, &worktree_store, cx)
+        })
     }
 
     pub fn shell_environment_errors<'a>(
@@ -4856,6 +4888,46 @@ impl Project {
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         self.git_store.read(cx).status_for_buffer_id(buffer_id, cx)
+    }
+
+    pub fn set_agent_location(
+        &mut self,
+        new_location: Option<AgentLocation>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(old_location) = self.agent_location.as_ref() {
+            old_location
+                .buffer
+                .update(cx, |buffer, cx| buffer.remove_agent_selections(cx))
+                .ok();
+        }
+
+        if let Some(location) = new_location.as_ref() {
+            location
+                .buffer
+                .update(cx, |buffer, cx| {
+                    buffer.set_agent_selections(
+                        Arc::from([language::Selection {
+                            id: 0,
+                            start: location.position,
+                            end: location.position,
+                            reversed: false,
+                            goal: language::SelectionGoal::None,
+                        }]),
+                        false,
+                        CursorShape::Hollow,
+                        cx,
+                    )
+                })
+                .ok();
+        }
+
+        self.agent_location = new_location;
+        cx.emit(Event::AgentLocationChanged);
+    }
+
+    pub fn agent_location(&self) -> Option<AgentLocation> {
+        self.agent_location.clone()
     }
 }
 

@@ -6,7 +6,7 @@ use crate::llm::{
 };
 use crate::{Config, db::billing_preference};
 use anyhow::{Result, anyhow};
-use chrono::{NaiveDateTime, Utc};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -30,8 +30,12 @@ pub struct LlmTokenClaims {
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
     pub has_llm_subscription: bool,
+    #[serde(default)]
+    pub use_llm_request_queue: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
+    #[serde(default)]
+    pub use_new_billing: bool,
     pub plan: Plan,
     #[serde(default)]
     pub has_extended_trial: bool,
@@ -90,24 +94,51 @@ impl LlmTokenClaims {
             custom_llm_monthly_allowance_in_cents: user
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
-            plan: subscription
-                .as_ref()
-                .and_then(|subscription| subscription.kind)
-                .map_or(Plan::Free, |kind| match kind {
-                    SubscriptionKind::ZedFree => Plan::Free,
-                    SubscriptionKind::ZedPro => Plan::ZedPro,
-                    SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
-                }),
+            use_new_billing: feature_flags.iter().any(|flag| flag == "new-billing"),
+            use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
+            plan: if is_staff {
+                Plan::ZedPro
+            } else {
+                subscription
+                    .as_ref()
+                    .and_then(|subscription| subscription.kind)
+                    .map_or(Plan::Free, |kind| match kind {
+                        SubscriptionKind::ZedFree => Plan::Free,
+                        SubscriptionKind::ZedPro => Plan::ZedPro,
+                        SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+                    })
+            },
             has_extended_trial: feature_flags
                 .iter()
                 .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG),
-            subscription_period: maybe!({
-                let subscription = subscription?;
-                let period_start_at = subscription.current_period_start_at()?;
-                let period_end_at = subscription.current_period_end_at()?;
+            subscription_period: if is_staff {
+                maybe!({
+                    let now = Utc::now();
+                    let year = now.year();
+                    let month = now.month();
 
-                Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
-            }),
+                    let first_day_of_this_month =
+                        NaiveDate::from_ymd_opt(year, month, 1)?.and_hms_opt(0, 0, 0)?;
+
+                    let next_month = if month == 12 { 1 } else { month + 1 };
+                    let next_month_year = if month == 12 { year + 1 } else { year };
+                    let first_day_of_next_month =
+                        NaiveDate::from_ymd_opt(next_month_year, next_month, 1)?
+                            .and_hms_opt(23, 59, 59)?;
+
+                    let last_day_of_this_month = first_day_of_next_month - chrono::Days::new(1);
+
+                    Some((first_day_of_this_month, last_day_of_this_month))
+                })
+            } else {
+                maybe!({
+                    let subscription = subscription?;
+                    let period_start_at = subscription.current_period_start_at()?;
+                    let period_end_at = subscription.current_period_end_at()?;
+
+                    Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
+                })
+            },
             enable_model_request_overages: billing_preferences
                 .as_ref()
                 .map_or(false, |preferences| {
