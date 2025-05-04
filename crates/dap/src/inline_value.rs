@@ -61,6 +61,7 @@ impl InlineValueProvider for RustInlineValueProvider {
     ) -> Vec<InlineValueLocation> {
         let mut variables = Vec::new();
         let mut variable_names = HashSet::new();
+        let mut scope = VariableScope::Local;
 
         loop {
             let mut variable_names_in_scope = HashMap::new();
@@ -69,7 +70,7 @@ impl InlineValueProvider for RustInlineValueProvider {
                     break;
                 }
 
-                if child.kind() == "let_declaration" {
+                if scope == VariableScope::Local && child.kind() == "let_declaration" {
                     if let Some(identifier) = child.child_by_field_name("pattern") {
                         let variable_name = source[identifier.byte_range()].to_string();
 
@@ -95,8 +96,8 @@ impl InlineValueProvider for RustInlineValueProvider {
 
             variable_names.extend(variable_names_in_scope.keys().cloned());
 
-            if node.kind() == "function_item" {
-                break;
+            if node.kind() == "function_item" || node.kind() == "closure_expression" {
+                scope = VariableScope::Global;
             }
 
             if let Some(parent) = node.parent() {
