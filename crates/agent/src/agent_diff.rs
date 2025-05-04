@@ -991,7 +991,7 @@ impl ToolbarItemView for AgentDiffToolbar {
 impl Render for AgentDiffToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let generating_label = div()
-            .w(rems_from_px(95.)) // Arbitrary size so the label doesn't dance around)
+            .w(rems_from_px(110.)) // Arbitrary size so the label doesn't dance around
             .child(AnimatedLabel::new("Generating"))
             .into_any();
 
@@ -1130,7 +1130,7 @@ impl Render for AgentDiffToolbar {
 
                 let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
                 if is_generating {
-                    return generating_label;
+                    return div().px_2().child(generating_label).into_any();
                 }
 
                 let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
