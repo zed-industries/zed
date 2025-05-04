@@ -428,6 +428,10 @@ pub fn single_example(
     ComponentExample::new(variant_name, example)
 }
 
+pub fn empty_example(variant_name: impl Into<SharedString>) -> ComponentExample {
+    ComponentExample::new(variant_name, div().w_full().text_center().items_center().text_xs().opacity(0.4).child("This space is intentionally left blank. It indicates a case that should render nothing.").into_any_element())
+}
+
 pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {
     ComponentExampleGroup::new(examples)
 }
