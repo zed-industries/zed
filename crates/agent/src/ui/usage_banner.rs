@@ -107,7 +107,7 @@ impl Component for UsageBanner {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let trial_limit = Plan::ZedProTrial.model_requests_limit().into();
+        let trial_limit = Plan::ZedProTrial.model_requests_limit();
         let trial_examples = vec![
             single_example(
                 "Zed Pro Trial - New User",
@@ -150,7 +150,7 @@ impl Component for UsageBanner {
             ),
         ];
 
-        let free_limit = Plan::Free.model_requests_limit().into();
+        let free_limit = Plan::Free.model_requests_limit();
         let free_examples = vec![
             single_example(
                 "Free - Normal Usage",
@@ -193,7 +193,7 @@ impl Component for UsageBanner {
             ),
         ];
 
-        let zed_pro_limit = Plan::ZedPro.model_requests_limit().into();
+        let zed_pro_limit = Plan::ZedPro.model_requests_limit();
         let zed_pro_examples = vec![
             single_example(
                 "Zed Pro - Normal Usage",
