@@ -982,17 +982,18 @@ impl MessageEditor {
             return None;
         }
 
-        let plan = self.plan.clone();
-        let usage = self.usage.clone();
+        let plan = self.plan;
+        let usage = self.usage;
 
         let (plan, usage) = match (&plan, &usage) {
             (Some(p), Some(u)) => (p, u),
             _ => return None,
         };
 
+        // Create a UsageCallout component
         Some(
             div()
-                .child(UsageCallout::new(plan.clone(), usage.clone()))
+                .child(UsageCallout::new(*plan, *usage))
                 .line_height(line_height),
         )
     }

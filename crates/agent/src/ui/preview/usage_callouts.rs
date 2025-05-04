@@ -40,19 +40,19 @@ impl RenderOnce for UsageCallout {
             match self.plan {
                 Plan::Free => (
                     "Out of free prompts",
-                    format!("Upgrade to continue, wait for the next reset, or switch to API key."),
+                    "Upgrade to continue, wait for the next reset, or switch to API key.".to_string(),
                     "Upgrade",
                     "https://zed.dev/pricing",
                 ),
                 Plan::ZedProTrial => (
                     "Out of trial prompts",
-                    format!("Upgrade to Zed Pro to continue, or switch to API key."),
+                    "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
                     "https://zed.dev/pricing",
                 ),
                 Plan::ZedPro => (
                     "Out of included prompts",
-                    format!("Enable usage based billing to continue."),
+                    "Enable usage based billing to continue.".to_string(),
                     "Manage",
                     "https://zed.dev/account",
                 ),
