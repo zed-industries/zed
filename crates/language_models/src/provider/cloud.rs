@@ -645,7 +645,7 @@ impl CloudLanguageModel {
 }
 
 #[derive(Debug, Error)]
-#[error("cloud language model completion failed with status {status}: {body}")]
+#[error("cloud language model request failed with status {status}: {body}")]
 struct ApiError {
     status: StatusCode,
     body: String,
