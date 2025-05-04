@@ -455,7 +455,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
     ) -> Completion {
-        let new_text = MentionLink::for_rules(&rules);
+        let new_text = MentionLink::for_rule(&rules);
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
