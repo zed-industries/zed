@@ -293,6 +293,8 @@ impl CommitModal {
             co_authors,
             generate_commit_message,
             active_repo,
+            signoff,
+            signoff_checkbox,
             is_amend_pending,
             has_previous_commit,
         ) = self.git_panel.update(cx, |git_panel, cx| {
@@ -301,6 +303,8 @@ impl CommitModal {
             let co_authors = git_panel.render_co_authors(cx);
             let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
             let active_repo = git_panel.active_repository.clone();
+            let signoff = git_panel.signoff();
+            let signoff_checkbox = git_panel.render_signoff_checkbox(cx);
             let is_amend_pending = git_panel.amend_pending();
             let has_previous_commit = active_repo
                 .as_ref()
@@ -313,6 +317,8 @@ impl CommitModal {
                 co_authors,
                 generate_commit_message,
                 active_repo,
+                signoff,
+                signoff_checkbox,
                 is_amend_pending,
                 has_previous_commit,
             )
@@ -384,7 +390,8 @@ impl CommitModal {
                             .child(branch_picker),
                     )
                     .children(generate_commit_message)
-                    .children(co_authors),
+                    .children(co_authors)
+                    .child(signoff_checkbox),
             )
             .child(div().flex_1())
             .child(
@@ -418,7 +425,10 @@ impl CommitModal {
                                     this.git_panel.update(cx, |git_panel, cx| {
                                         git_panel.set_amend_pending(false, cx);
                                         git_panel.commit_changes(
-                                            CommitOptions { amend: true },
+                                            CommitOptions {
+                                                amend: true,
+                                                signoff,
+                                            },
                                             window,
                                             cx,
                                         );
@@ -444,7 +454,10 @@ impl CommitModal {
                                     telemetry::event!("Git Committed", source = "Git Modal");
                                     this.git_panel.update(cx, |git_panel, cx| {
                                         git_panel.commit_changes(
-                                            CommitOptions { amend: false },
+                                            CommitOptions {
+                                                amend: false,
+                                                signoff,
+                                            },
                                             window,
                                             cx,
                                         )
@@ -504,7 +517,10 @@ impl CommitModal {
                                             );
                                             this.git_panel.update(cx, |git_panel, cx| {
                                                 git_panel.commit_changes(
-                                                    CommitOptions { amend: false },
+                                                    CommitOptions {
+                                                        amend: false,
+                                                        signoff,
+                                                    },
                                                     window,
                                                     cx,
                                                 )
@@ -533,7 +549,14 @@ impl CommitModal {
         }
         telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.commit_changes(CommitOptions { amend: false }, window, cx)
+            git_panel.commit_changes(
+                CommitOptions {
+                    amend: false,
+                    signoff: git_panel.signoff(),
+                },
+                window,
+                cx,
+            )
         });
         cx.emit(DismissEvent);
     }
@@ -558,7 +581,14 @@ impl CommitModal {
             telemetry::event!("Git Amended", source = "Git Modal");
             self.git_panel.update(cx, |git_panel, cx| {
                 git_panel.set_amend_pending(false, cx);
-                git_panel.commit_changes(CommitOptions { amend: true }, window, cx);
+                git_panel.commit_changes(
+                    CommitOptions {
+                        amend: true,
+                        signoff: git_panel.signoff(),
+                    },
+                    window,
+                    cx,
+                );
             });
             cx.emit(DismissEvent);
         }
