@@ -8714,8 +8714,10 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if editor.set_wrap_width(Some(editor_width), cx) {
-        snapshot = editor.snapshot(window, cx);
+    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
+        if editor.set_wrap_width(Some(editor_width), cx) {
+            snapshot = editor.snapshot(window, cx);
+        }
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
