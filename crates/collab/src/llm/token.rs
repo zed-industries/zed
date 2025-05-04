@@ -30,6 +30,8 @@ pub struct LlmTokenClaims {
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
     pub has_llm_subscription: bool,
+    #[serde(default)]
+    pub use_llm_request_queue: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
     #[serde(default)]
@@ -93,6 +95,7 @@ impl LlmTokenClaims {
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
             use_new_billing: feature_flags.iter().any(|flag| flag == "new-billing"),
+            use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
             plan: subscription
                 .as_ref()
                 .and_then(|subscription| subscription.kind)
