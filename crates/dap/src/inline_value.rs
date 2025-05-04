@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariableLookupKind {
     Variable,
@@ -58,8 +60,10 @@ impl InlineValueProvider for RustInlineValueProvider {
         max_row: usize,
     ) -> Vec<InlineValueLocation> {
         let mut variables = Vec::new();
+        let mut variable_names = HashSet::new();
 
         loop {
+            let mut variable_names_in_scope = HashMap::new();
             for child in node.named_children(&mut node.walk()) {
                 if child.start_position().row >= max_row {
                     break;
@@ -67,8 +71,19 @@ impl InlineValueProvider for RustInlineValueProvider {
 
                 if child.kind() == "let_declaration" {
                     if let Some(identifier) = child.child_by_field_name("pattern") {
+                        let variable_name = source[identifier.byte_range()].to_string();
+
+                        if variable_names.contains(&variable_name) {
+                            continue;
+                        }
+
+                        if let Some(index) = variable_names_in_scope.get(&variable_name) {
+                            variables.remove(*index);
+                        }
+
+                        variable_names_in_scope.insert(variable_name.clone(), variables.len());
                         variables.push(InlineValueLocation {
-                            variable_name: source[identifier.byte_range()].to_string(),
+                            variable_name,
                             scope: VariableScope::Local,
                             lookup: VariableLookupKind::Variable,
                             row: identifier.end_position().row,
@@ -77,6 +92,8 @@ impl InlineValueProvider for RustInlineValueProvider {
                     }
                 }
             }
+
+            variable_names.extend(variable_names_in_scope.keys().cloned());
 
             if node.kind() == "function_item" {
                 break;
