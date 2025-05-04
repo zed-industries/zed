@@ -46,7 +46,7 @@ const PROVIDER_NAME: &str = "Google AI";
 const CACHE_TTL: Duration = Duration::from_secs(60 * 5);
 
 /// Minimum amount of time left before a cache expires for it to be used.
-const CACHE_TTL_MINIMUM_FOR_USAGE: Duration = Duration::from_secs(2);
+const CACHE_TTL_MINIMUM_FOR_USAGE: Duration = Duration::from_secs(10);
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct GoogleSettings {
@@ -858,8 +858,6 @@ impl GoogleLanguageModel {
             }
 
             // todo! Check speed and cost
-            //
-            // todo! Retry generate content request in the case that the cache is expired.
             //
             // todo! When to update cache expiry time?  Maybe only when there is a full match?
             //
