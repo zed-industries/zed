@@ -112,7 +112,7 @@ pub enum StopReason {
     ToolUse,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct RequestUsage {
     pub limit: UsageLimit,
     pub amount: i32,
