@@ -62,7 +62,10 @@ use ui::{
     prelude::*,
 };
 use util::{ResultExt, maybe};
-use workspace::searchable::{Direction, SearchableItemHandle};
+use workspace::{
+    CollaboratorId,
+    searchable::{Direction, SearchableItemHandle},
+};
 use workspace::{
     Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
@@ -3417,15 +3420,14 @@ impl FollowableItem for ContextEditor {
         true
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<proto::PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_leader_peer_id(leader_peer_id, window, cx)
-        })
+        self.editor
+            .update(cx, |editor, cx| editor.set_leader_id(leader_id, window, cx))
     }
 
     fn dedup(&self, existing: &Self, _window: &Window, cx: &App) -> Option<item::Dedup> {

@@ -61,6 +61,9 @@ pub struct StreamingEditFileToolInput {
 
     /// If true, this tool will recreate the file from scratch.
     /// If false, this tool will produce granular edits to an existing file.
+    ///
+    /// When a file already exists or you just created it, always prefer editing
+    /// it as opposed to recreating it from scratch.
     pub create_or_overwrite: bool,
 }
 
@@ -170,7 +173,7 @@ impl Tool for StreamingEditFileTool {
                 .update(|cx| LanguageModelRegistry::read_global(cx).default_model())?
                 .context("default model not set")?
                 .model;
-            let edit_agent = EditAgent::new(model, action_log, Templates::new());
+            let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {
