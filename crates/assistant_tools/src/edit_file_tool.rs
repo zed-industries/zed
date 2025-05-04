@@ -8,7 +8,7 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, WeakEntity, pulsating_between,
+    Task, TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
@@ -18,11 +18,13 @@ use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat}
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
@@ -540,6 +542,13 @@ impl ToolCard for EditFileToolCard {
             });
 
         let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+
+            editor.set_text_style_refinement(TextStyleRefinement {
+                font_size: Some(ui_font_size.into()),
+                ..TextStyleRefinement::default()
+            });
+
             let line_height = editor
                 .style()
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
