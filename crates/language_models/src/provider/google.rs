@@ -964,9 +964,6 @@ impl GoogleLanguageModel {
             }
         }
 
-        // todo! Check speed and cost
-        //
-        // todo! Consider not awaiting on caches, instead using ones that are immediately ready.
         cx.foreground_executor().spawn({
             let cache = self.cache.clone();
             async move {
@@ -975,6 +972,7 @@ impl GoogleLanguageModel {
                 let mut now = UtcDateTime::now();
                 // The last key is skipped because `contents` must be non-empty.
                 for (ix, key) in content_cache_keys.iter().enumerate().rev().skip(1) {
+                    // TODO: Measure if it's worth it to await on caches vs using ones that are already ready.
                     if let Some(task) = cache.lock().get_unexpired(&key, now) {
                         if let Some(cache_entry) = task.await {
                             prefix_len = ix + 1;
