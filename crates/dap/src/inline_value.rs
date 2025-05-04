@@ -91,6 +91,17 @@ impl InlineValueProvider for RustInlineValueProvider {
                             column: identifier.end_position().column,
                         });
                     }
+                } else if child.kind() == "static_item" {
+                    if let Some(name) = child.child_by_field_name("name") {
+                        let variable_name = source[name.byte_range()].to_string();
+                        variables.push(InlineValueLocation {
+                            variable_name,
+                            scope: scope.clone(),
+                            lookup: VariableLookupKind::Expression,
+                            row: name.end_position().row,
+                            column: name.end_position().column,
+                        });
+                    }
                 }
             }
 
