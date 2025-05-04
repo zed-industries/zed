@@ -1,6 +1,7 @@
 # Zed on Linux
 
 ## Standard Installation
+
 For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
 
 ```sh
@@ -54,8 +55,6 @@ When installing a third-party package please be aware that it may not be complet
 
 We'd love your help making Zed available for everyone. If Zed is not yet available for your package manager, and you would like to fix that, we have some notes on [how to do it](./development/linux.md#notes-for-packaging-zed).
 
-If Zed is installed using one of these package managers, consult the documentation for the package manager on how to uninstal/remove a package.
-
 ### Downloading manually
 
 If you'd prefer, you can install Zed by downloading our pre-built .tar.gz. This is the same artifact that our install script uses, but you can customize the location of your installation by modifying the instructions below:
@@ -87,26 +86,34 @@ sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/shar
 ## Uninstalling Zed
 
 ### Standard Uninstall
+
 If Zed was installed using the default installation script, it can be uninstalled by supplying the `--uninstall` flag to the `zed` shell command
+
 ```sh
 zed --uninstall
 ```
+
 If there are no errors, the shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
 
 In the case that the `zed` shell command was not found in your PATH, you can try one of the following commands
+
 ```sh
 $HOME/.local/bin/zed --uninstall
 ```
+
 or
+
 ```sh
 $HOME/.local/zed.app/bin.zed --uninstall
 ```
-The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin.zed`. But the second case should work as long as Zed was installed to its default location. 
+
+The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin.zed`. But the second case should work as long as Zed was installed to its default location.
 
 If Zed was installed to a different location, you must invoke the `zed` binary stored in that installation directory and pass the `--uninstall` flag to it in the same format as the previous commands.
 
 ### Package Manager
-If Zed was installed using a package manager, please consult the documentation for the package manager on how to uninstall  packages.
+
+If Zed was installed using a package manager, please consult the documentation for that package manager on how to uninstall a package.
 
 ## Troubleshooting
 
