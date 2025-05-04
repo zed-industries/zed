@@ -151,6 +151,7 @@ pub enum IconName {
     LightBulb,
     LineHeight,
     Link,
+    ListCollapse,
     ListTree,
     ListX,
     LockOutlined,

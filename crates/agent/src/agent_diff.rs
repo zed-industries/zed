@@ -26,7 +26,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -937,7 +937,7 @@ impl AgentDiffToolbar {
             Some(AgentDiffToolbarItem::Pane(_)) => ToolbarItemLocation::PrimaryRight,
             Some(AgentDiffToolbarItem::Editor { state, .. }) => match state {
                 EditorState::Generating | EditorState::Reviewing => {
-                    ToolbarItemLocation::PrimaryLeft
+                    ToolbarItemLocation::PrimaryRight
                 }
                 EditorState::Idle => ToolbarItemLocation::Hidden,
             },
@@ -990,6 +990,11 @@ impl ToolbarItemView for AgentDiffToolbar {
 
 impl Render for AgentDiffToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let generating_label = div()
+            .w(rems_from_px(110.)) // Arbitrary size so the label doesn't dance around
+            .child(AnimatedLabel::new("Generating"))
+            .into_any();
+
         let Some(active_item) = self.active_item.as_ref() else {
             return Empty.into_any();
         };
@@ -1004,24 +1009,13 @@ impl Render for AgentDiffToolbar {
 
                 let content = match state {
                     EditorState::Idle => return Empty.into_any(),
-                    EditorState::Generating => vec![
-                        h_flex()
-                            .ml_1()
-                            .gap_1p5()
-                            .w_32()
-                            .child(Icon::new(IconName::ZedAssistant))
-                            .child(
-                                div()
-                                    .w(rems(6.5625))
-                                    .child(AnimatedLabel::new("Generating")),
-                            )
-                            .into_any(),
-                    ],
+                    EditorState::Generating => vec![generating_label],
                     EditorState::Reviewing => vec![
                         h_flex()
                             .child(
                                 IconButton::new("hunk-up", IconName::ArrowUp)
-                                    .tooltip(ui::Tooltip::for_action_title_in(
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::for_action_title_in(
                                         "Previous Hunk",
                                         &GoToPreviousHunk,
                                         &editor_focus_handle,
@@ -1039,7 +1033,8 @@ impl Render for AgentDiffToolbar {
                             )
                             .child(
                                 IconButton::new("hunk-down", IconName::ArrowDown)
-                                    .tooltip(ui::Tooltip::for_action_title_in(
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::for_action_title_in(
                                         "Next Hunk",
                                         &GoToHunk,
                                         &editor_focus_handle,
@@ -1053,8 +1048,9 @@ impl Render for AgentDiffToolbar {
                                     }),
                             )
                             .into_any(),
-                        vertical_divider().into_any_element(),
+                        Divider::vertical().into_any_element(),
                         h_flex()
+                            .gap_0p5()
                             .child(
                                 Button::new("reject-all", "Reject All")
                                     .key_binding({
@@ -1086,18 +1082,37 @@ impl Render for AgentDiffToolbar {
                                     })),
                             )
                             .into_any(),
+                        Divider::vertical().into_any_element(),
                     ],
                 };
 
                 h_flex()
-                    .bg(cx.theme().colors().surface_background)
-                    .rounded_md()
-                    .p_1()
-                    .mx_2()
-                    .gap_1()
-                    .children(content)
-                    .child(vertical_divider())
                     .track_focus(&editor_focus_handle)
+                    .size_full()
+                    .child(
+                        h_flex()
+                            .py(DynamicSpacing::Base08.rems(cx))
+                            .px_2()
+                            .gap_1()
+                            .children(content)
+                            .when_some(editor.read(cx).workspace(), |this, _workspace| {
+                                this.child(
+                                    IconButton::new("review", IconName::ListCollapse)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Review All Files",
+                                            &OpenAgentDiff,
+                                            &editor_focus_handle,
+                                        ))
+                                        .on_click({
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.dispatch_action(&OpenAgentDiff, window, cx);
+                                            })
+                                        }),
+                                )
+                            }),
+                    )
+                    .child(vertical_divider())
                     .on_action({
                         let editor = editor.clone();
                         move |_action: &OpenAgentDiff, window, cx| {
@@ -1105,21 +1120,6 @@ impl Render for AgentDiffToolbar {
                                 agent_diff.deploy_pane_from_editor(&editor, window, cx);
                             });
                         }
-                    })
-                    .when_some(editor.read(cx).workspace(), |this, _workspace| {
-                        this.child(
-                            IconButton::new("review", IconName::ListTree)
-                                .tooltip(ui::Tooltip::for_action_title_in(
-                                    "Review All Files",
-                                    &OpenAgentDiff,
-                                    &editor_focus_handle,
-                                ))
-                                .on_click({
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.dispatch_action(&OpenAgentDiff, window, cx);
-                                    })
-                                }),
-                        )
                     })
                     .into_any()
             }
@@ -1130,10 +1130,7 @@ impl Render for AgentDiffToolbar {
 
                 let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
                 if is_generating {
-                    return div()
-                        .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
-                        .child(AnimatedLabel::new("Generating"))
-                        .into_any();
+                    return div().px_2().child(generating_label).into_any();
                 }
 
                 let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
@@ -1144,11 +1141,9 @@ impl Render for AgentDiffToolbar {
                 let focus_handle = agent_diff.focus_handle(cx);
 
                 h_group_xl()
-                    .my_neg_1()
+                    .px_2()
                     .items_center()
-                    .p_1()
                     .flex_wrap()
-                    .justify_between()
                     .child(
                         h_group_sm()
                             .child(
@@ -2086,7 +2081,7 @@ mod tests {
         // The toolbar is displayed in the right state
         assert_eq!(
             diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryRight
         );
         assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
             toolbar.active_item,
@@ -2105,7 +2100,7 @@ mod tests {
         override_toolbar_agent_review_setting(true, cx);
         assert_eq!(
             diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryRight
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.
