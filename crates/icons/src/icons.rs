@@ -72,6 +72,7 @@ pub enum IconName {
     CopilotInit,
     Copy,
     CountdownTimer,
+    Crosshair,
     CursorIBeam,
     Dash,
     DatabaseZap,
