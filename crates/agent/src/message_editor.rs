@@ -32,7 +32,7 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionMode;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
@@ -42,7 +42,7 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::ThreadStore;
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, NewThread, OpenAgentDiff,
+    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
     RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 
@@ -97,7 +97,7 @@ pub(crate) fn create_editor(
             window,
             cx,
         );
-        editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
+        editor.set_placeholder_text("Message the agent – @ to include context", cx);
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
         editor.set_context_menu_options(ContextMenuOptions {
@@ -200,8 +200,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -457,6 +456,44 @@ impl MessageEditor {
         )
     }
 
+    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let following = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.is_being_followed(CollaboratorId::Agent)
+            })
+            .unwrap_or(false);
+        IconButton::new("follow-agent", IconName::Crosshair)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .toggle_state(following)
+            .selected_icon_color(Some(Color::Custom(cx.theme().players().agent().cursor)))
+            .tooltip(move |window, cx| {
+                if following {
+                    Tooltip::for_action("Stop Following Agent", &Follow, window, cx)
+                } else {
+                    Tooltip::with_meta(
+                        "Follow Agent",
+                        Some(&Follow),
+                        "Track the agent's location as it reads and edits files.",
+                        window,
+                        cx,
+                    )
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        if following {
+                            workspace.unfollow(CollaboratorId::Agent, window, cx);
+                        } else {
+                            workspace.follow(CollaboratorId::Agent, window, cx);
+                        }
+                    })
+                    .ok();
+            }))
+    }
+
     fn render_editor(
         &self,
         font_size: Rems,
@@ -522,34 +559,39 @@ impl MessageEditor {
                     .items_start()
                     .justify_between()
                     .child(self.context_strip.clone())
-                    .when(focus_handle.is_focused(window), |this| {
-                        this.child(
-                            IconButton::new("toggle-height", expand_icon)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        let expand_label = if is_editor_expanded {
-                                            "Minimize Message Editor".to_string()
-                                        } else {
-                                            "Expand Message Editor".to_string()
-                                        };
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .when(focus_handle.is_focused(window), |this| {
+                                this.child(
+                                    IconButton::new("toggle-height", expand_icon)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                let expand_label = if is_editor_expanded {
+                                                    "Minimize Message Editor".to_string()
+                                                } else {
+                                                    "Expand Message Editor".to_string()
+                                                };
 
-                                        Tooltip::for_action_in(
-                                            expand_label,
-                                            &ExpandMessageEditor,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    }
-                                })
-                                .on_click(cx.listener(|_, _, window, cx| {
-                                    window.dispatch_action(Box::new(ExpandMessageEditor), cx);
-                                })),
-                        )
-                    }),
+                                                Tooltip::for_action_in(
+                                                    expand_label,
+                                                    &ExpandMessageEditor,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(|_, _, window, cx| {
+                                            window
+                                                .dispatch_action(Box::new(ExpandMessageEditor), cx);
+                                        })),
+                                )
+                            }),
+                    ),
             )
             .child(
                 v_flex()
@@ -592,7 +634,12 @@ impl MessageEditor {
                         h_flex()
                             .flex_none()
                             .justify_between()
-                            .child(h_flex().gap_2().child(self.profile_selector.clone()))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_follow_toggle(cx))
+                                    .child(self.profile_selector.clone()),
+                            )
                             .child(
                                 h_flex()
                                     .gap_1()

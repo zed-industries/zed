@@ -69,7 +69,7 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct AssistantSettings {
     pub enabled: bool,
     pub button: bool,
@@ -89,31 +89,6 @@ pub struct AssistantSettings {
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
     pub single_file_review: bool,
-}
-
-impl Default for AssistantSettings {
-    fn default() -> Self {
-        Self {
-            enabled: Default::default(),
-            button: Default::default(),
-            dock: Default::default(),
-            default_width: Default::default(),
-            default_height: Default::default(),
-            default_model: Default::default(),
-            inline_assistant_model: Default::default(),
-            commit_message_model: Default::default(),
-            thread_summary_model: Default::default(),
-            inline_alternatives: Default::default(),
-            using_outdated_settings_version: Default::default(),
-            enable_experimental_live_diffs: Default::default(),
-            default_profile: Default::default(),
-            profiles: Default::default(),
-            always_allow_tool_actions: Default::default(),
-            notify_when_agent_waiting: Default::default(),
-            stream_edits: Default::default(),
-            single_file_review: true,
-        }
-    }
 }
 
 impl AssistantSettings {
@@ -453,6 +428,14 @@ impl AssistantSettingsContent {
     pub fn set_always_allow_tool_actions(&mut self, allow: bool) {
         self.v2_setting(|setting| {
             setting.always_allow_tool_actions = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
+    pub fn set_single_file_review(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.single_file_review = Some(allow);
             Ok(())
         })
         .ok();

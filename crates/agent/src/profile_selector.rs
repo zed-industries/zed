@@ -4,22 +4,20 @@ use assistant_settings::{
     AgentProfile, AgentProfileId, AssistantSettings, GroupedAgentProfiles, builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{Action, Entity, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
-    ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
+    ButtonLike, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 
-use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
+use crate::{ManageProfiles, ThreadStore};
 
 pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
-    focus_handle: FocusHandle,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
@@ -28,7 +26,6 @@ impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
         thread_store: WeakEntity<ThreadStore>,
-        focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
@@ -39,7 +36,6 @@ impl ProfileSelector {
             profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
             fs,
             thread_store,
-            focus_handle,
             menu_handle: PopoverMenuHandle::default(),
             _subscriptions: vec![settings_subscription],
         }
@@ -132,7 +128,7 @@ impl ProfileSelector {
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AssistantSettings::get_global(cx);
         let profile_id = &settings.default_profile;
         let profile = settings.profiles.get(profile_id);
@@ -146,15 +142,7 @@ impl Render for ProfileSelector {
             .default_model()
             .map_or(false, |default| default.model.supports_tools());
 
-        let icon = match profile_id.as_str() {
-            builtin_profiles::WRITE => IconName::Pencil,
-            builtin_profiles::ASK => IconName::MessageBubbles,
-            builtin_profiles::MANUAL => IconName::MessageBubbleDashed,
-            _ => IconName::UserRoundPen,
-        };
-
         let this = cx.entity().clone();
-        let focus_handle = self.focus_handle.clone();
 
         PopoverMenu::new("profile-selector")
             .menu(move |window, cx| {
@@ -164,7 +152,6 @@ impl Render for ProfileSelector {
                 ButtonLike::new("profile-selector-button").child(
                     h_flex()
                         .gap_1()
-                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
                         .child(
                             Label::new(selected_profile)
                                 .size(LabelSize::Small)
@@ -174,17 +161,7 @@ impl Render for ProfileSelector {
                             Icon::new(IconName::ChevronDown)
                                 .size(IconSize::XSmall)
                                 .color(Color::Muted),
-                        )
-                        .child(div().opacity(0.5).children({
-                            let focus_handle = focus_handle.clone();
-                            KeyBinding::for_action_in(
-                                &ToggleProfileSelector,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(10.)))
-                        })),
+                        ),
                 )
             } else {
                 ButtonLike::new("tools-not-supported-button")

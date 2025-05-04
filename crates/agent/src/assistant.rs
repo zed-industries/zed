@@ -77,7 +77,8 @@ actions!(
         Keep,
         Reject,
         RejectAll,
-        KeepAll
+        KeepAll,
+        Follow
     ]
 );
 
