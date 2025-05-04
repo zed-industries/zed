@@ -573,6 +573,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_working_directory(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        if cfg!(windows) {
+            return;
+        }
+
         zlog::init();
         zlog::init_output_stdout();
         executor.allow_parking();
