@@ -8,7 +8,7 @@ use crate::llm::db::ModelId;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: Uuid,
-    pub subscription_usage_id: i32,
+    pub subscription_usage_id: Uuid,
     pub model_id: ModelId,
     pub mode: CompletionMode,
     pub requests: i32,
