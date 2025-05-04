@@ -61,6 +61,9 @@ pub struct StreamingEditFileToolInput {
 
     /// If true, this tool will recreate the file from scratch.
     /// If false, this tool will produce granular edits to an existing file.
+    ///
+    /// When a file already exists, always prefer editing it as opposed to
+    /// recreating it from scratch.
     pub create_or_overwrite: bool,
 }
 
