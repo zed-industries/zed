@@ -1,5 +1,5 @@
-use std::mem;
 use std::time::Duration;
+use std::{fmt::Display, mem};
 
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
@@ -149,12 +149,13 @@ pub async fn update_cache(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    cache_name: &CacheName,
-    request: UpdateCacheRequest,
+    mut request: UpdateCacheRequest,
 ) -> Result<UpdateCacheResponse> {
+    // The `name` field is emptied as it is provided as a path parameter.
+    let name = mem::take(&mut request.name);
     let uri = format!(
         "{api_url}/v1beta/cachedContents/{cache_id}?key={api_key}",
-        cache_id = &cache_name.cache_id
+        cache_id = &name.cache_id
     );
     let request_builder = HttpRequest::builder()
         .method(Method::PATCH)
@@ -551,6 +552,7 @@ pub struct CreatedCache {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCacheRequest {
+    pub name: CacheName,
     #[serde(
         serialize_with = "serialize_duration",
         deserialize_with = "deserialize_duration"
@@ -576,7 +578,7 @@ pub struct ModelName {
     pub model_id: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CacheName {
     pub cache_id: String,
 }
@@ -584,6 +586,12 @@ pub struct CacheName {
 impl ModelName {
     pub fn is_empty(&self) -> bool {
         self.model_id.is_empty()
+    }
+}
+
+impl CacheName {
+    pub fn is_empty(&self) -> bool {
+        self.cache_id.is_empty()
     }
 }
 
@@ -615,6 +623,12 @@ impl<'de> Deserialize<'de> for ModelName {
     }
 }
 
+impl Display for ModelName {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.model_id)
+    }
+}
+
 impl Serialize for CacheName {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -640,6 +654,12 @@ impl<'de> Deserialize<'de> for CacheName {
                 CACHE_NAME_PREFIX, string
             )));
         }
+    }
+}
+
+impl Display for CacheName {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.cache_id)
     }
 }
 

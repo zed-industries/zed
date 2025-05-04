@@ -7,11 +7,11 @@ use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
     CacheName, Content, CreateCacheRequest, CreateCacheResponse, FunctionDeclaration,
     GenerateContentRequest, GenerateContentResponse, ModelName, Part, SystemInstruction,
-    UsageMetadata,
+    UpdateCacheRequest, UpdateCacheResponse, UsageMetadata,
 };
 use gpui::{
-    AnyView, App, AppContext, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle,
-    WhiteSpace,
+    AnyView, App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, FontStyle,
+    Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -282,26 +282,22 @@ impl GoogleLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<GenerateContentResponse>>>,
     > {
-        let http_client = self.http_client.clone();
-
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
-            let request = google_ai::stream_generate_content(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request.await,
-            );
-            request.await.context("failed to stream completion")
+        match self.api_url_and_key(cx) {
+            Ok((api_url, api_key)) => {
+                let http_client = self.http_client.clone();
+                async move {
+                    let request = google_ai::stream_generate_content(
+                        http_client.as_ref(),
+                        &api_url,
+                        &api_key,
+                        request.await,
+                    );
+                    request.await.context("failed to stream completion")
+                }
+                .boxed()
+            }
+            Err(err) => future::ready(Err(err)).boxed(),
         }
-        .boxed()
     }
 
     fn create_cache(
@@ -309,22 +305,48 @@ impl GoogleLanguageModel {
         request: google_ai::CreateCacheRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<CreateCacheResponse>> {
-        let http_client = self.http_client.clone();
+        match self.api_url_and_key(cx) {
+            Ok((api_url, api_key)) => {
+                let http_client = self.http_client.clone();
+                async move {
+                    google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request).await
+                }
+                .boxed()
+            }
+            Err(err) => future::ready(Err(err)).boxed(),
+        }
+    }
 
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
+    fn update_cache(
+        &self,
+        request: UpdateCacheRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<UpdateCacheResponse>> {
+        match self.api_url_and_key(cx) {
+            Ok((api_url, api_key)) => {
+                let http_client = self.http_client.clone();
+                async move {
+                    google_ai::update_cache(http_client.as_ref(), &api_url, &api_key, request).await
+                }
+                .boxed()
+            }
+            Err(err) => future::ready(Err(err)).boxed(),
+        }
+    }
+
+    fn api_url_and_key(&self, cx: &AsyncApp) -> Result<(String, String)> {
+        let Ok((api_url, api_key)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
+            (settings.api_url.clone(), state.api_key.clone())
         }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return Err(anyhow!("App state dropped"));
         };
 
         let Some(api_key) = api_key else {
-            return future::ready(Err(anyhow!("Missing Google API key"))).boxed();
+            return Err(anyhow!("Missing Google API key"));
         };
 
-        async move {
-            google_ai::create_cache(http_client.as_ref(), &api_url, &api_key, request).await
-        }.boxed()
+        Ok((api_url, api_key))
     }
 }
 
@@ -708,17 +730,64 @@ pub struct Cache {
 }
 
 #[derive(Debug, Clone)]
-pub struct CacheEntry {
-    pub name: CacheName,
-    pub expire_time: UtcDateTime,
-    pub drop_on_expire: Shared<Task<()>>,
+struct CacheEntry {
+    name: CacheName,
+    expire_time: UtcDateTime,
+    _drop_on_expire: Shared<Task<()>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct CacheKey(u64);
+struct CacheKey(u64);
+
+#[derive(Debug)]
+enum CacheStatus {
+    Absent,
+    Creating,
+    Failed,
+    Valid(CacheEntry),
+    Expired,
+}
+
+impl CacheEntry {
+    fn new(
+        name: CacheName,
+        expire_time: UtcDateTime,
+        cache_key: CacheKey,
+        cache: Arc<Mutex<Cache>>,
+        executor: BackgroundExecutor,
+    ) -> Option<CacheEntry> {
+        let now = UtcDateTime::now();
+        let Some(remaining_time): Option<std::time::Duration> = (expire_time - now).try_into().ok()
+        else {
+            cache.lock().task_map.remove(&cache_key);
+            return None;
+        };
+        let cache_expired = executor.timer(remaining_time);
+        let drop_on_expire = executor
+            .spawn({
+                let name = name.clone();
+                async move {
+                    cache_expired.await;
+                    cache.lock().task_map.remove(&cache_key);
+                    log::info!("removed cache `{name}` because it expired");
+                }
+            })
+            .shared();
+
+        Some(CacheEntry {
+            name,
+            expire_time,
+            _drop_on_expire: drop_on_expire,
+        })
+    }
+
+    fn is_expired(&self, now: UtcDateTime) -> bool {
+        self.expire_time - CACHE_TTL_MINIMUM_FOR_USAGE > now
+    }
+}
 
 impl CacheKey {
-    pub fn base(request: &GenerateContentRequest) -> Self {
+    fn base(request: &GenerateContentRequest) -> Self {
         #[derive(Hash, PartialEq, Eq)]
         pub struct CacheBaseRef<'a> {
             pub model: &'a ModelName,
@@ -739,7 +808,7 @@ impl CacheKey {
         Self(hasher.finish())
     }
 
-    pub fn for_message(predecessor: Self, message: &Content) -> Self {
+    fn for_message(predecessor: Self, message: &Content) -> Self {
         let mut hasher = FxHasher::default();
         predecessor.0.hash(&mut hasher);
         message.hash(&mut hasher);
@@ -755,8 +824,8 @@ impl Cache {
     ) -> Option<Shared<Task<Option<CacheEntry>>>> {
         let cache_task = self.task_map.get(key)?;
         match cache_task.clone().now_or_never() {
-            Some(Some(created_cache)) => {
-                if created_cache.expire_time - CACHE_TTL_MINIMUM_FOR_USAGE > now {
+            Some(Some(existing_cache)) => {
+                if existing_cache.is_expired(now) {
                     Some(cache_task.clone())
                 } else {
                     None
@@ -772,6 +841,25 @@ impl Cache {
             }
         }
     }
+
+    fn get_status(&self, key: &CacheKey) -> CacheStatus {
+        if let Some(existing_task) = self.task_map.get(&key) {
+            match existing_task.clone().now_or_never() {
+                Some(Some(existing_cache)) => {
+                    let now = UtcDateTime::now();
+                    if existing_cache.is_expired(now) {
+                        CacheStatus::Expired
+                    } else {
+                        CacheStatus::Valid(existing_cache)
+                    }
+                }
+                Some(None) => CacheStatus::Failed,
+                None => CacheStatus::Creating,
+            }
+        } else {
+            CacheStatus::Absent
+        }
+    }
 }
 
 impl GoogleLanguageModel {
@@ -781,120 +869,136 @@ impl GoogleLanguageModel {
         mut request: google_ai::GenerateContentRequest,
         cx: &AsyncApp,
     ) -> Task<google_ai::GenerateContentRequest> {
-        if dbg!(
-            self.cache
-                .lock()
-                .models_not_supported
-                .contains(&request.model)
-        ) {
-            Task::ready(request)
-        } else {
-            let base_cache_key = CacheKey::base(&request);
-            let mut prev_cache_key = base_cache_key;
-            let content_cache_keys = request
-                .contents
-                .iter()
-                .map(|content| {
-                    let key = CacheKey::for_message(prev_cache_key, content);
-                    prev_cache_key = key;
-                    key
-                })
-                .collect::<Vec<_>>();
+        if self
+            .cache
+            .lock()
+            .models_not_supported
+            .contains(&request.model)
+        {
+            return Task::ready(request);
+        }
 
-            let create_cache_request = if should_create_cache {
-                Some(CreateCacheRequest {
-                    ttl: CACHE_TTL,
-                    model: request.model.clone(),
-                    contents: request.contents.clone(),
-                    system_instruction: request.system_instruction.clone(),
-                    tools: request.tools.clone(),
-                    tool_config: request.tool_config.clone(),
-                })
-            } else {
-                None
-            };
-            if let Some((request, cache_key)) =
-                create_cache_request.zip(content_cache_keys.last().copied())
-            {
-                let model = request.model.clone();
-                let create_cache_future = self.request_limiter.run(self.create_cache(request, cx));
-                let cache = self.cache.clone();
-                let executor = cx.background_executor().clone();
-                let task = cx.background_spawn(async move {
-                    match create_cache_future.await.log_err()? {
-                        CreateCacheResponse::Created(created_cache) => {
-                            let cache_id = created_cache.name.cache_id.clone();
-                            log::info!("created cache `{cache_id}`");
+        let base_cache_key = CacheKey::base(&request);
+        let mut prev_cache_key = base_cache_key;
+        let content_cache_keys = request
+            .contents
+            .iter()
+            .map(|content| {
+                let key = CacheKey::for_message(prev_cache_key, content);
+                prev_cache_key = key;
+                key
+            })
+            .collect::<Vec<_>>();
 
-                            let now = UtcDateTime::now();
-                            let Some(remaining_time): Option<std::time::Duration> =
-                                (created_cache.expire_time - now).try_into().ok()
-                            else {
-                                cache.lock().task_map.remove(&cache_key);
-                                return None;
-                            };
-                            let cache_expired = executor.timer(remaining_time);
-                            let drop_on_expire = executor
-                                .spawn(async move {
-                                    cache_expired.await;
-                                    cache.lock().task_map.remove(&cache_key);
-                                    log::info!("removed cache `{cache_id}` as it expired");
-                                })
-                                .shared();
-
-                            Some(CacheEntry {
-                                name: created_cache.name,
-                                expire_time: created_cache.expire_time.to_utc(),
-                                drop_on_expire,
-                            })
-                        }
-                        CreateCacheResponse::CachingNotSupportedByModel => {
-                            cache.lock().models_not_supported.insert(model);
-                            None
-                        }
-                    }
-                });
-                self.cache.lock().task_map.insert(cache_key, task.shared());
-            }
-
-            // todo! Check speed and cost
-            //
-            // todo! When to update cache expiry time?  Maybe only when there is a full match?
-            //
-            // todo! Consider not awaiting on caches, instead using ones that are immediately ready.
-            cx.foreground_executor().spawn({
-                let cache = self.cache.clone();
-                async move {
-                    let mut prefix_len = 0;
-                    let mut found_cache_entry = None;
-                    let mut now = UtcDateTime::now();
-                    // The last key is skipped because `contents` must be non-empty.
-                    for (ix, key) in content_cache_keys.iter().enumerate().rev().skip(1) {
-                        if let Some(task) = cache.lock().get_unexpired(&key, now) {
-                            if let Some(cache_entry) = task.await {
-                                prefix_len = ix + 1;
-                                found_cache_entry = Some(cache_entry);
-                                break;
-                            } else {
-                                now = UtcDateTime::now();
+        if let (true, Some(cache_key)) = (should_create_cache, content_cache_keys.last().copied()) {
+            let cache_status = self.cache.lock().get_status(&cache_key);
+            match cache_status {
+                CacheStatus::Creating => {}
+                CacheStatus::Valid(existing_cache) => {
+                    let name = existing_cache.name;
+                    let update_cache_request = UpdateCacheRequest {
+                        name: name.clone(),
+                        ttl: CACHE_TTL,
+                    };
+                    // TODO: This is imperfect, but not in ways that are likely to matter in
+                    // practice. Ideally the cache update task would get stored such that:
+                    //   * It's not posible for the cache to expire and get recreated while waiting
+                    //     for the update response.
+                    //   * It would get cancelled on drop.
+                    let update_cache_future = self.update_cache(update_cache_request, cx);
+                    let cache = self.cache.clone();
+                    let executor = cx.background_executor().clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            if let Some(response) = update_cache_future.await.log_err() {
+                                let cache_entry = CacheEntry::new(
+                                    name,
+                                    response.expire_time.to_utc(),
+                                    cache_key,
+                                    cache.clone(),
+                                    executor,
+                                );
+                                cache
+                                    .lock()
+                                    .task_map
+                                    .insert(cache_key, Task::ready(cache_entry).shared());
+                            }
+                        })
+                        .detach();
+                }
+                CacheStatus::Absent | CacheStatus::Expired | CacheStatus::Failed => {
+                    let create_request = CreateCacheRequest {
+                        ttl: CACHE_TTL,
+                        model: request.model.clone(),
+                        contents: request.contents.clone(),
+                        system_instruction: request.system_instruction.clone(),
+                        tools: request.tools.clone(),
+                        tool_config: request.tool_config.clone(),
+                    };
+                    let model = request.model.clone();
+                    let create_cache_future = self
+                        .request_limiter
+                        .run(self.create_cache(create_request, cx));
+                    let cache = self.cache.clone();
+                    let executor = cx.background_executor().clone();
+                    let task = cx.background_spawn(async move {
+                        match create_cache_future.await.log_err()? {
+                            CreateCacheResponse::Created(created_cache) => {
+                                log::info!("created cache `{}`", created_cache.name);
+                                CacheEntry::new(
+                                    created_cache.name,
+                                    created_cache.expire_time.to_utc(),
+                                    cache_key,
+                                    cache,
+                                    executor,
+                                )
+                            }
+                            CreateCacheResponse::CachingNotSupportedByModel => {
+                                cache.lock().models_not_supported.insert(model);
+                                None
                             }
                         }
-                    }
-                    if let Some(found_cache_entry) = found_cache_entry {
-                        log::info!(
-                            "using cache `{}` which has {prefix_len} messages",
-                            found_cache_entry.name.cache_id
-                        );
-                        request.cached_content = Some(found_cache_entry.name);
-                        request.contents.drain(..prefix_len);
-                        request.system_instruction = None;
-                        request.tools = None;
-                        request.tool_config = None;
-                    }
-                    request
+                    });
+                    self.cache.lock().task_map.insert(cache_key, task.shared());
                 }
-            })
+            }
         }
+
+        // todo! Check speed and cost
+        //
+        // todo! Consider not awaiting on caches, instead using ones that are immediately ready.
+        cx.foreground_executor().spawn({
+            let cache = self.cache.clone();
+            async move {
+                let mut prefix_len = 0;
+                let mut found_cache_entry = None;
+                let mut now = UtcDateTime::now();
+                // The last key is skipped because `contents` must be non-empty.
+                for (ix, key) in content_cache_keys.iter().enumerate().rev().skip(1) {
+                    if let Some(task) = cache.lock().get_unexpired(&key, now) {
+                        if let Some(cache_entry) = task.await {
+                            prefix_len = ix + 1;
+                            found_cache_entry = Some(cache_entry);
+                            break;
+                        } else {
+                            now = UtcDateTime::now();
+                        }
+                    }
+                }
+                if let Some(found_cache_entry) = found_cache_entry {
+                    log::info!(
+                        "using cache `{}` which has {prefix_len} messages",
+                        found_cache_entry.name.cache_id
+                    );
+                    request.cached_content = Some(found_cache_entry.name);
+                    request.contents.drain(..prefix_len);
+                    request.system_instruction = None;
+                    request.tools = None;
+                    request.tool_config = None;
+                }
+                request
+            }
+        })
     }
 }
 

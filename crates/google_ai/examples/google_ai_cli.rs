@@ -329,17 +329,12 @@ async fn main() -> Result<()> {
             };
 
             let request = UpdateCacheRequest {
+                name: cache_name.clone(),
                 ttl: Duration::from_secs(*ttl),
             };
 
-            let response = update_cache(
-                http_client.as_ref(),
-                &cli.api_url,
-                &cli.api_key,
-                &cache_name,
-                request,
-            )
-            .await?;
+            let response =
+                update_cache(http_client.as_ref(), &cli.api_url, &cli.api_key, request).await?;
             println!("Cache updated:");
             println!("  ID: {}", cache_name.cache_id);
             println!("  New expiration: {}", response.expire_time);
