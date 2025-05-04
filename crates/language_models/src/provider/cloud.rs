@@ -35,9 +35,10 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use zed_llm_client::{
-    CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionRequestStatus, CountTokensBody,
-    CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
-    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
+    CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
     TOOL_USE_LIMIT_REACHED_HEADER_NAME,
 };
 
@@ -47,9 +48,6 @@ use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
 pub const PROVIDER_NAME: &str = "Zed";
-
-const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER: &str = "x-zed-client-supports-status-messages";
-const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER: &str = "x-zed-server-supports-queueing";
 
 const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
     option_env!("ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON");
@@ -547,14 +545,14 @@ impl CloudLanguageModel {
             let request = request_builder
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
-                .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER, "true")
+                .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
             let mut response = http_client.send(request).await?;
             let status = response.status();
             if status.is_success() {
                 let includes_status_messages = response
                     .headers()
-                    .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER)
+                    .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME)
                     .is_some();
 
                 let tool_use_limit_reached = response
