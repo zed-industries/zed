@@ -104,10 +104,9 @@ impl Render for AssistantModelSelector {
         let focus_handle = self.focus_handle.clone();
 
         let model = self.selector.read(cx).active_model(cx);
-        let (model_name, model_icon) = match model {
-            Some(model) => (model.model.name().0, Some(model.provider.icon())),
-            _ => (SharedString::from("No model selected"), None),
-        };
+        let model_name = model
+            .map(|model| model.model.name().0)
+            .unwrap_or_else(|| SharedString::from("No model selected"));
 
         LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),
@@ -116,11 +115,6 @@ impl Render for AssistantModelSelector {
                 .child(
                     h_flex()
                         .gap_0p5()
-                        .children(
-                            model_icon.map(|icon| {
-                                Icon::new(icon).color(Color::Muted).size(IconSize::Small)
-                            }),
-                        )
                         .child(
                             Label::new(model_name)
                                 .size(LabelSize::Small)

@@ -18092,7 +18092,6 @@ dependencies = [
  "component",
  "dap",
  "db",
- "derive_more",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
