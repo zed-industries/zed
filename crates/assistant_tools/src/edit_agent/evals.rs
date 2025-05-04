@@ -27,7 +27,7 @@ use std::{
 use util::path;
 
 #[test]
-// #[cfg_attr(not(feature = "eval"), ignore)]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_extract_handle_command_output() {
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
@@ -333,7 +333,7 @@ fn eval_disable_cursor_blinking() {
 }
 
 #[test]
-// #[cfg_attr(not(feature = "eval"), ignore)]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
