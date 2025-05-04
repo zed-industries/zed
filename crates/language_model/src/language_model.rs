@@ -227,27 +227,6 @@ impl Default for LanguageModelTextStream {
     }
 }
 
-// systemInstruction, tools, and toolConfig must only be supplied with the first cache request.
-
-// If system prompt + tools etc is >4k tokens, use cachedContents to cache it.
-//
-// 1. First request - `generateContent` referencing system prompt cache.
-// 2. Receive model response
-// 3. Cache it
-// 4. Send next user message referencing new cache.
-
-// Challenge: `cachedContents` does *not* support reusing an existing cache, and so input tokens are
-// recomputed for the entire cache. This means that it is not helpful to
-
-/*
-struct CacheState {
-    // Merkle style hash (include prior hash when computing next hash)
-    caches: HashMap<LanguageModelMessageHash, CacheName>,
-}
-
-struct CacheName(String);
-*/
-
 pub trait LanguageModel: Send + Sync {
     /// The ID used for the model when making requests. If checking for match of a user-provided
     /// string, use `matches_id` instead.
