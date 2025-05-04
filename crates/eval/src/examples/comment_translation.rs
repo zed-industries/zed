@@ -18,15 +18,13 @@ impl Example for CommentTranslation {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        cx.push_user_message(format!(
-            r#"
+        cx.push_user_message(r#"
             Edit the following files and translate all their comments to italian, in this exact order:
 
             - font-kit/src/family.rs
             - font-kit/src/canvas.rs
             - font-kit/src/error.rs
-            "#
-        ));
+        "#);
         cx.run_to_end().await?;
 
         let mut create_or_overwrite_count = 0;
