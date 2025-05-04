@@ -9,7 +9,7 @@ use language_model_selector::{
 };
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
 #[derive(Clone)]
 pub enum ModelType {
@@ -110,23 +110,13 @@ impl Render for AssistantModelSelector {
 
         LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),
-            ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(
-                            Label::new(model_name)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .ml_1(),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                ),
+            Button::new("active-model", model_name)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ChevronDown)
+                .icon_size(IconSize::XSmall)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted),
             move |window, cx| {
                 Tooltip::for_action_in(
                     "Change Model",
