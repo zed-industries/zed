@@ -126,16 +126,19 @@ pub async fn create_cache(
     if response.status().is_success() {
         let created_cache = serde_json::from_str::<CreatedCache>(&text)?;
         Ok(CreateCacheResponse::Created(created_cache))
-    } else if response.status().as_u16() == 404 {
+    } else if response.status().as_u16() == 404
+        && text.contains("or is not supported for createCachedContent")
+    {
         log::info!(
-            "Received 404 from Gemini cache creation, so assuming `{}` doesn't support caching: {}",
+            "will no longer attempt Gemini cache creation for model `{}` due to {:?} response: {}",
             request.model.model_id,
+            response.status(),
             text
         );
         Ok(CreateCacheResponse::CachingNotSupportedByModel)
     } else {
         Err(anyhow!(
-            "error during Gemini cache creation, status code: {:?}, body: {}",
+            "unexpected {:?} response during Gemini cache creation: {}",
             response.status(),
             text
         ))
