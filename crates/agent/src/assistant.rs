@@ -48,7 +48,7 @@ pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
 pub use agent_diff::{AgentDiff, AgentDiffToolbar};
 pub use context_store::ContextStore;
-pub use ui::{all_agent_previews, get_agent_preview};
+pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
     agent,

@@ -5,7 +5,7 @@ use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{ContextLoadResult, load_context};
 use crate::debug::DebugAccount;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::{AgentPreview, AnimatedLabel};
+use crate::ui::{AnimatedLabel, preview::AgentPreview};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use editor::actions::{MoveUp, Paste};
@@ -1013,10 +1013,7 @@ impl MessageEditor {
             return None;
         }
 
-        // Create a helper function to generate button actions with proper type annotations
-        fn create_button_action(
-            url: String,
-        ) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
+        fn cta(url: String) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
             Box::new(move |_, _window, cx| {
                 _ = cx.open_url(&url);
             })
@@ -1030,19 +1027,19 @@ impl MessageEditor {
                     "Upgrade to continue, wait for the next reset, or change providers."
                         .to_string(),
                     "Upgrade",
-                    create_button_action("https://zed.dev/pricing".to_string()),
+                    cta("https://zed.dev/pricing".to_string()),
                 ),
                 zed_llm_client::Plan::ZedProTrial => (
                     "Out of trial requests",
                     "Upgrade to Zed Pro to continue, or change providers.".to_string(),
                     "Upgrade",
-                    create_button_action("https://zed.dev/pricing".to_string()),
+                    cta("https://zed.dev/pricing".to_string()),
                 ),
                 zed_llm_client::Plan::ZedPro => (
                     "Out of requests",
                     "Enable usage based billing to continue.".to_string(),
                     "Enable Billing",
-                    create_button_action("https://zed.dev/account".to_string()),
+                    cta("https://zed.dev/account".to_string()),
                 ),
             }
         } else {
@@ -1055,7 +1052,7 @@ impl MessageEditor {
                         remaining
                     ),
                     "Upgrade",
-                    create_button_action("https://zed.dev/pricing".to_string()),
+                    cta("https://zed.dev/pricing".to_string()),
                 ),
                 zed_llm_client::Plan::ZedProTrial => (
                     "Reaching Trial limit soon",
@@ -1064,7 +1061,7 @@ impl MessageEditor {
                         remaining
                     ),
                     "Upgrade",
-                    create_button_action("https://zed.dev/pricing".to_string()),
+                    cta("https://zed.dev/pricing".to_string()),
                 ),
                 _ => return None,
             }
