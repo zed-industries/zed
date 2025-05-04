@@ -1313,10 +1313,28 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             drop(lock);
 
-            let is_composing =
-                with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                    .flatten()
-                    .is_some();
+            // --- Add Log before is_composing calculation ---
+            log::debug!(
+                "handle_key_event: About to calculate is_composing by calling marked_text_range..."
+            );
+            // --- End Log ---
+
+            let is_composing = with_input_handler(this, |input_handler| {
+                // input_handler is likely &mut dyn InputHandler
+                log::debug!("handle_key_event: Calling input_handler.marked_text_range()...");
+                // --- Call marked_text_range without extra arguments ---
+                let range = input_handler.marked_text_range();
+                // --- End call ---
+                log::debug!("handle_key_event: marked_text_range returned: {:?}", range);
+                range // Return the result (Option<Range<usize>>)
+            }) // with_input_handler returns Option<Option<Range<usize>>>
+            .flatten() // Flatten to Option<Range<usize>>
+            .is_some(); // Check if Some
+
+            log::debug!(
+                "handle_key_event: Calculated is_composing: {}",
+                is_composing
+            );
 
             // If we're composing, send the key to the input handler first;
             // otherwise we only send to the input handler if we don't have a matching binding.
@@ -1338,15 +1356,39 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     drop(lock);
                 }
 
+                // --- Add Log Before handleEvent ---
+                let key_desc = key_down_event.keystroke.key.clone(); // Clone key for logging
+                log::debug!(
+                    "handle_key_event: Calling handleEvent: for key: {:?}, is_composing: {}",
+                    key_desc,
+                    is_composing
+                );
+                // --- End Log ---
+
                 let handled: BOOL = unsafe {
                     let input_context: id = msg_send![this, inputContext];
                     msg_send![input_context, handleEvent: native_event]
                 };
+
+                // --- Add Log After handleEvent ---
+                log::debug!(
+                    "handle_key_event: handleEvent: returned: {}, for key: {:?}",
+                    if handled == YES { "YES" } else { "NO" },
+                    key_desc
+                );
+                // --- End Log ---
+
                 window_state.as_ref().lock().keystroke_for_do_command.take();
                 if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+                    log::debug!("handle_key_event: Returning early due to do_command_handled"); // Add log
                     return handled as BOOL;
                 } else if handled == YES {
+                    log::debug!(
+                        "handle_key_event: Returning YES because handleEvent: returned YES"
+                    ); // Add log
                     return YES;
+                } else {
+                    log::debug!("handle_key_event: handleEvent: returned NO, proceeding..."); // Add log
                 }
 
                 let handled = run_callback(PlatformInput::KeyDown(key_down_event));
