@@ -422,6 +422,17 @@ pub fn vscode_data_dir() -> &'static PathBuf {
     })
 }
 
+pub fn sublime_data_dir() -> &'static PathBuf {
+    static SUBLIME_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SUBLIME_DATA_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir().join("Library/Application Support/Sublime Text")
+        } else {
+            config_dir().join("sublime-text-3") // TODO: handle 4?
+        }
+    })
+}
+
 /// Returns the path to the vscode user settings file
 pub fn vscode_settings_file() -> &'static PathBuf {
     static VSCODE_SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();

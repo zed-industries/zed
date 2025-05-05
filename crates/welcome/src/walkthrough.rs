@@ -6,15 +6,18 @@ use gpui::{
     ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
 use persistence::WALKTHROUGH_DB;
+use regex::Regex;
 use settings::Settings;
 use settings::SettingsStore;
 use std::collections::BTreeMap;
 use std::convert::identity;
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::SystemTime;
 use theme::ThemeRegistry;
 use theme::ThemeSettings;
+use time::OffsetDateTime;
+use time_format::TimestampFormat;
 use ui::CheckboxWithLabel;
 use ui::prelude::*;
 use vim_mode_setting::VimModeSetting;
@@ -134,26 +137,16 @@ impl Walkthrough {
                 let fs = fs.clone();
                 async move |this: WeakEntity<Self>, cx| {
                     let mut recents: BTreeMap<&str, Vec<String>> = BTreeMap::default();
-                    if let Some(projects) = recent_projects::get_vscode_projects(fs.clone()).await {
-                        if !projects.is_empty() {
-                            recents.insert(
-                                "vscode",
-                                projects
-                                    .into_iter()
-                                    .map(|p: PathBuf| p.to_string_lossy().to_string())
-                                    .collect(),
-                            );
-                        }
-                    }
-                    if let Some(projects) = recent_projects::get_neovim_projects(fs).await {
-                        if !projects.is_empty() {
-                            recents.insert(
-                                "neovim",
-                                projects
-                                    .into_iter()
-                                    .map(|p: PathBuf| p.to_string_lossy().to_string())
-                                    .collect(),
-                            );
+                    use recent_projects::*;
+                    for (name, projects) in [
+                        ("vscode", get_vscode_projects(fs.clone()).await),
+                        ("sublime", get_sublime_projects(fs.clone()).await),
+                        ("neovim", get_neovim_projects(fs.clone()).await),
+                    ] {
+                        if let Some(projects) = projects {
+                            if !projects.is_empty() {
+                                recents.insert(name, projects);
+                            }
                         }
                     }
 
@@ -241,7 +234,7 @@ impl Walkthrough {
             WalkthroughStep::OpenProject { .. } => self.section_button(
                 ix,
                 "Open a Project",
-                "Pick a recent project you had open in another editor",
+                "Pick a recent project you had open in another editor, or start something new",
                 cx,
             ),
         }
@@ -362,14 +355,22 @@ impl Walkthrough {
                 )
             })
             .when(
-                true,
-                // todo!("when this path exists: {}", paths::vscode_settings_file()),
+                // fs.is_file(paths::vscode_settings_file()).await
+                paths::vscode_settings_file().exists(),
                 |this| {
                     this.child(
-                        h_flex()
-                            .child(Button::new("import-vscode", "Import VsCode settings"))
-                            .child(format!("settings file last modified {}", "TODO ago",)),
+                        h_flex().child(Button::new("import-vscode", "Import VsCode settings")),
                     )
+                    // .child(format!(
+                    //     "last modified {}",
+                    //     time_format::format_local_timestamp(
+                    //         paths::vscode_settings_file()
+                    //             .metadata()
+                    //             .and_then(|m| m.modified().ok())?,
+                    //         OffsetDateTime::now_local(),
+                    //         TimestampFormat::Relative
+                    //     ),
+                    // )),
                 },
             )
             .child(h_flex().children([
@@ -505,7 +506,9 @@ impl Walkthrough {
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        dbg!(&self.recent_projects);
+        static HOME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(&format!("^{}", paths::home_dir().to_string_lossy())).unwrap()
+        });
         if !self.recent_projects.is_empty() {
             let mut tabs = TransparentTabs::new(tab_selection.clone());
             for (name, projects) in &self.recent_projects {
@@ -514,8 +517,15 @@ impl Walkthrough {
                     v_flex().children(projects.iter().enumerate().map(|(i, path)| {
                         Button::new(
                             i,
-                            // path.replace(String::from_utf8_lossy(paths::home_dir()), "~"),
-                            path,
+                            HOME_REGEX.replace(path, "~").to_string(), // if let Some(home_path) =
+                                                                       // path.strip_prefix(String::from_utf8_lossy(paths::home_dir()))
+                                                                       // {
+
+                                                                       //     format!(
+                                                                       //         "~{home_path}",
+                                                                       //     ),
+                                                                       //     }
+                                                                       //     else{path}
                         )
                     }))
                 })
