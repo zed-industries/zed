@@ -21,8 +21,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TCPHost;
-use util::ResultExt as _;
+use task::TcpArgumentsTemplate;
+use util::{ResultExt as _, TryFutureExt};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -74,16 +74,14 @@ pub enum Transport {
 }
 
 impl Transport {
-    #[cfg(any(test, feature = "test-support"))]
-    async fn start(_: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        #[cfg(any(test, feature = "test-support"))]
-        return FakeTransport::start(cx)
-            .await
-            .map(|(transports, fake)| (transports, Self::Fake(fake)));
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if cfg!(any(test, feature = "test-support")) {
+            return FakeTransport::start(cx)
+                .await
+                .map(|(transports, fake)| (transports, Self::Fake(fake)));
+        }
+
         if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
@@ -128,6 +126,7 @@ pub(crate) struct TransportDelegate {
     pending_requests: Requests,
     transport: Transport,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
+    _tasks: Vec<gpui::Task<Option<()>>>,
 }
 
 impl TransportDelegate {
@@ -142,6 +141,7 @@ impl TransportDelegate {
             log_handlers: Default::default(),
             current_requests: Default::default(),
             pending_requests: Default::default(),
+            _tasks: Default::default(),
         };
         let messages = this.start_handlers(transport_pipes, cx).await?;
         Ok((messages, this))
@@ -168,35 +168,43 @@ impl TransportDelegate {
 
         cx.update(|cx| {
             if let Some(stdout) = params.stdout.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_adapter_log(stdout, log_handler.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_adapter_log(stdout, log_handler.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_output(
-                    params.output,
-                    client_tx,
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_output(
+                        params.output,
+                        client_tx,
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
 
             if let Some(stderr) = params.stderr.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_error(stderr, self.log_handlers.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_input(
-                    params.input,
-                    client_rx,
-                    self.current_requests.clone(),
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_input(
+                        params.input,
+                        client_rx,
+                        self.current_requests.clone(),
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
         })?;
 
         {
@@ -369,6 +377,7 @@ impl TransportDelegate {
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
+        log::debug!("Handle error started");
         let mut buffer = String::new();
 
         let mut reader = BufReader::new(stderr);
@@ -520,18 +529,21 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     /// Get an open port to use with the tcp client when not supplied by debug config
-    pub async fn port(host: &TCPHost) -> Result<u16> {
+    pub async fn port(host: &TcpArgumentsTemplate) -> Result<u16> {
         if let Some(port) = host.port {
             Ok(port)
         } else {
-            Ok(TcpListener::bind(SocketAddrV4::new(host.host(), 0))
-                .await?
-                .local_addr()?
-                .port())
+            Self::unused_port(host.host()).await
         }
     }
 
-    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
+    pub async fn unused_port(host: Ipv4Addr) -> Result<u16> {
+        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
+            .await?
+            .local_addr()?
+            .port())
+    }
+
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
@@ -540,19 +552,16 @@ impl TcpTransport {
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::null())
@@ -629,19 +638,16 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::piped())

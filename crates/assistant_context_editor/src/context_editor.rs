@@ -48,14 +48,24 @@ use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::TypeId,
+    cmp,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::SelectionGoal;
 use ui::{
     ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
     prelude::*,
 };
 use util::{ResultExt, maybe};
-use workspace::searchable::{Direction, SearchableItemHandle};
+use workspace::{
+    CollaboratorId,
+    searchable::{Direction, SearchableItemHandle},
+};
 use workspace::{
     Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
@@ -139,7 +149,7 @@ pub trait AssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>>;
@@ -291,6 +301,7 @@ impl ContextEditor {
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -617,6 +628,7 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
+            ContextEvent::SummaryGenerated => {}
             ContextEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(
@@ -1045,7 +1057,7 @@ impl ContextEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon: IconName::Ai,
+                        icon_path: SharedString::from(IconName::Ai.path()),
                         label: "Thinking Process".into(),
                     }),
                 );
@@ -1088,7 +1100,7 @@ impl ContextEditor {
                         FoldPlaceholder {
                             render: render_fold_icon_button(
                                 cx.entity().downgrade(),
-                                section.icon,
+                                section.icon.path().into(),
                                 section.label.clone(),
                             ),
                             merge_adjacent: false,
@@ -1098,7 +1110,7 @@ impl ContextEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon: section.icon,
+                        icon_path: section.icon.path().into(),
                         label: section.label,
                     }),
                 );
@@ -2046,7 +2058,7 @@ impl ContextEditor {
                                 FoldPlaceholder {
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
-                                        metadata.crease.icon,
+                                        metadata.crease.icon_path.clone(),
                                         metadata.crease.label.clone(),
                                     ),
                                     ..Default::default()
@@ -2088,7 +2100,7 @@ impl ContextEditor {
                         continue;
                     };
                     let image_id = image.id();
-                    let image_task = LanguageModelImage::from_image(image, cx).shared();
+                    let image_task = LanguageModelImage::from_image(Arc::new(image), cx).shared();
 
                     for image_position in image_positions.iter() {
                         context.insert_content(
@@ -2178,13 +2190,8 @@ impl ContextEditor {
         });
     }
 
-    pub fn title(&self, cx: &App) -> Cow<str> {
-        self.context
-            .read(cx)
-            .summary()
-            .map(|summary| summary.text.clone())
-            .map(Cow::Owned)
-            .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
+    pub fn title(&self, cx: &App) -> SharedString {
+        self.context.read(cx).summary_or_default()
     }
 
     fn render_patch_block(
@@ -2847,7 +2854,7 @@ fn render_thought_process_fold_icon_button(
 
 fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
-    icon: IconName,
+    icon_path: SharedString,
     label: SharedString,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new(move |fold_id, fold_range, _cx| {
@@ -2855,7 +2862,7 @@ fn render_fold_icon_button(
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(icon))
+            .child(Icon::from_path(icon_path.clone()))
             .child(Label::new(label.clone()).single_line())
             .on_click(move |_, window, cx| {
                 editor
@@ -3159,8 +3166,8 @@ impl Focusable for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content_text(&self, _window: &Window, cx: &App) -> Option<SharedString> {
-        Some(util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into())
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(item::ItemEvent)) {
@@ -3413,15 +3420,14 @@ impl FollowableItem for ContextEditor {
         true
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<proto::PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_leader_peer_id(leader_peer_id, window, cx)
-        })
+        self.editor
+            .update(cx, |editor, cx| editor.set_leader_id(leader_id, window, cx))
     }
 
     fn dedup(&self, existing: &Self, _window: &Window, cx: &App) -> Option<item::Dedup> {
@@ -3767,7 +3773,7 @@ pub fn make_lsp_adapter_delegate(
         let Some(worktree) = project.worktrees(cx).next() else {
             return Ok(None::<Arc<dyn LspAdapterDelegate>>);
         };
-        let http_client = project.client().http_client().clone();
+        let http_client = project.client().http_client();
         project.lsp_store().update(cx, |_, cx| {
             Ok(Some(LocalLspAdapterDelegate::new(
                 project.languages().clone(),

@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
@@ -34,7 +34,7 @@ impl Tool for DeletePathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -62,6 +62,7 @@ impl Tool for DeletePathTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {

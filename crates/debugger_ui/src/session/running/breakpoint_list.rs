@@ -45,6 +45,7 @@ impl Focusable for BreakpointList {
         self.focus_handle.clone()
     }
 }
+
 impl BreakpointList {
     pub(super) fn new(
         session: Entity<Session>,
@@ -213,6 +214,7 @@ impl Render for BreakpointList {
         }
         v_flex()
             .id("breakpoint-list")
+            .track_focus(&self.focus_handle)
             .on_hover(cx.listener(|this, hovered, window, cx| {
                 if *hovered {
                     this.show_scrollbar = true;

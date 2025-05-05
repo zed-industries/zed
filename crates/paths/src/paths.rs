@@ -401,7 +401,7 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-/// Returns the relative path to a `launch.json` file within a project.
+/// Returns the relative path to a `debug.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }
@@ -409,4 +409,19 @@ pub fn local_debug_file_relative_path() -> &'static Path {
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
+}
+
+/// Returns the path to the vscode user settings file
+pub fn vscode_settings_file() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let rel_path = "Code/User/Settings.json";
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        } else {
+            config_dir().join(rel_path)
+        }
+    })
 }

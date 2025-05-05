@@ -4,7 +4,7 @@
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
@@ -1472,7 +1472,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(&remote_branches, &branches_set);
@@ -1505,7 +1505,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.name, branches[2]);
+    assert_eq!(server_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx.update(|cx| {
@@ -1545,7 +1545,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.name, "totally-new-branch");
+    assert_eq!(server_branch.name(), "totally-new-branch");
 }
 
 pub async fn init_test(
@@ -1566,7 +1566,6 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
-    let debug_adapters = DapRegistry::default().into();
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
@@ -1579,7 +1578,6 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
-                debug_adapters,
                 extension_host_proxy: proxy,
             },
             cx,

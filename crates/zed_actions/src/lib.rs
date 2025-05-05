@@ -199,14 +199,14 @@ pub mod assistant {
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct OpenPromptLibrary {
+    pub struct OpenRulesLibrary {
         #[serde(skip)]
-        pub prompt_to_focus: Option<Uuid>,
+        pub prompt_to_select: Option<Uuid>,
     }
 
     impl_action_with_deprecated_aliases!(
         assistant,
-        OpenPromptLibrary,
+        OpenRulesLibrary,
         ["assistant::DeployPromptLibrary"]
     );
 

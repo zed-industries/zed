@@ -796,8 +796,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
-        VimCommand::str(("buffers", ""), "tab_switcher::Toggle"),
-        VimCommand::str(("ls", ""), "tab_switcher::Toggle"),
+        VimCommand::str(("buffers", ""), "tab_switcher::ToggleAll"),
+        VimCommand::str(("ls", ""), "tab_switcher::ToggleAll"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
         VimCommand::new(("tabe", "dit"), workspace::NewFile),
@@ -1446,27 +1446,42 @@ impl ShellExec {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
-                cx.emit(workspace::Event::SpawnTask {
-                    action: Box::new(SpawnInTerminal {
-                        id: TaskId("vim".to_string()),
-                        full_label: command.clone(),
-                        label: command.clone(),
-                        command: command.clone(),
-                        args: Vec::new(),
-                        command_label: command.clone(),
-                        cwd,
-                        env: HashMap::default(),
-                        use_new_terminal: true,
-                        allow_concurrent_runs: true,
-                        reveal: RevealStrategy::NoFocus,
-                        reveal_target: RevealTarget::Dock,
-                        hide: HideStrategy::Never,
-                        shell,
-                        show_summary: false,
-                        show_command: false,
-                        show_rerun: false,
-                    }),
-                });
+
+                let spawn_in_terminal = SpawnInTerminal {
+                    id: TaskId("vim".to_string()),
+                    full_label: command.clone(),
+                    label: command.clone(),
+                    command: command.clone(),
+                    args: Vec::new(),
+                    command_label: command.clone(),
+                    cwd,
+                    env: HashMap::default(),
+                    use_new_terminal: true,
+                    allow_concurrent_runs: true,
+                    reveal: RevealStrategy::NoFocus,
+                    reveal_target: RevealTarget::Dock,
+                    hide: HideStrategy::Never,
+                    shell,
+                    show_summary: false,
+                    show_command: false,
+                    show_rerun: false,
+                };
+
+                let task_status = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
+                cx.background_spawn(async move {
+                    match task_status.await {
+                        Some(Ok(status)) => {
+                            if status.success() {
+                                log::debug!("Vim shell exec succeeded");
+                            } else {
+                                log::debug!("Vim shell exec failed, code: {:?}", status.code());
+                            }
+                        }
+                        Some(Err(e)) => log::error!("Vim shell exec failed: {e}"),
+                        None => log::debug!("Vim shell exec got cancelled"),
+                    }
+                })
+                .detach();
             });
             return;
         };
@@ -1498,7 +1513,7 @@ impl ShellExec {
             editor.highlight_rows::<ShellExec>(
                 input_range.clone().unwrap(),
                 cx.theme().status().unreachable_background,
-                false,
+                Default::default(),
                 cx,
             );
 

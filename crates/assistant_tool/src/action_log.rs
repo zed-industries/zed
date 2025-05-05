@@ -29,6 +29,10 @@ impl ActionLog {
         }
     }
 
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
     /// Notifies a diagnostics check
     pub fn checked_project_diagnostics(&mut self) {
         self.edited_since_project_diagnostics_check = false;
@@ -39,10 +43,10 @@ impl ActionLog {
         self.edited_since_project_diagnostics_check
     }
 
-    fn track_buffer(
+    fn track_buffer_internal(
         &mut self,
         buffer: Entity<Buffer>,
-        created: bool,
+        is_created: bool,
         cx: &mut Context<Self>,
     ) -> &mut TrackedBuffer {
         let tracked_buffer = self
@@ -59,7 +63,7 @@ impl ActionLog {
                 let base_text;
                 let status;
                 let unreviewed_changes;
-                if created {
+                if is_created {
                     base_text = Rope::default();
                     status = TrackedBufferStatus::Created;
                     unreviewed_changes = Patch::new(vec![Edit {
@@ -146,7 +150,7 @@ impl ActionLog {
                     // resurrected externally, we want to clear the changes we
                     // were tracking and reset the buffer's state.
                     self.tracked_buffers.remove(&buffer);
-                    self.track_buffer(buffer, false, cx);
+                    self.track_buffer_internal(buffer, false, cx);
                 }
                 cx.notify();
             }
@@ -261,25 +265,21 @@ impl ActionLog {
 
     /// Track a buffer as read, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer(buffer, false, cx);
+        self.track_buffer_internal(buffer, false, cx);
     }
 
-    /// Track a buffer that was added as context, so we can notify the model about user edits.
-    pub fn buffer_added_as_context(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer(buffer, false, cx);
-    }
-
-    /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer(buffer.clone(), true, cx);
-        self.buffer_edited(buffer, cx)
+    /// Mark a buffer as edited, so we can refresh it in the context
+    pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.edited_since_project_diagnostics_check = true;
+        self.tracked_buffers.remove(&buffer);
+        self.track_buffer_internal(buffer.clone(), true, cx);
     }
 
     /// Mark a buffer as edited, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
 
-        let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
@@ -287,7 +287,7 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
             TrackedBufferStatus::Created => {
                 self.tracked_buffers.remove(&buffer);
@@ -397,7 +397,7 @@ impl ActionLog {
 
                 // Clear all tracked changes for this buffer and start over as if we just read it.
                 self.tracked_buffers.remove(&buffer);
-                self.track_buffer(buffer.clone(), false, cx);
+                self.buffer_read(buffer.clone(), cx);
                 cx.notify();
                 save
             }
@@ -695,9 +695,17 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
@@ -765,9 +773,20 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
+        fs.insert_tree(
+            path!("/dir"),
+            json!({"file": "abc\ndef\nghi\njkl\nmno\npqr"}),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno\npqr", cx));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
@@ -839,9 +858,17 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
@@ -928,25 +955,21 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/dir"), json!({})).await;
-
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let file_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
             .unwrap();
 
-        // Simulate file2 being recreated by a tool.
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(file_path, cx))
             .await
             .unwrap();
         cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| buffer.set_text("lorem", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
@@ -1067,8 +1090,9 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer(file2_path, cx))
             .await
             .unwrap();
+        action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
-        action_log.update(cx, |log, cx| log.will_create_buffer(buffer2.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
             .await
@@ -1381,8 +1405,9 @@ mod tests {
             .await
             .unwrap();
         cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| buffer.set_text("content", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
@@ -1490,7 +1515,7 @@ mod tests {
             log::info!("quiescing...");
             cx.run_until_parked();
             action_log.update(cx, |log, cx| {
-                let tracked_buffer = log.track_buffer(buffer.clone(), false, cx);
+                let tracked_buffer = log.tracked_buffers.get(&buffer).unwrap();
                 let mut old_text = tracked_buffer.base_text.clone();
                 let new_text = buffer.read(cx).as_rope();
                 for edit in tracked_buffer.unreviewed_changes.edits() {

@@ -1,7 +1,5 @@
-// todo(windows): remove
-#![cfg_attr(windows, allow(dead_code))]
-
 mod app_menu;
+mod keyboard;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -66,6 +64,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use keyboard::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -79,7 +78,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::TestScreenCaptureSource;
+pub use test::{TestDispatcher, TestScreenCaptureSource};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -802,6 +801,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
@@ -809,7 +809,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -852,6 +855,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
@@ -1069,7 +1073,10 @@ pub(crate) struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     pub focus: bool,
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1479,6 +1486,21 @@ pub enum ImageFormat {
     Tiff,
 }
 
+impl ImageFormat {
+    /// Returns the mime type for the ImageFormat
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "image/png",
+            ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Webp => "image/webp",
+            ImageFormat::Gif => "image/gif",
+            ImageFormat::Svg => "image/svg+xml",
+            ImageFormat::Bmp => "image/bmp",
+            ImageFormat::Tiff => "image/tiff",
+        }
+    }
+}
+
 /// An image, with a format and certain bytes
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
@@ -1497,6 +1519,15 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// An empty image containing no data
+    pub fn empty() -> Self {
+        Self {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+            id: 0,
+        }
+    }
+
     /// Get this image's ID
     pub fn id(&self) -> u64 {
         self.id
@@ -1509,8 +1540,24 @@ impl Image {
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(window, cx)
+            .use_data(None, window, cx)
             .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `get_asset` API to make this image renderable
+    pub fn get_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        ImageSource::Image(self)
+            .get_data(None, window, cx)
+            .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `remove_asset` API to drop this image, if possible.
+    pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
+        ImageSource::Image(self).remove_asset(cx);
     }
 
     /// Convert the clipboard image to an `ImageData` object.
@@ -1633,12 +1680,4 @@ impl From<String> for ClipboardString {
             metadata: None,
         }
     }
-}
-
-/// A trait for platform-specific keyboard layouts
-pub trait PlatformKeyboardLayout {
-    /// Get the keyboard layout ID, which should be unique to the layout
-    fn id(&self) -> &str;
-    /// Get the keyboard layout display name
-    fn name(&self) -> &str;
 }

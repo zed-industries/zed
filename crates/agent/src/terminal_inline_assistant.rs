@@ -1,23 +1,23 @@
-use crate::context::attach_context_to_message;
+use crate::context::load_context;
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
 use fs::Fs;
-use gpui::{App, Entity, Focusable, Global, Subscription, UpdateGlobal, WeakEntity};
+use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
     ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role, report_assistant_event,
 };
 use project::Project;
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, PromptStore};
 use std::sync::Arc;
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
@@ -69,7 +69,9 @@ impl TerminalInlineAssistant {
         terminal_view: &Entity<TerminalView>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
+        prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -90,6 +92,7 @@ impl TerminalInlineAssistant {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 window,
                 cx,
             )
@@ -109,6 +112,7 @@ impl TerminalInlineAssistant {
             prompt_editor,
             workspace.clone(),
             context_store,
+            prompt_store,
             window,
             cx,
         );
@@ -196,11 +200,11 @@ impl TerminalInlineAssistant {
             .log_err();
 
         let codegen = assist.codegen.clone();
-        let Some(request) = self.request_for_inline_assist(assist_id, cx).log_err() else {
+        let Some(request_task) = self.request_for_inline_assist(assist_id, cx).log_err() else {
             return;
         };
 
-        codegen.update(cx, |codegen, cx| codegen.start(request, cx));
+        codegen.update(cx, |codegen, cx| codegen.start(request_task, cx));
     }
 
     fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
@@ -217,7 +221,7 @@ impl TerminalInlineAssistant {
         &self,
         assist_id: TerminalInlineAssistId,
         cx: &mut App,
-    ) -> Result<LanguageModelRequest> {
+    ) -> Result<Task<LanguageModelRequest>> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
         let shell = std::env::var("SHELL").ok();
@@ -246,28 +250,41 @@ impl TerminalInlineAssistant {
             &latest_output,
         )?;
 
-        let mut request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![],
-            cache: false,
-        };
+        let contexts = assist
+            .context_store
+            .read(cx)
+            .context()
+            .cloned()
+            .collect::<Vec<_>>();
+        let context_load_task = assist.workspace.update(cx, |workspace, cx| {
+            let project = workspace.project();
+            load_context(contexts, project, &assist.prompt_store, cx)
+        })?;
 
-        attach_context_to_message(
-            &mut request_message,
-            assist.context_store.read(cx).context().iter(),
-            cx,
-        );
+        Ok(cx.background_spawn(async move {
+            let mut request_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![],
+                cache: false,
+            };
 
-        request_message.content.push(prompt.into());
+            context_load_task
+                .await
+                .loaded_context
+                .add_to_request_message(&mut request_message);
 
-        Ok(LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            messages: vec![request_message],
-            tools: Vec::new(),
-            stop: Vec::new(),
-            temperature: None,
-        })
+            request_message.content.push(prompt.into());
+
+            LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                mode: None,
+                messages: vec![request_message],
+                tools: Vec::new(),
+                stop: Vec::new(),
+                temperature: None,
+            }
+        }))
     }
 
     fn finish_assist(
@@ -380,6 +397,7 @@ struct TerminalInlineAssist {
     codegen: Entity<TerminalCodegen>,
     workspace: WeakEntity<Workspace>,
     context_store: Entity<ContextStore>,
+    prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -390,6 +408,7 @@ impl TerminalInlineAssist {
         prompt_editor: Entity<PromptEditor<TerminalCodegen>>,
         workspace: WeakEntity<Workspace>,
         context_store: Entity<ContextStore>,
+        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -400,6 +419,7 @@ impl TerminalInlineAssist {
             codegen: codegen.clone(),
             workspace: workspace.clone(),
             context_store,
+            prompt_store,
             _subscriptions: vec![
                 window.subscribe(&prompt_editor, cx, |prompt_editor, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| {

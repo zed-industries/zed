@@ -32,6 +32,13 @@ static SINK_FILE_SIZE_BYTES: AtomicU64 = AtomicU64::new(0);
 /// Maximum size of the log file before it will be rotated, in bytes.
 const SINK_FILE_SIZE_BYTES_MAX: u64 = 1024 * 1024; // 1 MB
 
+pub struct Record<'a> {
+    pub scope: Scope,
+    pub level: log::Level,
+    pub message: &'a std::fmt::Arguments<'a>,
+    pub module_path: Option<&'a str>,
+}
+
 pub fn init_output_stdout() {
     unsafe {
         ENABLED_SINKS_STDOUT = true;
@@ -91,20 +98,21 @@ static LEVEL_ANSI_COLORS: [&str; 6] = [
     ANSI_MAGENTA, // Trace: Magenta
 ];
 
+// PERF: batching
 pub fn submit(record: Record) {
     if unsafe { ENABLED_SINKS_STDOUT } {
         let mut stdout = std::io::stdout().lock();
         _ = writeln!(
             &mut stdout,
-            "{} {}{}{}{} {}[{}]{} {}",
+            "{} {ANSI_BOLD}{}{}{ANSI_RESET} {} {}",
             chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
-            ANSI_BOLD,
             LEVEL_ANSI_COLORS[record.level as usize],
             LEVEL_OUTPUT_STRINGS[record.level as usize],
-            ANSI_RESET,
-            ANSI_BOLD,
-            ScopeFmt(record.scope),
-            ANSI_RESET,
+            SourceFmt {
+                scope: record.scope,
+                module_path: record.module_path,
+                ansi: true,
+            },
             record.message
         );
     }
@@ -132,10 +140,14 @@ pub fn submit(record: Record) {
             let mut writer = SizedWriter { file, written: 0 };
             _ = writeln!(
                 &mut writer,
-                "{} {} [{}] {}",
+                "{} {} {} {}",
                 chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
                 LEVEL_OUTPUT_STRINGS[record.level as usize],
-                ScopeFmt(record.scope),
+                SourceFmt {
+                    scope: record.scope,
+                    module_path: record.module_path,
+                    ansi: false,
+                },
                 record.message
             );
             SINK_FILE_SIZE_BYTES.fetch_add(writer.written, Ordering::Relaxed) + writer.written
@@ -166,26 +178,38 @@ pub fn flush() {
     }
 }
 
-struct ScopeFmt(Scope);
-
-impl std::fmt::Display for ScopeFmt {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use std::fmt::Write;
-        f.write_str(self.0[0])?;
-        for scope in &self.0[1..] {
-            if !scope.is_empty() {
-                f.write_char(SCOPE_STRING_SEP_CHAR)?;
-            }
-            f.write_str(scope)?;
-        }
-        Ok(())
-    }
+struct SourceFmt<'a> {
+    scope: Scope,
+    module_path: Option<&'a str>,
+    ansi: bool,
 }
 
-pub struct Record<'a> {
-    pub scope: Scope,
-    pub level: log::Level,
-    pub message: &'a std::fmt::Arguments<'a>,
+impl std::fmt::Display for SourceFmt<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write;
+        f.write_char('[')?;
+        if self.ansi {
+            f.write_str(ANSI_BOLD)?;
+        }
+        // NOTE: if no longer prefixing scopes with their crate name, check if scope[0] is empty
+        if (self.scope[1].is_empty() && self.module_path.is_some()) || self.scope[0].is_empty() {
+            f.write_str(self.module_path.unwrap_or("?"))?;
+        } else {
+            f.write_str(self.scope[0])?;
+            for subscope in &self.scope[1..] {
+                if subscope.is_empty() {
+                    break;
+                }
+                f.write_char(SCOPE_STRING_SEP_CHAR)?;
+                f.write_str(subscope)?;
+            }
+        }
+        if self.ansi {
+            f.write_str(ANSI_RESET)?;
+        }
+        f.write_char(']')?;
+        Ok(())
+    }
 }
 
 fn rotate_log_file<PathRef>(
@@ -257,6 +281,7 @@ mod tests {
         assert_eq!(size.load(Ordering::Relaxed), 0);
     }
 
+    /// Regression test, ensuring that if log level values change we are made aware
     #[test]
     fn test_log_level_names() {
         assert_eq!(LEVEL_OUTPUT_STRINGS[log::Level::Error as usize], "ERROR");

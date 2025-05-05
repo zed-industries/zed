@@ -1,6 +1,8 @@
 pub mod parser;
 mod path_range;
 
+pub use path_range::{LineCol, PathWithRange};
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
@@ -192,6 +194,11 @@ impl Markdown {
         self.parse(cx);
     }
 
+    pub fn replace(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.source = source.into();
+        self.parse(cx);
+    }
+
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if source == self.source() {
             return;
@@ -210,11 +217,21 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
-        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        let count = s
+            .bytes()
+            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
+            .count();
         if count > 0 {
             let mut output = String::with_capacity(s.len() + count);
+            let mut is_newline = false;
             for c in s.chars() {
-                if c.is_ascii_punctuation() {
+                if is_newline && c == ' ' {
+                    continue;
+                }
+                is_newline = c == '\n';
+                if c == '\n' {
+                    output.push('\n')
+                } else if c.is_ascii_punctuation() {
                     output.push('\\')
                 }
                 output.push(c)
@@ -1022,21 +1039,21 @@ impl Element for MarkdownElement {
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::SubstitutedText(text) => {
-                    builder.push_text(text, range.start);
+                    builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::Rule => {
                     builder.push_div(
@@ -1049,8 +1066,8 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.start),
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
+                MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
+                MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
         }
@@ -1152,7 +1169,7 @@ fn render_copy_code_block_button(
     markdown: Entity<Markdown>,
     cx: &App,
 ) -> impl IntoElement {
-    let id = ElementId::NamedInteger("copy-markdown-code".into(), id);
+    let id = ElementId::named_usize("copy-markdown-code", id);
     let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
     IconButton::new(
         id.clone(),
@@ -1378,13 +1395,13 @@ impl MarkdownElementBuilder {
         });
     }
 
-    fn push_text(&mut self, text: &str, source_index: usize) {
+    fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
-            source_index,
+            source_index: source_range.start,
         });
         self.pending_line.text.push_str(text);
-        self.current_source_index = source_index + text.len();
+        self.current_source_index = source_range.end;
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
@@ -1461,6 +1478,10 @@ struct RenderedLine {
 
 impl RenderedLine {
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
+        if source_index >= self.source_end {
+            return self.layout.len();
+        }
+
         let mapping = match self
             .source_mappings
             .binary_search_by_key(&source_index, |probe| probe.source_index)
@@ -1472,6 +1493,10 @@ impl RenderedLine {
     }
 
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
+        if rendered_index >= self.layout.len() {
+            return self.source_end;
+        }
+
         let mapping = match self
             .source_mappings
             .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
@@ -1642,5 +1667,110 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{TestAppContext, size};
+
+    #[gpui::test]
+    fn test_mappings(cx: &mut TestAppContext) {
+        // Formatting.
+        assert_mappings(
+            &render_markdown("He*l*lo", cx),
+            vec![vec![(0, 0), (1, 1), (2, 3), (3, 5), (4, 6), (5, 7)]],
+        );
+
+        // Multiple lines.
+        assert_mappings(
+            &render_markdown("Hello\n\nWorld", cx),
+            vec![
+                vec![(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)],
+                vec![(0, 7), (1, 8), (2, 9), (3, 10), (4, 11), (5, 12)],
+            ],
+        );
+
+        // Multi-byte characters.
+        assert_mappings(
+            &render_markdown("αβγ\n\nδεζ", cx),
+            vec![
+                vec![(0, 0), (2, 2), (4, 4), (6, 6)],
+                vec![(0, 8), (2, 10), (4, 12), (6, 14)],
+            ],
+        );
+
+        // Smart quotes.
+        assert_mappings(&render_markdown("\"", cx), vec![vec![(0, 0), (3, 1)]]);
+        assert_mappings(
+            &render_markdown("\"hey\"", cx),
+            vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
+        );
+    }
+
+    fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
+        );
+        rendered.text
+    }
+
+    #[test]
+    fn test_escape() {
+        assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
+        assert_eq!(
+            Markdown::escape("hello\n    cool world"),
+            "hello\n\ncool world"
+        );
+    }
+
+    #[track_caller]
+    fn assert_mappings(rendered: &RenderedText, expected: Vec<Vec<(usize, usize)>>) {
+        assert_eq!(rendered.lines.len(), expected.len(), "line count mismatch");
+        for (line_ix, line_mappings) in expected.into_iter().enumerate() {
+            let line = &rendered.lines[line_ix];
+
+            assert!(
+                line.source_mappings.windows(2).all(|mappings| {
+                    mappings[0].source_index < mappings[1].source_index
+                        && mappings[0].rendered_index < mappings[1].rendered_index
+                }),
+                "line {} has duplicate mappings: {:?}",
+                line_ix,
+                line.source_mappings
+            );
+
+            for (rendered_ix, source_ix) in line_mappings {
+                assert_eq!(
+                    line.source_index_for_rendered_index(rendered_ix),
+                    source_ix,
+                    "line {}, rendered_ix {}",
+                    line_ix,
+                    rendered_ix
+                );
+
+                assert_eq!(
+                    line.rendered_index_for_source_index(source_ix),
+                    rendered_ix,
+                    "line {}, source_ix {}",
+                    line_ix,
+                    source_ix
+                );
+            }
+        }
     }
 }

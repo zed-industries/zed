@@ -43,6 +43,8 @@ actions!(
         InsertEndOfLine,
         InsertLineAbove,
         InsertLineBelow,
+        InsertEmptyLineAbove,
+        InsertEmptyLineBelow,
         InsertAtPrevious,
         JoinLines,
         JoinLinesNoWhitespace,
@@ -72,6 +74,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::insert_end_of_line);
     Vim::action(editor, cx, Vim::insert_line_above);
     Vim::action(editor, cx, Vim::insert_line_below);
+    Vim::action(editor, cx, Vim::insert_empty_line_above);
+    Vim::action(editor, cx, Vim::insert_empty_line_below);
     Vim::action(editor, cx, Vim::insert_at_previous);
     Vim::action(editor, cx, Vim::change_case);
     Vim::action(editor, cx, Vim::convert_to_upper_case);
@@ -537,6 +541,61 @@ impl Vim {
         });
     }
 
+    fn insert_empty_line_above(
+        &mut self,
+        _: &InsertEmptyLineAbove,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, _, cx| {
+                let selections = editor.selections.all::<Point>(cx);
+
+                let selection_start_rows: BTreeSet<u32> = selections
+                    .into_iter()
+                    .map(|selection| selection.start.row)
+                    .collect();
+                let edits = selection_start_rows
+                    .into_iter()
+                    .map(|row| {
+                        let start_of_line = Point::new(row, 0);
+                        (start_of_line..start_of_line, "\n".to_string())
+                    })
+                    .collect::<Vec<_>>();
+                editor.edit(edits, cx);
+            });
+        });
+    }
+
+    fn insert_empty_line_below(
+        &mut self,
+        _: &InsertEmptyLineBelow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, _, cx| {
+                let selections = editor.selections.all::<Point>(cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+                let selection_end_rows: BTreeSet<u32> = selections
+                    .into_iter()
+                    .map(|selection| selection.end.row)
+                    .collect();
+                let edits = selection_end_rows
+                    .into_iter()
+                    .map(|row| {
+                        let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                        (end_of_line..end_of_line, "\n".to_string())
+                    })
+                    .collect::<Vec<_>>();
+                editor.edit(edits, cx);
+            });
+        });
+    }
+
     fn join_lines_impl(
         &mut self,
         insert_whitespace: bool,
@@ -638,6 +697,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let is_return_char = text == "\n".into() || text == "\r".into();
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
@@ -647,7 +707,7 @@ impl Vim {
                 let (map, display_selections) = editor.selections.all_display(cx);
 
                 let mut edits = Vec::new();
-                for selection in display_selections {
+                for selection in &display_selections {
                     let mut range = selection.range();
                     for _ in 0..count {
                         let new_point = movement::saturating_right(&map, range.end);
@@ -660,11 +720,14 @@ impl Vim {
                     edits.push((
                         range.start.to_offset(&map, Bias::Left)
                             ..range.end.to_offset(&map, Bias::Left),
-                        text.repeat(count),
-                    ))
+                        text.repeat(if is_return_char { 0 } else { count }),
+                    ));
                 }
 
                 editor.edit(edits, cx);
+                if is_return_char {
+                    editor.newline(&editor::actions::Newline, window, cx);
+                }
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -1268,6 +1331,31 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_insert_empty_line_above(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate("[ space", "ˇ").await.assert_matches();
+        cx.simulate("[ space", "The ˇquick").await.assert_matches();
+        cx.simulate_at_each_offset(
+            "[ space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "[ space",
+            indoc! {"
+            The quick
+            ˇ
+            brown fox"},
+        )
+        .await
+        .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_dd(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate("d d", "ˇ").await.assert_matches();
@@ -1626,6 +1714,14 @@ mod test {
         cx.set_shared_state("ˇhello world\n").await;
         cx.simulate_shared_keystrokes("2 0 r - ").await;
         cx.shared_state().await.assert_eq("ˇhello world\n");
+
+        cx.set_shared_state("  helloˇ world\n").await;
+        cx.simulate_shared_keystrokes("r enter").await;
+        cx.shared_state().await.assert_eq("  hello\n ˇ world\n");
+
+        cx.set_shared_state("  helloˇ world\n").await;
+        cx.simulate_shared_keystrokes("2 r enter").await;
+        cx.shared_state().await.assert_eq("  hello\n ˇ orld\n");
     }
 
     #[gpui::test]

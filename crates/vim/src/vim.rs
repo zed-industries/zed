@@ -1023,6 +1023,7 @@ impl Vim {
     }
 
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
+        let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1040,18 +1041,18 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    // No operator active -> Block cursor
-                    CursorShape::Block
+                    cursor_shape.normal.unwrap_or(CursorShape::Block)
                 }
             }
-            Mode::Replace => CursorShape::Underline,
-            Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                CursorShape::Block
+            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
+            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                cursor_shape.visual.unwrap_or(CursorShape::Block)
             }
-            Mode::Insert => {
+            Mode::Insert => cursor_shape.insert.unwrap_or({
                 let editor_settings = EditorSettings::get_global(cx);
                 editor_settings.cursor_shape.unwrap_or_default()
-            }
+            }),
         }
     }
 
@@ -1142,7 +1143,7 @@ impl Vim {
                 && !newest_selection_empty
                 && self.mode == Mode::Normal
                 // When following someone, don't switch vim mode.
-                && editor.leader_peer_id().is_none()
+                && editor.leader_id().is_none()
         {
             if preserve_selection {
                 self.switch_mode(Mode::Visual, true, window, cx);
@@ -1467,7 +1468,7 @@ impl Vim {
     fn local_selections_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editor() else { return };
 
-        if editor.read(cx).leader_peer_id().is_some() {
+        if editor.read(cx).leader_id().is_some() {
             return;
         }
 
@@ -1693,6 +1694,27 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
+/// The settings for cursor shape.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+struct CursorShapeSettings {
+    /// Cursor shape for the normal mode.
+    ///
+    /// Default: block
+    pub normal: Option<CursorShape>,
+    /// Cursor shape for the replace mode.
+    ///
+    /// Default: underline
+    pub replace: Option<CursorShape>,
+    /// Cursor shape for the visual mode.
+    ///
+    /// Default: block
+    pub visual: Option<CursorShape>,
+    /// Cursor shape for the insert mode.
+    ///
+    /// The default value follows the primary cursor_shape.
+    pub insert: Option<CursorShape>,
+}
+
 #[derive(Deserialize)]
 struct VimSettings {
     pub default_mode: Mode,
@@ -1702,6 +1724,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub cursor_shape: CursorShapeSettings,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1713,6 +1736,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    pub cursor_shape: Option<CursorShapeSettings>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1771,6 +1795,11 @@ impl Settings for VimSettings {
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
                 .ok_or_else(Self::missing_default)?,
+            cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
         })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+        // TODO: translate vim extension settings
     }
 }

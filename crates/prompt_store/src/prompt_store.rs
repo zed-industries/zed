@@ -54,19 +54,39 @@ pub struct PromptMetadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum PromptId {
-    User { uuid: Uuid },
+    User { uuid: UserPromptId },
     EditWorkflow,
 }
 
 impl PromptId {
     pub fn new() -> PromptId {
-        PromptId::User {
-            uuid: Uuid::new_v4(),
-        }
+        UserPromptId::new().into()
     }
 
     pub fn is_built_in(&self) -> bool {
         !matches!(self, PromptId::User { .. })
+    }
+}
+
+impl From<UserPromptId> for PromptId {
+    fn from(uuid: UserPromptId) -> Self {
+        PromptId::User { uuid }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UserPromptId(pub Uuid);
+
+impl UserPromptId {
+    pub fn new() -> UserPromptId {
+        UserPromptId(Uuid::new_v4())
+    }
+}
+
+impl From<Uuid> for UserPromptId {
+    fn from(uuid: Uuid) -> Self {
+        UserPromptId(uuid)
     }
 }
 
@@ -211,9 +231,7 @@ impl PromptStore {
             .collect::<heed::Result<HashMap<_, _>>>()?;
 
         for (prompt_id_v1, metadata_v1) in metadata_v1 {
-            let prompt_id_v2 = PromptId::User {
-                uuid: prompt_id_v1.0,
-            };
+            let prompt_id_v2 = UserPromptId(prompt_id_v1.0).into();
             let Some(body_v1) = bodies_v1.remove(&prompt_id_v1) else {
                 continue;
             };
@@ -255,6 +273,10 @@ impl PromptStore {
             LineEnding::normalize(&mut prompt);
             Ok(prompt)
         })
+    }
+
+    pub fn all_prompt_metadata(&self) -> Vec<PromptMetadata> {
+        self.metadata_cache.read().metadata.clone()
     }
 
     pub fn default_prompt_metadata(&self) -> Vec<PromptMetadata> {
@@ -314,7 +336,12 @@ impl PromptStore {
         Some(metadata.id)
     }
 
-    pub fn search(&self, query: String, cx: &App) -> Task<Vec<PromptMetadata>> {
+    pub fn search(
+        &self,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        cx: &App,
+    ) -> Task<Vec<PromptMetadata>> {
         let cached_metadata = self.metadata_cache.read().metadata.clone();
         let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
@@ -333,7 +360,7 @@ impl PromptStore {
                     &query,
                     false,
                     100,
-                    &AtomicBool::default(),
+                    &cancellation_flag,
                     executor,
                 )
                 .await;

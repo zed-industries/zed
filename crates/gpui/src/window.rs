@@ -1,5 +1,5 @@
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
@@ -617,6 +617,7 @@ pub struct Window {
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -933,6 +934,7 @@ impl Window {
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
+            image_cache_stack: Vec::new(),
         })
     }
 
@@ -1152,6 +1154,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         action: Option<Box<dyn Action>>,
+        context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
         let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
@@ -1163,6 +1166,7 @@ impl Window {
                 &KeystrokeEvent {
                     keystroke: key_down_event.keystroke.clone(),
                     action: action.as_ref().map(|action| action.boxed_clone()),
+                    context_stack: context_stack.clone(),
                 },
                 self,
                 cx,
@@ -1463,6 +1467,20 @@ impl Window {
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.rem_size = rem_size.into();
+    }
+
+    /// Acquire a globally unique identifier for the given ElementId.
+    /// Only valid for the duration of the provided closure.
+    pub fn with_global_id<R>(
+        &mut self,
+        element_id: ElementId,
+        f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id);
+        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let result = f(&global_id, self);
+        self.element_id_stack.pop();
+        result
     }
 
     /// Executes the provided function with the specified rem size.
@@ -2099,6 +2117,16 @@ impl Window {
             None
         })
     }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
+    /// Your view will not be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
+        let (task, _) = cx.fetch_asset::<A>(source);
+        task.clone().now_or_never()
+    }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
@@ -2659,7 +2687,9 @@ impl Window {
             order: 0,
             pad: 0,
             grayscale,
-            bounds,
+            bounds: bounds
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil()),
             content_mask,
             corner_radii,
             tile,
@@ -2853,6 +2883,21 @@ impl Window {
         let result = f(self);
         self.rendered_entity_stack.pop();
         result
+    }
+
+    /// Executes the provided function with the specified image cache.
+    pub fn with_image_cache<F, R>(&mut self, image_cache: Option<AnyImageCache>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        if let Some(image_cache) = image_cache {
+            self.image_cache_stack.push(image_cache);
+            let result = f(self);
+            self.image_cache_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -3246,7 +3291,7 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, dispatch_path, cx);
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
         };
 
@@ -3300,13 +3345,18 @@ impl Window {
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
-                self.dispatch_keystroke_observers(event, Some(binding.action), cx);
+                self.dispatch_keystroke_observers(
+                    event,
+                    Some(binding.action),
+                    match_result.context_stack.clone(),
+                    cx,
+                );
                 self.pending_input_changed(cx);
                 return;
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path, cx);
+        self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
         self.pending_input_changed(cx);
     }
 
@@ -3314,6 +3364,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+        context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
         self.dispatch_key_down_up_event(event, &dispatch_path, cx);
@@ -3326,7 +3377,7 @@ impl Window {
             return;
         }
 
-        self.dispatch_keystroke_observers(event, None, cx);
+        self.dispatch_keystroke_observers(event, None, context_stack, cx);
     }
 
     fn pending_input_changed(&mut self, cx: &mut App) {
@@ -3424,7 +3475,12 @@ impl Window {
             for binding in replay.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(&event, Some(binding.action), cx);
+                    self.dispatch_keystroke_observers(
+                        &event,
+                        Some(binding.action),
+                        Vec::default(),
+                        cx,
+                    );
                     continue 'replay;
                 }
             }
@@ -4004,7 +4060,7 @@ pub enum ElementId {
     /// The ID of a View element
     View(EntityId),
     /// An integer ID.
-    Integer(usize),
+    Integer(u64),
     /// A string based ID.
     Name(SharedString),
     /// A UUID.
@@ -4012,9 +4068,16 @@ pub enum ElementId {
     /// An ID that's equated with a focus handle.
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
-    NamedInteger(SharedString, usize),
+    NamedInteger(SharedString, u64),
     /// A path
     Path(Arc<std::path::Path>),
+}
+
+impl ElementId {
+    /// Constructs an `ElementId::NamedInteger` from a name and `usize`.
+    pub fn named_usize(name: impl Into<SharedString>, integer: usize) -> ElementId {
+        Self::NamedInteger(name.into(), integer as u64)
+    }
 }
 
 impl Display for ElementId {
@@ -4047,13 +4110,13 @@ impl TryInto<SharedString> for ElementId {
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        ElementId::Integer(id)
+        ElementId::Integer(id as u64)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self::Integer(id as usize)
+        Self::Integer(id as u64)
     }
 }
 
@@ -4083,25 +4146,25 @@ impl<'a> From<&'a FocusHandle> for ElementId {
 
 impl From<(&'static str, EntityId)> for ElementId {
     fn from((name, id): (&'static str, EntityId)) -> Self {
-        ElementId::NamedInteger(name.into(), id.as_u64() as usize)
+        ElementId::NamedInteger(name.into(), id.as_u64())
     }
 }
 
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
-        ElementId::NamedInteger(name.into(), id)
+        ElementId::NamedInteger(name.into(), id as u64)
     }
 }
 
 impl From<(SharedString, usize)> for ElementId {
     fn from((name, id): (SharedString, usize)) -> Self {
-        ElementId::NamedInteger(name, id)
+        ElementId::NamedInteger(name, id as u64)
     }
 }
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
-        ElementId::NamedInteger(name.into(), id as usize)
+        ElementId::NamedInteger(name.into(), id)
     }
 }
 
@@ -4113,7 +4176,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(name.into(), id as usize)
+        ElementId::NamedInteger(name.into(), id.into())
     }
 }
 

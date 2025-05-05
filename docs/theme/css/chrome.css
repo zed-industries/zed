@@ -177,6 +177,36 @@ a > .hljs {
   display: none;
 }
 
+.nav-wrapper {
+  margin-block-start: 50px;
+  display: block;
+}
+
+.nav-buttons {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 20px 0;
+  padding: 0 10px;
+}
+
+.nav-button {
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--bg);
+  color: var(--fg) !important;
+  text-decoration: none;
+}
+
+.nav-button:hover {
+  background-color: var(--theme-hover);
+  color: var(--icons-hover) !important;
+}
+
+.nav-button i {
+  padding: 0 6px;
+}
+
 .mobile-nav-chapters {
   font-size: 2.5em;
   text-align: center;

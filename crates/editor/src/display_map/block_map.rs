@@ -65,7 +65,7 @@ pub struct CustomBlockId(pub usize);
 
 impl From<CustomBlockId> for ElementId {
     fn from(val: CustomBlockId) -> Self {
-        ElementId::Integer(val.0)
+        val.0.into()
     }
 }
 
