@@ -5,10 +5,10 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MultiBuffer, PathKey};
+use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, TextStyleRefinement, WeakEntity, pulsating_between,
+    Task, TextStyle, TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
@@ -382,14 +382,13 @@ impl EditFileToolCard {
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
                     multibuffer.clear(cx);
-                    let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+                    multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
                         diff_hunk_ranges,
                         editor::DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     );
-                    debug_assert!(is_newly_added);
                     multibuffer.add_diff(buffer_diff, cx);
                     let end = multibuffer.len(cx);
                     Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
@@ -554,7 +553,30 @@ impl ToolCard for EditFileToolCard {
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
                 .unwrap_or_default();
 
-            let element = editor.render(window, cx);
+            let settings = ThemeSettings::get_global(cx);
+            let element = EditorElement::new(
+                &cx.entity(),
+                EditorStyle {
+                    background: cx.theme().colors().editor_background,
+                    horizontal_padding: rems(0.25).to_pixels(window.rem_size()),
+                    local_player: cx.theme().players().local(),
+                    text: TextStyle {
+                        color: cx.theme().colors().editor_foreground,
+                        font_family: settings.buffer_font.family.clone(),
+                        font_features: settings.buffer_font.features.clone(),
+                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                        font_size: settings.buffer_font_size(cx).into(),
+                        font_weight: settings.buffer_font.weight,
+                        line_height: relative(settings.buffer_line_height.value()),
+                        ..Default::default()
+                    },
+                    scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+                    syntax: cx.theme().syntax().clone(),
+                    status: cx.theme().status().clone(),
+                    ..Default::default()
+                },
+            );
+
             (element.into_any_element(), line_height)
         });
 
@@ -775,9 +797,16 @@ async fn build_buffer_diff(
         })?
         .await;
 
+    let secondary_diff = cx.new(|cx| {
+        let mut diff = BufferDiff::new(&buffer, cx);
+        diff.set_snapshot(diff_snapshot.clone(), &buffer, cx);
+        diff
+    })?;
+
     cx.new(|cx| {
         let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
+        diff.set_snapshot(diff_snapshot, &buffer, cx);
+        diff.set_secondary_diff(secondary_diff);
         diff
     })
 }
