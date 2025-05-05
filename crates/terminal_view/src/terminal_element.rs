@@ -1,28 +1,28 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, ContentMask,
-    Context, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
-    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
-    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
+    ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
+    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
+    UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
+    relative, size,
 };
 use itertools::Itertools;
 use language::CursorShape;
 use settings::Settings;
-use std::ops::Range;
 use terminal::{
+    IndexedCell, Terminal, TerminalBounds, TerminalContent,
     alacritty_terminal::{
         grid::Dimensions,
         index::Point as AlacPoint,
-        term::{cell::Flags, TermMode},
+        term::{TermMode, cell::Flags},
         vte::ansi::{
             Color::{self as AnsiColor, Named},
             CursorShape as AlacCursorShape, NamedColor,
         },
     },
     terminal_settings::TerminalSettings,
-    IndexedCell, Terminal, TerminalBounds, TerminalContent,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};
@@ -892,15 +892,11 @@ impl Element for TerminalElement {
             let origin =
                 bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
-            // --- Read IME state and drop the read guard early ---
             let marked_text_cloned: Option<String> = {
-                // 新しいスコープを作成
-                let ime_state = self.terminal_view.read(cx); // 不変借用開始
-                ime_state.marked_text.clone() // 必要なデータをクローンする
-            }; // ここで ime_state がスコープを抜け、不変借用が終了する
+                let ime_state = self.terminal_view.read(cx);
+                ime_state.marked_text.clone()
+            };
 
-            // --- Initialize TerminalInputHandler with empty IME state ---
-            // --- Pass terminal_view to TerminalInputHandler ---
             let terminal_input_handler = TerminalInputHandler {
                 terminal: self.terminal.clone(),
                 terminal_view: self.terminal_view.clone(),
@@ -910,14 +906,11 @@ impl Element for TerminalElement {
                     .as_ref()
                     .map(|cursor| cursor.bounding_rect(origin)),
             };
-            // --- End Pass ---
-            // --- End initialization ---
 
             self.register_mouse_listeners(layout.mode, &layout.hitbox, window);
             if window.modifiers().secondary()
                 && bounds.contains(&window.mouse_position())
                 && self.terminal_view.read(cx).hover_target_tooltip.is_some()
-            // tooltip の read は paint 前ならOK
             {
                 window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(&layout.hitbox));
             } else {
@@ -974,7 +967,6 @@ impl Element for TerminalElement {
                         cell.paint(origin, &layout.dimensions, bounds, window, cx);
                     }
 
-                    // --- 3. 未確定文字列 (marked_text) があれば描画 ---
                     if let Some(text_to_mark) = &marked_text_cloned {
                         if !text_to_mark.is_empty() {
                             if let Some(cursor_layout) = &original_cursor {
@@ -1020,17 +1012,13 @@ impl Element for TerminalElement {
                                     }
                                 }
                             } else {
-                                // カーソルがない場合は描画できない (通常は発生しないはず)
                                 log::warn!("Cannot draw marked text: cursor layout is None");
                             }
                         }
                     }
 
-                    // --- 4. カーソルを描画 (未確定文字列がない場合のみ) ---
                     if self.cursor_visible && marked_text_cloned.is_none() {
-                        // marked_text が None の時だけ描画
                         if let Some(mut cursor) = original_cursor {
-                            // paint クロージャの外で take した値を使う
                             cursor.paint(origin, window, cx);
                         }
                     }
@@ -1086,9 +1074,11 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
-    fn marked_text_range(&mut self, _window: &mut Window, cx: &mut App) -> Option<Range<usize>> {
-        // --- Read from TerminalView using read() ---
-        // Assuming get_marked_range takes &self
+    fn marked_text_range(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<std::ops::Range<usize>> {
         self.terminal_view.read(cx).get_marked_range()
     }
 
@@ -1104,25 +1094,16 @@ impl InputHandler for TerminalInputHandler {
 
     fn replace_text_in_range(
         &mut self,
-        _replacement_range: Option<Range<usize>>,
+        _replacement_range: Option<std::ops::Range<usize>>,
         text: &str,
         window: &mut Window,
         cx: &mut App,
     ) {
-        log::debug!(
-            "***** TerminalInputHandler::replace_text_in_range called! text: '{}' *****",
-            text
-        );
-
-        // --- Update TerminalView state ---
-        // update returns () directly in new API, no Result to check
         self.terminal_view.update(cx, |view, view_cx| {
             view.clear_marked_text(view_cx);
             view.commit_text(text, view_cx);
         });
-        // --- End Update ---
 
-        // Telemetry part remains the same
         self.workspace
             .update(cx, |this, cx| {
                 window.invalidate_character_coordinates();
@@ -1130,53 +1111,43 @@ impl InputHandler for TerminalInputHandler {
                 let telemetry = project.client().telemetry().clone();
                 telemetry.log_edit_event("terminal", project.is_via_ssh());
             })
-            .ok(); // .ok() is fine here as WeakEntity::update returns Result
+            .ok();
     }
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        _range_utf16: Option<Range<usize>>, // TODO: Pass range to set_marked_text if needed
+        _range_utf16: Option<std::ops::Range<usize>>, // TODO: Pass range to set_marked_text if needed
         new_text: &str,
-        new_marked_range: Option<Range<usize>>,
+        new_marked_range: Option<std::ops::Range<usize>>,
         _window: &mut Window,
         cx: &mut App,
     ) {
-        log::debug!(
-            "***** TerminalInputHandler::replace_and_mark_text_in_range called! text: '{}', marked_range: {:?} *****",
-            new_text,
-            new_marked_range
-        );
-        // --- Update TerminalView state ---
         if let Some(range) = new_marked_range {
-            // Use log_err from ResultExt trait for Option/Result logging
             self.terminal_view.update(cx, |view, view_cx| {
                 view.set_marked_text(new_text.to_string(), range, view_cx);
-            }); //.log_err() removed as update returns ()
+            });
         } else {
-            // If no marked range, maybe just clear? Or treat as commit? For now, log.
             log::warn!(
                 "replace_and_mark_text_in_range called with no marked range, text: '{}'",
                 new_text
             );
             // Optionally, clear marked text here:
-            // self.terminal_view.update(cx, |view, view_cx| {
+            // self.terminal_view.update(_cx, |view, view_cx| {
             //     view.clear_marked_text(view_cx);
             // }).log_err();
         }
-        // --- End Update ---
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut App) {
-        log::debug!("***** TerminalInputHandler::unmark_text called! *****");
         self.terminal_view.update(cx, |view, view_cx| {
             view.clear_marked_text(view_cx);
-        }); //.log_err() removed
+        });
     }
 
     fn bounds_for_range(
         &mut self,
-        range_utf16: Range<usize>,
-        window: &mut Window, // Keep window if needed by helper
+        range_utf16: std::ops::Range<usize>,
+        window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
         log::debug!(

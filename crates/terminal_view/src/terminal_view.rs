@@ -222,23 +222,16 @@ impl TerminalView {
         }
     }
 
-    // --- Add IME Helper Methods ---
-
     /// Sets the marked (pre-edit) text from the IME.
     pub(crate) fn set_marked_text(
         &mut self,
         text: String,
-        range: Range<usize>, // UTF-16 range within the text
+        range: Range<usize>,
         cx: &mut Context<Self>,
     ) {
-        log::debug!(
-            "TerminalView::set_marked_text: text='{}', range={:?}",
-            text,
-            range
-        );
         self.marked_text = Some(text);
         self.marked_range_utf16 = Some(range);
-        cx.notify(); // Request repaint to show marked text
+        cx.notify();
     }
 
     /// Gets the current marked range (UTF-16).
@@ -252,20 +245,16 @@ impl TerminalView {
         if self.marked_text.is_some() {
             self.marked_text = None;
             self.marked_range_utf16 = None;
-            cx.notify(); // Request repaint to clear marked text
+            cx.notify();
         }
     }
 
     /// Commits (sends) the given text to the PTY. Called by InputHandler::replace_text_in_range.
     pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        log::debug!("TerminalView::commit_text: text='{}'", text);
-        // Clear any existing marked text first (should be done by caller via clear_marked_text, but belt-and-suspenders)
         self.clear_marked_text(cx);
 
-        // Send text to PTY
         if !text.is_empty() {
             self.terminal.update(cx, |term, _| {
-                log::debug!("Sending committed text to PTY: {}", text);
                 term.input(text.to_string());
             });
         }
@@ -283,8 +272,6 @@ impl TerminalView {
             content.display_offset,
         ))
     }
-
-    // --- End IME Helper Methods ---
 
     pub fn entity(&self) -> &Entity<Terminal> {
         &self.terminal
