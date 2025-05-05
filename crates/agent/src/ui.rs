@@ -4,7 +4,6 @@ mod context_pill;
 mod max_mode_tooltip;
 pub mod preview;
 mod upsell;
-mod usage_banner;
 
 pub use agent_notification::*;
 pub use animated_label::*;
