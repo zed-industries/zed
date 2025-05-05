@@ -2,12 +2,11 @@ use std::iter::zip;
 
 use crate::{
     debugger_panel::DebugPanel,
-    persistence::{SerializedLayout, SerializedPaneLayout},
+    persistence::SerializedPaneLayout,
     tests::{init_test, init_test_workspace, start_debug_session},
 };
 use dap::{StoppedEvent, StoppedEventReason, messages::Events};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::debugger::session::ThreadId;
 use project::{FakeFs, Project};
 use serde_json::json;
 use util::path;
@@ -61,9 +60,6 @@ async fn test_invert_axis_on_panel_position_change(
     let (debug_panel, dock_position) = workspace
         .update(cx, |workspace, window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            let active_session = debug_panel
-                .update(cx, |this, _| this.active_session())
-                .unwrap();
             let dock_position = debug_panel.read(cx).position(window, cx);
             (debug_panel, dock_position)
         })

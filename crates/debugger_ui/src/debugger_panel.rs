@@ -772,6 +772,7 @@ impl DebugPanel {
                 .p_1()
                 .justify_between()
                 .w_full()
+                .when(is_side, |this| this.gap_1())
                 .child(
                     h_flex()
                         .child(
@@ -1031,23 +1032,32 @@ impl DebugPanel {
                 .child(
                     h_flex()
                         .gap_2()
-                        .when_some(
-                            active_session
-                                .as_ref()
-                                .map(|session| session.read(cx).running_state())
-                                .cloned(),
-                            |this, session| {
-                                this.child(
-                                    session.update(cx, |this, cx| this.thread_dropdown(window, cx)),
-                                )
-                                .child(Divider::vertical())
-                            },
+                        .when(is_side, |this| this.justify_between())
+                        .child(
+                            h_flex().when_some(
+                                active_session
+                                    .as_ref()
+                                    .map(|session| session.read(cx).running_state())
+                                    .cloned(),
+                                |this, session| {
+                                    this.child(
+                                        session.update(cx, |this, cx| {
+                                            this.thread_dropdown(window, cx)
+                                        }),
+                                    )
+                                    .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
+                                },
+                            ),
                         )
-                        .when_some(active_session.as_ref(), |this, session| {
-                            let context_menu = self.sessions_drop_down_menu(session, window, cx);
-                            this.child(context_menu).child(Divider::vertical())
-                        })
-                        .when(!is_side, |this| this.child(new_session_button())),
+                        .child(
+                            h_flex()
+                                .when_some(active_session.as_ref(), |this, session| {
+                                    let context_menu =
+                                        self.sessions_drop_down_menu(session, window, cx);
+                                    this.child(context_menu).gap_2().child(Divider::vertical())
+                                })
+                                .when(!is_side, |this| this.child(new_session_button())),
+                        ),
                 ),
         )
     }
