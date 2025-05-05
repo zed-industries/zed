@@ -37,7 +37,9 @@ I want to approaching this FreeBSD port effort with a similar mindset.
 
 Clone down the Zed [repository](https://github.com/zed-industries/zed).
 run `script/linux`
+Add "x86_64-unknown-freebsd" to rust-toolchain.toml.
 
+cargo build
 ---
 
 This will initially be an **unofficial** effort.  

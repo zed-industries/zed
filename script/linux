@@ -243,8 +243,15 @@ fi
 pkg=$(command -v pkg || true)
 if [[ -n $pkg ]]; then
   deps=(
-    gcc
     cmake
+    gcc
+    git
+    llvm
+    pkgconfig
+    protobuf
+    rustup-init
+    libx11
+    alsa-lib
   )
   $maysudo "$pkg" install "${deps[@]}"
   finalize
