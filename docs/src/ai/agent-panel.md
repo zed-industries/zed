@@ -145,12 +145,14 @@ You can also open threads as Markdown by clicking on the file icon button, to th
 ## Feedback
 
 Every change we make to Zed's system prompt and tool set, needs to be backed by an eval with good scores.
+
 Every time the LLM performs a weird change or investigates a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
+
+> Note that rating responses will send your data related to that response to Zed's servers.
+> See [AI Improvement](./ai/ai-improvement.md) and [Privacy and Security](/ai/privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
+> ***If you don't want data persisted on Zed's servers, don't rate***. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
 The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
-You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.
 
-> Note that rating threads does send your data to Zed's servers.
-> So, if you don't want that to happen, it is probably better to not rate it, despite it being helpful to us.
-> For more information about Zed's approach to AI privacy and security, [check out the dedicated page](/ai/privacy-and-security.md).
+You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.
