@@ -797,9 +797,16 @@ async fn build_buffer_diff(
         })?
         .await;
 
+    let secondary_diff = cx.new(|cx| {
+        let mut diff = BufferDiff::new(&buffer, cx);
+        diff.set_snapshot(diff_snapshot.clone(), &buffer, cx);
+        diff
+    })?;
+
     cx.new(|cx| {
         let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
+        diff.set_snapshot(diff_snapshot, &buffer, cx);
+        diff.set_secondary_diff(secondary_diff);
         diff
     })
 }
