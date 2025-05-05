@@ -2668,8 +2668,7 @@ impl AssistantPanel {
                     );
                 });
             }
-            ActiveView::History => todo!(),
-            ActiveView::Configuration => todo!(),
+            ActiveView::History | ActiveView::Configuration => {}
         }
     }
 
