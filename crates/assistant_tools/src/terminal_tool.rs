@@ -175,7 +175,7 @@ impl Tool for TerminalTool {
                             window,
                             cx,
                         )
-                    });
+                    })
                 })?;
 
                 let _ = card.update(cx, |card, _| {
