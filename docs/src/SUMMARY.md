@@ -39,6 +39,7 @@
 
 # AI
 
+<!-- todo! update -->
 - [Overview](./ai/ai.md)
 - [Agent Panel](./ai/agent-panel.md)
 - [Inline Assistant](./ai/inline-assistant.md)
@@ -54,19 +55,6 @@
   - [Custom API Keys](./ai/custom-api-keys.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [Model Improvement](./ai/model-improvement.md)
-
-# Assistant
-
-- [Overview](./assistant/assistant.md)
-- [Configuration](./assistant/configuration.md)
-- [Assistant Panel](./assistant/assistant-panel.md)
-- [Contexts](./assistant/contexts.md)
-- [Inline Assistant](./assistant/inline-assistant.md)
-- [Commands](./assistant/commands.md)
-- [Prompts](./assistant/prompting.md)
-- [Context Servers](./assistant/context-servers.md)
-  - [Model Context Protocol](./assistant/model-context-protocol.md)
-- [Model Improvement](./model-improvement.md)
 
 # Extensions
 
