@@ -50,7 +50,6 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
     InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -432,6 +431,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -735,6 +735,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -933,6 +934,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1944,22 +1946,6 @@ impl AssistantPanel {
             })
     }
 
-    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let plan = self
-            .user_store
-            .read(cx)
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
-
-        Some(UsageBanner::new(plan, usage).into_any_element())
-    }
-
     fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tool_use_limit_reached = self
             .thread
@@ -2277,7 +2263,6 @@ impl Render for AssistantPanel {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
                     .children(self.render_tool_use_limit_reached(cx))
-                    .children(self.render_usage_banner(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),

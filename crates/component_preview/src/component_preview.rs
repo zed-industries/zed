@@ -110,7 +110,6 @@ struct ComponentPreview {
     active_page: PreviewPage,
     components: Vec<ComponentMetadata>,
     component_list: ListState,
-    agent_previews: Vec<ComponentId>,
     cursor_index: usize,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
@@ -179,9 +178,6 @@ impl ComponentPreview {
             },
         );
 
-        // Initialize agent previews
-        let agent_previews = agent::all_agent_previews();
-
         let mut component_preview = Self {
             workspace_id: None,
             focus_handle: cx.focus_handle(),
@@ -195,7 +191,6 @@ impl ComponentPreview {
             component_map: components().0,
             components: sorted_components,
             component_list,
-            agent_previews,
             cursor_index: selected_index,
             filter_editor,
             filter_text: String::new(),
@@ -707,38 +702,22 @@ impl ComponentPreview {
         }
     }
 
-    fn render_active_thread(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_active_thread(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("render-active-thread")
             .size_full()
             .child(
-                v_flex().children(self.agent_previews.iter().filter_map(|component_id| {
-                    if let (Some(thread_store), Some(active_thread)) = (
-                        self.thread_store.as_ref().map(|ts| ts.downgrade()),
-                        self.active_thread.clone(),
-                    ) {
-                        agent::get_agent_preview(
-                            component_id,
-                            self.workspace.clone(),
-                            active_thread,
-                            thread_store,
-                            window,
-                            cx,
-                        )
-                        .map(|element| div().child(element))
-                    } else {
-                        None
-                    }
-                })),
+                div()
+                    .mx_auto()
+                    .w(px(640.))
+                    .h_full()
+                    .py_8()
+                    .bg(cx.theme().colors().panel_background)
+                    .children(self.active_thread.clone().map(|thread| thread.clone()))
+                    .when_none(&self.active_thread.clone(), |this| {
+                        this.child("No active thread")
+                    }),
             )
-            .children(self.active_thread.clone().map(|thread| thread.clone()))
-            .when_none(&self.active_thread.clone(), |this| {
-                this.child("No active thread")
-            })
             .into_any_element()
     }
 
@@ -852,7 +831,7 @@ impl Render for ComponentPreview {
                             .render_component_page(&id, window, cx)
                             .into_any_element(),
                         PreviewPage::ActiveThread => {
-                            self.render_active_thread(window, cx).into_any_element()
+                            self.render_active_thread(cx).into_any_element()
                         }
                     }),
             )

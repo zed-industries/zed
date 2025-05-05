@@ -9,6 +9,7 @@ mod context_picker;
 mod context_server_configuration;
 mod context_store;
 mod context_strip;
+mod debug;
 mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -47,7 +48,7 @@ pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use context_store::ContextStore;
-pub use ui::{all_agent_previews, get_agent_preview};
+pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
     agent,
