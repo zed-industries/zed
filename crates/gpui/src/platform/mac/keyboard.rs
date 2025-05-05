@@ -6,7 +6,7 @@ use core_graphics::event::CGKeyCode;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
 use crate::{
-    PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key, is_immutable_key,
+    PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key,
     platform::mac::{LMGetKbdType, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData},
 };
 
@@ -110,7 +110,7 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
     }
 
     fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
-        if is_immutable_key(key) {
+        if key.chars().count() != 1 {
             return Ok(None);
         }
         if is_alphabetic_key(key) {

@@ -1,6 +1,4 @@
-use crate::{
-    PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key, is_immutable_key,
-};
+use crate::{PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key};
 
 pub(crate) struct LinuxKeyboardLayout {
     id: String,
@@ -31,7 +29,7 @@ impl PlatformKeyboardMapper for LinuxKeyboardMapper {
     }
 
     fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
-        if is_immutable_key(key) {
+        if key.chars().count() != 1 {
             return Ok(None);
         }
         if is_alphabetic_key(key) {
