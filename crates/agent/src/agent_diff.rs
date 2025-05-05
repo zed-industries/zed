@@ -1814,7 +1814,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit(
@@ -2028,7 +2028,7 @@ mod tests {
 
         // Make changes
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer1.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer1.clone(), cx));
             buffer1.update(cx, |buffer, cx| {
                 buffer
                     .edit(
@@ -2045,7 +2045,7 @@ mod tests {
             });
             action_log.update(cx, |log, cx| log.buffer_edited(buffer1.clone(), cx));
 
-            action_log.update(cx, |log, cx| log.track_buffer(buffer2.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
             buffer2.update(cx, |buffer, cx| {
                 buffer
                     .edit(

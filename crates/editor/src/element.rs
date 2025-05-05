@@ -170,7 +170,7 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub const SCROLLBAR_WIDTH: Pixels = px(15.);
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -6810,10 +6810,27 @@ impl Element for EditorElement {
                             cx,
                         )
                         .unwrap_or_default();
-                    let text_width = bounds.size.width - gutter_dimensions.width;
+                    let hitbox = window.insert_hitbox(bounds, false);
+                    let gutter_hitbox =
+                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    let text_hitbox = window.insert_hitbox(
+                        Bounds {
+                            origin: gutter_hitbox.top_right()
+                                + point(style.horizontal_padding, Pixels::default()),
+                            size: size(
+                                bounds.size.width
+                                    - gutter_dimensions.width
+                                    - 2. * style.horizontal_padding,
+                                bounds.size.height,
+                            ),
+                        },
+                        false,
+                    );
 
-                    let editor_width =
-                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
+                    let editor_width = text_hitbox.size.width
+                        - gutter_dimensions.margin
+                        - em_width
+                        - style.scrollbar_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -6849,24 +6866,13 @@ impl Element for EditorElement {
                         .map(|(guide, active)| (self.column_pixels(*guide, window, cx), *active))
                         .collect::<SmallVec<[_; 2]>>();
 
-                    let hitbox = window.insert_hitbox(bounds, false);
-                    let gutter_hitbox =
-                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
-                    let text_hitbox = window.insert_hitbox(
-                        Bounds {
-                            origin: gutter_hitbox.top_right(),
-                            size: size(text_width, bounds.size.height),
-                        },
-                        false,
-                    );
-
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
                     let content_offset = point(gutter_dimensions.margin, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
                     let editor_text_bounds =
-                        Bounds::from_corners(content_origin, bounds.bottom_right());
+                        Bounds::from_corners(content_origin, text_hitbox.bounds.bottom_right());
 
                     let height_in_lines = editor_text_bounds.size.height / line_height;
 
@@ -8715,8 +8721,10 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if editor.set_wrap_width(Some(editor_width), cx) {
-        snapshot = editor.snapshot(window, cx);
+    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
+        if editor.set_wrap_width(Some(editor_width), cx) {
+            snapshot = editor.snapshot(window, cx);
+        }
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;

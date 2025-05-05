@@ -37,6 +37,8 @@ language.workspace = true
 language_model.workspace = true
 linkme.workspace = true
 open.workspace = true
+paths.workspace = true
+portable-pty.workspace = true
 project.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
@@ -50,13 +52,13 @@ strsim.workspace = true
 task.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
+theme.workspace = true
 ui.workspace = true
 util.workspace = true
 web_search.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
-theme.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
@@ -75,6 +77,8 @@ reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
+theme.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
+zlog.workspace = true
