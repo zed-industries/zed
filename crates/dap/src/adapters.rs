@@ -290,7 +290,7 @@ impl DebugAdapterBinary {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdapterVersion {
     pub tag_name: String,
     pub url: String,

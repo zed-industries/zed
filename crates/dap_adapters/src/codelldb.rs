@@ -1,17 +1,16 @@
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use dap::adapters::{DebugTaskDefinition, InlineValueProvider, latest_github_release};
 use gpui::AsyncApp;
 use task::DebugRequest;
-use util::ResultExt;
 
 use crate::*;
 
 #[derive(Default)]
 pub(crate) struct CodeLldbDebugAdapter {
-    last_known_version: OnceLock<String>,
+    path_to_codelldb: OnceLock<String>,
 }
 
 impl CodeLldbDebugAdapter {
@@ -85,7 +84,6 @@ impl CodeLldbDebugAdapter {
             }
         };
         let asset_name = format!("codelldb-{platform}-{arch}.vsix");
-        let _ = self.last_known_version.set(release.tag_name.clone());
         let ret = AdapterVersion {
             tag_name: release.tag_name,
             url: release
@@ -98,38 +96,6 @@ impl CodeLldbDebugAdapter {
         };
 
         Ok(ret)
-    }
-
-    async fn get_installed_binary(
-        &self,
-        _: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
-        _: Option<PathBuf>,
-        _: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        let Some(version) = self.last_known_version.get() else {
-            bail!("Could not determine latest CodeLLDB version");
-        };
-        let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-        let version_path = adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version));
-
-        let adapter_dir = version_path.join("extension").join("adapter");
-        let command = adapter_dir.join("codelldb");
-        let command = command
-            .to_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
-        Ok(DebugAdapterBinary {
-            command,
-            cwd: None,
-            arguments: vec![
-                "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
-            ],
-            request_args: self.request_args(config),
-            envs: HashMap::default(),
-            connection: None,
-        })
     }
 }
 
@@ -144,22 +110,49 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         delegate: &dyn DapDelegate,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
-        cx: &mut AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+        let mut command = user_installed_path
+            .map(|p| p.to_string_lossy().to_string())
+            .or(self.path_to_codelldb.get().cloned());
+
+        if command.is_none() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            let version = self.fetch_latest_adapter_version(delegate).await?;
             adapters::download_adapter_from_github(
                 self.name(),
-                version,
+                version.clone(),
                 adapters::DownloadedFileType::Vsix,
                 delegate,
             )
             .await?;
-        }
+            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
+            let version_path =
+                adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
 
-        self.get_installed_binary(delegate, &config, user_installed_path, cx)
-            .await
+            let adapter_dir = version_path.join("extension").join("adapter");
+            let path = adapter_dir.join("codelldb");
+            let path = path
+                .to_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
+            self.path_to_codelldb.set(path.clone()).ok();
+            command = Some(path);
+        };
+
+        Ok(DebugAdapterBinary {
+            command: command.unwrap(),
+            cwd: None,
+            arguments: vec![
+                "--settings".into(),
+                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
+            ],
+            request_args: self.request_args(config),
+            envs: HashMap::default(),
+            connection: None,
+        })
     }
+
     fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
         Some(Box::new(CodeLldbInlineValueProvider))
     }
