@@ -7,7 +7,10 @@ use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
-use ui::{ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use util::ResultExt as _;
 
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
@@ -19,6 +22,7 @@ pub struct ProfileSelector {
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
+    documentation_side: DocumentationSide,
 }
 
 impl ProfileSelector {
@@ -26,6 +30,7 @@ impl ProfileSelector {
         fs: Arc<dyn Fs>,
         thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
+        documentation_side: DocumentationSide,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
@@ -39,7 +44,13 @@ impl ProfileSelector {
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
             _subscriptions: vec![settings_subscription],
+            documentation_side,
         }
+    }
+
+    pub fn set_documentation_side(&mut self, side: DocumentationSide, cx: &mut Context<Self>) {
+        self.documentation_side = side;
+        cx.notify();
     }
 
     pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
@@ -101,7 +112,9 @@ impl ProfileSelector {
             .toggleable(IconPosition::End, profile_id == settings.default_profile);
 
         let entry = if let Some(doc_text) = documentation {
-            entry.documentation_aside(move |_| Label::new(doc_text).into_any_element())
+            entry.documentation_aside(self.documentation_side, move |_| {
+                Label::new(doc_text).into_any_element()
+            })
         } else {
             entry
         };
@@ -175,7 +188,11 @@ impl Render for ProfileSelector {
                     )
                 }
             })
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(if self.documentation_side == DocumentationSide::Left {
+                gpui::Corner::BottomRight
+            } else {
+                gpui::Corner::BottomLeft
+            })
             .with_handle(self.menu_handle.clone())
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
