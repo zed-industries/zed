@@ -290,7 +290,7 @@ impl ContextServerStore {
             async move |this, cx| {
                 match server.clone().start(&cx).await {
                     Ok(_) => {
-                        log::info!("{} started", id);
+                        log::info!("Started {} context server", id);
                         debug_assert!(server.client().is_some());
 
                         this.update(cx, |this, cx| {
@@ -439,11 +439,12 @@ impl ContextServerStore {
 
                 let existing_config = this.servers.get(&id).map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) {
+                    let config = Arc::new(config);
                     if let Some(server) = this
-                        .create_context_server(id.clone(), Arc::new(config))
+                        .create_context_server(id.clone(), config.clone())
                         .log_err()
                     {
-                        servers_to_start.push(server);
+                        servers_to_start.push((server, config));
                         if this.servers.contains_key(&id) {
                             servers_to_stop.insert(id);
                         }
@@ -456,8 +457,8 @@ impl ContextServerStore {
             this.update(cx, |this, cx| this.stop_server(&id, cx).ok())?;
         }
 
-        for server in servers_to_start {
-            this.update(cx, |this, cx| this.start_server(server, cx))
+        for (server, config) in servers_to_start {
+            this.update(cx, |this, cx| this.run_server(server, config, cx))
                 .log_err();
         }
 
