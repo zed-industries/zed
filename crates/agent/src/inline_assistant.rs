@@ -48,6 +48,7 @@ use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
 use crate::terminal_inline_assistant::TerminalInlineAssistant;
+use crate::thread_store::TextThreadStore;
 use crate::thread_store::ThreadStore;
 
 pub fn init(
@@ -192,16 +193,20 @@ impl InlineAssistant {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 if is_assistant2_enabled {
-                    let thread_store = workspace
-                        .read(cx)
-                        .panel::<AssistantPanel>(cx)
+                    let panel = workspace.read(cx).panel::<AssistantPanel>(cx);
+                    let thread_store = panel
+                        .as_ref()
                         .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
+                    let text_thread_store = panel.map(|assistant_panel| {
+                        assistant_panel.read(cx).text_thread_store().downgrade()
+                    });
 
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
                             editor: cx.entity().downgrade(),
                             workspace: workspace.downgrade(),
                             thread_store,
+                            text_thread_store,
                         }),
                         window,
                         cx,
@@ -246,13 +251,15 @@ impl InlineAssistant {
                 .map_or(false, |model| model.provider.is_authenticated(cx))
         };
 
-        let assistant_panel = workspace
-            .panel::<AssistantPanel>(cx)
-            .map(|assistant_panel| assistant_panel.read(cx));
-        let prompt_store = assistant_panel
-            .and_then(|assistant_panel| assistant_panel.prompt_store().as_ref().cloned());
-        let thread_store =
-            assistant_panel.map(|assistant_panel| assistant_panel.thread_store().downgrade());
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+        let assistant_panel = assistant_panel.read(cx);
+
+        let prompt_store = assistant_panel.prompt_store().as_ref().cloned();
+        let thread_store = Some(assistant_panel.thread_store().downgrade());
+        let text_thread_store = Some(assistant_panel.text_thread_store().downgrade());
+        let context_store = assistant_panel.inline_assist_context_store().clone();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -261,9 +268,11 @@ impl InlineAssistant {
                         assistant.assist(
                             &active_editor,
                             cx.entity().downgrade(),
+                            context_store,
                             workspace.project().downgrade(),
                             prompt_store,
                             thread_store,
+                            text_thread_store,
                             window,
                             cx,
                         )
@@ -277,6 +286,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             prompt_store,
                             thread_store,
+                            text_thread_store,
                             window,
                             cx,
                         )
@@ -329,9 +339,11 @@ impl InlineAssistant {
         &mut self,
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
+        context_store: Entity<ContextStore>,
         project: WeakEntity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -437,8 +449,6 @@ impl InlineAssistant {
         let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
-            let context_store =
-                cx.new(|_cx| ContextStore::new(project.clone(), thread_store.clone()));
             let codegen = cx.new(|cx| {
                 BufferCodegen::new(
                     editor.read(cx).buffer().clone(),
@@ -462,9 +472,10 @@ impl InlineAssistant {
                     prompt_buffer.clone(),
                     codegen.clone(),
                     self.fs.clone(),
-                    context_store,
+                    context_store.clone(),
                     workspace.clone(),
                     thread_store.clone(),
+                    text_thread_store.clone(),
                     window,
                     cx,
                 )
@@ -537,6 +548,7 @@ impl InlineAssistant {
         workspace: Entity<Workspace>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -582,6 +594,7 @@ impl InlineAssistant {
                 context_store,
                 workspace.downgrade(),
                 thread_store,
+                text_thread_store,
                 window,
                 cx,
             )
@@ -1729,6 +1742,7 @@ struct AssistantCodeActionProvider {
     editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
 }
 
 const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant2";
@@ -1803,6 +1817,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
+        let text_thread_store = self.text_thread_store.clone();
         let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
@@ -1855,6 +1870,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     workspace,
                     prompt_store,
                     thread_store,
+                    text_thread_store,
                     window,
                     cx,
                 );

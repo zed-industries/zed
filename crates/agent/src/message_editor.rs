@@ -26,7 +26,7 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent};
+use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -36,7 +36,7 @@ use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionMode;
 
@@ -45,7 +45,7 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
     RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
@@ -81,6 +81,7 @@ pub(crate) fn create_editor(
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: WeakEntity<ThreadStore>,
+    text_thread_store: WeakEntity<TextThreadStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
@@ -122,6 +123,7 @@ pub(crate) fn create_editor(
             workspace,
             context_store,
             Some(thread_store),
+            Some(text_thread_store),
             editor_entity,
             None,
         ))));
@@ -137,6 +139,7 @@ impl MessageEditor {
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
+        text_thread_store: WeakEntity<TextThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -148,6 +151,7 @@ impl MessageEditor {
             workspace.clone(),
             context_store.downgrade(),
             thread_store.clone(),
+            text_thread_store.clone(),
             window,
             cx,
         );
@@ -157,6 +161,7 @@ impl MessageEditor {
                 context_store.clone(),
                 workspace.clone(),
                 Some(thread_store.clone()),
+                Some(text_thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 window,
@@ -512,13 +517,7 @@ impl MessageEditor {
             }))
     }
 
-    fn render_editor(
-        &self,
-        font_size: Rems,
-        line_height: Pixels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn render_editor(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
 
@@ -624,6 +623,10 @@ impl MessageEditor {
                             .when(is_editor_expanded, |this| this.h_full())
                             .child({
                                 let settings = ThemeSettings::get_global(cx);
+                                let font_size = TextSize::Small
+                                    .rems(cx)
+                                    .to_pixels(settings.agent_font_size(cx));
+                                let line_height = settings.buffer_line_height.value() * font_size;
 
                                 let text_style = TextStyle {
                                     color: cx.theme().colors().text,
@@ -1051,9 +1054,17 @@ impl MessageEditor {
             return None;
         }
 
-        let plan = self
-            .user_store
-            .read(cx)
+        let user_store = self.user_store.read(cx);
+
+        let ubb_enable = user_store
+            .usage_based_billing_enabled()
+            .map_or(false, |enabled| enabled);
+
+        if ubb_enable {
+            return None;
+        }
+
+        let plan = user_store
             .current_plan()
             .map(|plan| match plan {
                 Plan::Free => zed_llm_client::Plan::Free,
@@ -1061,7 +1072,24 @@ impl MessageEditor {
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
             .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
+        let usage = self.thread.read(cx).last_usage().or_else(|| {
+            maybe!({
+                let amount = user_store.model_request_usage_amount()?;
+                let limit = user_store.model_request_usage_limit()?.variant?;
+
+                Some(RequestUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        })?;
 
         Some(
             div()
@@ -1307,15 +1335,14 @@ impl Render for MessageEditor {
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let font_size = TextSize::Small.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
-            .child(self.render_editor(font_size, line_height, window, cx))
+            .child(self.render_editor(window, cx))
             .children({
                 let usage_callout = self.render_usage_callout(line_height, cx);
 
@@ -1383,16 +1410,19 @@ impl AgentPreview for MessageEditor {
     fn agent_preview(
         workspace: WeakEntity<Workspace>,
         active_thread: Entity<ActiveThread>,
-        thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         if let Some(workspace) = workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let user_store = workspace.read(cx).app_state().user_store.clone();
-            let weak_project = workspace.read(cx).project().clone().downgrade();
+            let project = workspace.read(cx).project().clone();
+            let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
-            let thread = active_thread.read(cx).thread().clone();
+            let active_thread = active_thread.read(cx);
+            let thread = active_thread.thread().clone();
+            let thread_store = active_thread.thread_store().clone();
+            let text_thread_store = active_thread.text_thread_store().clone();
 
             let default_message_editor = cx.new(|cx| {
                 MessageEditor::new(
@@ -1401,7 +1431,8 @@ impl AgentPreview for MessageEditor {
                     user_store,
                     context_store,
                     None,
-                    thread_store,
+                    thread_store.downgrade(),
+                    text_thread_store.downgrade(),
                     thread,
                     window,
                     cx,

@@ -324,10 +324,6 @@ fn keep_edits_in_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if thread.read(cx).is_generating() {
-        return;
-    }
-
     let diff_hunks_in_ranges = editor
         .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
@@ -353,10 +349,6 @@ fn reject_edits_in_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if thread.read(cx).is_generating() {
-        return;
-    }
-
     let diff_hunks_in_ranges = editor
         .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
@@ -702,10 +694,6 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
-
-    if thread.read(cx).is_generating() {
-        return Empty.into_any();
-    }
 
     h_flex()
         .h(line_height)
@@ -1372,6 +1360,7 @@ impl AgentDiff {
             | ThreadEvent::StreamedAssistantThinking(_, _)
             | ThreadEvent::StreamedToolUse { .. }
             | ThreadEvent::InvalidToolInput { .. }
+            | ThreadEvent::MissingToolUse { .. }
             | ThreadEvent::MessageAdded(_)
             | ThreadEvent::MessageEdited(_)
             | ThreadEvent::MessageDeleted(_)
@@ -1747,7 +1736,6 @@ mod tests {
     use crate::{Keep, ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolWorkingSet;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1770,7 +1758,6 @@ mod tests {
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
         });
@@ -1927,7 +1914,6 @@ mod tests {
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
