@@ -1,8 +1,9 @@
+use std::fmt::Display;
 use std::ops::Range;
 use std::sync::Arc;
 
 use assistant_context_editor::SavedContextMetadata;
-use chrono::{NaiveDate, TimeZone};
+use chrono::{TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -50,15 +51,18 @@ enum SearchState {
 }
 
 enum HistoryListItem {
-    DateSeparator(NaiveDate),
-    Entry(usize),
+    BucketSeparator(TimeBucket),
+    Entry {
+        index: usize,
+        format: EntryTimeFormat,
+    },
 }
 
 impl HistoryListItem {
     fn entry_index(&self) -> Option<usize> {
         match self {
-            HistoryListItem::DateSeparator(_) => None,
-            HistoryListItem::Entry(index) => Some(*index),
+            HistoryListItem::BucketSeparator(_) => None,
+            HistoryListItem::Entry { index, .. } => Some(*index),
         }
     }
 }
@@ -135,16 +139,21 @@ impl ThreadHistory {
         let all_entries = self.all_entries.clone();
 
         let bg_task = cx.background_spawn(async move {
-            let mut date = None;
+            let mut bucket = None;
+            let today = Utc::now().naive_local().date();
 
-            for (ix, entry) in all_entries.iter().enumerate() {
+            for (index, entry) in all_entries.iter().enumerate() {
                 let entry_date = entry.updated_at().naive_local().date();
+                let entry_bucket = TimeBucket::from(today - entry_date);
 
-                if Some(entry_date) != date {
-                    date = Some(entry_date);
-                    separated_items.push(HistoryListItem::DateSeparator(entry_date));
+                if Some(entry_bucket) != bucket {
+                    bucket = Some(entry_bucket);
+                    separated_items.push(HistoryListItem::BucketSeparator(entry_bucket));
                 }
-                separated_items.push(HistoryListItem::Entry(ix));
+                separated_items.push(HistoryListItem::Entry {
+                    index,
+                    format: entry_bucket.into(),
+                });
             }
             separated_items
         });
@@ -240,14 +249,6 @@ impl ThreadHistory {
             SearchState::Empty => self.all_entries.len(),
             SearchState::Searching { .. } => 0,
             SearchState::Searched { matches, .. } => matches.len(),
-        }
-    }
-
-    fn searching(&self) -> bool {
-        match &self.search_state {
-            SearchState::Empty => false,
-            SearchState::Searching { .. } => false,
-            SearchState::Searched { .. } => true,
         }
     }
 
@@ -434,7 +435,10 @@ impl ThreadHistory {
                 .map(|(ix, m)| {
                     self.render_list_item(
                         Some(range_start + ix),
-                        &HistoryListItem::Entry(m.candidate_id),
+                        &HistoryListItem::Entry {
+                            index: m.candidate_id,
+                            format: EntryTimeFormat::DateAndTime,
+                        },
                         m.positions.clone(),
                         cx,
                     )
@@ -454,7 +458,7 @@ impl ThreadHistory {
         cx: &App,
     ) -> AnyElement {
         match item {
-            HistoryListItem::Entry(entry_ix) => match self.all_entries.get(*entry_ix) {
+            HistoryListItem::Entry { index, format } => match self.all_entries.get(*index) {
                 Some(entry) => h_flex()
                     .w_full()
                     .pb_1()
@@ -462,16 +466,17 @@ impl ThreadHistory {
                         entry,
                         list_entry_ix == Some(self.selected_index),
                         highlight_positions,
+                        *format,
                     ))
                     .into_any(),
                 None => Empty.into_any_element(),
             },
-            HistoryListItem::DateSeparator(date) => div()
+            HistoryListItem::BucketSeparator(bucket) => div()
                 .px(DynamicSpacing::Base06.rems(cx))
                 .pt_2()
                 .pb_1()
                 .child(
-                    Label::new(self.format_relative_date(*date).unwrap_or("".to_string()))
+                    Label::new(bucket.to_string())
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),
                 )
@@ -479,34 +484,13 @@ impl ThreadHistory {
         }
     }
 
-    fn format_relative_date(&self, date: NaiveDate) -> Option<String> {
-        let unix_timestamp = chrono::Local
-            .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
-            .single()?
-            .timestamp();
-
-        let timestamp = OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
-
-        Some(time_format::format_date_medium(
-            timestamp,
-            OffsetDateTime::now_utc(),
-            true,
-        ))
-    }
-
     fn render_history_entry(
         &self,
         entry: &HistoryEntry,
         is_active: bool,
         highlight_positions: Vec<usize>,
+        format: EntryTimeFormat,
     ) -> AnyElement {
-        let format = if self.searching() {
-            EntryTimestampFormat::DateAndTime
-        } else {
-            // Date is already displayed in separator
-            EntryTimestampFormat::TimeOnly
-        };
-
         match entry {
             HistoryEntry::Thread(thread) => PastThread::new(
                 thread.clone(),
@@ -612,7 +596,7 @@ pub struct PastThread {
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
-    timestamp_format: EntryTimestampFormat,
+    timestamp_format: EntryTimeFormat,
 }
 
 impl PastThread {
@@ -621,7 +605,7 @@ impl PastThread {
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
-        timestamp_format: EntryTimestampFormat,
+        timestamp_format: EntryTimeFormat,
     ) -> Self {
         Self {
             thread,
@@ -704,7 +688,7 @@ pub struct PastContext {
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
-    timestamp_format: EntryTimestampFormat,
+    timestamp_format: EntryTimeFormat,
 }
 
 impl PastContext {
@@ -713,7 +697,7 @@ impl PastContext {
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
-        timestamp_format: EntryTimestampFormat,
+        timestamp_format: EntryTimeFormat,
     ) -> Self {
         Self {
             context,
@@ -792,12 +776,13 @@ impl RenderOnce for PastContext {
     }
 }
 
-pub enum EntryTimestampFormat {
+#[derive(Clone, Copy)]
+pub enum EntryTimeFormat {
     DateAndTime,
     TimeOnly,
 }
 
-impl EntryTimestampFormat {
+impl EntryTimeFormat {
     fn format_timestamp(
         &self,
         assistant_panel: &WeakEntity<AssistantPanel>,
@@ -810,13 +795,113 @@ impl EntryTimestampFormat {
             .unwrap_or(UtcOffset::UTC);
 
         match &self {
-            EntryTimestampFormat::DateAndTime => time_format::format_localized_timestamp(
+            EntryTimeFormat::DateAndTime => time_format::format_localized_timestamp(
                 timestamp,
                 OffsetDateTime::now_utc(),
                 timezone,
                 time_format::TimestampFormat::EnhancedAbsolute,
             ),
-            EntryTimestampFormat::TimeOnly => time_format::format_time(timestamp),
+            EntryTimeFormat::TimeOnly => time_format::format_time(timestamp),
         }
+    }
+}
+
+impl From<TimeBucket> for EntryTimeFormat {
+    fn from(bucket: TimeBucket) -> Self {
+        match bucket {
+            TimeBucket::Today => EntryTimeFormat::TimeOnly,
+            TimeBucket::Yesterday => EntryTimeFormat::TimeOnly,
+            TimeBucket::LastWeek => EntryTimeFormat::DateAndTime,
+            TimeBucket::LastMonth => EntryTimeFormat::DateAndTime,
+            TimeBucket::All => EntryTimeFormat::DateAndTime,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum TimeBucket {
+    Today,
+    Yesterday,
+    LastWeek,
+    LastMonth,
+    All,
+}
+
+impl From<TimeDelta> for TimeBucket {
+    fn from(delta: TimeDelta) -> Self {
+        if delta < TimeDelta::days(1) {
+            Self::Today
+        } else if delta < TimeDelta::days(2) {
+            Self::Yesterday
+        } else if delta < TimeDelta::days(7) {
+            Self::LastWeek
+        } else if delta < TimeDelta::days(30) {
+            Self::LastMonth
+        } else {
+            Self::All
+        }
+    }
+}
+
+impl Display for TimeBucket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TimeBucket::Today => write!(f, "Today"),
+            TimeBucket::Yesterday => write!(f, "Yesterday"),
+            TimeBucket::LastWeek => write!(f, "Last Week"),
+            TimeBucket::LastMonth => write!(f, "Last Month"),
+            TimeBucket::All => write!(f, "All"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_time_bucket_from_time_delta() {
+        let today = NaiveDate::from_ymd_opt(2023, 1, 15).unwrap();
+
+        // Today: 0 days
+        let same_day = today;
+        let delta = today - same_day;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::Today);
+
+        // Yesterday: 1 day
+        let yesterday = NaiveDate::from_ymd_opt(2023, 1, 14).unwrap();
+        let delta = today - yesterday;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::Yesterday);
+
+        // LastWeek: 2 days
+        let two_days_ago = NaiveDate::from_ymd_opt(2023, 1, 13).unwrap();
+        let delta = today - two_days_ago;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::LastWeek);
+
+        // LastWeek: 6 days (just below 7)
+        let six_days_ago = NaiveDate::from_ymd_opt(2023, 1, 9).unwrap();
+        let delta = today - six_days_ago;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::LastWeek);
+
+        // LastMonth: 7 days
+        let seven_days_ago = NaiveDate::from_ymd_opt(2023, 1, 8).unwrap();
+        let delta = today - seven_days_ago;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::LastMonth);
+
+        // LastMonth: 29 days (just below 30)
+        let twenty_nine_days_ago = NaiveDate::from_ymd_opt(2022, 12, 17).unwrap();
+        let delta = today - twenty_nine_days_ago;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::LastMonth);
+
+        // All: 30 days
+        let thirty_days_ago = NaiveDate::from_ymd_opt(2022, 12, 16).unwrap();
+        let delta = today - thirty_days_ago;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::All);
+
+        // All: more than 30 days (e.g., 60 days)
+        let sixty_days_ago = NaiveDate::from_ymd_opt(2022, 11, 16).unwrap();
+        let delta = today - sixty_days_ago;
+        assert_eq!(TimeBucket::from(delta), TimeBucket::All);
     }
 }
