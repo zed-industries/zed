@@ -78,4 +78,18 @@ pub const SETTINGS_ASSISTANT_PATTERN: &str = r#"(document
             key: (string (string_content) @key)
         )
     )
+    (#eq? @key "assistant")
+)"#;
+
+pub const SETTINGS_EDIT_PREDICTIONS_ASSISTANT_PATTERN: &str = r#"(document
+    (object
+        (pair
+            key: (string (string_content) @edit_predictions)
+            value: (object
+                (pair key: (string (string_content) @enabled_in_assistant))
+            )
+        )
+    )
+    (#eq? @edit_predictions "edit_predictions")
+    (#eq? @enabled_in_assistant "enabled_in_assistant")
 )"#;

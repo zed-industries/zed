@@ -1,12 +1,21 @@
 use std::ops::Range;
 use tree_sitter::{Query, QueryMatch};
 
-use crate::{MigrationPatterns, patterns::SETTINGS_ASSISTANT_PATTERN};
+use crate::{
+    MigrationPatterns, patterns::SETTINGS_ASSISTANT_PATTERN,
+    patterns::SETTINGS_EDIT_PREDICTIONS_ASSISTANT_PATTERN,
+};
 
-pub const SETTINGS_PATTERNS: MigrationPatterns = &[(SETTINGS_ASSISTANT_PATTERN, rename_assistant)];
+pub const SETTINGS_PATTERNS: MigrationPatterns = &[
+    (SETTINGS_ASSISTANT_PATTERN, rename_assistant),
+    (
+        SETTINGS_EDIT_PREDICTIONS_ASSISTANT_PATTERN,
+        rename_edit_prediction_assistant,
+    ),
+];
 
 fn rename_assistant(
-    contents: &str,
+    _contents: &str,
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
@@ -15,9 +24,18 @@ fn rename_assistant(
         .nodes_for_capture_index(key_capture_ix)
         .next()?
         .byte_range();
-    let key = contents.get(key_range.clone())?;
-    if dbg!(key) != "assistant" {
-        return None;
-    }
     return Some((key_range, "agent".to_string()));
+}
+
+fn rename_edit_prediction_assistant(
+    _contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let key_capture_ix = query.capture_index_for_name("enabled_in_assistant")?;
+    let key_range = mat
+        .nodes_for_capture_index(key_capture_ix)
+        .next()?
+        .byte_range();
+    return Some((key_range, "enabled_in_text_threads".to_string()));
 }

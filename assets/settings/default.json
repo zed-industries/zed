@@ -1016,9 +1016,9 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
-    // Whether edit predictions are enabled in the assistant panel.
+    // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_assistant": true
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {

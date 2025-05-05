@@ -36,9 +36,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
 
     let mut edits = vec![];
     while let Some(mat) = matches.next() {
-        dbg!("match");
         if let Some((_, callback)) = patterns.get(mat.pattern_index) {
-            dbg!("extend");
             edits.extend(callback(&text, &mat, query));
         }
     }
@@ -74,8 +72,7 @@ fn run_migrations(
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
     for (patterns, query) in migrations.iter() {
-        if let Some(migrated_text) = migrate(&current_text, dbg!(patterns), query)? {
-            dbg!(&migrated_text);
+        if let Some(migrated_text) = migrate(&current_text, patterns, query)? {
             current_text = migrated_text.clone();
             result = Some(migrated_text);
         }
@@ -712,12 +709,18 @@ mod tests {
             r#"{
                 "assistant": {
                     "foo": "bar"
+                },
+                "edit_predictions": {
+                    "enabled_in_assistant": false,
                 }
             }"#,
             Some(
                 r#"{
                 "agent": {
                     "foo": "bar"
+                },
+                "edit_predictions": {
+                    "enabled_in_text_threads": false,
                 }
             }"#,
             ),

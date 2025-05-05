@@ -258,7 +258,7 @@ impl ContextEditor {
 
             let show_edit_predictions = all_language_settings(None, cx)
                 .edit_predictions
-                .enabled_in_assistant;
+                .enabled_in_text_threads;
 
             editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
 
@@ -333,7 +333,7 @@ impl ContextEditor {
         self.editor.update(cx, |editor, cx| {
             let show_edit_predictions = all_language_settings(None, cx)
                 .edit_predictions
-                .enabled_in_assistant;
+                .enabled_in_text_threads;
 
             editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
         });
