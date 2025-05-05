@@ -335,6 +335,17 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Check if this editor already has active assistants
+        if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+            if !editor_assists.assist_ids.is_empty() {
+                // Focus the first assist in the editor rather than creating a new one
+                if let Some(&assist_id) = editor_assists.assist_ids.first() {
+                    self.focus_assist(assist_id, window, cx);
+                    return;
+                }
+            }
+        }
+
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
                 editor.snapshot(window, cx),
