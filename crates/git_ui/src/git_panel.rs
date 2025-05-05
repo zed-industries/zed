@@ -1746,7 +1746,7 @@ impl GitPanel {
                         Ok(text) => text,
                         Err(e) => {
                             this.update(cx, |this, cx| {
-                                this.show_error_toast("generate commit message", e.into(), cx)
+                                this.show_error_toast("generate commit message", e, cx)
                             })?;
                             return anyhow::Ok(());
                         }
@@ -1825,7 +1825,7 @@ impl GitPanel {
                     }
                     Err(e) => {
                         this.update(cx, |this, cx| {
-                            this.show_error_toast("generate commit message", e.into(), cx)
+                            this.show_error_toast("generate commit message", e, cx)
                         })?;
                     }
                 }
