@@ -25,9 +25,12 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, Result, ScreenCaptureSource, Task, WindowAppearance,
+    WindowParams, px,
 };
+
+use super::LinuxKeyboardMapper;
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -136,6 +139,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
         self.with_common(|common| common.text_system.clone())
+    }
+
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        Box::new(LinuxKeyboardMapper::new())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
