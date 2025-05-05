@@ -1769,15 +1769,15 @@ impl AssistantPanel {
             return false;
         }
 
-        // let plan = self.user_store.read(cx).current_plan();
-        // if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
-        //     return false;
-        // }
+        let plan = self.user_store.read(cx).current_plan();
+        if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
+            return false;
+        }
 
-        // let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
-        // if has_previous_trial {
-        //     return false;
-        // }
+        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
+        if has_previous_trial {
+            return false;
+        }
 
         true
     }
