@@ -239,8 +239,7 @@ impl Tool for EditFileTool {
             };
 
             let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
-
+                action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
                 let base_version = diff.base_version.clone();
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();

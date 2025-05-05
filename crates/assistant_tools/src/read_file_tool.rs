@@ -152,7 +152,7 @@ impl Tool for ReadFileTool {
                 })?;
 
                 action_log.update(cx, |log, cx| {
-                    log.track_buffer(buffer.clone(), cx);
+                    log.buffer_read(buffer.clone(), cx);
                 })?;
 
                 if let Some(anchor) = anchor {
@@ -177,7 +177,7 @@ impl Tool for ReadFileTool {
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
-                        log.track_buffer(buffer, cx);
+                        log.buffer_read(buffer, cx);
                     })?;
 
                     Ok(result)
