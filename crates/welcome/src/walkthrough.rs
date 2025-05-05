@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::convert::identity;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::SystemTime;
 use theme::ThemeRegistry;
 use theme::ThemeSettings;
 use ui::CheckboxWithLabel;
@@ -57,6 +58,7 @@ pub struct Walkthrough {
     list: ListState,
     steps: Vec<WalkthroughStep>,
     recent_projects: BTreeMap<&'static str, Vec<String>>,
+    vscode_settings: Option<SystemTime>,
     _settings_subscription: Subscription,
 }
 
@@ -112,6 +114,22 @@ impl Walkthrough {
                     tab_selection: cx.new(|_| 0),
                 },
             ];
+
+            // look up settings files from other editors
+            cx.spawn({
+                let fs = fs.clone();
+                async move |this: WeakEntity<Self>, cx| {
+                    if let Ok(Some(metadata)) = fs.metadata(paths::vscode_settings_file()).await {
+                        this.update(cx, |this, _| {
+                            this.vscode_settings = Some(metadata.mtime.timestamp_for_user());
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+
+            // look up recent projects from other editors
             cx.spawn({
                 let fs = fs.clone();
                 async move |this: WeakEntity<Self>, cx| {
@@ -139,7 +157,7 @@ impl Walkthrough {
                         }
                     }
 
-                    this.update(cx, |this, cx| {
+                    this.update(cx, |this, _cx| {
                         this.recent_projects = recents;
                     })
                 }
@@ -166,6 +184,7 @@ impl Walkthrough {
                     },
                 ),
                 recent_projects: BTreeMap::default(),
+                vscode_settings: None,
                 active_step: 0,
             }
         });
@@ -269,7 +288,7 @@ impl Walkthrough {
 
     fn render_settings_step(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         let fs = self.fs.clone();
@@ -484,7 +503,7 @@ impl Walkthrough {
         &self,
         tab_selection: &Entity<usize>,
         _window: &mut Window,
-        cx: &mut Context<Walkthrough>,
+        _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         dbg!(&self.recent_projects);
         if !self.recent_projects.is_empty() {

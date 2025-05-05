@@ -1,14 +1,14 @@
 use std::{
     collections::BTreeSet,
+    ffi::OsString,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
 use fs::Fs;
 use serde_json::Value;
-use smol::stream::{self,  StreamExt};
+use smol::stream::{self, StreamExt};
 
 // don't show projects you haven't used it the last 100 days
 const PROJECT_MTIME_CUTOFF: Duration = Duration::from_secs(100 * 24 * 60 * 60);
@@ -36,7 +36,7 @@ async fn dir_contains_project(path: &Path, fs: &dyn Fs) -> bool {
     };
     while let Some(Ok(path)) = paths.next().await {
         // TODO: look for other project files, ".jj", etc
-        if Some(path) == PathBuf::from_str(".git").ok() {
+        if path.file_name() == Some(&OsString::from(".git")) {
             return true;
         }
     }
@@ -45,22 +45,20 @@ async fn dir_contains_project(path: &Path, fs: &dyn Fs) -> bool {
 
 // returns a list of project roots. ignores any file paths that aren't inside the user's home directory
 async fn projects_for_paths(files: &[PathBuf], fs: &dyn Fs) -> Vec<PathBuf> {
-    let mut known_roots = BTreeSet::new();
+    let mut project_dirs = BTreeSet::new();
     let stop_at = paths::home_dir();
-    for path in files {
+    for mut path in files.iter().map(|p| p.as_path()) {
         while let Some(parent) = path.parent() {
-            if !parent.starts_with(stop_at) {
+            if !parent.starts_with(stop_at) || project_dirs.contains(parent) {
                 break;
             }
-            if known_roots.contains(parent) {
-                continue;
-            }
             if dir_contains_project(parent, fs).await {
-                known_roots.insert(parent.to_path_buf());
+                project_dirs.insert(parent.to_path_buf());
             }
+            path = parent;
         }
     }
-    known_roots.into_iter().collect()
+    project_dirs.into_iter().collect()
 }
 
 // jq .backupWorkspaces.folders[].folderUri from Code/User/globalStorage/storage.json
@@ -95,12 +93,11 @@ pub async fn get_neovim_projects(fs: Arc<dyn Fs>) -> Option<Vec<PathBuf>> {
         .output()
         .ok()?
         .stderr;
-    let paths = String::from_utf8(output)
-        .ok()?
+    let paths = String::from_utf8_lossy(&output)
         .lines()
         .take(MAX_OLDFILES)
-        .map(|s| s.split(": ").last().and_then(|s| PathBuf::from_str(s).ok()))
-        .collect::<Option<Vec<PathBuf>>>()?;
+        .filter_map(|s| s.split(": ").last().map(|s| PathBuf::from(s)))
+        .collect::<Vec<PathBuf>>();
     let projects = projects_for_paths(&paths, fs.as_ref()).await;
     dbg!("found", &projects);
     Some(recent_files(projects, fs.as_ref()).await)
