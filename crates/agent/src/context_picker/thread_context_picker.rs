@@ -284,7 +284,7 @@ pub fn unordered_thread_entries(
 ) -> impl Iterator<Item = (DateTime<Utc>, ThreadContextEntry)> {
     let threads = thread_store.read(cx).unordered_threads().map(|thread| {
         (
-            thread.updated_at.clone(),
+            thread.updated_at,
             ThreadContextEntry::Thread {
                 id: thread.id.clone(),
                 title: thread.summary.clone(),
