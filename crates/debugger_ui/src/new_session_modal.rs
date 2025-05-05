@@ -662,7 +662,9 @@ impl Render for NewSessionModal {
                             ),
                     )
                     .justify_between()
-                    .children(self.adapter_drop_down_menu(window, cx))
+                    .when(!matches!(self.mode, NewSessionMode::Scenario(_)), |this| {
+                        this.children(self.adapter_drop_down_menu(window, cx))
+                    })
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
