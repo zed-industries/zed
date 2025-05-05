@@ -27,4 +27,6 @@ If there's an existing MCP server you'd like to bring to Zed, check out the [con
 
 If you are interested in building your own MCP server, check out the [Model Context Protocol docs](https://modelcontextprotocol.io/introduction#get-started-with-mcp) to get started.
 
+
+---
 todo!
