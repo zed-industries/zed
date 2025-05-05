@@ -67,7 +67,7 @@ Zed offers two commit textareas:
 ### Undoing a Commit
 
 As soon as you commit in Zed, in the Git Panel, you'll see a bar right under the commit textarea, which will show the recently submitted commit.
-In there, you can reach for the "Uncommit" button, which performs the `git reset HEADˆ--soft` command.
+In there, you can use the "Uncommit" button, which performs the `git reset HEADˆ--soft` command.
 
 ## AI Support in Git
 

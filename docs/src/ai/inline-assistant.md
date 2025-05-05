@@ -2,7 +2,7 @@
 
 ## Using the Inline Assistant
 
-You can use `ctrl-enter` to open the inline assistant nearly anywhere you can enter text: Editors, the agent panel, the prompt library, channel notes, and even within the terminal panel.
+You can use `ctrl-enter` to open the inline assistant nearly anywhere you can enter text: editors, the agent panel, the prompt library, channel notes, and even within the terminal panel.
 
 The inline assistant allows you to send the current selection (or the current line) to a language model and modify the selection with the language model's response.
 
@@ -22,7 +22,7 @@ A common workflow when using the inline assistant is to create a context in the 
 ### Example Recipe - Fixing Errors with the Inline Assistant
 
 1. Create a new chat in the agent panel.
-2. Use the `/diagnostic` command to add current diagnostics to the context.
+2. Use the `/diagnostics` command to add current diagnostics to the context.
 3. OR use the `/terminal` command to add the current terminal output to the context (maybe a panic, error, or log?)
 4. Use the inline assistant to generate a fix for the error.
 

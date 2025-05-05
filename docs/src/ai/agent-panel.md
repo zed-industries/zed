@@ -3,7 +3,7 @@
 The Agent Panel provides you with a way to interact with LLMs.
 You can use it for various tasks, such as generating code, asking questions about your code base, and general inquiries such as emails and documentation.
 
-To open the Agent Panel, reach for the `agent: new thread` action in [the Command Palette](./getting-started#command-palette) or click the ✨ (sparkles) icon in the status bar.
+To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](./getting-started#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
 If you're using the Agent Panel for the first time, you'll need to set up at least one LLM provider.
 Check [the Configuration page](./configuration.md) for more details about how to do it.
@@ -31,7 +31,7 @@ This is usually valuable if the performed edit doesn't go in the right direction
 
 ### Navigation
 
-To quickly loop through recently opened threads, reach for the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent interactions with the LLM.
+To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent interactions with the LLM.
 
 The items in this menu work similarly to tabs, and closing them from there doesn't delete the thread; just takes them out of the recent list.
 
@@ -79,7 +79,7 @@ So, if your active tab is already one that had changes, you'll see diffs with th
 
 ## Adding Context
 
-Although Zed's agent is very efficient at reading through your codebase to autonomously pick up relevant files, directories, and others, manually adding context is still usually encouraged as a way to speed up and improve the AI's response quality.
+Although Zed's agent is very efficient at reading through your codebase to autonomously pick up relevant files, directories, and other context, manually adding context is still usually encouraged as a way to speed up and improve the AI's response quality.
 
 If you have a tab open when triggering the Agent Panel, that tab will appear as a suggested context in form of a dashed button.
 You can also add other forms of context, like files, rules, and directories, by either typing `@` or hitting the `+` icon button.
@@ -92,11 +92,11 @@ Zed surfaces how many tokens you are consuming for your currently active thread 
 Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
 With that in mind, once you get close to the model's context window, we'll display a banner on the bottom of the message editor offering to start a new thread with the current one summarized and added as context.
-You can also do this at any time—once with an ongoing thread—via the "Agent Options" menu on the top right.
+You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right.
 
 ## Changing Models
 
-After you've configured your LLM providers—either via [a custom API key](/ai/custom-api-keys.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by hitting the {#kb assistant::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](/ai/custom-api-keys.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb assistant::ToggleModelSelector} keybinding.
 
 ## Using Tools
 
@@ -137,7 +137,7 @@ All custom profiles can be edited via the UI or by hand under the `assistant.pro
 
 Tool calling needs to be individually supported by each model and model provider.
 Therefore, despite the presence of tools, some models may not have the ability to pick them up yet in Zed.
-You should see a "No tools" disabled button if you select a model that fits this case.
+You should see a "No tools" disabled button if you select a model that falls into this case.
 
 We want to support all of them, though!
 We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute.
@@ -162,7 +162,7 @@ We do not plan to deprecate text threads, but it should be noted that if you wan
 
 In case of any error or strange LLM response behavior, the best way to help the Zed team debug is by reaching for the `agent: open thread as markdown` action and attaching that data as part of your issue on GitHub.
 
-This action exposes all the thread in form of Markdown and allows for deeper understanding of what each tool call was doing.
+This action exposes the entire thread in the form of Markdown and allows for deeper understanding of what each tool call was doing.
 
 You can also open threads as Markdown by clicking on the file icon button, to the right of the thumbs down button, when focused on the panel's editor.
 

@@ -149,7 +149,7 @@ Zed has pre-configured maximum context lengths (`max_tokens`) to match the capab
 
 **Note**: Token counts displayed in the assistant panel are only estimates and will differ from the model's native tokenizer.
 
-Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
+Depending on your hardware or use-case, you may wish to limit or increase the context length for a specific model via settings.json:
 
 ```json
 {

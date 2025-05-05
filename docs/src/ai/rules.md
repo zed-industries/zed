@@ -76,7 +76,7 @@ Previously, the Rules Library was called the Prompt Library. The new rules syste
 
 ### Slash Commands in Rules
 
-Previously, it was possible to use slash commands (now @-mentions) in custom prompts (now rules). There is currently no support for using @-mentions in rules files, however, slash commands are supported in rules files when used with text-threads. See the documentation for using [slash commands in rules](./text-threads.md#slash-commands-in-rules) for more information.
+Previously, it was possible to use slash commands (now @-mentions) in custom prompts (now rules). There is currently no support for using @-mentions in rules files, however, slash commands are supported in rules files when used with text threads. See the documentation for using [slash commands in rules](./text-threads.md#slash-commands-in-rules) for more information.
 
 ### Prompt templates
 

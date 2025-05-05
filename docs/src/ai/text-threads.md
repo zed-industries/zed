@@ -108,7 +108,7 @@ Usage: `/selection`
 
 [Commands](#commands) can be used in rules to insert dynamic content or perform actions. For example, if you want to create a rule where it is important for the model to know the date, you can use the `/now` command to insert the current date.
 
-> **Warn:** Slash commands in rules **only** work when they are used in text-threads. Using them in non-text-threads is not supported.
+> **Warn:** Slash commands in rules **only** work when they are used in text threads. Using them in non-text threads is not supported.
 
 > **Note:** Slash commands in rules **must** be on their own line.
 
@@ -152,7 +152,7 @@ Title: Zed-Flavored Rust
 /prompt Rust - Workspace deps (bias towards reusing deps from the workspace)
 ```
 
-_The (text) above are comments and are not part of the rule._
+_The text in parentheses above are comments and are not part of the rule._
 
 > **Note:** While you technically _can_ nest a rule within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
 
