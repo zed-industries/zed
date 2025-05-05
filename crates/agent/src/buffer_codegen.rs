@@ -1095,9 +1095,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_model::LanguageModelRegistry::test);
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1167,8 +1165,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1237,9 +1234,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = concat!(
             "fn main() {\n",
@@ -1305,10 +1300,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(Project::init_settings);
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             func main() {
@@ -1368,9 +1360,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_inactive_codegen_alternative(cx: &mut TestAppContext) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1472,6 +1462,13 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(LanguageModelRegistry::test);
+        cx.set_global(cx.update(SettingsStore::test));
+        cx.update(Project::init_settings);
+        cx.update(language_settings::init);
     }
 
     fn simulate_response_stream(
