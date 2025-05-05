@@ -12,7 +12,7 @@ use assistant_context_editor::{
     SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
     render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings};
+use assistant_settings::{AssistantDockPosition, AssistantSettings, DismissedPrompts};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
@@ -34,8 +34,8 @@ use rules_library::{RulesLibrary, open_rules_library};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
-    prelude::*,
+    Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ProgressBar, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -318,6 +318,7 @@ pub struct AssistantPanel {
     width: Option<Pixels>,
     height: Option<Pixels>,
     pending_serialization: Option<Task<Result<()>>>,
+    hide_trial_upsell: bool,
 }
 
 impl AssistantPanel {
@@ -604,6 +605,11 @@ impl AssistantPanel {
             },
         );
 
+        let hide_trial_upsell = AssistantSettings::get_global(cx)
+            .dismissed_prompts
+            .zed_pro_trial
+            .clone();
+
         Self {
             active_view,
             workspace,
@@ -637,6 +643,7 @@ impl AssistantPanel {
             width: None,
             height: None,
             pending_serialization: None,
+            hide_trial_upsell,
         }
     }
 
@@ -1694,6 +1701,102 @@ impl AssistantPanel {
         }
     }
 
+    pub(crate) fn hide_trial_upsell(&mut self, cx: &mut Context<Self>) {
+        self.hide_trial_upsell = true;
+        cx.notify();
+    }
+
+    fn render_trial_upsell(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let hide_trial_upsell = self.hide_trial_upsell.clone();
+
+        if hide_trial_upsell {
+            return None;
+        }
+
+        let fs = self.fs.clone();
+
+        let checkbox = CheckboxWithLabel::new(
+            "dont-show-again",
+            Label::new("Don't show again"),
+            ToggleState::Unselected,
+            move |toggle_state, _window, cx| {
+                let toggle_state_bool = toggle_state.selected();
+                let fs = fs.clone();
+                let dismissed_prompts = AssistantSettings::get_global(cx).dismissed_prompts.clone();
+                update_settings_file::<AssistantSettings>(fs.clone(), cx, move |settings, _| {
+                    let new_dismissed_prompts = DismissedPrompts {
+                        zed_pro_trial: toggle_state_bool,
+                        ..dismissed_prompts.clone()
+                    };
+
+                    settings.set_dismissed_prompts(new_dismissed_prompts)
+                });
+            },
+        );
+
+        Some(
+            v_flex()
+                .w_full()
+                .p_4()
+                .gap_3()
+                .bg(cx.theme().colors().surface_background)
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("Try Zed Pro")
+                                .size(ui::LabelSize::Large)
+                                .weight(gpui::FontWeight::BOLD),
+                        )
+                        .child(Label::new("Get 150 prompts and unlimited edit predictions for 2 weeks, for free.").color(Color::Muted)),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    checkbox
+                                )
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("dismiss-button", "No Thanks")
+                                        .style(ButtonStyle::Subtle)
+                                        .on_click({
+                                            let assistant_panel = cx.entity();
+                                            move |_, _, cx| {
+                                                assistant_panel.update(cx, |this, cx| {
+                                                    this.hide_trial_upsell(cx);
+                                                });
+                                            }
+                                        }),
+                                )
+                                .child(
+                                    Button::new("cta-button", "Upgrade Now")
+                                        .style(ButtonStyle::Filled)
+                                        .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)),
+                                ),
+                        ),
+
+                ),
+            )
+        )
+    }
+
     fn render_active_thread_or_empty_state(
         &self,
         window: &mut Window,
@@ -1877,6 +1980,7 @@ impl AssistantPanel {
                         })
                 )
             })
+            .children(self.render_trial_upsell(window, cx))
             .when(!recent_history.is_empty(), |parent| {
                 let focus_handle = focus_handle.clone();
                 let configuration_error_ref = &configuration_error;
