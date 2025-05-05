@@ -13,7 +13,7 @@ Check [the Configuration page](./configuration.md) for more details about how to
 After you've configured some LLM providers, you're ready to start working with the agent panel.
 
 Type at the message editor and hit `enter` to submit your prompt to the LLM.
-If you need extra room to type, you can you can expand the message editor via ({#kb agent::ExpandMessageEditor}).
+If you need extra room to type, you can expand the message editor via ({#kb agent::ExpandMessageEditor}).
 
 You should start to see the responses stream in with indications of which tools the AI is using to fulfill your prompt.
 For example, if the AI chooses to perform an edit, you will see a card with the diff.
@@ -27,7 +27,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message.
 This allows you to return the state of your codebase to the one it was prior to that message's point.
-This is usually valuable if the performed edit doesn't go to the right direction.
+This is usually valuable if the performed edit doesn't go in the right direction.
 
 ### Navigation
 
@@ -101,14 +101,14 @@ After you've configured your LLM providers—either via [a custom API key](/ai/c
 ## Using Tools
 
 Unlike the previous version, the new Agent Panel supports tool calling, which largely enables agentic collaboration with AI.
-Zed comes with several built-in tools that allows models to perform tasks such as searching through your codebase, editing files, running commands, and others.
+Zed comes with several built-in tools that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
 
 You can also extend the set of available tools via [MCP Servers](/ai/mcp.md).
 
 ### Profiles
 
 Profiles introduce a way to group tools.
-Zed offers three built-in profiles and you can create how many custom ones as you want.
+Zed offers three built-in profiles and you can create as many custom ones as you want.
 
 #### Built-in Profiles
 
@@ -169,10 +169,10 @@ You can also open threads as Markdown by clicking on the file icon button, to th
 ## Feedback
 
 Every change we make to Zed's system prompt and tool set, needs to be backed by an eval with good scores.
-Every time the LLM performs a weird change or investigate a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
+Every time the LLM performs a weird change or investigates a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
 
 The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
-In case of a thumbs down, a new textarea will show up where you can add more specifics about what happened.
+In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
 You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.
 
 > Note that rating threads does send your data to Zed's servers.

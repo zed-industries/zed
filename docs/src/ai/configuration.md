@@ -73,7 +73,7 @@ You can add custom models to the Anthropic provider by adding the following to y
 Custom models will be listed in the model dropdown in the assistant panel.
 
 You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it),
-by changing the mode in of your models configuration to `thinking`, for example:
+by changing the mode of your models configuration to `thinking`, for example:
 
 ```json
 {
@@ -95,7 +95,7 @@ You can use GitHub Copilot chat with the Zed assistant by choosing it via the mo
 
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
-1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
+1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the configuration view (`agent: open configuration`) and navigate to the Google AI section
 3. Enter your Google AI API key and press enter.
 
@@ -147,7 +147,7 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models. Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
-**Note**: Tokens counts displayed in the assistant panel are only estimates and will differ from the models native tokenizer.
+**Note**: Token counts displayed in the assistant panel are only estimates and will differ from the model's native tokenizer.
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
@@ -170,7 +170,7 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 
 If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
-You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
+You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc. For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120 seconds.
 
 ### OpenAI {#openai}
 
@@ -203,9 +203,9 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
           "max_tokens": 128000,
           "max_completion_tokens": 20000
         }
-      ]
+      ],
       "version": "1"
-    },
+    }
   }
 }
 ```
@@ -286,7 +286,7 @@ Example configuration for using X.ai Grok with Zed:
    lms get qwen2.5-coder-7b
    ```
 
-3. Make sure the LM Studio API server by running:
+3. Make sure the LM Studio API server is running by executing:
 
    ```sh
    lms server start
@@ -298,7 +298,7 @@ Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#
 
 ### Custom Endpoints {#custom-endpoint}
 
-You can use a custom API endpoint for different providers, as long as it's compatible with the providers API structure.
+You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
 
 To do so, add the following to your Zed `settings.json`:
 
