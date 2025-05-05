@@ -2,10 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
-use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
-    Transformation, WeakEntity, Window, percentage,
-};
+use gpui::{AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, WeakEntity, Window};
 use language::LineEnding;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -20,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal_view::TerminalView;
-use ui::{Disclosure, IconName, Tooltip, prelude::*};
+use ui::{Disclosure, Tooltip, prelude::*};
 use util::{
     get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
     time::duration_alt_display,
@@ -233,11 +230,13 @@ impl Tool for TerminalTool {
                             workspace.downgrade(),
                             None,
                             project.downgrade(),
+                            true,
                             window,
                             cx,
                         )
                     })
                 })?;
+
                 let _ = card.update(cx, |card, _| {
                     card.terminal = Some(terminal_view.clone());
                     card.start_instant = Instant::now();
@@ -436,155 +435,118 @@ impl ToolCard for TerminalToolCard {
         };
 
         let tool_failed = matches!(status, ToolUseStatus::Error(_));
+
         let command_failed =
             self.command_finished && self.exit_status.is_none_or(|code| !code.success());
+
         if (tool_failed || command_failed) && self.elapsed_time.is_none() {
             self.elapsed_time = Some(self.start_instant.elapsed());
         }
         let time_elapsed = self
             .elapsed_time
             .unwrap_or_else(|| self.start_instant.elapsed());
-        let should_hide_terminal =
-            tool_failed || self.finished_with_empty_output || !self.preview_expanded;
+        let should_hide_terminal = tool_failed || self.finished_with_empty_output;
 
-        let border_color = cx.theme().colors().border.opacity(0.6);
         let header_bg = cx
             .theme()
             .colors()
             .element_background
             .blend(cx.theme().colors().editor_foreground.opacity(0.025));
 
-        let header_label = h_flex()
-            .w_full()
-            .max_w_full()
-            .px_1()
-            .gap_0p5()
-            .opacity(0.8)
-            .child(
-                h_flex()
-                    .child(
-                        Icon::new(IconName::Terminal)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        div()
-                            .id(("terminal-tool-header-input-command", self.entity_id))
-                            .text_size(rems(0.8125))
-                            .font_buffer(cx)
-                            .child(self.input_command.clone())
-                            .ml_1p5()
-                            .mr_0p5()
-                            .tooltip({
-                                let path = self
-                                    .working_dir
-                                    .as_ref()
-                                    .cloned()
-                                    .or_else(|| env::current_dir().ok())
-                                    .map(|path| format!("\"{}\"", path.display()))
-                                    .unwrap_or_else(|| "current directory".to_string());
-                                Tooltip::text(if self.command_finished {
-                                    format!("Ran in {path}")
-                                } else {
-                                    format!("Running in {path}")
-                                })
-                            }),
-                    ),
-            )
-            .into_any_element();
+        let border_color = cx.theme().colors().border.opacity(0.6);
+
+        let path = self
+            .working_dir
+            .as_ref()
+            .cloned()
+            .or_else(|| env::current_dir().ok())
+            .map(|path| format!("{}", path.display()))
+            .unwrap_or_else(|| "current directory".to_string());
 
         let header = h_flex()
             .flex_none()
-            .p_1()
             .gap_1()
             .justify_between()
             .rounded_t_md()
-            .bg(header_bg)
-            .child(header_label)
-            .map(|header| {
-                let header = header
-                    .when(self.was_content_truncated, |header| {
-                        let tooltip =
-                            if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                                "Output exceeded terminal max lines and was \
-                                truncated, the model received the first 16 KB."
-                                    .to_string()
-                            } else {
-                                format!(
-                                    "Output is {} long, to avoid unexpected token usage, \
-                                    only 16 KB was sent back to the model.",
-                                    format_file_size(self.original_content_len as u64, true),
-                                )
-                            };
-                        header.child(
-                            div()
-                                .id(("terminal-tool-truncated-label", self.entity_id))
-                                .tooltip(Tooltip::text(tooltip))
-                                .child(
-                                    Label::new("(truncated)")
-                                        .color(Color::Disabled)
-                                        .size(LabelSize::Small),
-                                ),
-                        )
-                    })
-                    .when(time_elapsed > Duration::from_secs(10), |header| {
-                        header.child(
-                            Label::new(format!("({})", duration_alt_display(time_elapsed)))
-                                .buffer_font(cx)
-                                .color(Color::Disabled)
-                                .size(LabelSize::Small),
-                        )
-                    });
-
-                if tool_failed || command_failed {
-                    header.child(
-                        div()
-                            .id(("terminal-tool-error-code-indicator", self.entity_id))
-                            .child(
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .when(command_failed && self.exit_status.is_some(), |this| {
-                                this.tooltip(Tooltip::text(format!(
-                                    "Exited with code {}",
-                                    self.exit_status
-                                        .and_then(|status| status.code())
-                                        .unwrap_or(-1),
-                                )))
-                            })
-                            .when(
-                                !command_failed && tool_failed && status.error().is_some(),
-                                |this| {
-                                    this.tooltip(Tooltip::text(format!(
-                                        "Error: {}",
-                                        status.error().unwrap(),
-                                    )))
-                                },
-                            ),
-                    )
-                } else if self.command_finished {
-                    header.child(
-                        Icon::new(IconName::Check)
-                            .size(IconSize::Small)
-                            .color(Color::Success),
-                    )
+            .child(
+                div()
+                    .id(("command-target-path", self.entity_id))
+                    .w_full()
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .child(
+                        Label::new(path)
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    ),
+            )
+            .when(self.was_content_truncated, |header| {
+                let tooltip = if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
+                    "Output exceeded terminal max lines and was \
+                        truncated, the model received the first 16 KB."
+                        .to_string()
                 } else {
-                    header.child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Info)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
+                    format!(
+                        "Output is {} long, to avoid unexpected token usage, \
+                            only 16 KB was sent back to the model.",
+                        format_file_size(self.original_content_len as u64, true),
                     )
-                }
+                };
+                header.child(
+                    h_flex()
+                        .id(("terminal-tool-truncated-label", self.entity_id))
+                        .tooltip(Tooltip::text(tooltip))
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Info)
+                                .size(IconSize::XSmall)
+                                .color(Color::Ignored),
+                        )
+                        .child(
+                            Label::new("Truncated")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        ),
+                )
             })
-            .when(!tool_failed && !self.finished_with_empty_output, |header| {
+            .when(time_elapsed > Duration::from_secs(10), |header| {
+                header.child(
+                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
+                        .buffer_font(cx)
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+            })
+            .when(tool_failed || command_failed, |header| {
+                header.child(
+                    div()
+                        .id(("terminal-tool-error-code-indicator", self.entity_id))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .when(command_failed && self.exit_status.is_some(), |this| {
+                            this.tooltip(Tooltip::text(format!(
+                                "Exited with code {}",
+                                self.exit_status
+                                    .and_then(|status| status.code())
+                                    .unwrap_or(-1),
+                            )))
+                        })
+                        .when(
+                            !command_failed && tool_failed && status.error().is_some(),
+                            |this| {
+                                this.tooltip(Tooltip::text(format!(
+                                    "Error: {}",
+                                    status.error().unwrap(),
+                                )))
+                            },
+                        ),
+                )
+            })
+            .when(!should_hide_terminal, |header| {
                 header.child(
                     Disclosure::new(
                         ("terminal-tool-disclosure", self.entity_id),
@@ -607,9 +569,25 @@ impl ToolCard for TerminalToolCard {
             .border_color(border_color)
             .rounded_lg()
             .overflow_hidden()
-            .child(header)
-            .when(!should_hide_terminal, |this| {
-                this.child(div().child(terminal.clone()).min_h(px(250.0)))
+            .child(
+                v_flex().p_2().gap_0p5().bg(header_bg).child(header).child(
+                    Label::new(self.input_command.clone())
+                        .buffer_font(cx)
+                        .size(LabelSize::Small),
+                ),
+            )
+            .when(self.preview_expanded && !should_hide_terminal, |this| {
+                this.child(
+                    div()
+                        .pt_2()
+                        .min_h_72()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
+                        .rounded_b_md()
+                        .text_ui_sm(cx)
+                        .child(terminal.clone()),
+                )
             })
             .into_any()
     }
