@@ -1,5 +1,6 @@
 use std::{
     borrow::Cow,
+    cmp::Reverse,
     ops::Not,
     path::{Path, PathBuf},
     sync::Arc,
@@ -196,6 +197,15 @@ impl NewSessionModal {
             .ok()?;
         let weak = cx.weak_entity();
         let debugger = self.debugger.clone();
+        let active_buffer_language_name =
+            self.task_contexts
+                .active_item_context
+                .as_ref()
+                .and_then(|item| {
+                    item.1
+                        .as_ref()
+                        .and_then(|location| location.buffer.read(cx).language()?.name().into())
+                });
         DropdownMenu::new(
             "dap-adapter-picker",
             debugger
@@ -218,7 +228,7 @@ impl NewSessionModal {
                 };
 
                 let available_languages = language_registry.language_names();
-                let mut adapter_scoring = HashMap::default();
+                let mut debugger_to_languages = HashMap::default();
                 for language in available_languages {
                     let Some(language) =
                         language_registry.available_language_for_name(language.as_str())
@@ -227,7 +237,7 @@ impl NewSessionModal {
                     };
 
                     language.config().debuggers.iter().for_each(|adapter| {
-                        adapter_scoring
+                        debugger_to_languages
                             .entry(adapter.clone())
                             .or_insert_with(HashSet::default)
                             .insert(language.name());
@@ -239,12 +249,22 @@ impl NewSessionModal {
                     .unwrap_or_default();
 
                 available_adapters.sort_by_key(|name| {
-                    adapter_scoring
-                        .get(name.as_ref())
-                        .map_or(0, |languages| languages.len())
+                    let languages_for_debugger = debugger_to_languages.get(name.as_ref());
+                    let languages_count =
+                        languages_for_debugger.map_or(0, |languages| languages.len());
+                    let contains_language_of_active_buffer = languages_for_debugger
+                        .zip(active_buffer_language_name.as_ref())
+                        .map_or(false, |(languages, active_buffer_language)| {
+                            languages.contains(active_buffer_language)
+                        });
+
+                    (
+                        Reverse(contains_language_of_active_buffer),
+                        Reverse(languages_count),
+                    )
                 });
 
-                for adapter in available_adapters.into_iter().rev() {
+                for adapter in available_adapters.into_iter() {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.0));
                 }
                 menu
