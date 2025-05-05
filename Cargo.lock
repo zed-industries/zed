@@ -106,6 +106,7 @@ dependencies = [
  "rope",
  "rules_library",
  "schemars",
+ "search",
  "serde",
  "serde_json",
  "serde_json_lenient",

@@ -297,7 +297,7 @@ pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
     // this can't be an FxHashMap because the extension APIs require the default SipHash
-    pub env: Option<std::collections::HashMap<String, String, std::hash::RandomState>>,
+    pub env: Option<std::collections::HashMap<String, String>>,
     pub ignore_system_version: Option<bool>,
 }
 
