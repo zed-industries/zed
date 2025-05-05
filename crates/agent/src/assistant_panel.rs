@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::Markdown;
 use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
@@ -23,7 +23,8 @@ use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop, linear_gradient,
+    prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -35,7 +36,6 @@ use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
-use ui::utils::WithRemSize;
 use ui::{
     Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
     ProgressBar, Tab, Tooltip, prelude::*,
@@ -47,7 +47,7 @@ use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_llm_client::UsageLimit;
 
-use crate::active_thread::{ActiveThread, ActiveThreadEvent, default_markdown_style};
+use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::agent_diff::AgentDiff;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
@@ -335,7 +335,7 @@ pub struct AssistantPanel {
     height: Option<Pixels>,
     pending_serialization: Option<Task<Result<()>>>,
     hide_trial_upsell: bool,
-    trial_markdown: Entity<Markdown>,
+    _trial_markdown: Entity<Markdown>,
 }
 
 impl AssistantPanel {
@@ -665,7 +665,7 @@ impl AssistantPanel {
             height: None,
             pending_serialization: None,
             hide_trial_upsell: false,
-            trial_markdown,
+            _trial_markdown: trial_markdown,
         }
     }
 
@@ -1753,22 +1753,12 @@ impl AssistantPanel {
 
     fn render_trial_upsell(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         if !self.should_render_upsell(cx) {
             return None;
         }
-
-        let default_md_style = default_markdown_style(window, cx);
-
-        let mut text_style = default_md_style.base_text_style;
-        text_style.font_size = px(4.0).into();
-
-        let md_style = MarkdownStyle {
-            base_text_style: text_style,
-            ..default_markdown_style(window, cx)
-        };
 
         let checkbox = CheckboxWithLabel::new(
             "dont-show-again",
@@ -1782,53 +1772,77 @@ impl AssistantPanel {
         );
 
         Some(
-            div().p_4().child(
+            div().p_2().child(
                 v_flex()
                     .w_full()
                     .elevation_2(cx)
+                    .rounded(px(8.))
                     .bg(cx.theme().colors().background.alpha(0.5))
-                    .p_4()
-                    .gap_6()
+                    .p(px(3.))
                     .child(
-                        WithRemSize::new(14.)
-                            .max_w(px(540.))
-                            .child(MarkdownElement::new(self.trial_markdown.clone(), md_style)),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .px_neg_2()
-                            .justify_between()
-                            .items_center()
-                            .child(h_flex().items_center().gap_1().child(checkbox))
+                        div()
+                            .gap_2()
+                            .flex()
+                            .flex_col()
+                            .size_full()
+                            .border_1()
+                            .rounded(px(5.))
+                            .border_color(cx.theme().colors().text.alpha(0.1))
+                            .overflow_hidden()
+                            .bg(linear_gradient(
+                                -37.,
+                                linear_color_stop(cx.theme().colors().text.alpha(0.04), 0.0),
+                                linear_color_stop(gpui::transparent_white(), 1.0),
+                            ))
+                            .px_4()
+                            .py_3()
+                            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+                            .child(Label::new("Try Zed Pro for free for 14 days - no credit card required.").size(LabelSize::Small))
+                            .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted).size(LabelSize::XSmall))
                             .child(
                                 h_flex()
-                                    .gap_2()
+                                    .w_full()
+                                    .px_neg_1()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(h_flex().items_center().gap_1().child(checkbox))
                                     .child(
-                                        Button::new("dismiss-button", "No Thanks")
-                                            .style(ButtonStyle::Subtle)
-                                            .color(Color::Muted)
-                                            .on_click({
-                                                let assistant_panel = cx.entity();
-                                                move |_, _, cx| {
-                                                    assistant_panel.update(cx, |this, cx| {
-                                                        let hidden = this.hide_trial_upsell;
-                                                        println!("hidden: {}", hidden);
-                                                        this.hide_trial_upsell = true;
-                                                        let new_hidden = this.hide_trial_upsell;
-                                                        println!("new_hidden: {}", new_hidden);
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("dismiss-button", "Not Now")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .color(Color::Muted)
+                                                    .on_click({
+                                                        let assistant_panel = cx.entity();
+                                                        move |_, _, cx| {
+                                                            assistant_panel.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    let hidden =
+                                                                        this.hide_trial_upsell;
+                                                                    println!("hidden: {}", hidden);
+                                                                    this.hide_trial_upsell = true;
+                                                                    let new_hidden =
+                                                                        this.hide_trial_upsell;
+                                                                    println!(
+                                                                        "new_hidden: {}",
+                                                                        new_hidden
+                                                                    );
 
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("cta-button", "Upgrade Now")
-                                            .style(ButtonStyle::Filled)
-                                            .on_click(|_, _, cx| {
-                                                cx.open_url(&zed_urls::account_url(cx))
-                                            }),
+                                                                    cx.notify();
+                                                                },
+                                                            );
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                Button::new("cta-button", "Start Trial")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .on_click(|_, _, cx| {
+                                                        cx.open_url(&zed_urls::account_url(cx))
+                                                    }),
+                                            ),
                                     ),
                             ),
                     ),
