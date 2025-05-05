@@ -67,7 +67,7 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
-    pub profile_selector: Entity<ProfileSelector>,
+    profile_selector: Entity<ProfileSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
     last_estimated_token_count: Option<usize>,
