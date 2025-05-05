@@ -26,7 +26,3 @@ Browse all available MCP extensions either on [Zed's website](https://zed.dev/ex
 If there's an existing MCP server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
 
 If you are interested in building your own MCP server, check out the [Model Context Protocol docs](https://modelcontextprotocol.io/introduction#get-started-with-mcp) to get started.
-
-
----
-<!-- todo! -->

@@ -8,23 +8,11 @@ The inline assistant allows you to send the current selection (or the current li
 
 You can also perform multiple generation requests in parallel by pressing `ctrl-enter` with multiple cursors, or by pressing `ctrl-enter` with a selection that spans multiple excerpts in a multibuffer.
 
-<!-- todo! - lines below likely needs to be updated -->
-The inline assistant pulls its context from the agent panel, allowing you to provide additional instructions or rules for code transformations.
+## Context
 
-> **Note**: The inline assistant sees the entire active context from the agent panel. This means the agent panel's context editor becomes one of the most powerful tools for shaping the results of the inline assistant.
+You can give the inline assistant context the same way you can in the agent panel, allowing you to provide additional instructions or rules for code transformations with @-mentions.
 
-## Using Prompts & Commands
-
-While you can't directly use slash commands (and by extension, the `/prompt` command to include prompts) in the inline assistant, you can use them in the active context in the agent panel.
-
-A common workflow when using the inline assistant is to create a context in the agent panel, add the desired context through text, prompts and commands, and then use the inline assistant to generate and apply transformations.
-
-### Example Recipe - Fixing Errors with the Inline Assistant
-
-1. Create a new chat in the agent panel.
-2. Use the `/diagnostics` command to add current diagnostics to the context.
-3. OR use the `/terminal` command to add the current terminal output to the context (maybe a panic, error, or log?)
-4. Use the inline assistant to generate a fix for the error.
+A useful pattern here is to create a thread in the agent panel, and then use the `@thread` command in the inline assistant to include the thread as context for the inline assistant transformation.
 
 ## Prefilling Prompts
 
@@ -43,6 +31,3 @@ To create a custom keybinding that prefills a prompt, you can add the following 
   }
 ]
 ```
-
-<!-- - todo! - needs more tweaks, not done -->
-<!-- - todo! - see what needs to be pulled in from old docs here v -->

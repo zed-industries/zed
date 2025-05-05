@@ -1,7 +1,5 @@
 # Text Threads
 
-<!-- todo! - bring other text thread-specific docs in here -->
-
 ## Commands Overview {#commands}
 
 Slash commands enhance the assistant's capabilities. Begin by typing a `/` at the beginning of the line to see a list of available commands:
