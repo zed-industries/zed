@@ -194,6 +194,10 @@ impl VariableList {
         }
     }
 
+    pub(super) fn has_open_context_menu(&self) -> bool {
+        self.open_context_menu.is_some()
+    }
+
     fn build_entries(&mut self, cx: &mut Context<Self>) {
         let Some(stack_frame_id) = self.selected_stack_frame_id else {
             return;
@@ -687,6 +691,7 @@ impl VariableList {
             .child(
                 ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
                     .selectable(false)
+                    .disabled(self.disabled)
                     .indent_level(state.depth + 1)
                     .indent_step_size(px(20.))
                     .always_show_disclosure_icon(true)
@@ -695,7 +700,15 @@ impl VariableList {
                         let var_path = entry.path.clone();
                         cx.listener(move |this, _, _, cx| this.toggle_entry(&var_path, cx))
                     })
-                    .child(div().text_ui(cx).w_full().child(scope.name.clone())),
+                    .child(
+                        div()
+                            .text_ui(cx)
+                            .w_full()
+                            .when(self.disabled, |this| {
+                                this.text_color(Color::Disabled.color(cx))
+                            })
+                            .child(scope.name.clone()),
+                    ),
             )
             .into_any()
     }
@@ -716,20 +729,27 @@ impl VariableList {
         };
 
         let syntax_color_for = |name| cx.theme().syntax().get(name).color;
-        let variable_name_color = match &dap
-            .presentation_hint
-            .as_ref()
-            .and_then(|hint| hint.kind.as_ref())
-            .unwrap_or(&VariablePresentationHintKind::Unknown)
-        {
-            VariablePresentationHintKind::Class
-            | VariablePresentationHintKind::BaseClass
-            | VariablePresentationHintKind::InnerClass
-            | VariablePresentationHintKind::MostDerivedClass => syntax_color_for("type"),
-            VariablePresentationHintKind::Data => syntax_color_for("variable"),
-            VariablePresentationHintKind::Unknown | _ => syntax_color_for("variable"),
+        let variable_name_color = if self.disabled {
+            Some(Color::Disabled.color(cx))
+        } else {
+            match &dap
+                .presentation_hint
+                .as_ref()
+                .and_then(|hint| hint.kind.as_ref())
+                .unwrap_or(&VariablePresentationHintKind::Unknown)
+            {
+                VariablePresentationHintKind::Class
+                | VariablePresentationHintKind::BaseClass
+                | VariablePresentationHintKind::InnerClass
+                | VariablePresentationHintKind::MostDerivedClass => syntax_color_for("type"),
+                VariablePresentationHintKind::Data => syntax_color_for("variable"),
+                VariablePresentationHintKind::Unknown | _ => syntax_color_for("variable"),
+            }
         };
-        let variable_color = syntax_color_for("variable.special");
+        let variable_color = self
+            .disabled
+            .then(|| Color::Disabled.color(cx))
+            .or_else(|| syntax_color_for("variable.special"));
 
         let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);
@@ -909,12 +929,12 @@ impl Render for VariableList {
         self.build_entries(cx);
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
             .overflow_y_scroll()
             .size_full()
-            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))

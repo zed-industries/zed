@@ -8,9 +8,9 @@ mod tests;
 
 use collections::HashMap;
 pub use ids::*;
-use rpc::LanguageModelProvider;
 pub use seed::*;
 pub use tables::*;
+use zed_llm_client::LanguageModelProvider;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;
@@ -20,7 +20,6 @@ use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-pub use queries::usages::{ActiveUserCount, TokenUsage};
 pub use sea_orm::ConnectOptions;
 use sea_orm::prelude::*;
 use sea_orm::{

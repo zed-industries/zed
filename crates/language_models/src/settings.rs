@@ -72,6 +72,7 @@ pub struct AllLanguageModelSettings {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
@@ -158,6 +159,15 @@ pub enum VersionedAnthropicSettingsContent {
 pub struct AnthropicSettingsContentV1 {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AmazonBedrockSettingsContent {
+    available_models: Option<Vec<provider::bedrock::AvailableModel>>,
+    endpoint_url: Option<String>,
+    region: Option<String>,
+    profile: Option<String>,
+    authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -297,6 +307,25 @@ impl settings::Settings for AllLanguageModelSettings {
                 anthropic.as_ref().and_then(|s| s.available_models.clone()),
             );
 
+            // Bedrock
+            let bedrock = value.bedrock.clone();
+            merge(
+                &mut settings.bedrock.profile_name,
+                bedrock.as_ref().map(|s| s.profile.clone()),
+            );
+            merge(
+                &mut settings.bedrock.authentication_method,
+                bedrock.as_ref().map(|s| s.authentication_method.clone()),
+            );
+            merge(
+                &mut settings.bedrock.region,
+                bedrock.as_ref().map(|s| s.region.clone()),
+            );
+            merge(
+                &mut settings.bedrock.endpoint,
+                bedrock.as_ref().map(|s| s.endpoint_url.clone()),
+            );
+
             // Ollama
             let ollama = value.ollama.clone();
 
@@ -384,4 +413,6 @@ impl settings::Settings for AllLanguageModelSettings {
 
         Ok(settings)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

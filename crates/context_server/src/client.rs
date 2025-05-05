@@ -40,7 +40,7 @@ pub enum RequestId {
     Str(String),
 }
 
-pub struct Client {
+pub(crate) struct Client {
     server_id: ContextServerId,
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
@@ -59,7 +59,7 @@ pub struct Client {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct ContextServerId(pub Arc<str>);
+pub(crate) struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
     if let Ok(Value::Null) = serde_json::to_value(value) {
@@ -140,7 +140,7 @@ impl Client {
     /// This function initializes a new Client by spawning a child process for the context server,
     /// setting up communication channels, and initializing handlers for input/output operations.
     /// It takes a server ID, binary information, and an async app context as input.
-    pub fn new(
+    pub fn stdio(
         server_id: ContextServerId,
         binary: ModelContextServerBinary,
         cx: AsyncApp,
@@ -158,7 +158,16 @@ impl Client {
             .unwrap_or_else(String::new);
 
         let transport = Arc::new(StdioTransport::new(binary, &cx)?);
+        Self::new(server_id, server_name.into(), transport, cx)
+    }
 
+    /// Creates a new Client instance for a context server.
+    pub fn new(
+        server_id: ContextServerId,
+        server_name: Arc<str>,
+        transport: Arc<dyn Transport>,
+        cx: AsyncApp,
+    ) -> Result<Self> {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
@@ -167,7 +176,7 @@ impl Client {
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
 
-        let stdout_input_task = cx.spawn({
+        let receive_input_task = cx.spawn({
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let transport = transport.clone();
@@ -177,13 +186,13 @@ impl Client {
                     .await
             }
         });
-        let stderr_input_task = cx.spawn({
+        let receive_err_task = cx.spawn({
             let transport = transport.clone();
-            async move |_| Self::handle_stderr(transport).log_err().await
+            async move |_| Self::handle_err(transport).log_err().await
         });
         let input_task = cx.spawn(async move |_| {
-            let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
-            stdout.or(stderr)
+            let (input, err) = futures::join!(receive_input_task, receive_err_task);
+            input.or(err)
         });
 
         let output_task = cx.background_spawn({
@@ -201,7 +210,7 @@ impl Client {
             server_id,
             notification_handlers,
             response_handlers,
-            name: server_name.into(),
+            name: server_name,
             next_id: Default::default(),
             outbound_tx,
             executor: cx.background_executor().clone(),
@@ -247,7 +256,7 @@ impl Client {
 
     /// Handles the stderr output from the context server.
     /// Continuously reads and logs any error messages from the server.
-    async fn handle_stderr(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
+    async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
             log::warn!("context server stderr: {}", err.trim());
         }
@@ -358,6 +367,7 @@ impl Client {
         Ok(())
     }
 
+    #[allow(unused)]
     pub fn on_notification<F>(&self, method: &'static str, f: F)
     where
         F: 'static + Send + FnMut(Value, AsyncApp),
@@ -365,14 +375,6 @@ impl Client {
         self.notification_handlers
             .lock()
             .insert(method, Box::new(f));
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn server_id(&self) -> ContextServerId {
-        self.server_id.clone()
     }
 }
 

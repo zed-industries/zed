@@ -18,7 +18,7 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 [dependencies]
 anyhow.workspace = true
 async-recursion = "0.3"
-async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
+async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
@@ -26,6 +26,7 @@ credentials_provider.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 http_client.workspace = true
 http_client_tls.workspace = true
 log.workspace = true
@@ -51,6 +52,7 @@ url.workspace = true
 util.workspace = true
 worktree.workspace = true
 telemetry.workspace = true
+tokio.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
@@ -67,4 +69,3 @@ windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
-async-native-tls = { version = "0.5.0", features = ["vendored"] }

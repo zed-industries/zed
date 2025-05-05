@@ -49,6 +49,7 @@ wayland = [
     "filedescriptor",
     "xkbcommon",
     "open",
+    "scap",
 ]
 x11 = [
     "blade-graphics",
@@ -65,6 +66,7 @@ x11 = [
     "x11-clipboard",
     "filedescriptor",
     "open",
+    "scap",
 ]
 
 
@@ -87,7 +89,7 @@ etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
 http_client = { optional = true, workspace = true }
-image = "0.25.1"
+image.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
@@ -99,7 +101,11 @@ profiling.workspace = true
 rand = { optional = true, workspace = true }
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = { version = "0.45.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+resvg = { version = "0.45.0", default-features = false, features = [
+    "text",
+    "system-fonts",
+    "memmap-fonts",
+] }
 usvg = { version = "0.45.0", default-features = false }
 schemars.workspace = true
 seahash = "4.1"
@@ -132,7 +138,7 @@ font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
-objc = "0.2"
+objc.workspace = true
 objc2 = { version = "0.5", optional = true }
 objc2-metal = { version = "0.2", optional = true }
 #TODO: replace with "objc2"
@@ -159,6 +165,7 @@ cosmic-text = { version = "0.13.2", optional = true }
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", features = [
     "source-fontconfig-dlopen",
 ], optional = true }
+scap = { workspace = true, optional = true }
 
 calloop = { version = "0.13.0" }
 filedescriptor = { version = "0.8.2", optional = true }
@@ -181,7 +188,6 @@ wayland-protocols-plasma = { version = "0.2.0", features = [
     "client",
 ], optional = true }
 
-
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }
 x11rb = { version = "0.13.1", features = [
@@ -193,14 +199,17 @@ x11rb = { version = "0.13.1", features = [
     "resource_manager",
     "sync",
 ], optional = true }
-xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
+xkbcommon = { version = "0.8.0", features = [
+    "wayland",
+    "x11",
+], optional = true }
 xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf65a0ea94c70d3c4fd", features = [
     "x11rb-xcb",
     "x11rb-client",
 ], optional = true }
 x11-clipboard = { version = "0.9.3", optional = true }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 blade-util.workspace = true
 bytemuck = "1"
 blade-graphics.workspace = true
@@ -210,6 +219,7 @@ rand.workspace = true
 windows.workspace = true
 windows-core = "0.61"
 windows-numerics = "0.2"
+windows-registry = "0.5"
 
 [dev-dependencies]
 backtrace = "0.3"

@@ -41,7 +41,7 @@ struct DapLogView {
     _subscriptions: Vec<Subscription>,
 }
 
-struct LogStore {
+pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     debug_clients: HashMap<SessionId, DebugAdapterState>,
     rpc_tx: UnboundedSender<(SessionId, IoKind, String)>,
@@ -101,7 +101,7 @@ impl DebugAdapterState {
 }
 
 impl LogStore {
-    fn new(cx: &Context<Self>) -> Self {
+    pub fn new(cx: &Context<Self>) -> Self {
         let (rpc_tx, mut rpc_rx) = unbounded::<(SessionId, IoKind, String)>();
         cx.spawn(async move |this, cx| {
             while let Some((client_id, io_kind, message)) = rpc_rx.next().await {
@@ -566,11 +566,13 @@ impl DapLogView {
             .dap_store()
             .read(cx)
             .sessions()
-            .filter_map(|client| {
-                let client = client.read(cx).adapter_client()?;
+            .filter_map(|session| {
+                let session = session.read(cx);
+                session.adapter();
+                let client = session.adapter_client()?;
                 Some(DapMenuItem {
                     client_id: client.id(),
-                    client_name: client.name().0.as_ref().into(),
+                    client_name: session.adapter().to_string(),
                     has_adapter_logs: client.has_adapter_logs(),
                     selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
                 })
@@ -725,8 +727,8 @@ impl Item for DapLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("DAP Logs".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "DAP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -843,3 +845,29 @@ impl EventEmitter<Event> for LogStore {}
 impl EventEmitter<Event> for DapLogView {}
 impl EventEmitter<EditorEvent> for DapLogView {}
 impl EventEmitter<SearchEvent> for DapLogView {}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LogStore {
+    pub fn contained_session_ids(&self) -> Vec<SessionId> {
+        self.debug_clients.keys().cloned().collect()
+    }
+
+    pub fn rpc_messages_for_session_id(&self, session_id: SessionId) -> Vec<String> {
+        self.debug_clients
+            .get(&session_id)
+            .expect("This session should exist if a test is calling")
+            .rpc_messages
+            .messages
+            .clone()
+            .into()
+    }
+
+    pub fn log_messages_for_session_id(&self, session_id: SessionId) -> Vec<String> {
+        self.debug_clients
+            .get(&session_id)
+            .expect("This session should exist if a test is calling")
+            .log_messages
+            .clone()
+            .into()
+    }
+}
