@@ -67,7 +67,6 @@ Default rules will show at the top of the rules list, and will be included with 
 
 You can manually add other rules as context using the `@rule` command.
 
-<!-- todo! - is this note accurate? -->
 > **Note:** Remember, commands are only evaluated when the context is created, so a command like `@file` won't continuously update.
 
 ## Migrating from Prompt Library
@@ -80,6 +79,4 @@ Previously, it was possible to use slash commands (now @-mentions) in custom pro
 
 ### Prompt templates
 
-<!-- todo! improve wording -->
-
-Zed still uses the same template system it did before the introduction of the Rules Library for replacing the prompts used in various places within Zed such as the inline assistant. These templates can still be used to override those prompts, and are documented in the [Rules Templates](./text-threads.md#rule-templates) section under [Text Threads](./text-threads.md).
+Zed maintains backwards compatibility with its original template system, which allows you to customize prompts used throughout the application, including the inline assistant. While the Rules Library is now the primary way to manage prompts, you can still use these legacy templates to override default prompts. For more details, see the [Rules Templates](./text-threads.md#rule-templates) section under [Text Threads](./text-threads.md).
