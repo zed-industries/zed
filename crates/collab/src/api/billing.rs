@@ -1196,10 +1196,16 @@ struct ModelRequestUsage {
 }
 
 #[derive(Debug, Serialize)]
-struct GetCurrentUsageResponse {
+struct CurrentUsage {
     pub model_requests: UsageCounts,
     pub model_request_usage: Vec<ModelRequestUsage>,
     pub edit_predictions: UsageCounts,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct GetCurrentUsageResponse {
+    pub plan: String,
+    pub current_usage: Option<CurrentUsage>,
 }
 
 async fn get_current_usage(
@@ -1212,6 +1218,11 @@ async fn get_current_usage(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
+    let feature_flags = app.db.get_user_flags(user.id).await?;
+    let has_extended_trial = feature_flags
+        .iter()
+        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+
     let Some(llm_db) = app.llm_db.clone() else {
         return Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
@@ -1219,22 +1230,8 @@ async fn get_current_usage(
         ));
     };
 
-    let empty_usage = GetCurrentUsageResponse {
-        model_requests: UsageCounts {
-            used: 0,
-            limit: Some(0),
-            remaining: Some(0),
-        },
-        model_request_usage: Vec::new(),
-        edit_predictions: UsageCounts {
-            used: 0,
-            limit: Some(0),
-            remaining: Some(0),
-        },
-    };
-
     let Some(subscription) = app.db.get_active_billing_subscription(user.id).await? else {
-        return Ok(Json(empty_usage));
+        return Ok(Json(GetCurrentUsageResponse::default()));
     };
 
     let subscription_period = maybe!({
@@ -1245,26 +1242,22 @@ async fn get_current_usage(
     });
 
     let Some((period_start_at, period_end_at)) = subscription_period else {
-        return Ok(Json(empty_usage));
+        return Ok(Json(GetCurrentUsageResponse::default()));
     };
 
     let usage = llm_db
         .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
         .await?;
-    let Some(usage) = usage else {
-        return Ok(Json(empty_usage));
-    };
 
-    let plan = match usage.plan {
-        SubscriptionKind::ZedPro => zed_llm_client::Plan::ZedPro,
-        SubscriptionKind::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-        SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
-    };
-
-    let feature_flags = app.db.get_user_flags(user.id).await?;
-    let has_extended_trial = feature_flags
-        .iter()
-        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+    let plan = usage
+        .as_ref()
+        .map(|usage| usage.plan.into())
+        .unwrap_or_else(|| {
+            subscription
+                .kind
+                .map(Into::into)
+                .unwrap_or(zed_llm_client::Plan::Free)
+        });
 
     let model_requests_limit = match plan.model_requests_limit() {
         zed_llm_client::UsageLimit::Limited(limit) => {
@@ -1278,9 +1271,29 @@ async fn get_current_usage(
         }
         zed_llm_client::UsageLimit::Unlimited => None,
     };
-    let edit_prediction_limit = match plan.edit_predictions_limit() {
+
+    let edit_predictions_limit = match plan.edit_predictions_limit() {
         zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
         zed_llm_client::UsageLimit::Unlimited => None,
+    };
+
+    let Some(usage) = usage else {
+        return Ok(Json(GetCurrentUsageResponse {
+            plan: plan.as_str().to_string(),
+            current_usage: Some(CurrentUsage {
+                model_requests: UsageCounts {
+                    used: 0,
+                    limit: model_requests_limit,
+                    remaining: model_requests_limit,
+                },
+                model_request_usage: Vec::new(),
+                edit_predictions: UsageCounts {
+                    used: 0,
+                    limit: edit_predictions_limit,
+                    remaining: edit_predictions_limit,
+                },
+            }),
+        }));
     };
 
     let subscription_usage_meters = llm_db
@@ -1301,17 +1314,21 @@ async fn get_current_usage(
         .collect::<Vec<_>>();
 
     Ok(Json(GetCurrentUsageResponse {
-        model_requests: UsageCounts {
-            used: usage.model_requests,
-            limit: model_requests_limit,
-            remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
-        },
-        model_request_usage,
-        edit_predictions: UsageCounts {
-            used: usage.edit_predictions,
-            limit: edit_prediction_limit,
-            remaining: edit_prediction_limit.map(|limit| (limit - usage.edit_predictions).max(0)),
-        },
+        plan: plan.as_str().to_string(),
+        current_usage: Some(CurrentUsage {
+            model_requests: UsageCounts {
+                used: usage.model_requests,
+                limit: model_requests_limit,
+                remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
+            },
+            model_request_usage,
+            edit_predictions: UsageCounts {
+                used: usage.edit_predictions,
+                limit: edit_predictions_limit,
+                remaining: edit_predictions_limit
+                    .map(|limit| (limit - usage.edit_predictions).max(0)),
+            },
+        }),
     }))
 }
 
