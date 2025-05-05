@@ -109,18 +109,18 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
         }
     }
 
-    fn get_shifted_key(&self, key: &str) -> anyhow::Result<String> {
+    fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
         if is_immutable_key(key) {
-            return Ok(key.to_string());
+            return Ok(None);
         }
         if is_alphabetic_key(key) {
-            return Ok(key.to_uppercase());
+            return Ok(Some(key.to_uppercase()));
         }
         let Some(scan_code) = self.key_to_code.get(key) else {
             return Err(anyhow::anyhow!("Key not found: {}", key));
         };
         if let Some(shifted_key) = self.code_to_shifted_key.get(scan_code) {
-            Ok(shifted_key.clone())
+            Ok(Some(shifted_key.clone()))
         } else {
             Err(anyhow::anyhow!(
                 "Shifted key not found for key {} with scan code: {}",

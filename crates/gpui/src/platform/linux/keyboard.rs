@@ -30,15 +30,15 @@ impl PlatformKeyboardMapper for LinuxKeyboardMapper {
         Ok(scan_code.to_key().to_string())
     }
 
-    fn get_shifted_key(&self, key: &str) -> anyhow::Result<String> {
+    fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
         if is_immutable_key(key) {
-            return Ok(key.to_string());
+            return Ok(None);
         }
         if is_alphabetic_key(key) {
-            return Ok(key.to_uppercase());
+            return Ok(Some(key.to_uppercase()));
         }
         // todo(linux)
-        Ok(key.to_string())
+        Ok(Some(key.to_string()))
     }
 }
 
