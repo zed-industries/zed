@@ -2043,7 +2043,7 @@ impl ActiveThread {
 
         let panel_background = cx.theme().colors().panel_background;
 
-        WithRemSize::new(dbg!(ThemeSettings::get_global(cx).agent_font_size(cx)))
+        WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
             .size_full()
             .child(
                 v_flex()
