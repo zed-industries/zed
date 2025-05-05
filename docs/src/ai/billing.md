@@ -26,16 +26,3 @@ From Stripe’s secure portal, you can download all current and historical invoi
 You can update your payment method, company name, address, and tax information through the billing portal.
 We use Stripe as our payment processor to ensure secure transactions.
 Please note that changes to billing information will **only** affect future invoices—**we cannot modify historical invoices**.
-
-## Cancellation and Refunds {#cancel-refund}
-
-You can cancel your subscription directly through the billing portal using the “Cancel subscription” button.
-Your access will continue until the end of your current billing period.
-
-You can self-serve a refund by going to the billing portal and clicking on the Cancel subscription button.
-Our self-serve refund policy is as follows:
-
-- **EU, UK or Turkey customers**: Eligible for a refund if you cancel your subscription within 14 days of purchase.
-- **All other customers (US + rest of world)**: Refundable within 24 hours after purchase.
-
-If you’re not in the window of self-serve refunds, reach out at billing-support@zed.dev and we’ll be happy to assist you.
