@@ -36,7 +36,7 @@ impl Example for Planets {
         for tool_use in response.tool_uses() {
             if tool_use.name == OpenTool.name() {
                 open_tool_uses += 1;
-            } else if tool_use.name == TerminalTool.name() {
+            } else if tool_use.name == TerminalTool::NAME {
                 terminal_tool_uses += 1;
             }
         }

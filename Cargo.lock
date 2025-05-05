@@ -735,6 +735,7 @@ dependencies = [
  "language_model",
  "language_models",
  "linkme",
+ "log",
  "open",
  "paths",
  "portable-pty",

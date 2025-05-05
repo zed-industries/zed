@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use futures::FutureExt as _;
+use futures::{FutureExt as _, future::Shared};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
     Transformation, WeakEntity, Window, percentage,
@@ -15,13 +15,16 @@ use serde::{Deserialize, Serialize};
 use std::{
     env,
     path::{Path, PathBuf},
-    process::ExitStatus,
+    process::{ExitStatus, Stdio},
     sync::Arc,
     time::{Duration, Instant},
 };
 use terminal_view::TerminalView;
 use ui::{Disclosure, IconName, Tooltip, prelude::*};
-use util::{markdown::MarkdownInlineCode, size::format_file_size, time::duration_alt_display};
+use util::{
+    command::new_std_command, get_system_shell, markdown::MarkdownInlineCode,
+    size::format_file_size, time::duration_alt_display,
+};
 use workspace::Workspace;
 
 const COMMAND_OUTPUT_LIMIT: usize = 16 * 1024;
@@ -34,11 +37,43 @@ pub struct TerminalToolInput {
     cd: String,
 }
 
-pub struct TerminalTool;
+pub struct TerminalTool {
+    determine_shell: Shared<Task<String>>,
+}
+
+impl TerminalTool {
+    pub const NAME: &str = "terminal";
+
+    pub(crate) fn new(cx: &mut App) -> Self {
+        let determine_shell = cx.background_spawn(async move {
+            if cfg!(windows) {
+                return get_system_shell().into();
+            }
+
+            let status = new_std_command("which")
+                .arg("bash")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            if status.is_ok_and(|status| status.success()) {
+                log::info!("agent selected bash for terminal tool");
+                "bash".into()
+            } else {
+                let shell = get_system_shell();
+                log::info!("agent selected {shell} for terminal tool");
+                shell
+            }
+        });
+        Self {
+            determine_shell: determine_shell.shared(),
+        }
+    }
+}
 
 impl Tool for TerminalTool {
     fn name(&self) -> String {
-        "terminal".to_string()
+        Self::NAME.to_string()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -97,18 +132,7 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
         };
-        let program = {
-            #[cfg(windows)]
-            {
-                get_windows_system_shell()
-            }
-            #[cfg(not(windows))]
-            {
-                // TODO fall back to the user's shell
-                "bash"
-            }
-        }
-        .to_owned();
+        let program = self.determine_shell.clone();
         let command = format!("({}) </dev/null", input.command);
         let args = vec!["-c".into(), command.clone()];
         let cwd = working_dir.clone();
@@ -133,6 +157,7 @@ impl Tool for TerminalTool {
             let task = cx.background_spawn(async move {
                 let env = env.await;
                 let pty_system = native_pty_system();
+                let program = program.await;
                 let mut cmd = CommandBuilder::new(program);
                 cmd.args(args);
                 for (k, v) in env {
@@ -173,12 +198,13 @@ impl Tool for TerminalTool {
         let terminal = cx.spawn({
             let project = project.downgrade();
             async move |cx| {
+                let program = program.await;
                 let env = env.await;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
-                                command,
+                                command: program,
                                 args,
                                 cwd,
                                 env,
@@ -653,7 +679,7 @@ mod tests {
         };
         let result = cx.update(|cx| {
             TerminalTool::run(
-                Arc::new(TerminalTool),
+                Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
                 &[],
                 project.clone(),
@@ -686,7 +712,7 @@ mod tests {
 
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
-                Arc::new(TerminalTool),
+                Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
                 &[],
                 project.clone(),
