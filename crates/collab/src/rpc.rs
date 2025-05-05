@@ -37,7 +37,6 @@ use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
-use util::maybe;
 
 use futures::{
     FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
@@ -2713,13 +2712,10 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
     let usage = if let Some(llm_db) = session.app_state.llm_db.clone() {
         let subscription = db.get_active_billing_subscription(user_id).await?;
 
-        let subscription_period = maybe!({
-            let subscription = subscription?;
-            let period_start_at = subscription.current_period_start_at()?;
-            let period_end_at = subscription.current_period_end_at()?;
-
-            Some((period_start_at, period_end_at))
-        });
+        let subscription_period = crate::db::billing_subscription::Model::current_period(
+            subscription,
+            session.is_staff(),
+        );
 
         if let Some((period_start_at, period_end_at)) = subscription_period {
             llm_db

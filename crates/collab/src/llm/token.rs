@@ -6,12 +6,11 @@ use crate::llm::{
 };
 use crate::{Config, db::billing_preference};
 use anyhow::{Result, anyhow};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
+use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
-use util::maybe;
 use uuid::Uuid;
 use zed_llm_client::Plan;
 
@@ -111,34 +110,11 @@ impl LlmTokenClaims {
             has_extended_trial: feature_flags
                 .iter()
                 .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG),
-            subscription_period: if is_staff {
-                maybe!({
-                    let now = Utc::now();
-                    let year = now.year();
-                    let month = now.month();
-
-                    let first_day_of_this_month =
-                        NaiveDate::from_ymd_opt(year, month, 1)?.and_hms_opt(0, 0, 0)?;
-
-                    let next_month = if month == 12 { 1 } else { month + 1 };
-                    let next_month_year = if month == 12 { year + 1 } else { year };
-                    let first_day_of_next_month =
-                        NaiveDate::from_ymd_opt(next_month_year, next_month, 1)?
-                            .and_hms_opt(23, 59, 59)?;
-
-                    let last_day_of_this_month = first_day_of_next_month - chrono::Days::new(1);
-
-                    Some((first_day_of_this_month, last_day_of_this_month))
-                })
-            } else {
-                maybe!({
-                    let subscription = subscription?;
-                    let period_start_at = subscription.current_period_start_at()?;
-                    let period_end_at = subscription.current_period_end_at()?;
-
-                    Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
-                })
-            },
+            subscription_period: billing_subscription::Model::current_period(
+                subscription,
+                is_staff,
+            )
+            .map(|(start, end)| (start.naive_utc(), end.naive_utc())),
             enable_model_request_overages: billing_preferences
                 .as_ref()
                 .map_or(false, |preferences| {
