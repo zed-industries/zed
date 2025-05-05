@@ -10,7 +10,7 @@ use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKe
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, TextStyle, TextStyleRefinement, WeakEntity, pulsating_between,
+    Task, TextStyle, WeakEntity, pulsating_between,
 };
 use indoc::formatdoc;
 use language::{
