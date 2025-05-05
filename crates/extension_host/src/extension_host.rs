@@ -1137,7 +1137,7 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        let mut languages_to_add = new_index
+        let languages_to_add = new_index
             .languages
             .iter_mut()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
