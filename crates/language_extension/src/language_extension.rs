@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
-use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
+use language::{LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
@@ -31,14 +31,10 @@ impl ExtensionGrammarProxy for LanguageServerRegistryProxy {
 impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
     fn register_language(
         &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        hidden: bool,
+        language: LanguageConfig,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
-        self.language_registry
-            .register_language(language, grammar, matcher, hidden, load);
+        self.language_registry.register_language(language, load);
     }
 
     fn remove_languages(

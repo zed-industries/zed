@@ -146,24 +146,21 @@ pub enum BinaryStatus {
 #[derive(Clone)]
 pub struct AvailableLanguage {
     id: LanguageId,
-    name: LanguageName,
-    grammar: Option<Arc<str>>,
-    matcher: LanguageMatcher,
-    hidden: bool,
+    config: LanguageConfig,
     load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     loaded: bool,
 }
 
 impl AvailableLanguage {
     pub fn name(&self) -> LanguageName {
-        self.name.clone()
+        self.config.name.clone()
     }
 
     pub fn matcher(&self) -> &LanguageMatcher {
-        &self.matcher
+        &self.config.matcher
     }
     pub fn hidden(&self) -> bool {
-        self.hidden
+        self.config.hidden
     }
 }
 
@@ -490,18 +487,14 @@ impl LanguageRegistry {
     /// Adds a language to the registry, which can be loaded if needed.
     pub fn register_language(
         &self,
-        name: LanguageName,
-        grammar_name: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        hidden: bool,
+        config: LanguageConfig,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
         let state = &mut *self.state.write();
 
         for existing_language in &mut state.available_languages {
-            if existing_language.name == name {
-                existing_language.grammar = grammar_name;
-                existing_language.matcher = matcher;
+            if existing_language.config.name == config.name {
+                existing_language.config = config;
                 existing_language.load = load;
                 return;
             }
@@ -509,11 +502,8 @@ impl LanguageRegistry {
 
         state.available_languages.push(AvailableLanguage {
             id: LanguageId::new(),
-            name,
-            grammar: grammar_name,
-            matcher,
+            config,
             load,
-            hidden,
             loaded: false,
         });
         state.version += 1;
@@ -559,7 +549,7 @@ impl LanguageRegistry {
         let mut result = state
             .available_languages
             .iter()
-            .filter_map(|l| l.loaded.not().then_some(l.name.to_string()))
+            .filter_map(|l| l.loaded.not().then_some(l.config.name.to_string()))
             .chain(state.languages.iter().map(|l| l.config.name.to_string()))
             .collect::<Vec<_>>();
         result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
@@ -578,10 +568,7 @@ impl LanguageRegistry {
         let mut state = self.state.write();
         state.available_languages.push(AvailableLanguage {
             id: language.id,
-            name: language.name(),
-            grammar: language.config.grammar.clone(),
-            matcher: language.config.matcher.clone(),
-            hidden: language.config.hidden,
+            config: language.config.clone(),
             load: Arc::new(|| Err(anyhow!("already loaded"))),
             loaded: true,
         });
@@ -650,7 +637,7 @@ impl LanguageRegistry {
         state
             .available_languages
             .iter()
-            .find(|l| l.name.0.as_ref() == name)
+            .find(|l| l.config.name.0.as_ref() == name)
             .cloned()
     }
 
@@ -767,8 +754,11 @@ impl LanguageRegistry {
                 let current_match_type = best_language_match
                     .as_ref()
                     .map_or(LanguageMatchPrecedence::default(), |(_, score)| *score);
-                let language_score =
-                    callback(&language.name, &language.matcher, current_match_type);
+                let language_score = callback(
+                    &language.config.name,
+                    &language.config.matcher,
+                    current_match_type,
+                );
                 debug_assert!(
                     language_score.is_none_or(|new_score| new_score > current_match_type),
                     "Matching callback should only return a better match than the current one"
@@ -816,7 +806,7 @@ impl LanguageRegistry {
                 let this = self.clone();
 
                 let id = language.id;
-                let name = language.name.clone();
+                let name = language.config.name.clone();
                 let language_load = language.load.clone();
 
                 self.executor
@@ -1142,7 +1132,7 @@ impl LanguageRegistryState {
         self.languages
             .retain(|language| !languages_to_remove.contains(&language.name()));
         self.available_languages
-            .retain(|language| !languages_to_remove.contains(&language.name));
+            .retain(|language| !languages_to_remove.contains(&language.config.name));
         self.grammars
             .retain(|name, _| !grammars_to_remove.contains(name));
         self.version += 1;

@@ -140,7 +140,7 @@ struct GlobalExtensionStore(Entity<ExtensionStore>);
 
 impl Global for GlobalExtensionStore {}
 
-#[derive(Debug, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Default)]
 pub struct ExtensionIndex {
     pub extensions: BTreeMap<Arc<str>, ExtensionIndexEntry>,
     pub themes: BTreeMap<Arc<str>, ExtensionIndexThemeEntry>,
@@ -167,13 +167,11 @@ pub struct ExtensionIndexIconThemeEntry {
     pub path: PathBuf,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
-    pub matcher: LanguageMatcher,
-    pub hidden: bool,
-    pub grammar: Option<Arc<str>>,
+    pub config: LanguageConfig,
 }
 
 actions!(zed, [ReloadExtensions]);
@@ -1185,17 +1183,14 @@ impl ExtensionStore {
 
         self.proxy.register_grammars(grammars_to_add);
 
-        for (language_name, language) in languages_to_add {
+        for (_, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
             self.proxy.register_language(
-                language_name.clone(),
-                language.grammar.clone(),
-                language.matcher.clone(),
-                language.hidden,
+                language.config.clone(),
                 Arc::new(move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
@@ -1435,9 +1430,7 @@ impl ExtensionStore {
                     ExtensionIndexLanguageEntry {
                         extension: extension_id.clone(),
                         path: relative_path,
-                        matcher: config.matcher,
-                        hidden: config.hidden,
-                        grammar: config.grammar,
+                        config,
                     },
                 );
             }
