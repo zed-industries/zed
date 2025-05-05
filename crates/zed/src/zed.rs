@@ -26,8 +26,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, point,
-    px,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -915,7 +915,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let agent_diff_toolbar = cx.new(|_cx| AgentDiffToolbar::new());
+            let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
         })
     });
@@ -1336,7 +1336,7 @@ fn show_markdown_app_notification<F>(
                 let primary_button_on_click = primary_button_on_click.clone();
                 cx.new(move |cx| {
                     MessageNotification::new_from_builder(cx, move |window, cx| {
-                        gpui::div()
+                        image_cache(retain_all("notification-cache"))
                             .text_xs()
                             .child(markdown_preview::markdown_renderer::render_parsed_markdown(
                                 &parsed_markdown.clone(),

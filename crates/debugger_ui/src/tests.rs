@@ -23,6 +23,8 @@ mod debugger_panel;
 #[cfg(test)]
 mod module_list;
 #[cfg(test)]
+mod persistence;
+#[cfg(test)]
 mod stack_frame_list;
 #[cfg(test)]
 mod variable_list;
@@ -118,8 +120,8 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         workspace
             .panel::<DebugPanel>(cx)
             .and_then(|panel| panel.read(cx).active_session())
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
-            .map(|running| running.read(cx).session().clone())
+            .map(|session| session.read(cx).running_state().read(cx).session())
+            .cloned()
             .ok_or_else(|| anyhow!("Failed to get active session"))
     })??;
 

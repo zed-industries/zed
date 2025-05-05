@@ -33,6 +33,7 @@ use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
 
 use std::ops::Range;
+use std::path::Path;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
@@ -1080,7 +1081,7 @@ impl AssistantPanel {
 
     pub fn open_saved_context(
         &mut self,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1191,21 +1192,19 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_server::Restart,
+        _action: &project::context_server_store::Restart,
         _: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return;
-        };
-
-        assistant_panel.update(cx, |assistant_panel, cx| {
-            assistant_panel
-                .context_store
-                .update(cx, |context_store, cx| {
-                    context_store.restart_context_servers(cx);
-                });
-        });
+        workspace
+            .project()
+            .read(cx)
+            .context_server_store()
+            .update(cx, |store, cx| {
+                for server in store.running_servers() {
+                    store.restart_server(&server.id(), cx).log_err();
+                }
+            });
     }
 }
 
@@ -1391,7 +1390,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {

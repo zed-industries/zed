@@ -111,7 +111,7 @@ enum BreakpointStoreMode {
     Remote(RemoteBreakpointStore),
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ActiveStackFrame {
     pub session_id: SessionId,
     pub thread_id: ThreadId,
@@ -521,13 +521,26 @@ impl BreakpointStore {
             self.active_stack_frame.take();
         }
 
-        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+        cx.emit(BreakpointStoreEvent::ClearDebugLines);
         cx.notify();
     }
 
     pub fn set_active_position(&mut self, position: ActiveStackFrame, cx: &mut Context<Self>) {
+        if self
+            .active_stack_frame
+            .as_ref()
+            .is_some_and(|active_position| active_position == &position)
+        {
+            return;
+        }
+
+        if self.active_stack_frame.is_some() {
+            cx.emit(BreakpointStoreEvent::ClearDebugLines);
+        }
+
         self.active_stack_frame = Some(position);
-        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+
+        cx.emit(BreakpointStoreEvent::SetDebugLine);
         cx.notify();
     }
 
@@ -693,7 +706,8 @@ pub enum BreakpointUpdatedReason {
 }
 
 pub enum BreakpointStoreEvent {
-    ActiveDebugLineChanged,
+    SetDebugLine,
+    ClearDebugLines,
     BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
     BreakpointsCleared(Vec<Arc<Path>>),
 }

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use gpui::{App, ClipboardItem, Context, Entity, Task, Window, div, prelude::*};
+use gpui::{
+    App, ClipboardItem, Context, Entity, RetainAllImageCache, Task, Window, div, prelude::*,
+};
 use language::Buffer;
 use markdown_preview::{
     markdown_elements::ParsedMarkdown, markdown_parser::parse_markdown,
@@ -11,6 +13,7 @@ use crate::outputs::OutputContent;
 
 pub struct MarkdownView {
     raw_text: String,
+    image_cache: Entity<RetainAllImageCache>,
     contents: Option<ParsedMarkdown>,
     parsing_markdown_task: Option<Task<Result<()>>>,
 }
@@ -33,6 +36,7 @@ impl MarkdownView {
 
         Self {
             raw_text: text.clone(),
+            image_cache: RetainAllImageCache::new(cx),
             contents: None,
             parsing_markdown_task: Some(task),
         }
@@ -74,6 +78,7 @@ impl Render for MarkdownView {
             markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
 
         v_flex()
+            .image_cache(self.image_cache.clone())
             .gap_3()
             .py_4()
             .children(parsed.children.iter().map(|child| {

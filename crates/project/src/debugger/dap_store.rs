@@ -15,20 +15,16 @@ use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    Source, StackFrameId, StartDebuggingRequestArguments,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
     adapters::{
         DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
     client::SessionId,
     messages::Message,
-    requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
+    requests::{Completions, Evaluate},
 };
 use fs::Fs;
-use futures::{
-    channel::mpsc,
-    future::{Shared, join_all},
-};
+use futures::future::{Shared, join_all};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{
@@ -43,9 +39,8 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use serde_json::Value;
 use settings::{Settings, WorktreeId};
-use smol::{lock::Mutex, stream::StreamExt};
+use smol::lock::Mutex;
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
@@ -55,7 +50,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal};
-use util::ResultExt as _;
+use util::{ResultExt as _, merge_json_value_into};
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -66,19 +61,6 @@ pub enum DapStoreEvent {
     DebugClientEvent {
         session_id: SessionId,
         message: Message,
-    },
-    RunInTerminal {
-        session_id: SessionId,
-        title: Option<String>,
-        cwd: Option<Arc<Path>>,
-        command: Option<String>,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-        sender: mpsc::Sender<Result<u32>>,
-    },
-    SpawnChildSession {
-        request: StartDebuggingRequestArguments,
-        parent_session: Entity<Session>,
     },
     Notification(String),
     RemoteHasInitialized,
@@ -113,8 +95,6 @@ pub struct DapStore {
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
-    start_debugging_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
-    _start_debugging_task: Task<()>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -184,35 +164,10 @@ impl DapStore {
         mode: DapStoreMode,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Self {
-        let (start_debugging_tx, mut message_rx) =
-            futures::channel::mpsc::unbounded::<(SessionId, Message)>();
-        let task = cx.spawn(async move |this, cx| {
-            while let Some((session_id, message)) = message_rx.next().await {
-                match message {
-                    Message::Request(request) => {
-                        let _ = this
-                            .update(cx, |this, cx| {
-                                if request.command == StartDebugging::COMMAND {
-                                    this.handle_start_debugging_request(session_id, request, cx)
-                                        .detach_and_log_err(cx);
-                                } else if request.command == RunInTerminal::COMMAND {
-                                    this.handle_run_in_terminal_request(session_id, request, cx)
-                                        .detach_and_log_err(cx);
-                                }
-                            })
-                            .log_err();
-                    }
-                    _ => {}
-                }
-            }
-        });
-
         Self {
             mode,
-            _start_debugging_task: task,
-            start_debugging_tx,
             next_session_id: 0,
             downstream_client: None,
             breakpoint_store,
@@ -438,7 +393,8 @@ impl DapStore {
 
     pub fn new_session(
         &mut self,
-        template: DebugTaskDefinition,
+        label: SharedString,
+        adapter: DebugAdapterName,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
@@ -450,14 +406,12 @@ impl DapStore {
             });
         }
 
-        let start_debugging_tx = self.start_debugging_tx.clone();
-
         let session = Session::new(
             self.breakpoint_store.clone(),
             session_id,
             parent_session,
-            template.clone(),
-            start_debugging_tx,
+            label,
+            adapter,
             cx,
         );
 
@@ -469,7 +423,7 @@ impl DapStore {
                 SessionStateEvent::Shutdown => {
                     this.shutdown_session(session_id, cx).detach_and_log_err(cx);
                 }
-                SessionStateEvent::Restart => {}
+                SessionStateEvent::Restart | SessionStateEvent::SpawnChildSession { .. } => {}
                 SessionStateEvent::Running => {
                     cx.emit(DapStoreEvent::DebugClientStarted(session_id));
                 }
@@ -483,6 +437,7 @@ impl DapStore {
     pub fn boot_session(
         &self,
         session: Entity<Session>,
+        definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
@@ -490,21 +445,23 @@ impl DapStore {
         };
 
         let dap_store = cx.weak_entity();
-        let breakpoint_store = self.breakpoint_store.clone();
-        let definition = session.read(cx).definition();
 
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
-                let binary = this
+                let mut binary = this
                     .update(cx, |this, cx| {
                         this.get_debug_adapter_binary(definition.clone(), cx)
                     })?
                     .await?;
 
+                if let Some(args) = definition.initialize_args {
+                    merge_json_value_into(args, &mut binary.request_args.configuration);
+                }
+
                 session
                     .update(cx, |session, cx| {
-                        session.boot(binary, worktree, breakpoint_store, dap_store, cx)
+                        session.boot(binary, worktree, dap_store, cx)
                     })?
                     .await
             }
@@ -581,196 +538,6 @@ impl DapStore {
                 env.get_worktree_environment(worktree.clone(), cx)
             }),
         )
-    }
-
-    fn handle_start_debugging_request(
-        &mut self,
-        session_id: SessionId,
-        request: dap::messages::Request,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(parent_session) = self.session_by_id(session_id) else {
-            return Task::ready(Err(anyhow!("Session not found")));
-        };
-        let request_seq = request.seq;
-
-        let launch_request: Option<Result<StartDebuggingRequestArguments, _>> = request
-            .arguments
-            .as_ref()
-            .map(|value| serde_json::from_value(value.clone()));
-
-        let mut success = true;
-        if let Some(Ok(request)) = launch_request {
-            cx.emit(DapStoreEvent::SpawnChildSession {
-                request,
-                parent_session: parent_session.clone(),
-            });
-        } else {
-            log::error!(
-                "Failed to parse launch request arguments: {:?}",
-                request.arguments
-            );
-            success = false;
-        }
-
-        cx.spawn(async move |_, cx| {
-            parent_session
-                .update(cx, |session, cx| {
-                    session.respond_to_client(
-                        request_seq,
-                        success,
-                        StartDebugging::COMMAND.to_string(),
-                        None,
-                        cx,
-                    )
-                })?
-                .await
-        })
-    }
-
-    fn handle_run_in_terminal_request(
-        &mut self,
-        session_id: SessionId,
-        request: dap::messages::Request,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(session) = self.session_by_id(session_id) else {
-            return Task::ready(Err(anyhow!("Session not found")));
-        };
-
-        let request_args = serde_json::from_value::<RunInTerminalRequestArguments>(
-            request.arguments.unwrap_or_default(),
-        )
-        .expect("To parse StartDebuggingRequestArguments");
-
-        let seq = request.seq;
-
-        let cwd = Path::new(&request_args.cwd);
-
-        match cwd.try_exists() {
-            Ok(false) | Err(_) if !request_args.cwd.is_empty() => {
-                return session.update(cx, |session, cx| {
-                    session.respond_to_client(
-                        seq,
-                        false,
-                        RunInTerminal::COMMAND.to_string(),
-                        serde_json::to_value(dap::ErrorResponse {
-                            error: Some(dap::Message {
-                                id: seq,
-                                format: format!("Received invalid/unknown cwd: {cwd:?}"),
-                                variables: None,
-                                send_telemetry: None,
-                                show_user: None,
-                                url: None,
-                                url_label: None,
-                            }),
-                        })
-                        .ok(),
-                        cx,
-                    )
-                });
-            }
-            _ => (),
-        }
-        let mut args = request_args.args.clone();
-
-        // Handle special case for NodeJS debug adapter
-        // If only the Node binary path is provided, we set the command to None
-        // This prevents the NodeJS REPL from appearing, which is not the desired behavior
-        // The expected usage is for users to provide their own Node command, e.g., `node test.js`
-        // This allows the NodeJS debug client to attach correctly
-        let command = if args.len() > 1 {
-            Some(args.remove(0))
-        } else {
-            None
-        };
-
-        let mut envs: HashMap<String, String> = Default::default();
-        if let Some(Value::Object(env)) = request_args.env {
-            for (key, value) in env {
-                let value_str = match (key.as_str(), value) {
-                    (_, Value::String(value)) => value,
-                    _ => continue,
-                };
-
-                envs.insert(key, value_str);
-            }
-        }
-
-        let (tx, mut rx) = mpsc::channel::<Result<u32>>(1);
-        let cwd = Some(cwd)
-            .filter(|cwd| cwd.as_os_str().len() > 0)
-            .map(Arc::from)
-            .or_else(|| {
-                self.session_by_id(session_id)
-                    .and_then(|session| session.read(cx).binary().cwd.as_deref().map(Arc::from))
-            });
-        cx.emit(DapStoreEvent::RunInTerminal {
-            session_id,
-            title: request_args.title,
-            cwd,
-            command,
-            args,
-            envs,
-            sender: tx,
-        });
-        cx.notify();
-
-        let session = session.downgrade();
-        cx.spawn(async move |_, cx| {
-            let (success, body) = match rx.next().await {
-                Some(Ok(pid)) => (
-                    true,
-                    serde_json::to_value(dap::RunInTerminalResponse {
-                        process_id: None,
-                        shell_process_id: Some(pid as u64),
-                    })
-                    .ok(),
-                ),
-                Some(Err(error)) => (
-                    false,
-                    serde_json::to_value(dap::ErrorResponse {
-                        error: Some(dap::Message {
-                            id: seq,
-                            format: error.to_string(),
-                            variables: None,
-                            send_telemetry: None,
-                            show_user: None,
-                            url: None,
-                            url_label: None,
-                        }),
-                    })
-                    .ok(),
-                ),
-                None => (
-                    false,
-                    serde_json::to_value(dap::ErrorResponse {
-                        error: Some(dap::Message {
-                            id: seq,
-                            format: "failed to receive response from spawn terminal".to_string(),
-                            variables: None,
-                            send_telemetry: None,
-                            show_user: None,
-                            url: None,
-                            url_label: None,
-                        }),
-                    })
-                    .ok(),
-                ),
-            };
-
-            session
-                .update(cx, |session, cx| {
-                    session.respond_to_client(
-                        seq,
-                        success,
-                        RunInTerminal::COMMAND.to_string(),
-                        body,
-                        cx,
-                    )
-                })?
-                .await
-        })
     }
 
     pub fn evaluate(

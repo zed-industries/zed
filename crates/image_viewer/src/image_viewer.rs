@@ -35,9 +35,19 @@ impl ImageView {
     pub fn new(
         image_item: Entity<ImageItem>,
         project: Entity<Project>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
+        cx.on_release_in(window, |this, window, cx| {
+            let image_data = this.image_item.read(cx).image.clone();
+            if let Some(image) = image_data.clone().get_render_image(window, cx) {
+                cx.drop_image(image, None);
+            }
+            image_data.remove_asset(cx);
+        })
+        .detach();
+
         Self {
             image_item,
             project,
@@ -234,7 +244,9 @@ impl SerializableItem for ImageView {
                 .update(cx, |project, cx| project.open_image(project_path, cx))?
                 .await?;
 
-            cx.update(|_, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, cx))))?
+            cx.update(
+                |window, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, window, cx))),
+            )?
         })
     }
 
@@ -363,15 +375,15 @@ impl ProjectItem for ImageView {
 
     fn for_project_item(
         project: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         item: Entity<Self::Item>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self
     where
         Self: Sized,
     {
-        Self::new(item, project, cx)
+        Self::new(item, project, window, cx)
     }
 }
 
