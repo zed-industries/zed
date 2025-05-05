@@ -101,6 +101,8 @@ pub struct UserStore {
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
+    trial_started_at: Option<DateTime<Utc>>,
+    is_usage_based_billing_enabled: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -160,6 +162,8 @@ impl UserStore {
             by_github_login: Default::default(),
             current_user: current_user_rx,
             current_plan: None,
+            trial_started_at: None,
+            is_usage_based_billing_enabled: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -321,6 +325,11 @@ impl UserStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.current_plan = Some(message.payload.plan());
+            this.trial_started_at = message
+                .payload
+                .trial_started_at
+                .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
+            this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
             cx.notify();
         })?;
         Ok(())
