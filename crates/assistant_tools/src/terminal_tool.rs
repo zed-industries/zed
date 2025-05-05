@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use futures::FutureExt as _;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
     Transformation, WeakEntity, Window, percentage,
@@ -20,10 +21,7 @@ use std::{
 };
 use terminal_view::TerminalView;
 use ui::{Disclosure, IconName, Tooltip, prelude::*};
-use util::{
-    get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
-    time::duration_alt_display,
-};
+use util::{markdown::MarkdownInlineCode, size::format_file_size, time::duration_alt_display};
 use workspace::Workspace;
 
 const COMMAND_OUTPUT_LIMIT: usize = 16 * 1024;
@@ -99,17 +97,40 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
         };
-        let command = get_system_shell();
+        let command = {
+            #[cfg(windows)]
+            {
+                get_windows_system_shell()
+            }
+            #[cfg(not(windows))]
+            {
+                "bash"
+            }
+        }
+        .to_owned();
         let args = vec!["-c".into(), input.command.clone()];
         let cwd = working_dir.clone();
+        let env = match &working_dir {
+            Some(dir) => {
+                let env = project.read(cx).environment().clone();
+                env.update(cx, |env, cx| {
+                    env.get_directory_environment(dir.as_path().into(), cx)
+                })
+            }
+            None => Task::ready(None).shared(),
+        };
 
         let Some(window) = window else {
             // Headless setup, a test or eval. Our terminal subsystem requires a workspace,
             // so bypass it and provide a convincing imitation using a pty.
             let task = cx.background_spawn(async move {
+                let env = env.await.unwrap_or_default();
                 let pty_system = native_pty_system();
                 let mut cmd = CommandBuilder::new(command);
                 cmd.args(args);
+                for (k, v) in env {
+                    cmd.env(k, v);
+                }
                 if let Some(cwd) = cwd {
                     cmd.cwd(cwd);
                 }
@@ -142,17 +163,27 @@ impl Tool for TerminalTool {
             };
         };
 
-        let terminal = project.update(cx, |project, cx| {
-            project.create_terminal(
-                TerminalKind::Task(task::SpawnInTerminal {
-                    command,
-                    args,
-                    cwd,
-                    ..Default::default()
-                }),
-                window,
-                cx,
-            )
+        let terminal = cx.spawn({
+            let project = project.downgrade();
+            async move |cx| {
+                let env = env.await.unwrap_or_default();
+                let terminal = project
+                    .update(cx, |project, cx| {
+                        project.create_terminal(
+                            TerminalKind::Task(task::SpawnInTerminal {
+                                command,
+                                args,
+                                cwd,
+                                env,
+                                ..Default::default()
+                            }),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await;
+                terminal
+            }
         });
 
         let card = cx.new(|cx| {

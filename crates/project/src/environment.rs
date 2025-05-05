@@ -118,7 +118,7 @@ impl ProjectEnvironment {
     /// If the project was opened from the CLI, then the inherited CLI environment is returned.
     /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in
     /// that directory, to get environment variables as if the user has `cd`'d there.
-    pub(crate) fn get_directory_environment(
+    pub fn get_directory_environment(
         &mut self,
         abs_path: Arc<Path>,
         cx: &mut Context<Self>,
