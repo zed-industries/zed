@@ -42,14 +42,14 @@ pub trait AgentPreview: Component + Sized {
 #[macro_export]
 macro_rules! register_agent_preview {
     ($type:ty) => {
-        #[linkme::distributed_slice($crate::ui::agent_preview::__ALL_AGENT_PREVIEWS)]
+        #[linkme::distributed_slice($crate::ui::preview::__ALL_AGENT_PREVIEWS)]
         static __REGISTER_AGENT_PREVIEW: fn() -> (
             component::ComponentId,
-            $crate::ui::agent_preview::PreviewFn,
+            $crate::ui::preview::PreviewFn,
         ) = || {
             (
                 <$type as component::Component>::id(),
-                <$type as $crate::ui::agent_preview::AgentPreview>::agent_preview,
+                <$type as $crate::ui::preview::AgentPreview>::agent_preview,
             )
         };
     };
