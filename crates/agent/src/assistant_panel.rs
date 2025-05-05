@@ -1371,7 +1371,6 @@ impl AssistantPanel {
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
-        // todo!("update")
         let last_usage = active_thread.thread().read(cx).last_usage();
         let account_url = zed_urls::account_url(cx);
 
