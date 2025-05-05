@@ -577,13 +577,13 @@ mod tests {
             assert!(editor.has_active_inline_completion());
 
             // Accepting the first word of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_next_word_inline_completion(&Default::default(), window, cx);
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "one.copilot\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
 
             // Accepting next word should accept the non-word and copilot suggestion should be gone
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_next_word_inline_completion(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
@@ -619,7 +619,7 @@ mod tests {
             assert!(editor.has_active_inline_completion());
 
             // Accepting the first word (non-word) of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_next_word_inline_completion(&Default::default(), window, cx);
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "one.123. \ntwo\nthree\n");
             assert_eq!(
@@ -628,7 +628,7 @@ mod tests {
             );
 
             // Accepting next word should accept the next word and copilot suggestion should still exist
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_next_word_inline_completion(&Default::default(), window, cx);
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "one.123. copilot\ntwo\nthree\n");
             assert_eq!(
@@ -637,7 +637,7 @@ mod tests {
             );
 
             // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_next_word_inline_completion(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
             assert_eq!(

@@ -201,7 +201,7 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
              _: &editor::actions::AcceptPartialCopilotSuggestion,
              window: &mut Window,
              cx: &mut Context<Editor>| {
-                editor.accept_partial_inline_completion(&Default::default(), window, cx);
+                editor.accept_next_word_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
