@@ -339,7 +339,11 @@ impl ContextStore {
         }
     }
 
-    pub fn contexts(&self) -> Vec<SavedContextMetadata> {
+    pub fn unordered_contexts(&self) -> impl Iterator<Item = &SavedContextMetadata> {
+        self.contexts_metadata.iter()
+    }
+
+    pub fn reverse_chronological_contexts(&self) -> Vec<SavedContextMetadata> {
         let mut contexts = self.contexts_metadata.iter().cloned().collect::<Vec<_>>();
         contexts.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.mtime));
         contexts

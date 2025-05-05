@@ -90,6 +90,7 @@ time.workspace = true
 time_format.workspace = true
 ui.workspace = true
 ui_input.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
