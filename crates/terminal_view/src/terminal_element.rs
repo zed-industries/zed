@@ -1147,7 +1147,7 @@ impl InputHandler for TerminalInputHandler {
     fn bounds_for_range(
         &mut self,
         range_utf16: std::ops::Range<usize>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
         log::debug!(
@@ -1158,7 +1158,7 @@ impl InputHandler for TerminalInputHandler {
         // --- Get layout info from TerminalView ---
         let layout_info = self.terminal_view.read(cx).get_layout_info_for_ime(cx); // Pass cx if needed by helper
 
-        if let Some((term_bounds, cursor_point, display_offset)) = layout_info {
+        if let Some((term_bounds, _cursor_point, _display_offset)) = layout_info {
             // --- Calculate bounds based on info from TerminalView ---
             // Need element bounds origin, get it from window? Or store it?
             // Let's try getting element bounds via window/focus handle if possible,
@@ -1185,8 +1185,8 @@ impl InputHandler for TerminalInputHandler {
                 log::warn!(
                     "bounds_for_range: cursor_bounds is None, calculating approximate bounds"
                 );
-                let line_height = term_bounds.line_height;
-                let cell_width = term_bounds.cell_width;
+                let _line_height = term_bounds.line_height;
+                let _cell_width = term_bounds.cell_width;
                 // We don't have element_bounds.origin here easily.
                 // Return None or a very rough estimate. Let's return None for now.
                 return None;
