@@ -712,6 +712,7 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        cx.run_until_parked();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
