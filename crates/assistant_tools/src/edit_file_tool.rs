@@ -8,21 +8,23 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, WeakEntity, pulsating_between,
+    Task, TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
     language_settings::SoftWrap,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
@@ -164,6 +166,19 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
+            // Set the agent's location to the top of the file
+            project
+                .update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::MIN,
+                        }),
+                        cx,
+                    );
+                })
+                .ok();
+
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
             if input.old_string.is_empty() {
@@ -226,6 +241,7 @@ impl Tool for EditFileTool {
             let snapshot = cx.update(|cx| {
                 action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
 
+                let base_version = diff.base_version.clone();
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, cx);
@@ -233,6 +249,21 @@ impl Tool for EditFileTool {
                     buffer.snapshot()
                 });
                 action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+
+                // Set the agent's location to the position of the first edit
+                if let Some(first_edit) = snapshot.edits_since::<usize>(&base_version).next() {
+                    let position = snapshot.anchor_before(first_edit.new.start);
+                    project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position,
+                            }),
+                            cx,
+                        );
+                    })
+                }
+
                 snapshot
             })?;
 
@@ -304,6 +335,7 @@ impl EditFileToolCard {
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_scrollbars(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_read_only(true);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -510,6 +542,13 @@ impl ToolCard for EditFileToolCard {
             });
 
         let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+
+            editor.set_text_style_refinement(TextStyleRefinement {
+                font_size: Some(ui_font_size.into()),
+                ..TextStyleRefinement::default()
+            });
+
             let line_height = editor
                 .style()
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
@@ -640,7 +679,7 @@ impl ToolCard for EditFileToolCard {
                             .border_t_1()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .child(div().pl_1().child(editor))
+                            .child(editor)
                             .when(
                                 !self.full_height_expanded && is_collapsible,
                                 |editor_container| editor_container.child(gradient_overlay),

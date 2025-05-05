@@ -61,6 +61,16 @@ pub enum SubscriptionKind {
     ZedFree,
 }
 
+impl From<SubscriptionKind> for zed_llm_client::Plan {
+    fn from(value: SubscriptionKind) -> Self {
+        match value {
+            SubscriptionKind::ZedPro => Self::ZedPro,
+            SubscriptionKind::ZedProTrial => Self::ZedProTrial,
+            SubscriptionKind::ZedFree => Self::Free,
+        }
+    }
+}
+
 /// The status of a Stripe subscription.
 ///
 /// [Stripe docs](https://docs.stripe.com/api/subscriptions/object#subscription_object-status)

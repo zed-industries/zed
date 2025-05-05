@@ -29,8 +29,7 @@ use gpui::{
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, RequestUsage, Role,
-    StopReason,
+    LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
@@ -72,7 +71,6 @@ pub struct ActiveThread {
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     expanded_code_blocks: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
-    last_usage: Option<RequestUsage>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
@@ -722,7 +720,7 @@ fn open_markdown_link(
             }
         }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
-        Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
+        Some(MentionLink::Rule(prompt_id)) => window.dispatch_action(
             Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(prompt_id.0),
             }),
@@ -764,7 +762,6 @@ impl ActiveThread {
                     .unwrap()
             }
         });
-
         let mut this = Self {
             language_registry,
             thread_store,
@@ -784,7 +781,6 @@ impl ActiveThread {
             hide_scrollbar_task: None,
             editing_message: None,
             last_error: None,
-            last_usage: None,
             copied_code_block_ids: HashSet::default(),
             notifications: Vec::new(),
             _subscriptions: subscriptions,
@@ -839,10 +835,6 @@ impl ActiveThread {
 
     pub fn clear_last_error(&mut self) {
         self.last_error.take();
-    }
-
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
     }
 
     /// Returns the editing message id and the estimated token count in the content
@@ -950,8 +942,8 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::UsageUpdated(usage) => {
-                self.last_usage = Some(*usage);
+            ThreadEvent::NewRequest | ThreadEvent::CompletionCanceled => {
+                cx.notify();
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
@@ -1723,14 +1715,13 @@ impl ActiveThread {
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
         let is_generating = thread.is_generating();
+        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let show_feedback = thread.is_turn_end(ix);
-
-        let generating_label = (is_generating && is_last_message)
-            .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
+        let loading_dots = (is_generating_stale && is_last_message)
+            .then(|| AnimatedLabel::new("").size(LabelSize::Small));
 
         let editing_message_state = self
             .editing_message
@@ -1752,6 +1743,8 @@ impl ActiveThread {
 
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
+
+        let show_feedback = thread.is_turn_end(ix);
 
         let feedback_container = h_flex()
             .group("feedback_container")
@@ -2029,80 +2022,84 @@ impl ActiveThread {
 
         v_flex()
             .w_full()
-            .when_some(checkpoint, |parent, checkpoint| {
-                let mut is_pending = false;
-                let mut error = None;
-                if let Some(last_restore_checkpoint) =
-                    self.thread.read(cx).last_restore_checkpoint()
-                {
-                    if last_restore_checkpoint.message_id() == message_id {
-                        match last_restore_checkpoint {
-                            LastRestoreCheckpoint::Pending { .. } => is_pending = true,
-                            LastRestoreCheckpoint::Error { error: err, .. } => {
-                                error = Some(err.clone());
+            .map(|parent| {
+                if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                    let mut is_pending = false;
+                    let mut error = None;
+                    if let Some(last_restore_checkpoint) =
+                        self.thread.read(cx).last_restore_checkpoint()
+                    {
+                        if last_restore_checkpoint.message_id() == message_id {
+                            match last_restore_checkpoint {
+                                LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+                                LastRestoreCheckpoint::Error { error: err, .. } => {
+                                    error = Some(err.clone());
+                                }
                             }
                         }
                     }
-                }
 
-                let restore_checkpoint_button =
-                    Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                        .icon(if error.is_some() {
-                            IconName::XCircle
-                        } else {
-                            IconName::Undo
-                        })
-                        .icon_size(IconSize::XSmall)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(if error.is_some() {
-                            Some(Color::Error)
-                        } else {
-                            None
-                        })
-                        .label_size(LabelSize::XSmall)
-                        .disabled(is_pending)
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.thread.update(cx, |thread, cx| {
-                                thread
-                                    .restore_checkpoint(checkpoint.clone(), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }));
+                    let restore_checkpoint_button =
+                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                            .icon(if error.is_some() {
+                                IconName::XCircle
+                            } else {
+                                IconName::Undo
+                            })
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(if error.is_some() {
+                                Some(Color::Error)
+                            } else {
+                                None
+                            })
+                            .label_size(LabelSize::XSmall)
+                            .disabled(is_pending)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }));
 
-                let restore_checkpoint_button = if is_pending {
-                    restore_checkpoint_button
-                        .with_animation(
-                            ("pulsating-restore-checkpoint-button", ix),
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.6, 1.)),
-                            |label, delta| label.alpha(delta),
-                        )
-                        .into_any_element()
-                } else if let Some(error) = error {
-                    restore_checkpoint_button
-                        .tooltip(Tooltip::text(error.to_string()))
-                        .into_any_element()
+                    let restore_checkpoint_button = if is_pending {
+                        restore_checkpoint_button
+                            .with_animation(
+                                ("pulsating-restore-checkpoint-button", ix),
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.6, 1.)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else if let Some(error) = error {
+                        restore_checkpoint_button
+                            .tooltip(Tooltip::text(error.to_string()))
+                            .into_any_element()
+                    } else {
+                        restore_checkpoint_button.into_any_element()
+                    };
+
+                    parent.child(
+                        h_flex()
+                            .pt_2p5()
+                            .px_2p5()
+                            .w_full()
+                            .gap_1()
+                            .child(ui::Divider::horizontal())
+                            .child(restore_checkpoint_button)
+                            .child(ui::Divider::horizontal()),
+                    )
                 } else {
-                    restore_checkpoint_button.into_any_element()
-                };
-
-                parent.child(
-                    h_flex()
-                        .pt_2p5()
-                        .px_2p5()
-                        .w_full()
-                        .gap_1()
-                        .child(ui::Divider::horizontal())
-                        .child(restore_checkpoint_button)
-                        .child(ui::Divider::horizontal()),
-                )
+                    parent
+                }
             })
             .when(is_first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(generating_label.is_some(), |this| {
+            .when(is_generating && is_last_message, |this| {
                 this.child(
                     h_flex()
                         .h_8()
@@ -2110,7 +2107,7 @@ impl ActiveThread {
                         .mb_4()
                         .ml_4()
                         .py_1p5()
-                        .child(generating_label.unwrap()),
+                        .when_some(loading_dots, |this, loading_dots| this.child(loading_dots)),
                 )
             })
             .when(show_feedback, move |parent| {

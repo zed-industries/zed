@@ -126,7 +126,6 @@ pub enum Mode {
 pub struct LocalMode {
     client: Arc<DebugAdapterClient>,
     binary: DebugAdapterBinary,
-    pub(crate) breakpoint_store: Entity<BreakpointStore>,
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
     executor: BackgroundExecutor,
@@ -152,7 +151,6 @@ impl LocalMode {
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         worktree: WeakEntity<Worktree>,
-        breakpoint_store: Entity<BreakpointStore>,
         binary: DebugAdapterBinary,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
@@ -178,7 +176,6 @@ impl LocalMode {
 
         Ok(Self {
             client,
-            breakpoint_store,
             worktree,
             tmp_breakpoint: None,
             binary,
@@ -219,10 +216,10 @@ impl LocalMode {
         &self,
         abs_path: Arc<Path>,
         reason: BreakpointUpdatedReason,
+        breakpoint_store: &Entity<BreakpointStore>,
         cx: &mut App,
     ) -> Task<()> {
-        let breakpoints = self
-            .breakpoint_store
+        let breakpoints = breakpoint_store
             .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
             .into_iter()
             .filter(|bp| bp.state.is_enabled())
@@ -271,12 +268,11 @@ impl LocalMode {
     fn send_source_breakpoints(
         &self,
         ignore_breakpoints: bool,
+        breakpoint_store: &Entity<BreakpointStore>,
         cx: &App,
     ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         let mut breakpoint_tasks = Vec::new();
-        let breakpoints = self
-            .breakpoint_store
-            .read_with(cx, |store, cx| store.all_breakpoints(cx));
+        let breakpoints = breakpoint_store.read_with(cx, |store, cx| store.all_breakpoints(cx));
 
         for (path, breakpoints) in breakpoints {
             let breakpoints = if ignore_breakpoints {
@@ -314,6 +310,7 @@ impl LocalMode {
         definition: &DebugTaskDefinition,
         initialized_rx: oneshot::Receiver<()>,
         dap_store: WeakEntity<DapStore>,
+        breakpoint_store: Entity<BreakpointStore>,
         cx: &App,
     ) -> Task<Result<()>> {
         let mut raw = self.binary.request_args.clone();
@@ -354,7 +351,7 @@ impl LocalMode {
             async move |cx| {
                 initialized_rx.await?;
                 let errors_by_path = cx
-                    .update(|cx| this.send_source_breakpoints(false, cx))?
+                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
                     .await;
 
                 dap_store.update(cx, |_, cx| {
@@ -513,7 +510,6 @@ pub struct Session {
     id: SessionId,
     child_session_ids: HashSet<SessionId>,
     parent_session: Option<Entity<Session>>,
-    ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
     output_token: OutputToken,
@@ -525,6 +521,8 @@ pub struct Session {
     locations: HashMap<u64, dap::LocationsResponse>,
     is_session_terminated: bool,
     requests: HashMap<TypeId, HashMap<RequestSlot, Shared<Task<Option<()>>>>>,
+    pub(crate) breakpoint_store: Entity<BreakpointStore>,
+    ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
 }
@@ -642,14 +640,14 @@ impl Session {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
-            cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
+            cx.subscribe(&breakpoint_store, |this, store, event, cx| match event {
                 BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
                     if let Some(local) = (!this.ignore_breakpoints)
                         .then(|| this.as_local_mut())
                         .flatten()
                     {
                         local
-                            .send_breakpoints_from_path(path.clone(), *reason, cx)
+                            .send_breakpoints_from_path(path.clone(), *reason, &store, cx)
                             .detach();
                     };
                 }
@@ -672,7 +670,6 @@ impl Session {
                 child_session_ids: HashSet::default(),
                 parent_session,
                 capabilities: Capabilities::default(),
-                ignore_breakpoints: false,
                 variables: Default::default(),
                 stack_frames: Default::default(),
                 thread_states: ThreadStates::default(),
@@ -685,6 +682,8 @@ impl Session {
                 background_tasks: Vec::default(),
                 locations: Default::default(),
                 is_session_terminated: false,
+                ignore_breakpoints: false,
+                breakpoint_store,
                 exception_breakpoints: Default::default(),
                 definition: template,
             };
@@ -704,7 +703,6 @@ impl Session {
         &mut self,
         binary: DebugAdapterBinary,
         worktree: Entity<Worktree>,
-        breakpoint_store: Entity<BreakpointStore>,
         dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -750,7 +748,6 @@ impl Session {
                 id,
                 parent_session,
                 worktree.downgrade(),
-                breakpoint_store.clone(),
                 binary,
                 message_tx,
                 cx.clone(),
@@ -991,6 +988,7 @@ impl Session {
                 &self.definition,
                 initialize_rx,
                 dap_store,
+                self.breakpoint_store.clone(),
                 cx,
             ),
             Mode::Building => Task::ready(Err(anyhow!("cannot initialize, still building"))),
@@ -1016,6 +1014,7 @@ impl Session {
                 let task = local_mode.send_breakpoints_from_path(
                     path,
                     BreakpointUpdatedReason::Toggled,
+                    &self.breakpoint_store,
                     cx,
                 );
 
@@ -1081,13 +1080,20 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
+        // todo(debugger): Find a clean way to get around the clone
+        let breakpoint_store = self.breakpoint_store.clone();
         if let Some((local, path)) = self.as_local_mut().and_then(|local| {
             let breakpoint = local.tmp_breakpoint.take()?;
             let path = breakpoint.path.clone();
             Some((local, path))
         }) {
             local
-                .send_breakpoints_from_path(path, BreakpointUpdatedReason::Toggled, cx)
+                .send_breakpoints_from_path(
+                    path,
+                    BreakpointUpdatedReason::Toggled,
+                    &breakpoint_store,
+                    cx,
+                )
                 .detach();
         };
 
@@ -1137,6 +1143,9 @@ impl Session {
             Events::Continued(event) => {
                 if event.all_threads_continued.unwrap_or_default() {
                     self.thread_states.continue_all_threads();
+                    self.breakpoint_store.update(cx, |store, cx| {
+                        store.remove_active_position(Some(self.session_id()), cx)
+                    });
                 } else {
                     self.thread_states
                         .continue_thread(ThreadId(event.thread_id));
@@ -1434,7 +1443,7 @@ impl Session {
         self.ignore_breakpoints = ignore;
 
         if let Some(local) = self.as_local() {
-            local.send_source_breakpoints(ignore, cx)
+            local.send_source_breakpoints(ignore, &self.breakpoint_store, cx)
         } else {
             // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
             unimplemented!()
@@ -1516,7 +1525,12 @@ impl Session {
     ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
     {
         move |this, response, cx| match response.log_err() {
-            Some(response) => Some(response),
+            Some(response) => {
+                this.breakpoint_store.update(cx, |store, cx| {
+                    store.remove_active_position(Some(this.session_id()), cx)
+                });
+                Some(response)
+            }
             None => {
                 this.thread_states.stop_thread(thread_id);
                 cx.notify();
@@ -1536,12 +1550,9 @@ impl Session {
     }
 
     fn clear_active_debug_line(&mut self, cx: &mut Context<Session>) {
-        self.as_local()
-            .expect("Message handler will only run in local mode")
-            .breakpoint_store
-            .update(cx, |store, cx| {
-                store.remove_active_position(Some(self.id), cx)
-            });
+        self.breakpoint_store.update(cx, |store, cx| {
+            store.remove_active_position(Some(self.id), cx)
+        });
     }
 
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
