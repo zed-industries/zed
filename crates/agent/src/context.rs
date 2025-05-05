@@ -632,6 +632,7 @@ pub struct TextThreadContext {
 }
 
 impl TextThreadContextHandle {
+    // pub fn lookup_key() ->
     pub fn eq_for_key(&self, other: &Self) -> bool {
         self.context == other.context
     }

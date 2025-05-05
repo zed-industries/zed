@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use chrono::{DateTime, Utc};
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
@@ -158,12 +159,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             return;
         };
 
-        let Some(thread_store) = self.thread_store.upgrade() else {
-            return;
-        };
-
         match entry {
             ThreadContextEntry::Thread { id, .. } => {
+                let Some(thread_store) = self.thread_store.upgrade() else {
+                    return;
+                };
                 let open_thread_task =
                     thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
 
@@ -180,8 +180,25 @@ impl PickerDelegate for ThreadContextPickerDelegate {
                 })
                 .detach_and_log_err(cx);
             }
-            ThreadContextEntry::Context { path, title } => {
-                todo!()
+            ThreadContextEntry::Context { path, .. } => {
+                let Some(text_thread_store) = self.text_thread_store.upgrade() else {
+                    return;
+                };
+                let task = text_thread_store
+                    .update(cx, |this, cx| this.open_local_context(path.clone(), cx));
+
+                cx.spawn(async move |this, cx| {
+                    let thread = task.await?;
+                    this.update(cx, |this, cx| {
+                        this.delegate
+                            .context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_text_thread(thread, true, cx)
+                            })
+                            .ok();
+                    })
+                })
+                .detach_and_log_err(cx);
             }
         }
     }
@@ -218,8 +235,10 @@ pub fn render_thread_context_entry(
         ThreadContextEntry::Thread { id, .. } => context_store
             .upgrade()
             .map_or(false, |ctx_store| ctx_store.read(cx).includes_thread(&id)),
-        ThreadContextEntry::Context { path, title } => {
-            todo!();
+        ThreadContextEntry::Context { path, .. } => {
+            context_store.upgrade().map_or(false, |ctx_store| {
+                ctx_store.read(cx).includes_text_thread(path)
+            })
         }
     };
 
@@ -258,13 +277,11 @@ pub struct ThreadMatch {
     pub is_recent: bool,
 }
 
-pub(crate) fn search_threads(
-    query: String,
-    cancellation_flag: Arc<AtomicBool>,
+pub fn unordered_thread_entries(
     thread_store: Entity<ThreadStore>,
     text_thread_store: Entity<TextThreadStore>,
-    cx: &mut App,
-) -> Task<Vec<ThreadMatch>> {
+    cx: &App,
+) -> impl Iterator<Item = (DateTime<Utc>, ThreadContextEntry)> {
     let threads = thread_store.read(cx).unordered_threads().map(|thread| {
         (
             thread.updated_at.clone(),
@@ -288,7 +305,18 @@ pub(crate) fn search_threads(
             )
         });
 
-    let mut threads = threads.chain(text_threads).collect::<Vec<_>>();
+    threads.chain(text_threads)
+}
+
+pub(crate) fn search_threads(
+    query: String,
+    cancellation_flag: Arc<AtomicBool>,
+    thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
+    cx: &mut App,
+) -> Task<Vec<ThreadMatch>> {
+    let mut threads =
+        unordered_thread_entries(thread_store, text_thread_store, cx).collect::<Vec<_>>();
     threads.sort_unstable_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
 
     let executor = cx.background_executor().clone();

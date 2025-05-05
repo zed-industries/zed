@@ -27,7 +27,9 @@ use project::{Entry, ProjectPath};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_context_picker::{RulesContextEntry, RulesContextPicker};
 use symbol_context_picker::SymbolContextPicker;
-use thread_context_picker::{ThreadContextEntry, ThreadContextPicker, render_thread_context_entry};
+use thread_context_picker::{
+    ThreadContextEntry, ThreadContextPicker, render_thread_context_entry, unordered_thread_entries,
+};
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
@@ -463,16 +465,16 @@ impl ContextPicker {
             return Task::ready(Err(anyhow!("context store not available")));
         };
 
-        let Some(thread_store) = self
-            .thread_store
-            .as_ref()
-            .and_then(|thread_store| thread_store.upgrade())
-        else {
-            return Task::ready(Err(anyhow!("thread store not available")));
-        };
-
         match entry {
             ThreadContextEntry::Thread { id, .. } => {
+                let Some(thread_store) = self
+                    .thread_store
+                    .as_ref()
+                    .and_then(|thread_store| thread_store.upgrade())
+                else {
+                    return Task::ready(Err(anyhow!("thread store not available")));
+                };
+
                 let open_thread_task =
                     thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
                 cx.spawn(async move |this, cx| {
@@ -480,12 +482,27 @@ impl ContextPicker {
                     context_store.update(cx, |context_store, cx| {
                         context_store.add_thread(thread, true, cx);
                     })?;
-
                     this.update(cx, |_this, cx| cx.notify())
                 })
             }
-            ThreadContextEntry::Context { path, title } => {
-                todo!()
+            ThreadContextEntry::Context { path, .. } => {
+                let Some(text_thread_store) = self
+                    .text_thread_store
+                    .as_ref()
+                    .and_then(|thread_store| thread_store.upgrade())
+                else {
+                    return Task::ready(Err(anyhow!("text thread store not available")));
+                };
+
+                let task = text_thread_store
+                    .update(cx, |this, cx| this.open_local_context(path.clone(), cx));
+                cx.spawn(async move |this, cx| {
+                    let thread = task.await?;
+                    context_store.update(cx, |context_store, cx| {
+                        context_store.add_text_thread(thread, true, cx);
+                    })?;
+                    this.update(cx, |_this, cx| cx.notify())
+                })
             }
         }
     }
@@ -502,6 +519,7 @@ impl ContextPicker {
         recent_context_picker_entries(
             context_store,
             self.thread_store.clone(),
+            self.text_thread_store.clone(),
             workspace,
             None,
             cx,
@@ -600,6 +618,7 @@ fn available_context_picker_entries(
 fn recent_context_picker_entries(
     context_store: Entity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     workspace: Entity<Workspace>,
     exclude_path: Option<ProjectPath>,
     cx: &App,
@@ -631,23 +650,32 @@ fn recent_context_picker_entries(
         .panel::<AssistantPanel>(cx)
         .map(|panel| panel.read(cx).active_thread(cx).read(cx).id());
 
-    if let Some(thread_store) = thread_store.and_then(|thread_store| thread_store.upgrade()) {
-        // todo! Also include recent text threads?
+    if let Some((thread_store, text_thread_store)) = thread_store
+        .and_then(|store| store.upgrade())
+        .zip(text_thread_store.and_then(|store| store.upgrade()))
+    {
+        let mut threads = unordered_thread_entries(thread_store, text_thread_store, cx)
+            .filter(|(_, thread)| match thread {
+                ThreadContextEntry::Thread { id, .. } => {
+                    Some(id) != active_thread_id && !current_threads.contains(id)
+                }
+                ThreadContextEntry::Context { .. } => true,
+            })
+            .collect::<Vec<_>>();
+
+        const RECENT_COUNT: usize = 2;
+        if threads.len() > RECENT_COUNT {
+            threads.select_nth_unstable_by_key(RECENT_COUNT - 1, |(updated_at, _)| {
+                std::cmp::Reverse(*updated_at)
+            });
+            threads.truncate(RECENT_COUNT);
+        }
+        threads.sort_unstable_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
+
         recent.extend(
-            thread_store
-                .read(cx)
-                .reverse_chronological_threads()
+            threads
                 .into_iter()
-                .filter(|thread| {
-                    Some(&thread.id) != active_thread_id && !current_threads.contains(&thread.id)
-                })
-                .take(2)
-                .map(|thread| {
-                    RecentEntry::Thread(ThreadContextEntry::Thread {
-                        id: thread.id,
-                        title: thread.summary,
-                    })
-                }),
+                .map(|(_, thread)| RecentEntry::Thread(thread)),
         );
     }
 

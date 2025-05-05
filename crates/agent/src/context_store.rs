@@ -1,8 +1,9 @@
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use assistant_context_editor::AssistantContext;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};
@@ -18,7 +19,7 @@ use crate::ThreadStore;
 use crate::context::{
     AgentContextHandle, AgentContextKey, ContextId, DirectoryContextHandle, FetchedUrlContext,
     FileContextHandle, ImageContext, RulesContextHandle, SelectionContextHandle,
-    SymbolContextHandle, ThreadContextHandle,
+    SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{MessageId, Thread, ThreadId};
@@ -29,6 +30,7 @@ pub struct ContextStore {
     next_context_id: ContextId,
     context_set: IndexSet<AgentContextKey>,
     context_thread_ids: HashSet<ThreadId>,
+    context_text_thread_paths: HashSet<Arc<Path>>,
 }
 
 pub enum ContextStoreEvent {
@@ -48,6 +50,7 @@ impl ContextStore {
             next_context_id: ContextId::zero(),
             context_set: IndexSet::default(),
             context_thread_ids: HashSet::default(),
+            context_text_thread_paths: HashSet::default(),
         }
     }
 
@@ -227,6 +230,31 @@ impl ContextStore {
         }
     }
 
+    pub fn add_text_thread(
+        &mut self,
+        context: Entity<AssistantContext>,
+        remove_if_exists: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AgentContextHandle> {
+        let context_id = self.next_context_id.post_inc();
+        let context = AgentContextHandle::TextThread(TextThreadContextHandle {
+            context,
+            context_id,
+        });
+
+        if let Some(existing) = self.context_set.get(AgentContextKey::ref_cast(&context)) {
+            if remove_if_exists {
+                self.remove_context(&context, cx);
+                None
+            } else {
+                Some(existing.as_ref().clone())
+            }
+        } else {
+            self.insert_context(context.clone(), cx);
+            Some(context)
+        }
+    }
+
     pub fn add_rules(
         &mut self,
         prompt_id: UserPromptId,
@@ -380,6 +408,10 @@ impl ContextStore {
                     return false;
                 }
             }
+            AgentContextHandle::TextThread(text_thread_context) => {
+                self.context_text_thread_paths
+                    .extend(text_thread_context.context.read(cx).path().cloned());
+            }
             _ => {}
         }
         let inserted = self.context_set.insert(AgentContextKey(context));
@@ -398,6 +430,11 @@ impl ContextStore {
                 AgentContextHandle::Thread(thread_context) => {
                     self.context_thread_ids
                         .remove(thread_context.thread.read(cx).id());
+                }
+                AgentContextHandle::TextThread(text_thread_context) => {
+                    if let Some(path) = text_thread_context.context.read(cx).path() {
+                        self.context_text_thread_paths.remove(path);
+                    }
                 }
                 _ => {}
             }
@@ -466,6 +503,10 @@ impl ContextStore {
 
     pub fn includes_thread(&self, thread_id: &ThreadId) -> bool {
         self.context_thread_ids.contains(thread_id)
+    }
+
+    pub fn includes_text_thread(&self, path: &Arc<Path>) -> bool {
+        self.context_text_thread_paths.contains(path)
     }
 
     pub fn includes_user_rules(&self, prompt_id: UserPromptId) -> bool {

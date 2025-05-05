@@ -723,7 +723,9 @@ fn open_markdown_link(
         Some(MentionLink::TextThread(path)) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    todo!();
+                    panel
+                        .open_saved_prompt_editor(path, window, cx)
+                        .detach_and_log_err(cx);
                 });
             }
         }),
@@ -3443,10 +3445,7 @@ pub(crate) fn open_context(
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    let thread_id = thread_context.thread.read(cx).id().clone();
-                    panel
-                        .open_thread_by_id(&thread_id, window, cx)
-                        .detach_and_log_err(cx)
+                    panel.open_thread(thread_context.thread.clone(), window, cx);
                 });
             }
         }),
@@ -3455,7 +3454,7 @@ pub(crate) fn open_context(
             workspace.update(cx, |workspace, cx| {
                 if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                     panel.update(cx, |panel, cx| {
-                        todo!();
+                        panel.open_prompt_editor(text_thread_context.context.clone(), window, cx)
                     });
                 }
             })

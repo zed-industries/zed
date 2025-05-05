@@ -862,42 +862,39 @@ impl AssistantPanel {
         let context = self
             .context_store
             .update(cx, |store, cx| store.open_local_context(path, cx));
-        let fs = self.fs.clone();
-        let project = self.project.clone();
-        let workspace = self.workspace.clone();
-
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
-
         cx.spawn_in(window, async move |this, cx| {
             let context = context.await?;
             this.update_in(cx, |this, window, cx| {
-                let editor = cx.new(|cx| {
-                    ContextEditor::for_context(
-                        context,
-                        fs,
-                        workspace,
-                        project,
-                        lsp_adapter_delegate,
-                        window,
-                        cx,
-                    )
-                });
-
-                this.set_active_view(
-                    ActiveView::prompt_editor(
-                        editor.clone(),
-                        this.language_registry.clone(),
-                        window,
-                        cx,
-                    ),
-                    window,
-                    cx,
-                );
-
-                anyhow::Ok(())
-            })??;
-            Ok(())
+                this.open_prompt_editor(context, window, cx);
+            })
         })
+    }
+
+    pub(crate) fn open_prompt_editor(
+        &mut self,
+        context: Entity<AssistantContext>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project.clone(), cx)
+            .log_err()
+            .flatten();
+        let editor = cx.new(|cx| {
+            ContextEditor::for_context(
+                context,
+                self.fs.clone(),
+                self.workspace.clone(),
+                self.project.clone(),
+                lsp_adapter_delegate,
+                window,
+                cx,
+            )
+        });
+        self.set_active_view(
+            ActiveView::prompt_editor(editor.clone(), self.language_registry.clone(), window, cx),
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn open_thread_by_id(

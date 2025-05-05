@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use ui::{AnyElement, Component, ComponentScope, Window};
 use workspace::Workspace;
 
-use crate::{ActiveThread, TextThreadStore, ThreadStore};
+use crate::ActiveThread;
 
 /// Function type for creating agent component previews
 pub type PreviewFn =

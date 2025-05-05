@@ -699,7 +699,6 @@ impl ComponentPreview {
                 .child(ComponentPreviewPage::new(
                     component.clone(),
                     self.workspace.clone(),
-                    self.thread_store.as_ref().map(|ts| ts.downgrade()),
                     self.active_thread.clone(),
                 ))
                 .into_any_element()
@@ -1048,7 +1047,6 @@ pub struct ComponentPreviewPage {
     // languages: Arc<LanguageRegistry>,
     component: ComponentMetadata,
     workspace: WeakEntity<Workspace>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
     active_thread: Option<Entity<ActiveThread>>,
 }
 
@@ -1056,7 +1054,6 @@ impl ComponentPreviewPage {
     pub fn new(
         component: ComponentMetadata,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
         active_thread: Option<Entity<ActiveThread>>,
         // languages: Arc<LanguageRegistry>
     ) -> Self {
@@ -1064,7 +1061,6 @@ impl ComponentPreviewPage {
             // languages,
             component,
             workspace,
-            thread_store,
             active_thread,
         }
     }

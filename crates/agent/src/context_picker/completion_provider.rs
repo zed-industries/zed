@@ -413,6 +413,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
     ) -> Completion {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
@@ -458,8 +459,23 @@ impl ContextPickerCompletionProvider {
                             Some(context)
                         })
                     }
-                    ThreadContextEntry::Context { path, title } => {
-                        todo!()
+                    ThreadContextEntry::Context { path, .. } => {
+                        let path = path.clone();
+                        let context_store = context_store.clone();
+                        let text_thread_store = text_thread_store.clone();
+                        cx.spawn::<_, Option<_>>(async move |cx| {
+                            let thread = text_thread_store
+                                .update(cx, |store, cx| store.open_local_context(path, cx))
+                                .ok()?
+                                .await
+                                .log_err()?;
+                            let context = context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_text_thread(thread, false, cx)
+                                })
+                                .ok()??;
+                            Some(context)
+                        })
                     }
                 },
             )),
@@ -768,6 +784,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let recent_entries = recent_context_picker_entries(
             context_store.clone(),
             thread_store.clone(),
+            text_thread_store.clone(),
             workspace.clone(),
             excluded_path.clone(),
             cx,
@@ -839,6 +856,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             thread, is_recent, ..
                         }) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
+                            let text_thread_store =
+                                text_thread_store.as_ref().and_then(|t| t.upgrade())?;
                             Some(Self::completion_for_thread(
                                 thread,
                                 excerpt_id,
@@ -847,6 +866,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
+                                text_thread_store,
                             ))
                         }
 
