@@ -11,7 +11,7 @@ pub struct TransparentTabs {
 }
 
 struct Tab {
-    tab_title: AnyElement,
+    tab_title: String,
     content: Option<Box<dyn Fn(&mut ui::Window, &mut ui::App) -> AnyElement>>,
 }
 
@@ -25,11 +25,11 @@ impl TransparentTabs {
 
     pub fn tab<R: IntoElement>(
         mut self,
-        tab_title: impl IntoElement,
+        tab_title: &str,
         content: impl Fn(&mut ui::Window, &mut ui::App) -> R + 'static,
     ) -> Self {
         self.tabs.push(Tab {
-            tab_title: tab_title.into_any_element(),
+            tab_title: tab_title.to_owned(),
             content: Some(Box::new(move |window, cx| {
                 content(window, cx).into_any_element()
             })),
@@ -44,25 +44,27 @@ impl RenderOnce for TransparentTabs {
         let selected = *self.selected.read(cx);
         v_flex()
             .child(
-                h_flex().children(self.tabs.into_iter().enumerate().map(|(i, t)| {
-                    div()
-                        .id(i)
-                        .child(t.tab_title)
-                        .when(i == selected, |this| {
-                            this.bg(cx.theme().colors().element_selected)
-                        })
-                        .on_click({
-                            let selected = self.selected.clone();
-                            move |_, _window, cx| {
-                                selected.update(cx, |selected, cx| {
-                                    *selected = i;
-                                    cx.notify();
-                                })
-                            }
-                        })
-                })),
+                h_flex()
+                    .children(self.tabs.into_iter().enumerate().map(|(i, t)| {
+                        Button::new(i, t.tab_title)
+                            .toggle_state(i == selected)
+                            // .when(i==selected,
+                            // this.bg(cx.theme().colors().element_selected))
+                            .selected_style(ButtonStyle::Filled)
+                            .on_click({
+                                let selected = self.selected.clone();
+                                move |_, _window, cx| {
+                                    selected.update(cx, |selected, cx| {
+                                        *selected = i;
+                                        cx.notify();
+                                    })
+                                }
+                            })
+                    }))
+                    .flex_grow()
+                    .justify_center(),
             )
-            .child((content)(window, cx))
+            .child(div().child((content)(window, cx)).size_full())
     }
 }
 

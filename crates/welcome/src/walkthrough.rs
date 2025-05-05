@@ -11,6 +11,7 @@ use settings::Settings;
 use settings::SettingsStore;
 use std::collections::BTreeMap;
 use std::convert::identity;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -21,6 +22,7 @@ use time_format::TimestampFormat;
 use ui::CheckboxWithLabel;
 use ui::prelude::*;
 use vim_mode_setting::VimModeSetting;
+use workspace::CloseIntent;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::{Item, ItemEvent},
@@ -145,7 +147,10 @@ impl Walkthrough {
                     ] {
                         if let Some(projects) = projects {
                             if !projects.is_empty() {
-                                recents.insert(name, projects);
+                                recents.insert(
+                                    name,
+                                    projects.iter().take(10).map(Clone::clone).collect(),
+                                );
                             }
                         }
                     }
@@ -285,9 +290,13 @@ impl Walkthrough {
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         let fs = self.fs.clone();
+        let vscode_settings_modified = self.vscode_settings;
         v_flex()
             .items_center()
             .justify_center()
+            .size_full()
+            // TODO: header
+            .child("Pick a keymap")
             .child(
                 h_flex().children(
                     {
@@ -336,6 +345,7 @@ impl Walkthrough {
                     );
                 },
             ))
+            // TODO: gap
             .child(
                 Button::new("extensions", "Browse extensions").on_click(|_, window, cx| {
                     window.dispatch_action(
@@ -354,25 +364,25 @@ impl Walkthrough {
                         .child("Install a `zed` binary that\ncan be run from the command line"),
                 )
             })
-            .when(
-                // fs.is_file(paths::vscode_settings_file()).await
-                paths::vscode_settings_file().exists(),
-                |this| {
-                    this.child(
-                        h_flex().child(Button::new("import-vscode", "Import VsCode settings")),
-                    )
-                    // .child(format!(
-                    //     "last modified {}",
-                    //     time_format::format_local_timestamp(
-                    //         paths::vscode_settings_file()
-                    //             .metadata()
-                    //             .and_then(|m| m.modified().ok())?,
-                    //         OffsetDateTime::now_local(),
-                    //         TimestampFormat::Relative
-                    //     ),
-                    // )),
-                },
-            )
+            .when_some(vscode_settings_modified, |this, mtime| {
+                this.child(
+                    h_flex()
+                        .child(Button::new("import-vscode", "Import VsCode settings"))
+                        .child(
+                            Label::new(format!(
+                                "(last modified {})",
+                                time_format::format_local_timestamp(
+                                    mtime.into(),
+                                    OffsetDateTime::now_utc(),
+                                    TimestampFormat::Relative
+                                ),
+                            ))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                        ),
+                )
+            })
+            // TODO: pad to bottom
             .child(h_flex().children([
                 // TODO: on click action dispatchers
                 Button::new("open-settings", "open settings").on_click(cx.listener(
@@ -504,7 +514,7 @@ impl Walkthrough {
         &self,
         tab_selection: &Entity<usize>,
         _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
+        cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         static HOME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(&format!("^{}", paths::home_dir().to_string_lossy())).unwrap()
@@ -513,20 +523,45 @@ impl Walkthrough {
             let mut tabs = TransparentTabs::new(tab_selection.clone());
             for (name, projects) in &self.recent_projects {
                 let projects = projects.clone(); // TODO: is this needed?
-                tabs = tabs.tab(name.to_owned(), move |_, _| {
+                let workspace = self.workspace.clone();
+                tabs = tabs.tab(name.to_owned(), move |window, cx| {
                     v_flex().children(projects.iter().enumerate().map(|(i, path)| {
-                        Button::new(
-                            i,
-                            HOME_REGEX.replace(path, "~").to_string(), // if let Some(home_path) =
-                                                                       // path.strip_prefix(String::from_utf8_lossy(paths::home_dir()))
-                                                                       // {
-
-                                                                       //     format!(
-                                                                       //         "~{home_path}",
-                                                                       //     ),
-                                                                       //     }
-                                                                       //     else{path}
-                        )
+                        Button::new(i, HOME_REGEX.replace(path, "~").to_string()).on_click({
+                            let workspace = workspace.clone();
+                            let dir = PathBuf::from(path.clone());
+                            move |_, window, cx| {
+                                let dir = dir.clone();
+                                dbg!("spawning", &dir);
+                                dbg!(workspace.update(cx, |_workspace, cx| {
+                                    cx.spawn_in(window, async move |workspace, cx| {
+                                        let continue_replacing = workspace
+                                            .update_in(cx, |workspace, window, cx| {
+                                                workspace.prepare_to_close(
+                                                    CloseIntent::ReplaceWindow,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })?
+                                            .await?;
+                                        if continue_replacing {
+                                            workspace
+                                                .update_in(cx, |workspace, window, cx| {
+                                                    workspace.open_workspace_for_paths(
+                                                        true,
+                                                        vec![dir],
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })?
+                                                .await
+                                        } else {
+                                            Ok(())
+                                        }
+                                    })
+                                }))
+                                .ok();
+                            }
+                        })
                     }))
                 })
             }
