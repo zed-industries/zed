@@ -24,6 +24,8 @@ use crate::prelude::*;
 pub enum VectorName {
     ZedLogo,
     ZedXCopilot,
+    Grid,
+    AiGrid,
 }
 
 /// A vector image, such as an SVG.
