@@ -335,6 +335,18 @@ impl ContextServerStore {
         );
     }
 
+    fn remove_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
+        let Some(state) = self.servers.remove(id) else {
+            return Err(anyhow::anyhow!("Context server not found"));
+        };
+        drop(state);
+        cx.emit(Event::ServerStatusChanged {
+            server_id: id.clone(),
+            status: ContextServerStatus::Stopped,
+        });
+        Ok(())
+    }
+
     fn create_context_server(
         &self,
         id: ContextServerId,
@@ -425,12 +437,16 @@ impl ContextServerStore {
         }
 
         let mut servers_to_start = Vec::new();
+        let mut servers_to_remove = HashSet::default();
         let mut servers_to_stop = HashSet::default();
 
         this.update(cx, |this, _cx| {
             for server_id in this.servers.keys() {
+                // All servers that are not in desired_servers should be removed from the store.
+                // E.g. this can happen if the user removed a server from the configuration,
+                // or the user uninstalled an extension.
                 if !desired_servers.contains_key(&server_id.0) {
-                    servers_to_stop.insert(server_id.clone());
+                    servers_to_remove.insert(server_id.clone());
                 }
             }
 
@@ -455,6 +471,10 @@ impl ContextServerStore {
 
         for id in servers_to_stop {
             this.update(cx, |this, cx| this.stop_server(&id, cx).ok())?;
+        }
+
+        for id in servers_to_remove {
+            this.update(cx, |this, cx| this.remove_server(&id, cx).ok())?;
         }
 
         for (server, config) in servers_to_start {
@@ -737,7 +757,7 @@ mod tests {
         });
     }
 
-    #[gpui::test(iterations = 25)]
+    #[gpui::test]
     async fn test_context_server_maintain_servers_loop(cx: &mut TestAppContext) {
         const SERVER_1_ID: &'static str = "mcp-1";
         const SERVER_2_ID: &'static str = "mcp-2";
@@ -806,20 +826,18 @@ mod tests {
                 ],
                 cx,
             );
-            update_context_server_configuration(cx, {
-                let server_1_id = server_1_id.0.clone();
-                |context_servers| {
-                    context_servers.insert(
-                        server_1_id,
-                        ContextServerConfiguration {
-                            command: None,
-                            settings: Some(json!({
-                                "somevalue": false
-                            })),
-                        },
-                    );
-                }
-            });
+            set_context_server_configuration(
+                vec![(
+                    server_1_id.0.clone(),
+                    ContextServerConfiguration {
+                        command: None,
+                        settings: Some(json!({
+                            "somevalue": false
+                        })),
+                    },
+                )],
+                cx,
+            );
 
             cx.run_until_parked();
         }
@@ -827,20 +845,18 @@ mod tests {
         // Ensure that mcp-1 is not restarted when the configuration was not changed
         {
             let _server_events = assert_server_events(&store, vec![], cx);
-            update_context_server_configuration(cx, {
-                let server_1_id = server_1_id.0.clone();
-                |context_servers| {
-                    context_servers.insert(
-                        server_1_id,
-                        ContextServerConfiguration {
-                            command: None,
-                            settings: Some(json!({
-                                "somevalue": false
-                            })),
-                        },
-                    );
-                }
-            });
+            set_context_server_configuration(
+                vec![(
+                    server_1_id.0.clone(),
+                    ContextServerConfiguration {
+                        command: None,
+                        settings: Some(json!({
+                            "somevalue": false
+                        })),
+                    },
+                )],
+                cx,
+            );
 
             cx.run_until_parked();
         }
@@ -855,34 +871,74 @@ mod tests {
                 ],
                 cx,
             );
-            update_context_server_configuration(cx, {
-                let server_2_id = server_2_id.0.clone();
-                |context_servers| {
-                    context_servers.insert(
-                        server_2_id,
+            set_context_server_configuration(
+                vec![
+                    (
+                        server_1_id.0.clone(),
+                        ContextServerConfiguration {
+                            command: None,
+                            settings: Some(json!({
+                                "somevalue": false
+                            })),
+                        },
+                    ),
+                    (
+                        server_2_id.0.clone(),
                         ContextServerConfiguration {
                             command: None,
                             settings: Some(json!({
                                 "somevalue": true
                             })),
                         },
-                    );
-                }
-            });
+                    ),
+                ],
+                cx,
+            );
 
             cx.run_until_parked();
         }
+
+        // Ensure that mcp-2 is removed once it is removed from the settings
+        {
+            let _server_events = assert_server_events(
+                &store,
+                vec![(server_2_id.clone(), ContextServerStatus::Stopped)],
+                cx,
+            );
+            set_context_server_configuration(
+                vec![(
+                    server_1_id.0.clone(),
+                    ContextServerConfiguration {
+                        command: None,
+                        settings: Some(json!({
+                            "somevalue": false
+                        })),
+                    },
+                )],
+                cx,
+            );
+
+            cx.run_until_parked();
+
+            cx.update(|cx| {
+                assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
+            });
+        }
     }
 
-    fn update_context_server_configuration(
+    fn set_context_server_configuration(
+        context_servers: Vec<(Arc<str>, ContextServerConfiguration)>,
         cx: &mut TestAppContext,
-        update_configurations: impl FnOnce(&mut HashMap<Arc<str>, ContextServerConfiguration>),
     ) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                    update_configurations(&mut settings.context_servers);
-                });
+                let mut settings = ProjectSettings::default();
+                for (id, config) in context_servers {
+                    settings.context_servers.insert(id, config);
+                }
+                store
+                    .set_user_settings(&serde_json::to_string(&settings).unwrap(), cx)
+                    .unwrap();
             })
         });
     }

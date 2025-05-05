@@ -111,4 +111,11 @@ impl ExtensionContextServerProxy for ContextServerDescriptorRegistryProxy {
                 )
             });
     }
+
+    fn unregister_context_server(&self, server_id: Arc<str>, cx: &mut App) {
+        self.context_server_factory_registry
+            .update(cx, |registry, _| {
+                registry.unregister_context_server_descriptor_by_id(&server_id)
+            });
+    }
 }
