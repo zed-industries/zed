@@ -10,11 +10,17 @@ Zed’s plans offer hosted versions of major LLM’s, generally with higher rate
 
 ## Usage {#usage}
 
-The models above can be used with the prompts included in your plan. For models not marked with [“Max Mode”](#max-mode), each prompt is counted against the monthly limit of your plan. If you’ve exceeded your limit for the month, and are on a paid plan, you can enable usage-based pricing to continue using models for the rest of the month. See [Plans and Usage](./plans-and-usage.md) for more information.
+The models above can be used with the prompts included in your plan. For models not marked with [“Max Mode”](#max-mode), each prompt is counted against the monthly limit of your plan.
+
+If you’ve exceeded your limit for the month, and are on a paid plan, you can enable usage-based pricing to continue using models for the rest of the month. See [Plans and Usage](./plans-and-usage.md) for more information.
+
+Non-[Max Mode](#max-mode) will use up to 25 tool calls per one prompt. If your prompt extends beyond 25 tool calls, Zed will ask if you’d like to continue which will consume a second prompt. See [Max Mode](#max-mode) for more information on tool calls in [Max Mode](#max-mode).
 
 ## Max Mode {#max-mode}
 
 In Max Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience. Because of the increased cost to Zed, each subsequent request beyond the initial user prompt in [Max Mode](#max-mode) models is counted as a prompt for metering. In addition, usage-based pricing per request is slightly more expensive for [Max Mode](#max-mode) models than usage-based pricing per prompt for regular models.
+
+Note that the Agent Panel using a Max Mode model may consume a good bit of your monthly prompt capacity, if many tool calls are used. We encourage you to think through what model is best for your needs before leaving the Agent Panel to work.
 
 ## Context Windows {#context-windows}
 

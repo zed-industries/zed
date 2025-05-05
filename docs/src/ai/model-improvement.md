@@ -1,6 +1,6 @@
-# Zed Model Improvement
+# Zed AI Improvement
 
-## Zed Assistant
+## Agent Panel
 
 When using the Zed Assistant, Zed does not persistently store user content or use user content for training of its models.
 
@@ -10,7 +10,7 @@ When using upstream services through Zed AI, we require similar assurances from 
 
 When you directly connect the Zed Assistant with a non Zed AI service (e.g. via API key) Zed does not have access to your user content. Users should reference their agreement with the service provider to understand what terms and conditions apply.
 
-## Zed Edit Predictions
+## Edit Predictions
 
 By default, when using Zed Edit Predictions, Zed does not persistently store user content or use user content for training of its models.
 
