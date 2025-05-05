@@ -23,7 +23,7 @@ use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
-use rpc::proto::{self, PeerId, update_view};
+use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -39,7 +39,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -170,14 +170,14 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leader_peer_id = leader_peer_id;
-        if self.leader_peer_id.is_some() {
+        self.leader_id = leader_id;
+        if self.leader_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
@@ -349,6 +349,30 @@ impl FollowableItem for Editor {
         } else {
             None
         }
+    }
+
+    fn update_agent_location(
+        &mut self,
+        location: language::Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let buffer = buffer.read(cx);
+        let Some((excerpt_id, _, _)) = buffer.as_singleton() else {
+            return;
+        };
+        let position = buffer.anchor_in_excerpt(*excerpt_id, location).unwrap();
+        let selection = Selection {
+            id: 0,
+            reversed: false,
+            start: position,
+            end: position,
+            goal: SelectionGoal::None,
+        };
+        drop(buffer);
+        self.set_selections_from_remote(vec![selection], None, window, cx);
+        self.request_autoscroll_remotely(Autoscroll::center(), cx);
     }
 }
 
@@ -619,9 +643,12 @@ impl Item for Editor {
         None
     }
 
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
-        let path = path_for_buffer(&self.buffer, detail, true, cx)?;
-        Some(path.to_string_lossy().to_string().into())
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
+            path.to_string_lossy().to_string().into()
+        } else {
+            "untitled".into()
+        }
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -957,6 +984,7 @@ impl Item for Editor {
             cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
                 if matches!(event, workspace::Event::ModalOpened) {
                     editor.mouse_context_menu.take();
+                    editor.inline_blame_popover.take();
                 }
             })
             .detach();
@@ -1010,12 +1038,10 @@ impl SerializableItem for Editor {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        window.spawn(cx, async move |_| {
-            DB.delete_unloaded_items(workspace_id, alive_items).await
-        })
+        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
     }
 
     fn deserialize(
@@ -1250,6 +1276,7 @@ impl SerializableItem for Editor {
                     language,
                     mtime,
                 };
+                log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 DB.save_serialized_editor(item_id, workspace_id, editor)
                     .await
                     .context("failed to save serialized editor")
@@ -1290,7 +1317,7 @@ impl ProjectItem for Editor {
 
     fn for_project_item(
         project: Entity<Project>,
-        pane: &Pane,
+        pane: Option<&Pane>,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1301,7 +1328,7 @@ impl ProjectItem for Editor {
         {
             if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
                 if let Some(restoration_data) = Self::project_item_kind()
-                    .and_then(|kind| pane.project_item_restoration_data.get(&kind))
+                    .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
                     .and_then(|data| data.downcast_ref::<EditorRestorationData>())
                     .and_then(|data| {
                         let file = project::File::from_dyn(buffer.read(cx).file())?;

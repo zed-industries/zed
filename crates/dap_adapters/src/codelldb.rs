@@ -2,9 +2,9 @@ use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use dap::adapters::latest_github_release;
+use dap::adapters::{DebugTaskDefinition, InlineValueProvider, latest_github_release};
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugTaskDefinition};
+use task::DebugRequest;
 
 use crate::*;
 
@@ -25,7 +25,10 @@ impl CodeLldbDebugAdapter {
         });
         let map = configuration.as_object_mut().unwrap();
         // CodeLLDB uses `name` for a terminal label.
-        map.insert("name".into(), Value::String(config.label.clone()));
+        map.insert(
+            "name".into(),
+            Value::String(String::from(config.label.as_ref())),
+        );
         let request = config.request.to_dap();
         match &config.request {
             DebugRequest::Attach(attach) => {
@@ -149,5 +152,26 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             envs: HashMap::default(),
             connection: None,
         })
+    }
+
+    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
+        Some(Box::new(CodeLldbInlineValueProvider))
+    }
+}
+
+struct CodeLldbInlineValueProvider;
+
+impl InlineValueProvider for CodeLldbInlineValueProvider {
+    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
+        variables
+            .into_iter()
+            .map(|(variable, range)| {
+                lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
+                    range,
+                    variable_name: Some(variable),
+                    case_sensitive_lookup: true,
+                })
+            })
+            .collect()
     }
 }

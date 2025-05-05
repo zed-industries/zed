@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
@@ -125,6 +125,8 @@ impl Settings for SshSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub struct SshPrompt {
@@ -563,7 +565,23 @@ pub async fn open_ssh_project(
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
-        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
+        let workspace_position = cx
+            .update(|cx| {
+                workspace::ssh_workspace_position_from_db(
+                    connection_options.host.clone(),
+                    connection_options.port,
+                    connection_options.username.clone(),
+                    &paths,
+                    cx,
+                )
+            })?
+            .await
+            .context("fetching ssh workspace position from db")?;
+
+        let mut options =
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+        options.window_bounds = workspace_position.window_bounds;
+
         cx.open_window(options, |window, cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
@@ -574,7 +592,11 @@ pub async fn open_ssh_project(
                 None,
                 cx,
             );
-            cx.new(|cx| Workspace::new(None, project, app_state.clone(), window, cx))
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                workspace.centered_layout = workspace_position.centered_layout;
+                workspace
+            })
         })?
     };
 
@@ -632,7 +654,7 @@ pub async fn open_ssh_project(
             .ok();
 
         if let Err(e) = did_open_ssh_project {
-            log::error!("Failed to open project: {:?}", e);
+            log::error!("Failed to open project: {e:?}");
             let response = window
                 .update(cx, |_, window, cx| {
                     window.prompt(

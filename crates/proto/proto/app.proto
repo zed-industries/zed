@@ -23,6 +23,29 @@ enum Plan {
 
 message UpdateUserPlan {
     Plan plan = 1;
+    optional uint64 trial_started_at = 2;
+    optional bool is_usage_based_billing_enabled = 3;
+    optional SubscriptionUsage usage = 4;
+}
+
+message SubscriptionUsage {
+    uint32 model_requests_usage_amount = 1;
+    UsageLimit model_requests_usage_limit = 2;
+    uint32 edit_predictions_usage_amount = 3;
+    UsageLimit edit_predictions_usage_limit = 4;
+}
+
+message UsageLimit {
+    oneof variant {
+        Limited limited = 1;
+        Unlimited unlimited = 2;
+    }
+
+    message Limited {
+        uint32 limit = 1;
+    }
+
+    message Unlimited {}
 }
 
 message AcceptTermsOfService {}

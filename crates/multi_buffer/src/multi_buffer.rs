@@ -1686,7 +1686,10 @@ impl MultiBuffer {
         let mut counts: Vec<usize> = Vec::new();
         for range in expanded_ranges {
             if let Some(last_range) = merged_ranges.last_mut() {
-                debug_assert!(last_range.context.start <= range.context.start);
+                debug_assert!(
+                    last_range.context.start <= range.context.start,
+                    "Last range: {last_range:?} Range: {range:?}"
+                );
                 if last_range.context.end >= range.context.start {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
@@ -2631,6 +2634,11 @@ impl MultiBuffer {
 
     pub fn all_diff_hunks_expanded(&self) -> bool {
         self.snapshot.borrow().all_diff_hunks_expanded
+    }
+
+    pub fn set_all_diff_hunks_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.borrow_mut().all_diff_hunks_expanded = false;
+        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], false, cx);
     }
 
     pub fn has_multiple_hunks(&self, cx: &App) -> bool {
@@ -5948,6 +5956,29 @@ impl MultiBufferSnapshot {
             )
         })
         .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
+    }
+
+    pub fn diagnostics_with_buffer_ids_in_range<'a, T>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (BufferId, DiagnosticEntry<T>)> + 'a
+    where
+        T: 'a
+            + text::ToOffset
+            + text::FromAnchor
+            + TextDimension
+            + Ord
+            + Sub<T, Output = T>
+            + fmt::Debug,
+    {
+        self.lift_buffer_metadata(range, move |buffer, buffer_range| {
+            Some(
+                buffer
+                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .map(|entry| (entry.range, entry.diagnostic)),
+            )
+        })
+        .map(|(range, diagnostic, b)| (b.buffer_id, DiagnosticEntry { diagnostic, range }))
     }
 
     pub fn syntax_ancestor<T: ToOffset>(

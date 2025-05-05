@@ -101,12 +101,11 @@ pub fn init(
     SlashCommandSettings::register(cx);
 
     assistant_context_editor::init(client.clone(), cx);
-    prompt_library::init(cx);
+    rules_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
-    context_server::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

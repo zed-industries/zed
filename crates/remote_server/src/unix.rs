@@ -11,7 +11,7 @@ use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, 
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
@@ -853,13 +853,13 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
-                .parse::<Uri>()
+                .parse::<Url>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })

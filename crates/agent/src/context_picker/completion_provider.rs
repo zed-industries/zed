@@ -15,22 +15,23 @@ use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
-use prompt_store::PromptId;
+use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
+use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::RULES_ICON;
-use crate::context_picker::file_context_picker::search_files;
-use crate::context_picker::symbol_context_picker::search_symbols;
+use crate::Thread;
+use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
 use crate::context_store::ContextStore;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 
 use super::fetch_context_picker::fetch_url_content;
-use super::file_context_picker::FileMatch;
+use super::file_context_picker::{FileMatch, search_files};
 use super::rules_context_picker::{RulesContextEntry, search_rules};
 use super::symbol_context_picker::SymbolMatch;
+use super::symbol_context_picker::search_symbols;
 use super::thread_context_picker::{ThreadContextEntry, ThreadMatch, search_threads};
 use super::{
     ContextPickerAction, ContextPickerEntry, ContextPickerMode, MentionLink, RecentEntry,
@@ -38,8 +39,8 @@ use super::{
 };
 
 pub(crate) enum Match {
-    Symbol(SymbolMatch),
     File(FileMatch),
+    Symbol(SymbolMatch),
     Thread(ThreadMatch),
     Fetch(SharedString),
     Rules(RulesContextEntry),
@@ -69,7 +70,9 @@ fn search(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     recent_entries: Vec<RecentEntry>,
+    prompt_store: Option<Entity<PromptStore>>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_context_store: Option<WeakEntity<assistant_context_editor::ContextStore>>,
     workspace: Entity<Workspace>,
     cx: &mut App,
 ) -> Task<Vec<Match>> {
@@ -85,6 +88,7 @@ fn search(
                     .collect()
             })
         }
+
         Some(ContextPickerMode::Symbol) => {
             let search_symbols_task =
                 search_symbols(query.clone(), cancellation_flag.clone(), &workspace, cx);
@@ -96,10 +100,20 @@ fn search(
                     .collect()
             })
         }
+
         Some(ContextPickerMode::Thread) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
-                let search_threads_task =
-                    search_threads(query.clone(), cancellation_flag.clone(), thread_store, cx);
+            if let Some((thread_store, context_store)) = thread_store
+                .as_ref()
+                .and_then(|t| t.upgrade())
+                .zip(text_thread_context_store.as_ref().and_then(|t| t.upgrade()))
+            {
+                let search_threads_task = search_threads(
+                    query.clone(),
+                    cancellation_flag.clone(),
+                    thread_store,
+                    context_store,
+                    cx,
+                );
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -111,6 +125,7 @@ fn search(
                 Task::ready(Vec::new())
             }
         }
+
         Some(ContextPickerMode::Fetch) => {
             if !query.is_empty() {
                 Task::ready(vec![Match::Fetch(query.into())])
@@ -118,10 +133,11 @@ fn search(
                 Task::ready(Vec::new())
             }
         }
+
         Some(ContextPickerMode::Rules) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
+            if let Some(prompt_store) = prompt_store.as_ref() {
                 let search_rules_task =
-                    search_rules(query.clone(), cancellation_flag.clone(), thread_store, cx);
+                    search_rules(query.clone(), cancellation_flag.clone(), prompt_store, cx);
                 cx.background_spawn(async move {
                     search_rules_task
                         .await
@@ -133,6 +149,7 @@ fn search(
                 Task::ready(Vec::new())
             }
         }
+
         None => {
             if query.is_empty() {
                 let mut matches = recent_entries
@@ -163,7 +180,7 @@ fn search(
                     .collect::<Vec<_>>();
 
                 matches.extend(
-                    available_context_picker_entries(&thread_store, &workspace, cx)
+                    available_context_picker_entries(&prompt_store, &thread_store, &workspace, cx)
                         .into_iter()
                         .map(|mode| {
                             Match::Entry(EntryMatch {
@@ -180,7 +197,8 @@ fn search(
                 let search_files_task =
                     search_files(query.clone(), cancellation_flag.clone(), &workspace, cx);
 
-                let entries = available_context_picker_entries(&thread_store, &workspace, cx);
+                let entries =
+                    available_context_picker_entries(&prompt_store, &thread_store, &workspace, cx);
                 let entry_candidates = entries
                     .iter()
                     .enumerate()
@@ -228,7 +246,9 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     editor: WeakEntity<Editor>,
+    excluded_buffer: Option<WeakEntity<Buffer>>,
 }
 
 impl ContextPickerCompletionProvider {
@@ -236,13 +256,17 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         editor: WeakEntity<Editor>,
+        exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
         Self {
             workspace,
             context_store,
             thread_store,
+            text_thread_store,
             editor,
+            excluded_buffer: exclude_buffer,
         }
     }
 
@@ -304,18 +328,20 @@ impl ContextPickerCompletionProvider {
                             let context_store = context_store.clone();
                             let selections = selections.clone();
                             let selection_infos = selection_infos.clone();
-                            move |_, _: &mut Window, cx: &mut App| {
+                            move |_, window: &mut Window, cx: &mut App| {
                                 context_store.update(cx, |context_store, cx| {
                                     for (buffer, range) in &selections {
-                                        context_store
-                                            .add_selection(buffer.clone(), range.clone(), cx)
-                                            .detach_and_log_err(cx)
+                                        context_store.add_selection(
+                                            buffer.clone(),
+                                            range.clone(),
+                                            cx,
+                                        );
                                     }
                                 });
 
                                 let editor = editor.clone();
                                 let selection_infos = selection_infos.clone();
-                                cx.defer(move |cx| {
+                                window.defer(cx, move |window, cx| {
                                     let mut current_offset = 0;
                                     for (file_name, link, line_range) in selection_infos.iter() {
                                         let snapshot =
@@ -346,9 +372,8 @@ impl ContextPickerCompletionProvider {
                                         );
 
                                         editor.update(cx, |editor, cx| {
-                                            editor.display_map.update(cx, |display_map, cx| {
-                                                display_map.fold(vec![crease], cx);
-                                            });
+                                            editor.insert_creases(vec![crease.clone()], cx);
+                                            editor.fold_creases(vec![crease], false, window, cx);
                                         });
 
                                         current_offset += text_len + 1;
@@ -388,6 +413,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
     ) -> Completion {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
@@ -399,33 +425,58 @@ impl ContextPickerCompletionProvider {
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(thread_entry.summary.to_string(), None),
+            label: CodeLabel::plain(thread_entry.title().to_string(), None),
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
                 IconName::MessageBubbles.path().into(),
-                thread_entry.summary.clone(),
+                thread_entry.title().clone(),
                 excerpt_id,
                 source_range.start,
                 new_text_len,
                 editor.clone(),
-                move |cx| {
-                    let thread_id = thread_entry.id.clone();
-                    let context_store = context_store.clone();
-                    let thread_store = thread_store.clone();
-                    cx.spawn(async move |cx| {
-                        let thread = thread_store
-                            .update(cx, |thread_store, cx| {
-                                thread_store.open_thread(&thread_id, cx)
-                            })?
-                            .await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_thread(thread, false, cx)
+                context_store.clone(),
+                move |cx| match &thread_entry {
+                    ThreadContextEntry::Thread { id, .. } => {
+                        let thread_id = id.clone();
+                        let context_store = context_store.clone();
+                        let thread_store = thread_store.clone();
+                        cx.spawn::<_, Option<_>>(async move |cx| {
+                            let thread: Entity<Thread> = thread_store
+                                .update(cx, |thread_store, cx| {
+                                    thread_store.open_thread(&thread_id, cx)
+                                })
+                                .ok()?
+                                .await
+                                .log_err()?;
+                            let context = context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_thread(thread, false, cx)
+                                })
+                                .ok()??;
+                            Some(context)
                         })
-                    })
-                    .detach_and_log_err(cx);
+                    }
+                    ThreadContextEntry::Context { path, .. } => {
+                        let path = path.clone();
+                        let context_store = context_store.clone();
+                        let text_thread_store = text_thread_store.clone();
+                        cx.spawn::<_, Option<_>>(async move |cx| {
+                            let thread = text_thread_store
+                                .update(cx, |store, cx| store.open_local_context(path, cx))
+                                .ok()?
+                                .await
+                                .log_err()?;
+                            let context = context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_text_thread(thread, false, cx)
+                                })
+                                .ok()??;
+                            Some(context)
+                        })
+                    }
                 },
             )),
         }
@@ -437,9 +488,8 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
-        thread_store: Entity<ThreadStore>,
     ) -> Completion {
-        let new_text = MentionLink::for_rules(&rules);
+        let new_text = MentionLink::for_rule(&rules);
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
@@ -456,30 +506,13 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
-                    let prompt_uuid = rules.prompt_id;
-                    let prompt_id = PromptId::User { uuid: prompt_uuid };
-                    let context_store = context_store.clone();
-                    let Some(prompt_store) = thread_store.read(cx).prompt_store() else {
-                        log::error!("Can't add user rules as prompt store is missing.");
-                        return;
-                    };
-                    let prompt_store = prompt_store.read(cx);
-                    let Some(metadata) = prompt_store.metadata(prompt_id) else {
-                        return;
-                    };
-                    let Some(title) = metadata.title else {
-                        return;
-                    };
-                    let text_task = prompt_store.load(prompt_id, cx);
-
-                    cx.spawn(async move |cx| {
-                        let text = text_task.await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_rules(prompt_uuid, title, text, false, cx)
-                        })
-                    })
-                    .detach_and_log_err(cx);
+                    let user_prompt_id = rules.prompt_id;
+                    let context = context_store.update(cx, |context_store, cx| {
+                        context_store.add_rules(user_prompt_id, false, cx)
+                    });
+                    Task::ready(context)
                 },
             )),
         }
@@ -510,27 +543,33 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let context_store = context_store.clone();
                     let http_client = http_client.clone();
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
-                        if context_store.update(cx, |context_store, _| {
-                            context_store.includes_url(&url_to_fetch).is_some()
-                        })? {
-                            return Ok(());
+                        if let Some(context) = context_store
+                            .update(cx, |context_store, _| {
+                                context_store.get_url_context(url_to_fetch.clone())
+                            })
+                            .ok()?
+                        {
+                            return Some(context);
                         }
                         let content = cx
                             .background_spawn(fetch_url_content(
                                 http_client,
                                 url_to_fetch.to_string(),
                             ))
-                            .await?;
-                        context_store.update(cx, |context_store, cx| {
-                            context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
-                        })
+                            .await
+                            .log_err()?;
+                        context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_fetched_url(url_to_fetch.to_string(), content, cx)
+                            })
+                            .ok()
                     })
-                    .detach_and_log_err(cx);
                 },
             )),
         }
@@ -589,15 +628,23 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor,
+                context_store.clone(),
                 move |cx| {
-                    context_store.update(cx, |context_store, cx| {
-                        let task = if is_directory {
-                            context_store.add_directory(project_path.clone(), false, cx)
-                        } else {
+                    if is_directory {
+                        Task::ready(
+                            context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_directory(&project_path, false, cx)
+                                })
+                                .log_err()
+                                .flatten(),
+                        )
+                    } else {
+                        let result = context_store.update(cx, |context_store, cx| {
                             context_store.add_file_from_path(project_path.clone(), false, cx)
-                        };
-                        task.detach_and_log_err(cx);
-                    })
+                        });
+                        cx.spawn(async move |_| result.await.log_err().flatten())
+                    }
                 },
             )),
         }
@@ -652,18 +699,19 @@ impl ContextPickerCompletionProvider {
                 source_range.start,
                 new_text_len,
                 editor.clone(),
+                context_store.clone(),
                 move |cx| {
                     let symbol = symbol.clone();
                     let context_store = context_store.clone();
                     let workspace = workspace.clone();
-                    super::symbol_context_picker::add_symbol(
+                    let result = super::symbol_context_picker::add_symbol(
                         symbol.clone(),
                         false,
                         workspace.clone(),
                         context_store.downgrade(),
                         cx,
-                    )
-                    .detach_and_log_err(cx);
+                    );
+                    cx.spawn(async move |_| result.await.log_err()?.0)
                 },
             )),
         })
@@ -719,25 +767,44 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ..snapshot.anchor_before(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
+        let text_thread_store = self.text_thread_store.clone();
         let editor = self.editor.clone();
-        let http_client = workspace.read(cx).client().http_client().clone();
+        let http_client = workspace.read(cx).client().http_client();
 
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
 
+        let excluded_path = self
+            .excluded_buffer
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .and_then(|b| b.read(cx).file())
+            .map(|file| ProjectPath::from_file(file.as_ref(), cx));
+
         let recent_entries = recent_context_picker_entries(
             context_store.clone(),
             thread_store.clone(),
+            text_thread_store.clone(),
             workspace.clone(),
+            excluded_path.clone(),
             cx,
         );
+
+        let prompt_store = thread_store.as_ref().and_then(|thread_store| {
+            thread_store
+                .read_with(cx, |thread_store, _cx| thread_store.prompt_store().clone())
+                .ok()
+                .flatten()
+        });
 
         let search_task = search(
             mode,
             query,
             Arc::<AtomicBool>::default(),
             recent_entries,
+            prompt_store,
             thread_store.clone(),
+            text_thread_store.clone(),
             workspace.clone(),
             cx,
         );
@@ -753,11 +820,17 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                     .into_iter()
                     .filter_map(|mat| match mat {
                         Match::File(FileMatch { mat, is_recent }) => {
+                            let project_path = ProjectPath {
+                                worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                path: mat.path.clone(),
+                            };
+
+                            if excluded_path.as_ref() == Some(&project_path) {
+                                return None;
+                            }
+
                             Some(Self::completion_for_path(
-                                ProjectPath {
-                                    worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                    path: mat.path.clone(),
-                                },
+                                project_path,
                                 &mat.path_prefix,
                                 is_recent,
                                 mat.is_dir,
@@ -768,6 +841,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 cx,
                             ))
                         }
+
                         Match::Symbol(SymbolMatch { symbol, .. }) => Self::completion_for_symbol(
                             symbol,
                             excerpt_id,
@@ -777,10 +851,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             workspace.clone(),
                             cx,
                         ),
+
                         Match::Thread(ThreadMatch {
                             thread, is_recent, ..
                         }) => {
                             let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
+                            let text_thread_store =
+                                text_thread_store.as_ref().and_then(|t| t.upgrade())?;
                             Some(Self::completion_for_thread(
                                 thread,
                                 excerpt_id,
@@ -789,19 +866,18 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store,
+                                text_thread_store,
                             ))
                         }
-                        Match::Rules(user_rules) => {
-                            let thread_store = thread_store.as_ref().and_then(|t| t.upgrade())?;
-                            Some(Self::completion_for_rules(
-                                user_rules,
-                                excerpt_id,
-                                source_range.clone(),
-                                editor.clone(),
-                                context_store.clone(),
-                                thread_store,
-                            ))
-                        }
+
+                        Match::Rules(user_rules) => Some(Self::completion_for_rules(
+                            user_rules,
+                            excerpt_id,
+                            source_range.clone(),
+                            editor.clone(),
+                            context_store.clone(),
+                        )),
+
                         Match::Fetch(url) => Some(Self::completion_for_fetch(
                             source_range.clone(),
                             url,
@@ -810,6 +886,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             context_store.clone(),
                             http_client.clone(),
                         )),
+
                         Match::Entry(EntryMatch { entry, .. }) => Self::completion_for_entry(
                             entry,
                             excerpt_id,
@@ -876,24 +953,44 @@ fn confirm_completion_callback(
     start: Anchor,
     content_len: usize,
     editor: Entity<Editor>,
-    add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
+    context_store: Entity<ContextStore>,
+    add_context_fn: impl Fn(&mut App) -> Task<Option<AgentContextHandle>> + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new(move |_, _, cx| {
-        add_context_fn(cx);
+    Arc::new(move |_, window, cx| {
+        let context = add_context_fn(cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
         let editor = editor.clone();
-        cx.defer(move |cx| {
-            crate::context_picker::insert_fold_for_mention(
+        let context_store = context_store.clone();
+        window.defer(cx, move |window, cx| {
+            let crease_id = crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
                 start,
                 content_len,
-                crease_text,
+                crease_text.clone(),
                 crease_icon_path,
-                editor,
+                editor.clone(),
+                window,
                 cx,
             );
+            cx.spawn(async move |cx| {
+                let crease_id = crease_id?;
+                let context = context.await?;
+                editor
+                    .update(cx, |editor, cx| {
+                        if let Some(addon) = editor.addon_mut::<ContextCreasesAddon>() {
+                            addon.add_creases(
+                                &context_store,
+                                AgentContextKey(context),
+                                [(crease_id, crease_text)],
+                                cx,
+                            );
+                        }
+                    })
+                    .ok()
+            })
+            .detach();
         });
         false
     })
@@ -1048,6 +1145,10 @@ mod tests {
         fn include_in_nav_history() -> bool {
             false
         }
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
+        }
     }
 
     impl EventEmitter<()> for AtMentionEditor {}
@@ -1094,6 +1195,7 @@ mod tests {
                         "five.txt": "",
                         "six.txt": "",
                         "seven.txt": "",
+                        "eight.txt": "",
                     }
                 }),
             )
@@ -1120,9 +1222,12 @@ mod tests {
             separator!("b/five.txt"),
             separator!("b/six.txt"),
             separator!("b/seven.txt"),
+            separator!("b/eight.txt"),
         ];
+
+        let mut opened_editors = Vec::new();
         for path in paths {
-            workspace
+            let buffer = workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     workspace.open_path(
                         ProjectPath {
@@ -1137,6 +1242,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            opened_editors.push(buffer);
         }
 
         let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -1166,12 +1272,24 @@ mod tests {
 
         let editor_entity = editor.downgrade();
         editor.update_in(&mut cx, |editor, window, cx| {
+            let last_opened_buffer = opened_editors.last().and_then(|editor| {
+                editor
+                    .downcast::<Editor>()?
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .as_ref()
+                    .map(Entity::downgrade)
+            });
             window.focus(&editor.focus_handle(cx));
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,
+                None,
                 editor_entity,
+                last_opened_buffer,
             ))));
         });
 

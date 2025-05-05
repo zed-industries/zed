@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
@@ -9,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateFileToolInput {
@@ -23,6 +24,9 @@ pub struct CreateFileToolInput {
     ///
     /// You can create a new file by providing a path of "directory1/new_file.txt"
     /// </example>
+    ///
+    /// Make sure to include this field before the `contents` field in the input object
+    /// so that we can display it immediately.
     pub path: String,
 
     /// The text contents of the file to create.
@@ -69,7 +73,7 @@ impl Tool for CreateFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 format!("Create file {path}")
             }
             Err(_) => DEFAULT_UI_TEXT.to_string(),
@@ -89,6 +93,7 @@ impl Tool for CreateFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
@@ -113,7 +118,7 @@ impl Tool for CreateFileTool {
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
             cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
-                    action_log.track_buffer(buffer.clone(), cx)
+                    action_log.buffer_created(buffer.clone(), cx)
                 });
                 buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
                 action_log.update(cx, |action_log, cx| {

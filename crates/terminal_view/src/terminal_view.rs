@@ -34,7 +34,7 @@ use ui::{
 use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenOptions, OpenVisible, ToolbarItemLocation,
-    Workspace, WorkspaceId,
+    Workspace, WorkspaceId, delete_unloaded_items,
     item::{
         BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
@@ -111,7 +111,9 @@ pub struct TerminalView {
     context_menu: Option<(Entity<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_state: bool,
+    embedded: bool,
     blinking_terminal_enabled: bool,
+    cwd_serialized: bool,
     blinking_paused: bool,
     blink_epoch: usize,
     hover_target_tooltip: Option<String>,
@@ -161,6 +163,7 @@ impl TerminalView {
         workspace: WeakEntity<Workspace>,
         workspace_id: Option<WorkspaceId>,
         project: WeakEntity<Project>,
+        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -199,6 +202,7 @@ impl TerminalView {
             blink_epoch: 0,
             hover_target_tooltip: None,
             hover_tooltip_update: Task::ready(()),
+            embedded,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -207,6 +211,7 @@ impl TerminalView {
             scroll_handle,
             show_scrollbar: !Self::should_autohide_scrollbar(cx),
             hide_scrollbar_task: None,
+            cwd_serialized: false,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -379,7 +384,6 @@ impl TerminalView {
                 return;
             }
         }
-
         self.terminal.update(cx, |term, _| term.scroll_wheel(event));
     }
 
@@ -843,167 +847,176 @@ fn subscribe_for_terminal_events(
     cx: &mut Context<TerminalView>,
 ) -> Vec<Subscription> {
     let terminal_subscription = cx.observe(terminal, |_, _, cx| cx.notify());
+    let mut previous_cwd = None;
     let terminal_events_subscription = cx.subscribe_in(
         terminal,
         window,
-        move |terminal_view, _, event, window, cx| match event {
-            Event::Wakeup => {
-                cx.notify();
-                cx.emit(Event::Wakeup);
-                cx.emit(ItemEvent::UpdateTab);
-                cx.emit(SearchEvent::MatchesInvalidated);
+        move |terminal_view, terminal, event, window, cx| {
+            let current_cwd = terminal.read(cx).working_directory();
+            if current_cwd != previous_cwd {
+                previous_cwd = current_cwd;
+                terminal_view.cwd_serialized = false;
             }
 
-            Event::Bell => {
-                terminal_view.has_bell = true;
-                cx.emit(Event::Wakeup);
-            }
-
-            Event::BlinkChanged(blinking) => {
-                if matches!(
-                    TerminalSettings::get_global(cx).blinking,
-                    TerminalBlink::TerminalControlled
-                ) {
-                    terminal_view.blinking_terminal_enabled = *blinking;
+            match event {
+                Event::Wakeup => {
+                    cx.notify();
+                    cx.emit(Event::Wakeup);
+                    cx.emit(ItemEvent::UpdateTab);
+                    cx.emit(SearchEvent::MatchesInvalidated);
                 }
-            }
 
-            Event::TitleChanged => {
-                cx.emit(ItemEvent::UpdateTab);
-            }
+                Event::Bell => {
+                    terminal_view.has_bell = true;
+                    cx.emit(Event::Wakeup);
+                }
 
-            Event::NewNavigationTarget(maybe_navigation_target) => {
-                match maybe_navigation_target.as_ref() {
-                    None => {
-                        terminal_view.hover_target_tooltip = None;
-                        terminal_view.hover_tooltip_update = Task::ready(());
-                    }
-                    Some(MaybeNavigationTarget::Url(url)) => {
-                        terminal_view.hover_target_tooltip = Some(url.clone());
-                        terminal_view.hover_tooltip_update = Task::ready(());
-                    }
-                    Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
-                        let valid_files_to_open_task = possible_open_target(
-                            &workspace,
-                            &path_like_target.terminal_dir,
-                            &path_like_target.maybe_path,
-                            cx,
-                        );
-
-                        terminal_view.hover_tooltip_update =
-                            cx.spawn(async move |terminal_view, cx| {
-                                let file_to_open = valid_files_to_open_task.await;
-                                terminal_view
-                                    .update(cx, |terminal_view, _| match file_to_open {
-                                        Some(
-                                            OpenTarget::File(path, _)
-                                            | OpenTarget::Worktree(path, _),
-                                        ) => {
-                                            terminal_view.hover_target_tooltip =
-                                                Some(path.to_string(|path| {
-                                                    path.to_string_lossy().to_string()
-                                                }));
-                                        }
-                                        None => {
-                                            terminal_view.hover_target_tooltip = None;
-                                        }
-                                    })
-                                    .ok();
-                            });
+                Event::BlinkChanged(blinking) => {
+                    if matches!(
+                        TerminalSettings::get_global(cx).blinking,
+                        TerminalBlink::TerminalControlled
+                    ) {
+                        terminal_view.blinking_terminal_enabled = *blinking;
                     }
                 }
 
-                cx.notify()
-            }
+                Event::TitleChanged => {
+                    cx.emit(ItemEvent::UpdateTab);
+                }
 
-            Event::Open(maybe_navigation_target) => match maybe_navigation_target {
-                MaybeNavigationTarget::Url(url) => cx.open_url(url),
+                Event::NewNavigationTarget(maybe_navigation_target) => {
+                    match maybe_navigation_target.as_ref() {
+                        None => {
+                            terminal_view.hover_target_tooltip = None;
+                            terminal_view.hover_tooltip_update = Task::ready(());
+                        }
+                        Some(MaybeNavigationTarget::Url(url)) => {
+                            terminal_view.hover_target_tooltip = Some(url.clone());
+                            terminal_view.hover_tooltip_update = Task::ready(());
+                        }
+                        Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
+                            let valid_files_to_open_task = possible_open_target(
+                                &workspace,
+                                &path_like_target.terminal_dir,
+                                &path_like_target.maybe_path,
+                                cx,
+                            );
 
-                MaybeNavigationTarget::PathLike(path_like_target) => {
-                    if terminal_view.hover_target_tooltip.is_none() {
-                        return;
+                            terminal_view.hover_tooltip_update =
+                                cx.spawn(async move |terminal_view, cx| {
+                                    let file_to_open = valid_files_to_open_task.await;
+                                    terminal_view
+                                        .update(cx, |terminal_view, _| match file_to_open {
+                                            Some(
+                                                OpenTarget::File(path, _)
+                                                | OpenTarget::Worktree(path, _),
+                                            ) => {
+                                                terminal_view.hover_target_tooltip =
+                                                    Some(path.to_string(|path| {
+                                                        path.to_string_lossy().to_string()
+                                                    }));
+                                            }
+                                            None => {
+                                                terminal_view.hover_target_tooltip = None;
+                                            }
+                                        })
+                                        .ok();
+                                });
+                        }
                     }
-                    let task_workspace = workspace.clone();
-                    let path_like_target = path_like_target.clone();
-                    cx.spawn_in(window, async move |terminal_view, cx| {
-                        let open_target = terminal_view
-                            .update(cx, |_, cx| {
-                                possible_open_target(
-                                    &task_workspace,
-                                    &path_like_target.terminal_dir,
-                                    &path_like_target.maybe_path,
-                                    cx,
-                                )
-                            })?
-                            .await;
-                        if let Some(open_target) = open_target {
-                            let path_to_open = open_target.path();
-                            let opened_items = task_workspace
-                                .update_in(cx, |workspace, window, cx| {
-                                    workspace.open_paths(
-                                        vec![path_to_open.path.clone()],
-                                        OpenOptions {
-                                            visible: Some(OpenVisible::OnlyDirectories),
-                                            ..Default::default()
-                                        },
-                                        None,
-                                        window,
+
+                    cx.notify()
+                }
+
+                Event::Open(maybe_navigation_target) => match maybe_navigation_target {
+                    MaybeNavigationTarget::Url(url) => cx.open_url(url),
+
+                    MaybeNavigationTarget::PathLike(path_like_target) => {
+                        if terminal_view.hover_target_tooltip.is_none() {
+                            return;
+                        }
+                        let task_workspace = workspace.clone();
+                        let path_like_target = path_like_target.clone();
+                        cx.spawn_in(window, async move |terminal_view, cx| {
+                            let open_target = terminal_view
+                                .update(cx, |_, cx| {
+                                    possible_open_target(
+                                        &task_workspace,
+                                        &path_like_target.terminal_dir,
+                                        &path_like_target.maybe_path,
                                         cx,
                                     )
-                                })
-                                .context("workspace update")?
+                                })?
                                 .await;
-                            if opened_items.len() != 1 {
-                                debug_panic!(
-                                    "Received {} items for one path {path_to_open:?}",
-                                    opened_items.len(),
-                                );
-                            }
+                            if let Some(open_target) = open_target {
+                                let path_to_open = open_target.path();
+                                let opened_items = task_workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.open_paths(
+                                            vec![path_to_open.path.clone()],
+                                            OpenOptions {
+                                                visible: Some(OpenVisible::OnlyDirectories),
+                                                ..Default::default()
+                                            },
+                                            None,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .context("workspace update")?
+                                    .await;
+                                if opened_items.len() != 1 {
+                                    debug_panic!(
+                                        "Received {} items for one path {path_to_open:?}",
+                                        opened_items.len(),
+                                    );
+                                }
 
-                            if let Some(opened_item) = opened_items.first() {
-                                if open_target.is_file() {
-                                    if let Some(Ok(opened_item)) = opened_item {
-                                        if let Some(row) = path_to_open.row {
-                                            let col = path_to_open.column.unwrap_or(0);
-                                            if let Some(active_editor) =
-                                                opened_item.downcast::<Editor>()
-                                            {
-                                                active_editor
-                                                    .downgrade()
-                                                    .update_in(cx, |editor, window, cx| {
-                                                        editor.go_to_singleton_buffer_point(
-                                                            language::Point::new(
-                                                                row.saturating_sub(1),
-                                                                col.saturating_sub(1),
-                                                            ),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .log_err();
+                                if let Some(opened_item) = opened_items.first() {
+                                    if open_target.is_file() {
+                                        if let Some(Ok(opened_item)) = opened_item {
+                                            if let Some(row) = path_to_open.row {
+                                                let col = path_to_open.column.unwrap_or(0);
+                                                if let Some(active_editor) =
+                                                    opened_item.downcast::<Editor>()
+                                                {
+                                                    active_editor
+                                                        .downgrade()
+                                                        .update_in(cx, |editor, window, cx| {
+                                                            editor.go_to_singleton_buffer_point(
+                                                                language::Point::new(
+                                                                    row.saturating_sub(1),
+                                                                    col.saturating_sub(1),
+                                                                ),
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        })
+                                                        .log_err();
+                                                }
                                             }
                                         }
+                                    } else if open_target.is_dir() {
+                                        task_workspace.update(cx, |workspace, cx| {
+                                            workspace.project().update(cx, |_, cx| {
+                                                cx.emit(project::Event::ActivateProjectPanel);
+                                            })
+                                        })?;
                                     }
-                                } else if open_target.is_dir() {
-                                    task_workspace.update(cx, |workspace, cx| {
-                                        workspace.project().update(cx, |_, cx| {
-                                            cx.emit(project::Event::ActivateProjectPanel);
-                                        })
-                                    })?;
                                 }
                             }
-                        }
 
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx)
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx)
+                    }
+                },
+                Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
+                Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
+                Event::SelectionsChanged => {
+                    window.invalidate_character_coordinates();
+                    cx.emit(SearchEvent::ActiveMatchChanged)
                 }
-            },
-            Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
-            Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
-            Event::SelectionsChanged => {
-                window.invalidate_character_coordinates();
-                cx.emit(SearchEvent::ActiveMatchChanged)
             }
         },
     );
@@ -1100,7 +1113,7 @@ fn possible_open_target(
 
         for path_with_position in &potential_paths {
             let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
-                let root_path_with_posiition = PathWithPosition {
+                let root_path_with_position = PathWithPosition {
                     path: worktree_root.to_path_buf(),
                     row: path_with_position.row,
                     column: path_with_position.column,
@@ -1108,11 +1121,11 @@ fn possible_open_target(
                 match worktree.read(cx).root_entry() {
                     Some(root_entry) => {
                         return Task::ready(Some(OpenTarget::Worktree(
-                            root_path_with_posiition,
+                            root_path_with_position,
                             root_entry.clone(),
                         )));
                     }
-                    None => root_path_with_posiition,
+                    None => root_path_with_position,
                 }
             } else {
                 PathWithPosition {
@@ -1126,18 +1139,20 @@ fn possible_open_target(
                 }
             };
 
-            if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
-                return Task::ready(Some(OpenTarget::Worktree(
-                    PathWithPosition {
-                        path: worktree_root.join(&entry.path),
-                        row: path_to_check.row,
-                        column: path_to_check.column,
-                    },
-                    entry.clone(),
-                )));
-            } else {
-                paths_to_check.push(path_to_check);
+            if path_to_check.path.is_relative() {
+                if let Some(entry) = worktree.read(cx).entry_for_path(&path_to_check.path) {
+                    return Task::ready(Some(OpenTarget::Worktree(
+                        PathWithPosition {
+                            path: worktree_root.join(&entry.path),
+                            row: path_to_check.row,
+                            column: path_to_check.column,
+                        },
+                        entry.clone(),
+                    )));
+                }
             }
+
+            paths_to_check.push(path_to_check);
         }
 
         if !paths_to_check.is_empty() {
@@ -1364,6 +1379,7 @@ impl Render for TerminalView {
                         focused,
                         self.should_show_cursor(focused, cx),
                         self.block_below_cursor.clone(),
+                        self.embedded,
                     ))
                     .when_some(self.render_scrollbar(cx), |div, scrollbar| {
                         div.child(scrollbar)
@@ -1420,9 +1436,6 @@ impl Item for TerminalView {
                     }
                 }
             },
-            None if self.terminal.read(cx).debug_terminal() => {
-                (IconName::Debug, Color::Muted, None)
-            }
             None => (IconName::Terminal, Color::Muted, None),
         };
 
@@ -1450,6 +1463,11 @@ impl Item for TerminalView {
             )
             .child(Label::new(title).color(params.text_color()))
             .into_any()
+    }
+
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        let terminal = self.terminal().read(cx);
+        terminal.title(detail == 0).into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1487,6 +1505,7 @@ impl Item for TerminalView {
                 self.workspace.clone(),
                 workspace_id,
                 self.project.clone(),
+                false,
                 window,
                 cx,
             )
@@ -1540,6 +1559,9 @@ impl Item for TerminalView {
     ) {
         if self.terminal().read(cx).task().is_none() {
             if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
+                log::debug!(
+                    "Updating workspace id for the terminal, old: {old_id:?}, new: {new_id:?}",
+                );
                 cx.background_spawn(TERMINAL_DB.update_workspace_id(
                     new_id,
                     old_id,
@@ -1564,14 +1586,10 @@ impl SerializableItem for TerminalView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, async move |_| {
-            TERMINAL_DB
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+        delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
     }
 
     fn serialize(
@@ -1583,11 +1601,12 @@ impl SerializableItem for TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let terminal = self.terminal().read(cx);
-        if terminal.task().is_some() || terminal.debug_terminal() {
+        if terminal.task().is_some() {
             return None;
         }
 
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
+            self.cwd_serialized = true;
             Some(cx.background_spawn(async move {
                 TERMINAL_DB
                     .save_working_directory(item_id, workspace_id, cwd)
@@ -1598,8 +1617,8 @@ impl SerializableItem for TerminalView {
         }
     }
 
-    fn should_serialize(&self, event: &Self::Event) -> bool {
-        matches!(event, ItemEvent::UpdateTab)
+    fn should_serialize(&self, _: &Self::Event) -> bool {
+        !self.cwd_serialized
     }
 
     fn deserialize(
@@ -1644,6 +1663,7 @@ impl SerializableItem for TerminalView {
                         workspace,
                         Some(workspace_id),
                         project.downgrade(),
+                        false,
                         window,
                         cx,
                     )

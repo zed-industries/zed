@@ -1,5 +1,5 @@
 use crate::{
-    AppState, Config, RateLimiter,
+    AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
@@ -517,7 +517,6 @@ impl TestServer {
             blob_store_client: None,
             stripe_client: None,
             stripe_billing: None,
-            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             kinesis_client: None,
             config: Config {
@@ -555,9 +554,6 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 stripe_api_key: None,
-                stripe_zed_pro_price_id: None,
-                stripe_zed_pro_trial_price_id: None,
-                stripe_zed_free_price_id: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
                 kinesis_region: None,
@@ -713,6 +709,7 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        cx.run_until_parked();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 

@@ -18,7 +18,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
     Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -518,7 +518,7 @@ impl TitleBar {
             let repo = repository.read(cx);
             repo.branch
                 .as_ref()
-                .map(|branch| branch.name.clone())
+                .map(|branch| branch.name())
                 .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {
@@ -663,7 +663,7 @@ impl TitleBar {
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, cx| {
-                        menu.when(cx.has_flag::<ZedPro>(), |menu| {
+                        menu.when(cx.has_flag::<NewBillingFeatureFlag>(), |menu| {
                             menu.action(
                                 format!(
                                     "Current Plan: {}",

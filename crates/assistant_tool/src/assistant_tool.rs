@@ -1,4 +1,5 @@
 mod action_log;
+pub mod outline;
 mod tool_registry;
 mod tool_schema;
 mod tool_working_set;
@@ -10,14 +11,16 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::AnyElement;
+use gpui::AnyWindowHandle;
 use gpui::Context;
 use gpui::IntoElement;
 use gpui::Window;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
+use workspace::Workspace;
 
 pub use crate::action_log::*;
 pub use crate::tool_registry::*;
@@ -49,6 +52,13 @@ impl ToolUseStatus {
             ToolUseStatus::Error(out) => out.clone(),
         }
     }
+
+    pub fn error(&self) -> Option<SharedString> {
+        match self {
+            ToolUseStatus::Error(out) => Some(out.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// The result of running a tool, containing both the asynchronous output
@@ -65,6 +75,7 @@ pub trait ToolCard: 'static + Sized {
         &mut self,
         status: &ToolUseStatus,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement;
 }
@@ -76,6 +87,7 @@ pub struct AnyToolCard {
         entity: gpui::AnyEntity,
         status: &ToolUseStatus,
         window: &mut Window,
+        workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> AnyElement,
 }
@@ -86,11 +98,14 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
             entity: gpui::AnyEntity,
             status: &ToolUseStatus,
             window: &mut Window,
+            workspace: WeakEntity<Workspace>,
             cx: &mut App,
         ) -> AnyElement {
             let entity = entity.downcast::<T>().unwrap();
             entity.update(cx, |entity, cx| {
-                entity.render(status, window, cx).into_any_element()
+                entity
+                    .render(status, window, workspace, cx)
+                    .into_any_element()
             })
         }
 
@@ -102,8 +117,14 @@ impl<T: ToolCard> From<Entity<T>> for AnyToolCard {
 }
 
 impl AnyToolCard {
-    pub fn render(&self, status: &ToolUseStatus, window: &mut Window, cx: &mut App) -> AnyElement {
-        (self.render)(self.entity.clone(), status, window, cx)
+    pub fn render(
+        &self,
+        status: &ToolUseStatus,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut App,
+    ) -> AnyElement {
+        (self.render)(self.entity.clone(), status, window, workspace, cx)
     }
 }
 
@@ -163,6 +184,7 @@ pub trait Tool: 'static + Send + Sync {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult;
 }
