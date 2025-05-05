@@ -6,8 +6,8 @@ use crate::{
     persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
-use anyhow::{Result, anyhow};
-use collections::HashMap;
+use anyhow::{Context as _, Result, anyhow};
+use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::DebugRequest;
 use dap::{
@@ -15,7 +15,6 @@ use dap::{
     client::SessionId, debugger_settings::DebuggerSettings,
 };
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use futures::{SinkExt as _, channel::mpsc};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
@@ -24,21 +23,12 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{
-    Project,
-    debugger::{
-        dap_store::{self, DapStore},
-        session::ThreadStatus,
-    },
-    terminals::TerminalKind,
-};
+use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::any::TypeId;
-use std::path::Path;
-use std::sync::Arc;
-use task::{DebugScenario, HideStrategy, RevealStrategy, RevealTarget, TaskContext, TaskId};
-use terminal_view::TerminalView;
+use std::path::PathBuf;
+use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::SplitDirection;
 use workspace::{
@@ -74,27 +64,21 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
-            let dap_store = project.read(cx).dap_store();
-
-            let _subscriptions =
-                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
 
             let debug_panel = Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                _subscriptions,
                 past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
                 project,
@@ -110,20 +94,14 @@ impl DebugPanel {
         let (has_active_session, supports_restart, support_step_back, status) = self
             .active_session()
             .map(|item| {
-                let running = item.read(cx).mode().as_running().cloned();
-
-                match running {
-                    Some(running) => {
-                        let caps = running.read(cx).capabilities(cx);
-                        (
-                            !running.read(cx).session().read(cx).is_terminated(),
-                            caps.supports_restart_request.unwrap_or_default(),
-                            caps.supports_step_back.unwrap_or_default(),
-                            running.read(cx).thread_status(cx),
-                        )
-                    }
-                    None => (false, false, false, None),
-                }
+                let running = item.read(cx).running_state().clone();
+                let caps = running.read(cx).capabilities(cx);
+                (
+                    !running.read(cx).session().read(cx).is_terminated(),
+                    caps.supports_restart_request.unwrap_or_default(),
+                    caps.supports_step_back.unwrap_or_default(),
+                    running.read(cx).thread_status(cx),
+                )
             })
             .unwrap_or((false, false, false, None));
 
@@ -288,7 +266,7 @@ impl DebugPanel {
             cx.subscribe_in(
                 &session,
                 window,
-                move |_, session, event: &SessionStateEvent, window, cx| match event {
+                move |this, session, event: &SessionStateEvent, window, cx| match event {
                     SessionStateEvent::Restart => {
                         let mut curr_session = session.clone();
                         while let Some(parent_session) = curr_session
@@ -310,6 +288,9 @@ impl DebugPanel {
                         })
                         .detach_and_log_err(cx);
                     }
+                    SessionStateEvent::SpawnChildSession { request } => {
+                        this.handle_start_debugging_request(request, session.clone(), window, cx);
+                    }
                     _ => {}
                 },
             )
@@ -323,11 +304,11 @@ impl DebugPanel {
             this.sessions.retain(|session| {
                 session
                     .read(cx)
-                    .mode()
-                    .as_running()
-                    .map_or(false, |running_state| {
-                        !running_state.read(cx).session().read(cx).is_terminated()
-                    })
+                    .running_state()
+                    .read(cx)
+                    .session()
+                    .read(cx)
+                    .is_terminated()
             });
 
             let session_item = DebugSession::running(
@@ -340,11 +321,13 @@ impl DebugPanel {
                 cx,
             );
 
-            if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                // We might want to make this an event subscription and only notify when a new thread is selected
-                // This is used to filter the command menu correctly
-                cx.observe(&running, |_, _, cx| cx.notify()).detach();
-            }
+            // We might want to make this an event subscription and only notify when a new thread is selected
+            // This is used to filter the command menu correctly
+            cx.observe(
+                &session_item.read(cx).running_state().clone(),
+                |_, _, cx| cx.notify(),
+            )
+            .detach();
 
             this.sessions.push(session_item.clone());
             this.activate_session(session_item, window, cx);
@@ -357,7 +340,7 @@ impl DebugPanel {
         Ok(())
     }
 
-    pub fn start_child_session(
+    pub fn handle_start_debugging_request(
         &mut self,
         request: &StartDebuggingRequestArguments,
         parent_session: Entity<Session>,
@@ -370,7 +353,6 @@ impl DebugPanel {
         };
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
-        let breakpoint_store = self.project.read(cx).breakpoint_store();
         let definition = parent_session.read(cx).definition().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
@@ -381,13 +363,7 @@ impl DebugPanel {
                     dap_store.new_session(definition.clone(), Some(parent_session.clone()), cx);
 
                 let task = session.update(cx, |session, cx| {
-                    session.boot(
-                        binary,
-                        worktree,
-                        breakpoint_store,
-                        dap_store_handle.downgrade(),
-                        cx,
-                    )
+                    session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
                 });
                 (session, task)
             })?;
@@ -419,51 +395,9 @@ impl DebugPanel {
         self.active_session.clone()
     }
 
-    fn handle_dap_store_event(
-        &mut self,
-        _dap_store: &Entity<DapStore>,
-        event: &dap_store::DapStoreEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            dap_store::DapStoreEvent::RunInTerminal {
-                session_id,
-                title,
-                cwd,
-                command,
-                args,
-                envs,
-                sender,
-                ..
-            } => {
-                self.handle_run_in_terminal_request(
-                    *session_id,
-                    title.clone(),
-                    cwd.clone(),
-                    command.clone(),
-                    args.clone(),
-                    envs.clone(),
-                    sender.clone(),
-                    window,
-                    cx,
-                )
-                .detach_and_log_err(cx);
-            }
-            dap_store::DapStoreEvent::SpawnChildSession {
-                request,
-                parent_session,
-            } => {
-                self.start_child_session(request, parent_session.clone(), window, cx);
-            }
-            _ => {}
-        }
-    }
-
     pub fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-
         task_context: TaskContext,
         buffer: Option<Entity<Buffer>>,
         window: &Window,
@@ -484,8 +418,60 @@ impl DebugPanel {
                 stop_on_entry,
             } = scenario;
             let request = if let Some(mut request) = request {
-                // Resolve task variables within the request.
-                if let DebugRequest::Launch(_) = &mut request {}
+                if let DebugRequest::Launch(launch_config) = &mut request {
+                    let mut variable_names = HashMap::default();
+                    let mut substituted_variables = HashSet::default();
+                    let task_variables = task_context
+                        .task_variables
+                        .iter()
+                        .map(|(key, value)| {
+                            let key_string = key.to_string();
+                            if !variable_names.contains_key(&key_string) {
+                                variable_names.insert(key_string.clone(), key.clone());
+                            }
+                            (key_string, value.as_str())
+                        })
+                        .collect::<HashMap<_, _>>();
+
+                    let cwd = launch_config
+                        .cwd
+                        .as_ref()
+                        .and_then(|cwd| cwd.to_str())
+                        .and_then(|cwd| {
+                            task::substitute_all_template_variables_in_str(
+                                cwd,
+                                &task_variables,
+                                &variable_names,
+                                &mut substituted_variables,
+                            )
+                        });
+
+                    if let Some(cwd) = cwd {
+                        launch_config.cwd = Some(PathBuf::from(cwd))
+                    }
+
+                    if let Some(program) = task::substitute_all_template_variables_in_str(
+                        &launch_config.program,
+                        &task_variables,
+                        &variable_names,
+                        &mut substituted_variables,
+                    ) {
+                        launch_config.program = program;
+                    }
+
+                    for arg in launch_config.args.iter_mut() {
+                        if let Some(substituted_arg) =
+                            task::substitute_all_template_variables_in_str(
+                                &arg,
+                                &task_variables,
+                                &variable_names,
+                                &mut substituted_variables,
+                            )
+                        {
+                            *arg = substituted_arg;
+                        }
+                    }
+                }
 
                 request
             } else if let Some(build) = build {
@@ -507,7 +493,7 @@ impl DebugPanel {
                     workspace.spawn_in_terminal(task.resolved.clone(), window, cx)
                 })?;
 
-                let exit_status = run_build.await?;
+                let exit_status = run_build.await.transpose()?.context("task cancelled")?;
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
@@ -529,101 +515,6 @@ impl DebugPanel {
         })
     }
 
-    fn handle_run_in_terminal_request(
-        &self,
-        session_id: SessionId,
-        title: Option<String>,
-        cwd: Option<Arc<Path>>,
-        command: Option<String>,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-        mut sender: mpsc::Sender<Result<u32>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(session) = self
-            .sessions
-            .iter()
-            .find(|s| s.read(cx).session_id(cx) == session_id)
-        else {
-            return Task::ready(Err(anyhow!("no session {:?} found", session_id)));
-        };
-        let running = session.read(cx).running_state();
-        let cwd = cwd.map(|p| p.to_path_buf());
-        let shell = self
-            .project
-            .read(cx)
-            .terminal_settings(&cwd, cx)
-            .shell
-            .clone();
-        let kind = if let Some(command) = command {
-            let title = title.clone().unwrap_or(command.clone());
-            TerminalKind::Task(task::SpawnInTerminal {
-                id: TaskId("debug".to_string()),
-                full_label: title.clone(),
-                label: title.clone(),
-                command: command.clone(),
-                args,
-                command_label: title.clone(),
-                cwd,
-                env: envs,
-                use_new_terminal: true,
-                allow_concurrent_runs: true,
-                reveal: RevealStrategy::NoFocus,
-                reveal_target: RevealTarget::Dock,
-                hide: HideStrategy::Never,
-                shell,
-                show_summary: false,
-                show_command: false,
-                show_rerun: false,
-            })
-        } else {
-            TerminalKind::Shell(cwd.map(|c| c.to_path_buf()))
-        };
-
-        let workspace = self.workspace.clone();
-        let project = self.project.downgrade();
-
-        let terminal_task = self.project.update(cx, |project, cx| {
-            project.create_terminal(kind, window.window_handle(), cx)
-        });
-        let terminal_task = cx.spawn_in(window, async move |_, cx| {
-            let terminal = terminal_task.await?;
-
-            let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(terminal.clone(), workspace, None, project, window, cx)
-            })?;
-
-            running.update_in(cx, |running, window, cx| {
-                running.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
-                running.debug_terminal.update(cx, |debug_terminal, cx| {
-                    debug_terminal.terminal = Some(terminal_view);
-                    cx.notify();
-                });
-            })?;
-
-            anyhow::Ok(terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())?)
-        });
-
-        cx.background_spawn(async move {
-            match terminal_task.await {
-                Ok(pid_task) => match pid_task {
-                    Some(pid) => sender.send(Ok(pid.as_u32())).await?,
-                    None => {
-                        sender
-                            .send(Err(anyhow!(
-                                "Terminal was spawned but PID was not available"
-                            )))
-                            .await?
-                    }
-                },
-                Err(error) => sender.send(Err(anyhow!(error))).await?,
-            };
-
-            Ok(())
-        })
-    }
-
     fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
@@ -634,11 +525,9 @@ impl DebugPanel {
             return;
         };
         session.update(cx, |this, cx| {
-            if let Some(running) = this.mode().as_running() {
-                running.update(cx, |this, cx| {
-                    this.serialize_layout(window, cx);
-                });
-            }
+            this.running_state().update(cx, |this, cx| {
+                this.serialize_layout(window, cx);
+            });
         });
         let session_id = session.update(cx, |this, cx| this.session_id(cx));
         let should_prompt = self
@@ -775,7 +664,7 @@ impl DebugPanel {
         if let Some(running_state) = self
             .active_session
             .as_ref()
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|session| session.read(cx).running_state().clone())
         {
             let pane_items_status = running_state.read(cx).pane_items_status(cx);
             let this = cx.weak_entity();
@@ -786,10 +675,10 @@ impl DebugPanel {
                         let this = this.clone();
                         move |window, cx| {
                             this.update(cx, |this, cx| {
-                                if let Some(running_state) =
-                                    this.active_session.as_ref().and_then(|session| {
-                                        session.read(cx).mode().as_running().cloned()
-                                    })
+                                if let Some(running_state) = this
+                                    .active_session
+                                    .as_ref()
+                                    .map(|session| session.read(cx).running_state().clone())
                                 {
                                     running_state.update(cx, |state, cx| {
                                         if is_visible {
@@ -832,7 +721,7 @@ impl DebugPanel {
                     h_flex().gap_2().w_full().when_some(
                         active_session
                             .as_ref()
-                            .and_then(|session| session.read(cx).mode().as_running()),
+                            .map(|session| session.read(cx).running_state()),
                         |this, running_session| {
                             let thread_status = running_session
                                 .read(cx)
@@ -1070,7 +959,7 @@ impl DebugPanel {
                         .when_some(
                             active_session
                                 .as_ref()
-                                .and_then(|session| session.read(cx).mode().as_running())
+                                .map(|session| session.read(cx).running_state())
                                 .cloned(),
                             |this, session| {
                                 this.child(
@@ -1101,6 +990,7 @@ impl DebugPanel {
                                                     past_debug_definition,
                                                     weak_panel,
                                                     workspace,
+                                                    None,
                                                     window,
                                                     cx,
                                                 )
@@ -1133,12 +1023,10 @@ impl DebugPanel {
     ) {
         if let Some(session) = self.active_session() {
             session.update(cx, |session, cx| {
-                if let Some(running) = session.mode().as_running() {
-                    running.update(cx, |running, cx| {
-                        running.activate_pane_in_direction(direction, window, cx);
-                    })
-                }
-            })
+                session.running_state().update(cx, |running, cx| {
+                    running.activate_pane_in_direction(direction, window, cx);
+                })
+            });
         }
     }
 
@@ -1150,12 +1038,10 @@ impl DebugPanel {
     ) {
         if let Some(session) = self.active_session() {
             session.update(cx, |session, cx| {
-                if let Some(running) = session.mode().as_running() {
-                    running.update(cx, |running, cx| {
-                        running.activate_item(item, window, cx);
-                    })
-                }
-            })
+                session.running_state().update(cx, |running, cx| {
+                    running.activate_item(item, window, cx);
+                });
+            });
         }
     }
 
@@ -1168,11 +1054,9 @@ impl DebugPanel {
         debug_assert!(self.sessions.contains(&session_item));
         session_item.focus_handle(cx).focus(window);
         session_item.update(cx, |this, cx| {
-            if let Some(running) = this.mode().as_running() {
-                running.update(cx, |this, cx| {
-                    this.go_to_selected_stack_frame(window, cx);
-                });
-            }
+            this.running_state().update(cx, |this, cx| {
+                this.go_to_selected_stack_frame(window, cx);
+            });
         });
         self.active_session = Some(session_item);
         cx.notify();
@@ -1257,7 +1141,7 @@ impl Render for DebugPanel {
         if self
             .active_session
             .as_ref()
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
+            .map(|session| session.read(cx).running_state())
             .map(|state| state.read(cx).has_open_context_menu(cx))
             .unwrap_or(false)
         {
@@ -1375,10 +1259,9 @@ impl Render for DebugPanel {
                         if this
                             .active_session
                             .as_ref()
-                            .and_then(|session| {
-                                session.read(cx).mode().as_running().map(|state| {
-                                    state.read(cx).has_pane_at_position(event.position)
-                                })
+                            .map(|session| {
+                                let state = session.read(cx).running_state();
+                                state.read(cx).has_pane_at_position(event.position)
                             })
                             .unwrap_or(false)
                         {

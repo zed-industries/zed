@@ -1,7 +1,9 @@
+use std::mem;
+
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -11,25 +13,13 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
-    if request.contents.is_empty() {
-        bail!("Request must contain at least one content item");
-    }
+    validate_generate_content_request(&request)?;
 
-    if let Some(user_content) = request
-        .contents
-        .iter()
-        .find(|content| content.role == Role::User)
-    {
-        if user_content.parts.is_empty() {
-            bail!("User content must contain at least one part");
-        }
-    }
+    // The `model` field is emptied as it is provided as a path parameter.
+    let model_id = mem::take(&mut request.model.model_id);
 
-    let uri = format!(
-        "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
-        model = request.model
-    );
-    request.model.clear();
+    let uri =
+        format!("{api_url}/v1beta/models/{model_id}:streamGenerateContent?alt=sse&key={api_key}",);
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -78,18 +68,20 @@ pub async fn count_tokens(
     api_key: &str,
     request: CountTokensRequest,
 ) -> Result<CountTokensResponse> {
-    let uri = format!(
-        "{}/v1beta/models/gemini-pro:countTokens?key={}",
-        api_url, api_key
-    );
-    let request = serde_json::to_string(&request)?;
+    validate_generate_content_request(&request.generate_content_request)?;
 
+    let uri = format!(
+        "{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",
+        model_id = &request.generate_content_request.model.model_id,
+    );
+
+    let request = serde_json::to_string(&request)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(&uri)
         .header("Content-Type", "application/json");
-
     let http_request = request_builder.body(AsyncBody::from(request))?;
+
     let mut response = client.send(http_request).await?;
     let mut text = String::new();
     response.body_mut().read_to_string(&mut text).await?;
@@ -102,6 +94,28 @@ pub async fn count_tokens(
             text
         ))
     }
+}
+
+pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Result<()> {
+    if request.model.is_empty() {
+        bail!("Model must be specified");
+    }
+
+    if request.contents.is_empty() {
+        bail!("Request must contain at least one content item");
+    }
+
+    if let Some(user_content) = request
+        .contents
+        .iter()
+        .find(|content| content.role == Role::User)
+    {
+        if user_content.parts.is_empty() {
+            bail!("User content must contain at least one part");
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -121,11 +135,14 @@ pub enum Task {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentRequest {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub model: String,
+    #[serde(default, skip_serializing_if = "ModelName::is_empty")]
+    pub model: ModelName,
     pub contents: Vec<Content>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub system_instruction: Option<SystemInstruction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub generation_config: Option<GenerationConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_settings: Option<Vec<SafetySetting>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
@@ -136,19 +153,27 @@ pub struct GenerateContentRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates: Option<Vec<GenerateContentCandidate>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_feedback: Option<PromptFeedback>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_metadata: Option<UsageMetadata>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentCandidate {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<usize>,
     pub content: Content,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub finish_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub safety_ratings: Option<Vec<SafetyRating>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub citation_metadata: Option<CitationMetadata>,
 }
 
@@ -216,9 +241,13 @@ pub struct FunctionResponsePart {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationSource {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub end_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub uri: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
 }
 
@@ -231,30 +260,44 @@ pub struct CitationMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptFeedback {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
     pub safety_ratings: Vec<SafetyRating>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason_message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_content_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_use_prompt_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thoughts_token_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_token_count: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub candidate_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
 }
 
@@ -292,16 +335,13 @@ pub enum HarmCategory {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HarmBlockThreshold {
     #[serde(rename = "HARM_BLOCK_THRESHOLD_UNSPECIFIED")]
     Unspecified,
-    #[serde(rename = "BLOCK_LOW_AND_ABOVE")]
     BlockLowAndAbove,
-    #[serde(rename = "BLOCK_MEDIUM_AND_ABOVE")]
     BlockMediumAndAbove,
-    #[serde(rename = "BLOCK_ONLY_HIGH")]
     BlockOnlyHigh,
-    #[serde(rename = "BLOCK_NONE")]
     BlockNone,
 }
 
@@ -326,7 +366,7 @@ pub struct SafetyRating {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensRequest {
-    pub contents: Vec<Content>,
+    pub generate_content_request: GenerateContentRequest,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -380,6 +420,47 @@ pub struct FunctionDeclaration {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Default)]
+pub struct ModelName {
+    pub model_id: String,
+}
+
+impl ModelName {
+    pub fn is_empty(&self) -> bool {
+        self.model_id.is_empty()
+    }
+}
+
+const MODEL_NAME_PREFIX: &str = "models/";
+
+impl Serialize for ModelName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{MODEL_NAME_PREFIX}{}", &self.model_id))
+    }
+}
+
+impl<'de> Deserialize<'de> for ModelName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string = String::deserialize(deserializer)?;
+        if let Some(id) = string.strip_prefix(MODEL_NAME_PREFIX) {
+            Ok(Self {
+                model_id: id.to_string(),
+            })
+        } else {
+            return Err(serde::de::Error::custom(format!(
+                "Expected model name to begin with {}, got: {}",
+                MODEL_NAME_PREFIX, string
+            )));
+        }
+    }
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -451,16 +532,18 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
+        const ONE_MILLION: usize = 1_048_576;
+        const TWO_MILLION: usize = 2_097_152;
         match self {
-            Model::Gemini15Pro => 2_000_000,
-            Model::Gemini15Flash => 1_000_000,
-            Model::Gemini20Pro => 2_000_000,
-            Model::Gemini20Flash => 1_000_000,
-            Model::Gemini20FlashThinking => 1_000_000,
-            Model::Gemini20FlashLite => 1_000_000,
-            Model::Gemini25ProExp0325 => 1_000_000,
-            Model::Gemini25ProPreview0325 => 1_000_000,
-            Model::Gemini25FlashPreview0417 => 1_000_000,
+            Model::Gemini15Pro => TWO_MILLION,
+            Model::Gemini15Flash => ONE_MILLION,
+            Model::Gemini20Pro => TWO_MILLION,
+            Model::Gemini20Flash => ONE_MILLION,
+            Model::Gemini20FlashThinking => ONE_MILLION,
+            Model::Gemini20FlashLite => ONE_MILLION,
+            Model::Gemini25ProExp0325 => ONE_MILLION,
+            Model::Gemini25ProPreview0325 => ONE_MILLION,
+            Model::Gemini25FlashPreview0417 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }

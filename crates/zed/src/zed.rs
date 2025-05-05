@@ -26,8 +26,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, point,
-    px,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -915,7 +915,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let agent_diff_toolbar = cx.new(|_cx| AgentDiffToolbar::new());
+            let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
         })
     });
@@ -1336,7 +1336,7 @@ fn show_markdown_app_notification<F>(
                 let primary_button_on_click = primary_button_on_click.clone();
                 cx.new(move |cx| {
                     MessageNotification::new_from_builder(cx, move |window, cx| {
-                        gpui::div()
+                        image_cache(retain_all("notification-cache"))
                             .text_xs()
                             .child(markdown_preview::markdown_renderer::render_parsed_markdown(
                                 &parsed_markdown.clone(),
@@ -1502,26 +1502,43 @@ fn open_local_file(
     if let Some(worktree) = worktree {
         let tree_id = worktree.read(cx).id();
         cx.spawn_in(window, async move |workspace, cx| {
-            if let Some(dir_path) = settings_relative_path.parent() {
-                if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+            // Check if the file actually exists on disk (even if it's excluded from worktree)
+            let file_exists = {
+                let full_path =
+                    worktree.update(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
+
+                let fs = project.update(cx, |project, _| project.fs().clone())?;
+                let file_exists = fs
+                    .metadata(&full_path)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map_or(false, |metadata| !metadata.is_dir && !metadata.is_fifo);
+                file_exists
+            };
+
+            if !file_exists {
+                if let Some(dir_path) = settings_relative_path.parent() {
+                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                        project
+                            .update(cx, |project, cx| {
+                                project.create_entry((tree_id, dir_path), true, cx)
+                            })?
+                            .await
+                            .context("worktree was removed")?;
+                    }
+                }
+
+                if worktree.update(cx, |tree, _| {
+                    tree.entry_for_path(settings_relative_path).is_none()
+                })? {
                     project
                         .update(cx, |project, cx| {
-                            project.create_entry((tree_id, dir_path), true, cx)
+                            project.create_entry((tree_id, settings_relative_path), false, cx)
                         })?
                         .await
                         .context("worktree was removed")?;
                 }
-            }
-
-            if worktree.update(cx, |tree, _| {
-                tree.entry_for_path(settings_relative_path).is_none()
-            })? {
-                project
-                    .update(cx, |project, cx| {
-                        project.create_entry((tree_id, settings_relative_path), false, cx)
-                    })?
-                    .await
-                    .context("worktree was removed")?;
             }
 
             let editor = workspace
@@ -4315,5 +4332,113 @@ mod tests {
                 key
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_opening_project_settings_when_excluded(cx: &mut gpui::TestAppContext) {
+        // Use the proper initialization for runtime state
+        let app_state = init_keymap_test(cx);
+
+        eprintln!("Running test_opening_project_settings_when_excluded");
+
+        // 1. Set up a project with some project settings
+        let settings_init =
+            r#"{ "UNIQUEVALUE": true, "git": { "inline_blame": { "enabled": false } } }"#;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                Path::new("/root"),
+                json!({
+                    ".zed": {
+                        "settings.json": settings_init
+                    }
+                }),
+            )
+            .await;
+
+        eprintln!("Created project with .zed/settings.json containing UNIQUEVALUE");
+
+        // 2. Create a project with the file system and load it
+        let project = Project::test(app_state.fs.clone(), [Path::new("/root")], cx).await;
+
+        // Save original settings content for comparison
+        let original_settings = app_state
+            .fs
+            .load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap();
+
+        let original_settings_str = original_settings.clone();
+
+        // Verify settings exist on disk and have expected content
+        eprintln!("Original settings content: {}", original_settings_str);
+        assert!(
+            original_settings_str.contains("UNIQUEVALUE"),
+            "Test setup failed - settings file doesn't contain our marker"
+        );
+
+        // 3. Add .zed to file scan exclusions in user settings
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                worktree_settings.file_scan_exclusions = Some(vec![".zed".to_string()]);
+            });
+        });
+
+        eprintln!("Added .zed to file_scan_exclusions in settings");
+
+        // 4. Run tasks to apply settings
+        cx.background_executor.run_until_parked();
+
+        // 5. Critical: Verify .zed is actually excluded from worktree
+        let worktree = cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().clone());
+
+        let has_zed_entry = cx.update(|cx| worktree.read(cx).entry_for_path(".zed").is_some());
+
+        eprintln!(
+            "Is .zed directory visible in worktree after exclusion: {}",
+            has_zed_entry
+        );
+
+        // This assertion verifies the test is set up correctly to show the bug
+        // If .zed is not excluded, the test will fail here
+        assert!(
+            !has_zed_entry,
+            "Test precondition failed: .zed directory should be excluded but was found in worktree"
+        );
+
+        // 6. Create workspace and trigger the actual function that causes the bug
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        window
+            .update(cx, |workspace, window, cx| {
+                // Call the exact function that contains the bug
+                eprintln!("About to call open_project_settings_file");
+                open_project_settings_file(workspace, &OpenProjectSettings, window, cx);
+            })
+            .unwrap();
+
+        // 7. Run background tasks until completion
+        cx.background_executor.run_until_parked();
+
+        // 8. Verify file contents after calling function
+        let new_content = app_state
+            .fs
+            .load(Path::new("/root/.zed/settings.json"))
+            .await
+            .unwrap();
+
+        let new_content_str = new_content.clone();
+        eprintln!("New settings content: {}", new_content_str);
+
+        // The bug causes the settings to be overwritten with empty settings
+        // So if the unique value is no longer present, the bug has been reproduced
+        let bug_exists = !new_content_str.contains("UNIQUEVALUE");
+        eprintln!("Bug reproduced: {}", bug_exists);
+
+        // This assertion should fail if the bug exists - showing the bug is real
+        assert!(
+            new_content_str.contains("UNIQUEVALUE"),
+            "BUG FOUND: Project settings were overwritten when opening via command - original custom content was lost"
+        );
     }
 }

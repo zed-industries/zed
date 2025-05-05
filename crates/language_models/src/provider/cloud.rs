@@ -1,11 +1,10 @@
-use anthropic::{AnthropicError, AnthropicModelMode, parse_prompt_too_long};
+use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
 use futures::{
-    AsyncBufReadExt, FutureExt, Stream, StreamExt, TryStreamExt as _, future::BoxFuture,
-    stream::BoxStream,
+    AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
 use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
@@ -26,6 +25,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::{Settings, SettingsStore};
 use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
+use std::pin::Pin;
 use std::str::FromStr as _;
 use std::{
     sync::{Arc, LazyLock},
@@ -35,15 +35,17 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use zed_llm_client::{
-    CURRENT_PLAN_HEADER_NAME, CompletionBody, CountTokensBody, CountTokensResponse,
-    EXPIRED_LLM_TOKEN_HEADER_NAME, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
-    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
+    CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    TOOL_USE_LIMIT_REACHED_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
-use crate::provider::anthropic::{count_anthropic_tokens, into_anthropic};
-use crate::provider::google::into_google;
-use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
+use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
+use crate::provider::google::{GoogleEventMapper, into_google};
+use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -269,13 +271,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        let model = CloudModel::Anthropic(anthropic::Model::default());
+        let model = CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet);
         Some(self.create_language_model(model, llm_api_token))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        let model = CloudModel::Anthropic(anthropic::Model::default_fast());
+        let model = CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet);
         Some(self.create_language_model(model, llm_api_token))
     }
 
@@ -511,6 +513,13 @@ pub struct CloudLanguageModel {
     request_limiter: RateLimiter,
 }
 
+struct PerformLlmCompletionResponse {
+    response: Response<AsyncBody>,
+    usage: Option<RequestUsage>,
+    tool_use_limit_reached: bool,
+    includes_status_messages: bool,
+}
+
 impl CloudLanguageModel {
     const MAX_RETRIES: usize = 3;
 
@@ -518,7 +527,7 @@ impl CloudLanguageModel {
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
         body: CompletionBody,
-    ) -> Result<(Response<AsyncBody>, Option<RequestUsage>)> {
+    ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
 
         let mut token = llm_api_token.acquire(&client).await?;
@@ -536,13 +545,33 @@ impl CloudLanguageModel {
             let request = request_builder
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
+                .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
             let mut response = http_client.send(request).await?;
             let status = response.status();
             if status.is_success() {
-                let usage = RequestUsage::from_headers(response.headers()).ok();
+                let includes_status_messages = response
+                    .headers()
+                    .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME)
+                    .is_some();
 
-                return Ok((response, usage));
+                let tool_use_limit_reached = response
+                    .headers()
+                    .get(TOOL_USE_LIMIT_REACHED_HEADER_NAME)
+                    .is_some();
+
+                let usage = if includes_status_messages {
+                    None
+                } else {
+                    RequestUsage::from_headers(response.headers()).ok()
+                };
+
+                return Ok(PerformLlmCompletionResponse {
+                    response,
+                    usage,
+                    includes_status_messages,
+                    tool_use_limit_reached,
+                });
             } else if response
                 .headers()
                 .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
@@ -616,7 +645,7 @@ impl CloudLanguageModel {
 }
 
 #[derive(Debug, Error)]
-#[error("cloud language model completion failed with status {status}: {body}")]
+#[error("cloud language model request failed with status {status}: {body}")]
 struct ApiError {
     status: StatusCode,
     body: String,
@@ -689,7 +718,8 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
-                let request = into_google(request, model.id().into());
+                let model_id = model.id().to_string();
+                let generate_content_request = into_google(request, model_id.clone());
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -707,9 +737,9 @@ impl LanguageModel for CloudLanguageModel {
                         };
                     let request_body = CountTokensBody {
                         provider: zed_llm_client::LanguageModelProvider::Google,
-                        model: model.id().into(),
+                        model: model_id,
                         provider_request: serde_json::to_value(&google_ai::CountTokensRequest {
-                            contents: request.contents,
+                            generate_content_request,
                         })?,
                     };
                     let request = request_builder
@@ -744,28 +774,12 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncApp,
+        _cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
         >,
-    > {
-        self.stream_completion_with_usage(request, cx)
-            .map(|result| result.map(|(stream, _)| stream))
-            .boxed()
-    }
-
-    fn stream_completion_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            Option<RequestUsage>,
-        )>,
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
@@ -781,8 +795,13 @@ impl LanguageModel for CloudLanguageModel {
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream_with_usage(async move {
-                    let (response, usage) = Self::perform_llm_completion(
+                let future = self.request_limiter.stream(async move {
+                    let PerformLlmCompletionResponse {
+                        response,
+                        usage,
+                        includes_status_messages,
+                        tool_use_limit_reached,
+                    } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
@@ -811,25 +830,29 @@ impl LanguageModel for CloudLanguageModel {
                         Err(err) => anyhow!(err),
                     })?;
 
-                    Ok((
-                        crate::provider::anthropic::map_to_language_model_completion_events(
-                            Box::pin(response_lines(response).map_err(AnthropicError::Other)),
+                    let mut mapper = AnthropicEventMapper::new();
+                    Ok(map_cloud_completion_events(
+                        Box::pin(
+                            response_lines(response, includes_status_messages)
+                                .chain(usage_updated_event(usage))
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        usage,
+                        move |event| mapper.map_event(event),
                     ))
                 });
-                async move {
-                    let (stream, usage) = future.await?;
-                    Ok((stream.boxed(), usage))
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
                 let request = into_open_ai(request, model, model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream_with_usage(async move {
-                    let (response, usage) = Self::perform_llm_completion(
+                let future = self.request_limiter.stream(async move {
+                    let PerformLlmCompletionResponse {
+                        response,
+                        usage,
+                        includes_status_messages,
+                        tool_use_limit_reached,
+                    } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
@@ -842,25 +865,30 @@ impl LanguageModel for CloudLanguageModel {
                         },
                     )
                     .await?;
-                    Ok((
-                        crate::provider::open_ai::map_to_language_model_completion_events(
-                            Box::pin(response_lines(response)),
+
+                    let mut mapper = OpenAiEventMapper::new();
+                    Ok(map_cloud_completion_events(
+                        Box::pin(
+                            response_lines(response, includes_status_messages)
+                                .chain(usage_updated_event(usage))
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
-                        usage,
+                        move |event| mapper.map_event(event),
                     ))
                 });
-                async move {
-                    let (stream, usage) = future.await?;
-                    Ok((stream.boxed(), usage))
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
                 let request = into_google(request, model.id().into());
                 let llm_api_token = self.llm_api_token.clone();
-                let future = self.request_limiter.stream_with_usage(async move {
-                    let (response, usage) = Self::perform_llm_completion(
+                let future = self.request_limiter.stream(async move {
+                    let PerformLlmCompletionResponse {
+                        response,
+                        usage,
+                        includes_status_messages,
+                        tool_use_limit_reached,
+                    } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
                         CompletionBody {
@@ -868,38 +896,99 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
-                            model: request.model.clone(),
+                            model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)?,
                         },
                     )
                     .await?;
-                    Ok((
-                        crate::provider::google::map_to_language_model_completion_events(Box::pin(
-                            response_lines(response),
-                        )),
-                        usage,
+
+                    let mut mapper = GoogleEventMapper::new();
+                    Ok(map_cloud_completion_events(
+                        Box::pin(
+                            response_lines(response, includes_status_messages)
+                                .chain(usage_updated_event(usage))
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
+                        ),
+                        move |event| mapper.map_event(event),
                     ))
                 });
-                async move {
-                    let (stream, usage) = future.await?;
-                    Ok((stream.boxed(), usage))
-                }
-                .boxed()
+                async move { Ok(future.await?.boxed()) }.boxed()
             }
         }
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudCompletionEvent<T> {
+    Status(CompletionRequestStatus),
+    Event(T),
+}
+
+fn map_cloud_completion_events<T, F>(
+    stream: Pin<Box<dyn Stream<Item = Result<CloudCompletionEvent<T>>> + Send>>,
+    mut map_callback: F,
+) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+where
+    T: DeserializeOwned + 'static,
+    F: FnMut(T) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+        + Send
+        + 'static,
+{
+    stream
+        .flat_map(move |event| {
+            futures::stream::iter(match event {
+                Err(error) => {
+                    vec![Err(LanguageModelCompletionError::Other(error))]
+                }
+                Ok(CloudCompletionEvent::Status(event)) => {
+                    vec![Ok(LanguageModelCompletionEvent::StatusUpdate(event))]
+                }
+                Ok(CloudCompletionEvent::Event(event)) => map_callback(event),
+            })
+        })
+        .boxed()
+}
+
+fn usage_updated_event<T>(
+    usage: Option<RequestUsage>,
+) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
+    futures::stream::iter(usage.map(|usage| {
+        Ok(CloudCompletionEvent::Status(
+            CompletionRequestStatus::UsageUpdated {
+                amount: usage.amount as usize,
+                limit: usage.limit,
+            },
+        ))
+    }))
+}
+
+fn tool_use_limit_reached_event<T>(
+    tool_use_limit_reached: bool,
+) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
+    futures::stream::iter(tool_use_limit_reached.then(|| {
+        Ok(CloudCompletionEvent::Status(
+            CompletionRequestStatus::ToolUseLimitReached,
+        ))
+    }))
+}
+
 fn response_lines<T: DeserializeOwned>(
     response: Response<AsyncBody>,
-) -> impl Stream<Item = Result<T>> {
+    includes_status_messages: bool,
+) -> impl Stream<Item = Result<CloudCompletionEvent<T>>> {
     futures::stream::try_unfold(
         (String::new(), BufReader::new(response.into_body())),
-        move |(mut line, mut body)| async {
+        move |(mut line, mut body)| async move {
             match body.read_line(&mut line).await {
                 Ok(0) => Ok(None),
                 Ok(_) => {
-                    let event: T = serde_json::from_str(&line)?;
+                    let event = if includes_status_messages {
+                        serde_json::from_str::<CloudCompletionEvent<T>>(&line)?
+                    } else {
+                        CloudCompletionEvent::Event(serde_json::from_str::<T>(&line)?)
+                    };
+
                     line.clear();
                     Ok(Some((event, (line, body))))
                 }

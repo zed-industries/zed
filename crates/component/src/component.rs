@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{
-    AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, pattern_slash, prelude::*,
-    px, rems,
+    AnyElement, App, IntoElement, Pixels, RenderOnce, SharedString, Window, div, pattern_slash,
+    prelude::*, px, rems,
 };
 use linkme::distributed_slice;
 use parking_lot::RwLock;
@@ -17,6 +17,9 @@ pub trait Component {
     }
     fn name() -> &'static str {
         std::any::type_name::<Self>()
+    }
+    fn id() -> ComponentId {
+        ComponentId(Self::name())
     }
     /// Returns a name that the component should be sorted by.
     ///
@@ -81,7 +84,7 @@ pub fn register_component<T: Component>() {
     let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
     let mut data = COMPONENT_DATA.write();
     data.components.push(component_data);
-    data.previews.insert(T::name(), T::preview);
+    data.previews.insert(T::id().0, T::preview);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -246,13 +249,20 @@ pub struct ComponentExample {
     pub variant_name: SharedString,
     pub description: Option<SharedString>,
     pub element: AnyElement,
+    pub width: Option<Pixels>,
 }
 
 impl RenderOnce for ComponentExample {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .pt_2()
-            .w_full()
+            .map(|this| {
+                if let Some(width) = self.width {
+                    this.w(width)
+                } else {
+                    this.w_full()
+                }
+            })
             .flex()
             .flex_col()
             .gap_3()
@@ -303,11 +313,17 @@ impl ComponentExample {
             variant_name: variant_name.into(),
             element,
             description: None,
+            width: None,
         }
     }
 
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.width = Some(width);
         self
     }
 }
@@ -317,6 +333,7 @@ impl ComponentExample {
 pub struct ComponentExampleGroup {
     pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample>,
+    pub width: Option<Pixels>,
     pub grow: bool,
     pub vertical: bool,
 }
@@ -327,7 +344,13 @@ impl RenderOnce for ComponentExampleGroup {
             .flex_col()
             .text_sm()
             .text_color(cx.theme().colors().text_muted)
-            .w_full()
+            .map(|this| {
+                if let Some(width) = self.width {
+                    this.w(width)
+                } else {
+                    this.w_full()
+                }
+            })
             .when_some(self.title, |this, title| {
                 this.gap_4().child(
                     div()
@@ -370,6 +393,7 @@ impl ComponentExampleGroup {
         Self {
             title: None,
             examples,
+            width: None,
             grow: false,
             vertical: false,
         }
@@ -378,9 +402,14 @@ impl ComponentExampleGroup {
         Self {
             title: Some(title.into()),
             examples,
+            width: None,
             grow: false,
             vertical: false,
         }
+    }
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.width = Some(width);
+        self
     }
     pub fn grow(mut self) -> Self {
         self.grow = true;
@@ -397,6 +426,10 @@ pub fn single_example(
     example: AnyElement,
 ) -> ComponentExample {
     ComponentExample::new(variant_name, example)
+}
+
+pub fn empty_example(variant_name: impl Into<SharedString>) -> ComponentExample {
+    ComponentExample::new(variant_name, div().w_full().text_center().items_center().text_xs().opacity(0.4).child("This space is intentionally left blank. It indicates a case that should render nothing.").into_any_element())
 }
 
 pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {

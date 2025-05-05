@@ -122,7 +122,7 @@ mod tests {
     #[gpui::test]
     async fn test_saves_and_retrieves_command_invocation() {
         let db =
-            CommandPaletteDB(db::open_test_db("test_saves_and_retrieves_command_invocation").await);
+            CommandPaletteDB::open_test_db("test_saves_and_retrieves_command_invocation").await;
 
         let retrieved_cmd = db.get_last_invoked("editor: backspace").unwrap();
 
@@ -142,7 +142,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_gets_usage_history() {
-        let db = CommandPaletteDB(db::open_test_db("test_gets_usage_history").await);
+        let db = CommandPaletteDB::open_test_db("test_gets_usage_history").await;
         db.write_command_invocation("go to line: toggle", "200")
             .await
             .unwrap();
@@ -167,7 +167,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_lists_ordered_by_usage() {
-        let db = CommandPaletteDB(db::open_test_db("test_lists_ordered_by_usage").await);
+        let db = CommandPaletteDB::open_test_db("test_lists_ordered_by_usage").await;
 
         let empty_commands = db.list_commands_used();
         match &empty_commands {
@@ -200,7 +200,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_handles_max_invocation_entries() {
-        let db = CommandPaletteDB(db::open_test_db("test_handles_max_invocation_entries").await);
+        let db = CommandPaletteDB::open_test_db("test_handles_max_invocation_entries").await;
 
         for i in 1..=1001 {
             db.write_command_invocation("some-command", &i.to_string())

@@ -39,7 +39,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ModelType, ToggleModelSelector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -48,14 +48,24 @@ use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::{any::TypeId, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::TypeId,
+    cmp,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::SelectionGoal;
 use ui::{
     ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
     prelude::*,
 };
 use util::{ResultExt, maybe};
-use workspace::searchable::{Direction, SearchableItemHandle};
+use workspace::{
+    CollaboratorId,
+    searchable::{Direction, SearchableItemHandle},
+};
 use workspace::{
     Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
@@ -139,7 +149,7 @@ pub trait AssistantPanelDelegate {
     fn open_saved_context(
         &self,
         workspace: &mut Workspace,
-        path: PathBuf,
+        path: Arc<Path>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>>;
@@ -291,6 +301,7 @@ impl ContextEditor {
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -298,7 +309,6 @@ impl ContextEditor {
                             move |settings, _| settings.set_model(model.clone()),
                         );
                     },
-                    ModelType::Default,
                     window,
                     cx,
                 )
@@ -1047,7 +1057,7 @@ impl ContextEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon: IconName::Ai,
+                        icon_path: SharedString::from(IconName::Ai.path()),
                         label: "Thinking Process".into(),
                     }),
                 );
@@ -1090,7 +1100,7 @@ impl ContextEditor {
                         FoldPlaceholder {
                             render: render_fold_icon_button(
                                 cx.entity().downgrade(),
-                                section.icon,
+                                section.icon.path().into(),
                                 section.label.clone(),
                             ),
                             merge_adjacent: false,
@@ -1100,7 +1110,7 @@ impl ContextEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon: section.icon,
+                        icon_path: section.icon.path().into(),
                         label: section.label,
                     }),
                 );
@@ -2048,7 +2058,7 @@ impl ContextEditor {
                                 FoldPlaceholder {
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
-                                        metadata.crease.icon,
+                                        metadata.crease.icon_path.clone(),
                                         metadata.crease.label.clone(),
                                     ),
                                     ..Default::default()
@@ -2844,7 +2854,7 @@ fn render_thought_process_fold_icon_button(
 
 fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
-    icon: IconName,
+    icon_path: SharedString,
     label: SharedString,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new(move |fold_id, fold_range, _cx| {
@@ -2852,7 +2862,7 @@ fn render_fold_icon_button(
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(icon))
+            .child(Icon::from_path(icon_path.clone()))
             .child(Label::new(label.clone()).single_line())
             .on_click(move |_, window, cx| {
                 editor
@@ -3410,15 +3420,14 @@ impl FollowableItem for ContextEditor {
         true
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<proto::PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_leader_peer_id(leader_peer_id, window, cx)
-        })
+        self.editor
+            .update(cx, |editor, cx| editor.set_leader_id(leader_id, window, cx))
     }
 
     fn dedup(&self, existing: &Self, _window: &Window, cx: &App) -> Option<item::Dedup> {

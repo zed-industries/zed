@@ -1,25 +1,33 @@
-use crate::{Keep, KeepAll, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel};
+use crate::{
+    Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel,
+};
 use anyhow::Result;
+use assistant_settings::AssistantSettings;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
-    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+    Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
+    Action, AnyElement, AnyView, App, AppContext, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
-use language::{Capability, DiskState, OffsetRangeExt, Point};
+
+use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
+use language_model::StopReason;
 use multi_buffer::PathKey;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectItem, ProjectPath};
+use settings::{Settings, SettingsStore};
 use std::{
     any::{Any, TypeId},
+    collections::hash_map::Entry,
     ops::Range,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*};
+use ui::{Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
@@ -28,7 +36,7 @@ use workspace::{
 };
 use zed_actions::assistant::ToggleFocus;
 
-pub struct AgentDiff {
+pub struct AgentDiffPane {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     thread: Entity<Thread>,
@@ -38,7 +46,7 @@ pub struct AgentDiff {
     _subscriptions: Vec<Subscription>,
 }
 
-impl AgentDiff {
+impl AgentDiffPane {
     pub fn deploy(
         thread: Entity<Thread>,
         workspace: WeakEntity<Workspace>,
@@ -57,14 +65,14 @@ impl AgentDiff {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let existing_diff = workspace
-            .items_of_type::<AgentDiff>(cx)
+            .items_of_type::<AgentDiffPane>(cx)
             .find(|diff| diff.read(cx).thread == thread);
         if let Some(existing_diff) = existing_diff {
             workspace.activate_item(&existing_diff, true, true, window, cx);
             existing_diff
         } else {
-            let agent_diff =
-                cx.new(|cx| AgentDiff::new(thread.clone(), workspace.weak_handle(), window, cx));
+            let agent_diff = cx
+                .new(|cx| AgentDiffPane::new(thread.clone(), workspace.weak_handle(), window, cx));
             workspace.add_item_to_center(Box::new(agent_diff.clone()), window, cx);
             agent_diff
         }
@@ -80,35 +88,12 @@ impl AgentDiff {
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
         let project = thread.read(cx).project().clone();
-        let render_diff_hunk_controls = Arc::new({
-            let agent_diff = cx.entity();
-            move |row,
-                  status: &DiffHunkStatus,
-                  hunk_range,
-                  is_created_file,
-                  line_height,
-                  editor: &Entity<Editor>,
-                  window: &mut Window,
-                  cx: &mut App| {
-                render_diff_hunk_controls(
-                    row,
-                    status,
-                    hunk_range,
-                    is_created_file,
-                    line_height,
-                    &agent_diff,
-                    editor,
-                    window,
-                    cx,
-                )
-            }
-        });
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             editor.disable_inline_diagnostics();
             editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
+            editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
             editor.register_addon(AgentDiffAddon);
             editor
         });
@@ -248,7 +233,7 @@ impl AgentDiff {
         }
     }
 
-    pub fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn move_to_path(&self, path_key: PathKey, window: &mut Window, cx: &mut App) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
                 let first_hunk = editor
@@ -268,164 +253,190 @@ impl AgentDiff {
         }
     }
 
-    fn keep(&mut self, _: &crate::Keep, window: &mut Window, cx: &mut Context<Self>) {
-        let ranges = self
-            .editor
-            .read(cx)
-            .selections
-            .disjoint_anchor_ranges()
-            .collect::<Vec<_>>();
-        self.keep_edits_in_ranges(ranges, window, cx);
+    fn keep(&mut self, _: &Keep, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            keep_edits_in_selection(editor, &snapshot, &self.thread, window, cx);
+        });
     }
 
-    fn reject(&mut self, _: &crate::Reject, window: &mut Window, cx: &mut Context<Self>) {
-        let ranges = self
-            .editor
-            .read(cx)
-            .selections
-            .disjoint_anchor_ranges()
-            .collect::<Vec<_>>();
-        self.reject_edits_in_ranges(ranges, window, cx);
+    fn reject(&mut self, _: &Reject, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_selection(editor, &snapshot, &self.thread, window, cx);
+        });
     }
 
-    fn reject_all(&mut self, _: &crate::RejectAll, window: &mut Window, cx: &mut Context<Self>) {
-        self.reject_edits_in_ranges(
-            vec![editor::Anchor::min()..editor::Anchor::max()],
-            window,
-            cx,
-        );
+    fn reject_all(&mut self, _: &RejectAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_ranges(
+                editor,
+                &snapshot,
+                &self.thread,
+                vec![editor::Anchor::min()..editor::Anchor::max()],
+                window,
+                cx,
+            );
+        });
     }
 
-    fn keep_all(&mut self, _: &crate::KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
+    fn keep_all(&mut self, _: &KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| thread.keep_all_edits(cx));
     }
+}
 
-    fn keep_edits_in_ranges(
-        &mut self,
-        ranges: Vec<Range<editor::Anchor>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.thread.read(cx).is_generating() {
-            return;
+fn keep_edits_in_selection(
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
+    thread: &Entity<Thread>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let ranges = editor
+        .selections
+        .disjoint_anchor_ranges()
+        .collect::<Vec<_>>();
+
+    keep_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
+}
+
+fn reject_edits_in_selection(
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
+    thread: &Entity<Thread>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let ranges = editor
+        .selections
+        .disjoint_anchor_ranges()
+        .collect::<Vec<_>>();
+    reject_edits_in_ranges(editor, buffer_snapshot, &thread, ranges, window, cx)
+}
+
+fn keep_edits_in_ranges(
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
+    thread: &Entity<Thread>,
+    ranges: Vec<Range<editor::Anchor>>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if thread.read(cx).is_generating() {
+        return;
+    }
+
+    let diff_hunks_in_ranges = editor
+        .diff_hunks_in_ranges(&ranges, buffer_snapshot)
+        .collect::<Vec<_>>();
+
+    update_editor_selection(editor, buffer_snapshot, &diff_hunks_in_ranges, window, cx);
+
+    let multibuffer = editor.buffer().clone();
+    for hunk in &diff_hunks_in_ranges {
+        let buffer = multibuffer.read(cx).buffer(hunk.buffer_id);
+        if let Some(buffer) = buffer {
+            thread.update(cx, |thread, cx| {
+                thread.keep_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
+            });
         }
+    }
+}
 
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let diff_hunks_in_ranges = self
-            .editor
-            .read(cx)
-            .diff_hunks_in_ranges(&ranges, &snapshot)
-            .collect::<Vec<_>>();
-        let newest_cursor = self.editor.update(cx, |editor, cx| {
-            editor.selections.newest::<Point>(cx).head()
-        });
-        if diff_hunks_in_ranges.iter().any(|hunk| {
-            hunk.row_range
-                .contains(&multi_buffer::MultiBufferRow(newest_cursor.row))
-        }) {
-            self.update_selection(&diff_hunks_in_ranges, window, cx);
-        }
+fn reject_edits_in_ranges(
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
+    thread: &Entity<Thread>,
+    ranges: Vec<Range<editor::Anchor>>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if thread.read(cx).is_generating() {
+        return;
+    }
 
-        for hunk in &diff_hunks_in_ranges {
-            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
-            if let Some(buffer) = buffer {
-                self.thread.update(cx, |thread, cx| {
-                    thread.keep_edits_in_range(buffer, hunk.buffer_range.clone(), cx)
-                });
-            }
+    let diff_hunks_in_ranges = editor
+        .diff_hunks_in_ranges(&ranges, buffer_snapshot)
+        .collect::<Vec<_>>();
+
+    update_editor_selection(editor, buffer_snapshot, &diff_hunks_in_ranges, window, cx);
+
+    let multibuffer = editor.buffer().clone();
+
+    let mut ranges_by_buffer = HashMap::default();
+    for hunk in &diff_hunks_in_ranges {
+        let buffer = multibuffer.read(cx).buffer(hunk.buffer_id);
+        if let Some(buffer) = buffer {
+            ranges_by_buffer
+                .entry(buffer.clone())
+                .or_insert_with(Vec::new)
+                .push(hunk.buffer_range.clone());
         }
     }
 
-    fn reject_edits_in_ranges(
-        &mut self,
-        ranges: Vec<Range<editor::Anchor>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.thread.read(cx).is_generating() {
-            return;
-        }
+    for (buffer, ranges) in ranges_by_buffer {
+        thread
+            .update(cx, |thread, cx| {
+                thread.reject_edits_in_ranges(buffer, ranges, cx)
+            })
+            .detach_and_log_err(cx);
+    }
+}
 
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let diff_hunks_in_ranges = self
-            .editor
-            .read(cx)
-            .diff_hunks_in_ranges(&ranges, &snapshot)
-            .collect::<Vec<_>>();
-        let newest_cursor = self.editor.update(cx, |editor, cx| {
-            editor.selections.newest::<Point>(cx).head()
-        });
-        if diff_hunks_in_ranges.iter().any(|hunk| {
-            hunk.row_range
-                .contains(&multi_buffer::MultiBufferRow(newest_cursor.row))
-        }) {
-            self.update_selection(&diff_hunks_in_ranges, window, cx);
-        }
+fn update_editor_selection(
+    editor: &mut Editor,
+    buffer_snapshot: &MultiBufferSnapshot,
+    diff_hunks: &[multi_buffer::MultiBufferDiffHunk],
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let newest_cursor = editor.selections.newest::<Point>(cx).head();
 
-        let mut ranges_by_buffer = HashMap::default();
-        for hunk in &diff_hunks_in_ranges {
-            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
-            if let Some(buffer) = buffer {
-                ranges_by_buffer
-                    .entry(buffer.clone())
-                    .or_insert_with(Vec::new)
-                    .push(hunk.buffer_range.clone());
-            }
-        }
-
-        for (buffer, ranges) in ranges_by_buffer {
-            self.thread
-                .update(cx, |thread, cx| {
-                    thread.reject_edits_in_ranges(buffer, ranges, cx)
-                })
-                .detach_and_log_err(cx);
-        }
+    if !diff_hunks.iter().any(|hunk| {
+        hunk.row_range
+            .contains(&multi_buffer::MultiBufferRow(newest_cursor.row))
+    }) {
+        return;
     }
 
-    fn update_selection(
-        &mut self,
-        diff_hunks: &[multi_buffer::MultiBufferDiffHunk],
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let target_hunk = diff_hunks
+    let target_hunk = {
+        diff_hunks
             .last()
             .and_then(|last_kept_hunk| {
                 let last_kept_hunk_end = last_kept_hunk.multi_buffer_range().end;
-                self.editor
-                    .read(cx)
-                    .diff_hunks_in_ranges(&[last_kept_hunk_end..editor::Anchor::max()], &snapshot)
+                editor
+                    .diff_hunks_in_ranges(
+                        &[last_kept_hunk_end..editor::Anchor::max()],
+                        buffer_snapshot,
+                    )
                     .skip(1)
                     .next()
             })
             .or_else(|| {
                 let first_kept_hunk = diff_hunks.first()?;
                 let first_kept_hunk_start = first_kept_hunk.multi_buffer_range().start;
-                self.editor
-                    .read(cx)
+                editor
                     .diff_hunks_in_ranges(
                         &[editor::Anchor::min()..first_kept_hunk_start],
-                        &snapshot,
+                        buffer_snapshot,
                     )
                     .next()
-            });
+            })
+    };
 
-        if let Some(target_hunk) = target_hunk {
-            self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
-                    let next_hunk_start = target_hunk.multi_buffer_range().start;
-                    selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
-                })
-            });
-        }
+    if let Some(target_hunk) = target_hunk {
+        editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+            let next_hunk_start = target_hunk.multi_buffer_range().start;
+            selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
+        })
     }
 }
 
-impl EventEmitter<EditorEvent> for AgentDiff {}
+impl EventEmitter<EditorEvent> for AgentDiffPane {}
 
-impl Focusable for AgentDiff {
+impl Focusable for AgentDiffPane {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.multibuffer.read(cx).is_empty() {
             self.focus_handle.clone()
@@ -435,7 +446,7 @@ impl Focusable for AgentDiff {
     }
 }
 
-impl Item for AgentDiff {
+impl Item for AgentDiffPane {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -603,7 +614,7 @@ impl Item for AgentDiff {
     }
 }
 
-impl Render for AgentDiff {
+impl Render for AgentDiffPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
         let focus_handle = &self.focus_handle;
@@ -650,20 +661,49 @@ impl Render for AgentDiff {
     }
 }
 
+fn diff_hunk_controls(thread: &Entity<Thread>) -> editor::RenderDiffHunkControlsFn {
+    let thread = thread.clone();
+
+    Arc::new(
+        move |row,
+              status: &DiffHunkStatus,
+              hunk_range,
+              is_created_file,
+              line_height,
+              editor: &Entity<Editor>,
+              window: &mut Window,
+              cx: &mut App| {
+            {
+                render_diff_hunk_controls(
+                    row,
+                    status,
+                    hunk_range,
+                    is_created_file,
+                    line_height,
+                    &thread,
+                    editor,
+                    window,
+                    cx,
+                )
+            }
+        },
+    )
+}
+
 fn render_diff_hunk_controls(
     row: u32,
     _status: &DiffHunkStatus,
     hunk_range: Range<editor::Anchor>,
     is_created_file: bool,
     line_height: Pixels,
-    agent_diff: &Entity<AgentDiff>,
+    thread: &Entity<Thread>,
     editor: &Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
 
-    if agent_diff.read(cx).thread.read(cx).is_generating() {
+    if thread.read(cx).is_generating() {
         return Empty.into_any();
     }
 
@@ -694,15 +734,20 @@ fn render_diff_hunk_controls(
                     .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
-                    let agent_diff = agent_diff.clone();
+                    let editor = editor.clone();
+                    let thread = thread.clone();
                     move |_event, window, cx| {
-                        agent_diff.update(cx, |diff, cx| {
-                            diff.reject_edits_in_ranges(
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            reject_edits_in_ranges(
+                                editor,
+                                &snapshot,
+                                &thread,
                                 vec![hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
                             );
-                        });
+                        })
                     }
                 }),
             Button::new(("keep", row as u64), "Keep")
@@ -711,10 +756,15 @@ fn render_diff_hunk_controls(
                         .map(|kb| kb.size(rems_from_px(12.))),
                 )
                 .on_click({
-                    let agent_diff = agent_diff.clone();
+                    let editor = editor.clone();
+                    let thread = thread.clone();
                     move |_event, window, cx| {
-                        agent_diff.update(cx, |diff, cx| {
-                            diff.keep_edits_in_ranges(
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            keep_edits_in_ranges(
+                                editor,
+                                &snapshot,
+                                &thread,
                                 vec![hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
@@ -816,26 +866,82 @@ impl editor::Addon for AgentDiffAddon {
 }
 
 pub struct AgentDiffToolbar {
-    agent_diff: Option<WeakEntity<AgentDiff>>,
+    active_item: Option<AgentDiffToolbarItem>,
+    _settings_subscription: Subscription,
+}
+
+pub enum AgentDiffToolbarItem {
+    Pane(WeakEntity<AgentDiffPane>),
+    Editor {
+        editor: WeakEntity<Editor>,
+        state: EditorState,
+        _diff_subscription: Subscription,
+    },
 }
 
 impl AgentDiffToolbar {
-    pub fn new() -> Self {
-        Self { agent_diff: None }
-    }
-
-    fn agent_diff(&self, _: &App) -> Option<Entity<AgentDiff>> {
-        self.agent_diff.as_ref()?.upgrade()
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            active_item: None,
+            _settings_subscription: cx.observe_global::<SettingsStore>(Self::update_location),
+        }
     }
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(agent_diff) = self.agent_diff(cx) {
-            agent_diff.focus_handle(cx).focus(window);
+        let Some(active_item) = self.active_item.as_ref() else {
+            return;
+        };
+
+        match active_item {
+            AgentDiffToolbarItem::Pane(agent_diff) => {
+                if let Some(agent_diff) = agent_diff.upgrade() {
+                    agent_diff.focus_handle(cx).focus(window);
+                }
+            }
+            AgentDiffToolbarItem::Editor { editor, .. } => {
+                if let Some(editor) = editor.upgrade() {
+                    editor.read(cx).focus_handle(cx).focus(window);
+                }
+            }
         }
+
         let action = action.boxed_clone();
         cx.defer(move |cx| {
             cx.dispatch_action(action.as_ref());
         })
+    }
+
+    fn handle_diff_notify(&mut self, agent_diff: Entity<AgentDiff>, cx: &mut Context<Self>) {
+        let Some(AgentDiffToolbarItem::Editor { editor, state, .. }) = self.active_item.as_mut()
+        else {
+            return;
+        };
+
+        *state = agent_diff.read(cx).editor_state(&editor);
+        self.update_location(cx);
+        cx.notify();
+    }
+
+    fn update_location(&mut self, cx: &mut Context<Self>) {
+        let location = self.location(cx);
+        cx.emit(ToolbarItemEvent::ChangeLocation(location));
+    }
+
+    fn location(&self, cx: &App) -> ToolbarItemLocation {
+        if !EditorSettings::get_global(cx).toolbar.agent_review {
+            return ToolbarItemLocation::Hidden;
+        }
+
+        match &self.active_item {
+            None => ToolbarItemLocation::Hidden,
+            Some(AgentDiffToolbarItem::Pane(_)) => ToolbarItemLocation::PrimaryRight,
+            Some(AgentDiffToolbarItem::Editor { state, .. }) => match state {
+                EditorState::Generating | EditorState::Reviewing => {
+                    ToolbarItemLocation::PrimaryRight
+                }
+                EditorState::Idle => ToolbarItemLocation::Hidden,
+            },
+        }
     }
 }
 
@@ -848,14 +954,29 @@ impl ToolbarItemView for AgentDiffToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.agent_diff = active_pane_item
-            .and_then(|item| item.act_as::<AgentDiff>(cx))
-            .map(|entity| entity.downgrade());
-        if self.agent_diff.is_some() {
-            ToolbarItemLocation::PrimaryRight
-        } else {
-            ToolbarItemLocation::Hidden
+        if let Some(item) = active_pane_item {
+            if let Some(pane) = item.act_as::<AgentDiffPane>(cx) {
+                self.active_item = Some(AgentDiffToolbarItem::Pane(pane.downgrade()));
+                return self.location(cx);
+            }
+
+            if let Some(editor) = item.act_as::<Editor>(cx) {
+                if editor.read(cx).mode().is_full() {
+                    let agent_diff = AgentDiff::global(cx);
+
+                    self.active_item = Some(AgentDiffToolbarItem::Editor {
+                        editor: editor.downgrade(),
+                        state: agent_diff.read(cx).editor_state(&editor.downgrade()),
+                        _diff_subscription: cx.observe(&agent_diff, Self::handle_diff_notify),
+                    });
+
+                    return self.location(cx);
+                }
+            }
         }
+
+        self.active_item = None;
+        return self.location(cx);
     }
 
     fn pane_focus_update(
@@ -869,66 +990,766 @@ impl ToolbarItemView for AgentDiffToolbar {
 
 impl Render for AgentDiffToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_diff = match self.agent_diff(cx) {
-            Some(ad) => ad,
-            None => return div(),
+        let generating_label = div()
+            .w(rems_from_px(110.)) // Arbitrary size so the label doesn't dance around
+            .child(AnimatedLabel::new("Generating"))
+            .into_any();
+
+        let Some(active_item) = self.active_item.as_ref() else {
+            return Empty.into_any();
         };
 
-        let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
-        if is_generating {
-            return div()
-                .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
-                .child(AnimatedLabel::new("Generating"));
-        }
+        match active_item {
+            AgentDiffToolbarItem::Editor { editor, state, .. } => {
+                let Some(editor) = editor.upgrade() else {
+                    return Empty.into_any();
+                };
 
-        let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
-        if is_empty {
-            return div();
-        }
+                let editor_focus_handle = editor.read(cx).focus_handle(cx);
 
-        let focus_handle = agent_diff.focus_handle(cx);
+                let content = match state {
+                    EditorState::Idle => return Empty.into_any(),
+                    EditorState::Generating => vec![generating_label],
+                    EditorState::Reviewing => vec![
+                        h_flex()
+                            .child(
+                                IconButton::new("hunk-up", IconName::ArrowUp)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Previous Hunk",
+                                        &GoToPreviousHunk,
+                                        &editor_focus_handle,
+                                    ))
+                                    .on_click({
+                                        let editor_focus_handle = editor_focus_handle.clone();
+                                        move |_, window, cx| {
+                                            editor_focus_handle.dispatch_action(
+                                                &GoToPreviousHunk,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("hunk-down", IconName::ArrowDown)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Next Hunk",
+                                        &GoToHunk,
+                                        &editor_focus_handle,
+                                    ))
+                                    .on_click({
+                                        let editor_focus_handle = editor_focus_handle.clone();
+                                        move |_, window, cx| {
+                                            editor_focus_handle
+                                                .dispatch_action(&GoToHunk, window, cx);
+                                        }
+                                    }),
+                            )
+                            .into_any(),
+                        Divider::vertical().into_any_element(),
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Button::new("reject-all", "Reject All")
+                                    .key_binding({
+                                        KeyBinding::for_action_in(
+                                            &RejectAll,
+                                            &editor_focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&RejectAll, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("keep-all", "Keep All")
+                                    .key_binding({
+                                        KeyBinding::for_action_in(
+                                            &KeepAll,
+                                            &editor_focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&KeepAll, window, cx)
+                                    })),
+                            )
+                            .into_any(),
+                        Divider::vertical().into_any_element(),
+                    ],
+                };
 
-        h_group_xl()
-            .my_neg_1()
-            .items_center()
-            .p_1()
-            .flex_wrap()
-            .justify_between()
-            .child(
-                h_group_sm()
+                h_flex()
+                    .track_focus(&editor_focus_handle)
+                    .size_full()
                     .child(
-                        Button::new("reject-all", "Reject All")
-                            .key_binding({
-                                KeyBinding::for_action_in(&RejectAll, &focus_handle, window, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.)))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&RejectAll, window, cx)
-                            })),
+                        h_flex()
+                            .py(DynamicSpacing::Base08.rems(cx))
+                            .px_2()
+                            .gap_1()
+                            .children(content)
+                            .when_some(editor.read(cx).workspace(), |this, _workspace| {
+                                this.child(
+                                    IconButton::new("review", IconName::ListCollapse)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Review All Files",
+                                            &OpenAgentDiff,
+                                            &editor_focus_handle,
+                                        ))
+                                        .on_click({
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.dispatch_action(&OpenAgentDiff, window, cx);
+                                            })
+                                        }),
+                                )
+                            }),
                     )
+                    .child(vertical_divider())
+                    .on_action({
+                        let editor = editor.clone();
+                        move |_action: &OpenAgentDiff, window, cx| {
+                            AgentDiff::global(cx).update(cx, |agent_diff, cx| {
+                                agent_diff.deploy_pane_from_editor(&editor, window, cx);
+                            });
+                        }
+                    })
+                    .into_any()
+            }
+            AgentDiffToolbarItem::Pane(agent_diff) => {
+                let Some(agent_diff) = agent_diff.upgrade() else {
+                    return Empty.into_any();
+                };
+
+                let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
+                if is_generating {
+                    return div().px_2().child(generating_label).into_any();
+                }
+
+                let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
+                if is_empty {
+                    return Empty.into_any();
+                }
+
+                let focus_handle = agent_diff.focus_handle(cx);
+
+                h_group_xl()
+                    .px_2()
+                    .items_center()
+                    .flex_wrap()
                     .child(
-                        Button::new("keep-all", "Keep All")
-                            .key_binding({
-                                KeyBinding::for_action_in(&KeepAll, &focus_handle, window, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.)))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&KeepAll, window, cx)
-                            })),
-                    ),
-            )
+                        h_group_sm()
+                            .child(
+                                Button::new("reject-all", "Reject All")
+                                    .key_binding({
+                                        KeyBinding::for_action_in(
+                                            &RejectAll,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&RejectAll, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("keep-all", "Keep All")
+                                    .key_binding({
+                                        KeyBinding::for_action_in(
+                                            &KeepAll,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.)))
+                                    })
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&KeepAll, window, cx)
+                                    })),
+                            ),
+                    )
+                    .into_any()
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct AgentDiff {
+    reviewing_editors: HashMap<WeakEntity<Editor>, EditorState>,
+    workspace_threads: HashMap<WeakEntity<Workspace>, WorkspaceThread>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditorState {
+    Idle,
+    Reviewing,
+    Generating,
+}
+
+struct WorkspaceThread {
+    thread: WeakEntity<Thread>,
+    _thread_subscriptions: [Subscription; 2],
+    singleton_editors: HashMap<WeakEntity<Buffer>, HashMap<WeakEntity<Editor>, Subscription>>,
+    _settings_subscription: Subscription,
+    _workspace_subscription: Option<Subscription>,
+}
+
+struct AgentDiffGlobal(Entity<AgentDiff>);
+
+impl Global for AgentDiffGlobal {}
+
+impl AgentDiff {
+    fn global(cx: &mut App) -> Entity<Self> {
+        cx.try_global::<AgentDiffGlobal>()
+            .map(|global| global.0.clone())
+            .unwrap_or_else(|| {
+                let entity = cx.new(|_cx| Self::default());
+                let global = AgentDiffGlobal(entity.clone());
+                cx.set_global(global);
+                entity.clone()
+            })
+    }
+
+    pub fn set_active_thread(
+        workspace: &WeakEntity<Workspace>,
+        thread: &Entity<Thread>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        Self::global(cx).update(cx, |this, cx| {
+            this.register_active_thread_impl(workspace, thread, window, cx);
+        });
+    }
+
+    fn register_active_thread_impl(
+        &mut self,
+        workspace: &WeakEntity<Workspace>,
+        thread: &Entity<Thread>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action_log = thread.read(cx).action_log().clone();
+
+        let action_log_subscription = cx.observe_in(&action_log, window, {
+            let workspace = workspace.clone();
+            move |this, _action_log, window, cx| {
+                this.update_reviewing_editors(&workspace, window, cx);
+            }
+        });
+
+        let thread_subscription = cx.subscribe_in(&thread, window, {
+            let workspace = workspace.clone();
+            move |this, _thread, event, window, cx| {
+                this.handle_thread_event(&workspace, event, window, cx)
+            }
+        });
+
+        if let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) {
+            // replace thread and action log subscription, but keep editors
+            workspace_thread.thread = thread.downgrade();
+            workspace_thread._thread_subscriptions = [action_log_subscription, thread_subscription];
+            self.update_reviewing_editors(&workspace, window, cx);
+            return;
+        }
+
+        let settings_subscription = cx.observe_global_in::<SettingsStore>(window, {
+            let workspace = workspace.clone();
+            let mut was_active = AssistantSettings::get_global(cx).single_file_review;
+            move |this, window, cx| {
+                let is_active = AssistantSettings::get_global(cx).single_file_review;
+                if was_active != is_active {
+                    was_active = is_active;
+                    this.update_reviewing_editors(&workspace, window, cx);
+                }
+            }
+        });
+
+        let workspace_subscription = workspace
+            .upgrade()
+            .map(|workspace| cx.subscribe_in(&workspace, window, Self::handle_workspace_event));
+
+        self.workspace_threads.insert(
+            workspace.clone(),
+            WorkspaceThread {
+                thread: thread.downgrade(),
+                _thread_subscriptions: [action_log_subscription, thread_subscription],
+                singleton_editors: HashMap::default(),
+                _settings_subscription: settings_subscription,
+                _workspace_subscription: workspace_subscription,
+            },
+        );
+
+        let workspace = workspace.clone();
+        cx.defer_in(window, move |this, window, cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                this.register_workspace(workspace, window, cx);
+            }
+        });
+    }
+
+    fn register_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let agent_diff = cx.entity();
+
+        let editors = workspace.update(cx, |workspace, cx| {
+            let agent_diff = agent_diff.clone();
+
+            Self::register_review_action::<Keep>(workspace, Self::keep, &agent_diff);
+            Self::register_review_action::<Reject>(workspace, Self::reject, &agent_diff);
+            Self::register_review_action::<KeepAll>(workspace, Self::keep_all, &agent_diff);
+            Self::register_review_action::<RejectAll>(workspace, Self::reject_all, &agent_diff);
+
+            workspace.items_of_type(cx).collect::<Vec<_>>()
+        });
+
+        let weak_workspace = workspace.downgrade();
+
+        for editor in editors {
+            if let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
+                self.register_editor(weak_workspace.clone(), buffer, editor, window, cx);
+            };
+        }
+
+        self.update_reviewing_editors(&weak_workspace, window, cx);
+    }
+
+    fn register_review_action<T: Action>(
+        workspace: &mut Workspace,
+        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState
+        + 'static,
+        this: &Entity<AgentDiff>,
+    ) {
+        let this = this.clone();
+        workspace.register_action(move |workspace, _: &T, window, cx| {
+            let review = &review;
+            let task = this.update(cx, |this, cx| {
+                this.review_in_active_editor(workspace, review, window, cx)
+            });
+
+            if let Some(task) = task {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+    }
+
+    fn handle_thread_event(
+        &mut self,
+        workspace: &WeakEntity<Workspace>,
+        event: &ThreadEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ThreadEvent::NewRequest
+            | ThreadEvent::Stopped(Ok(StopReason::EndTurn))
+            | ThreadEvent::Stopped(Ok(StopReason::MaxTokens))
+            | ThreadEvent::Stopped(Err(_))
+            | ThreadEvent::ShowError(_)
+            | ThreadEvent::CompletionCanceled => {
+                self.update_reviewing_editors(workspace, window, cx);
+            }
+            // intentionally being exhaustive in case we add a variant we should handle
+            ThreadEvent::Stopped(Ok(StopReason::ToolUse))
+            | ThreadEvent::StreamedCompletion
+            | ThreadEvent::ReceivedTextChunk
+            | ThreadEvent::StreamedAssistantText(_, _)
+            | ThreadEvent::StreamedAssistantThinking(_, _)
+            | ThreadEvent::StreamedToolUse { .. }
+            | ThreadEvent::InvalidToolInput { .. }
+            | ThreadEvent::MessageAdded(_)
+            | ThreadEvent::MessageEdited(_)
+            | ThreadEvent::MessageDeleted(_)
+            | ThreadEvent::SummaryGenerated
+            | ThreadEvent::SummaryChanged
+            | ThreadEvent::UsePendingTools { .. }
+            | ThreadEvent::ToolFinished { .. }
+            | ThreadEvent::CheckpointChanged
+            | ThreadEvent::ToolConfirmationNeeded
+            | ThreadEvent::CancelEditing => {}
+        }
+    }
+
+    fn handle_workspace_event(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        event: &workspace::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            workspace::Event::ItemAdded { item } => {
+                if let Some(editor) = item.downcast::<Editor>() {
+                    if let Some(buffer) = Self::full_editor_buffer(editor.read(cx), cx) {
+                        self.register_editor(
+                            workspace.downgrade(),
+                            buffer.clone(),
+                            editor,
+                            window,
+                            cx,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn full_editor_buffer(editor: &Editor, cx: &App) -> Option<WeakEntity<Buffer>> {
+        if editor.mode().is_full() {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .map(|buffer| buffer.downgrade())
+        } else {
+            None
+        }
+    }
+
+    fn register_editor(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        buffer: WeakEntity<Buffer>,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace_thread) = self.workspace_threads.get_mut(&workspace) else {
+            return;
+        };
+
+        let weak_editor = editor.downgrade();
+
+        workspace_thread
+            .singleton_editors
+            .entry(buffer.clone())
+            .or_default()
+            .entry(weak_editor.clone())
+            .or_insert_with(|| {
+                let workspace = workspace.clone();
+                cx.observe_release(&editor, move |this, _, _cx| {
+                    let Some(active_thread) = this.workspace_threads.get_mut(&workspace) else {
+                        return;
+                    };
+
+                    if let Entry::Occupied(mut entry) =
+                        active_thread.singleton_editors.entry(buffer)
+                    {
+                        let set = entry.get_mut();
+                        set.remove(&weak_editor);
+
+                        if set.is_empty() {
+                            entry.remove();
+                        }
+                    }
+                })
+            });
+
+        self.update_reviewing_editors(&workspace, window, cx);
+    }
+
+    fn update_reviewing_editors(
+        &mut self,
+        workspace: &WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !AssistantSettings::get_global(cx).single_file_review {
+            for (editor, _) in self.reviewing_editors.drain() {
+                editor
+                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .ok();
+            }
+            return;
+        }
+
+        let Some(workspace_thread) = self.workspace_threads.get_mut(workspace) else {
+            return;
+        };
+
+        let Some(thread) = workspace_thread.thread.upgrade() else {
+            return;
+        };
+
+        let action_log = thread.read(cx).action_log();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+
+        let mut unaffected = self.reviewing_editors.clone();
+
+        for (buffer, diff_handle) in changed_buffers {
+            if buffer.read(cx).file().is_none() {
+                continue;
+            }
+
+            let Some(buffer_editors) = workspace_thread.singleton_editors.get(&buffer.downgrade())
+            else {
+                continue;
+            };
+
+            for (weak_editor, _) in buffer_editors {
+                let Some(editor) = weak_editor.upgrade() else {
+                    continue;
+                };
+
+                let multibuffer = editor.read(cx).buffer().clone();
+                multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer.add_diff(diff_handle.clone(), cx);
+                });
+
+                let new_state = if thread.read(cx).is_generating() {
+                    EditorState::Generating
+                } else {
+                    EditorState::Reviewing
+                };
+
+                let previous_state = self
+                    .reviewing_editors
+                    .insert(weak_editor.clone(), new_state.clone());
+
+                if previous_state.is_none() {
+                    editor.update(cx, |editor, cx| {
+                        editor.start_temporary_diff_override();
+                        editor.set_render_diff_hunk_controls(diff_hunk_controls(&thread), cx);
+                        editor.set_expand_all_diff_hunks(cx);
+                        editor.register_addon(EditorAgentDiffAddon);
+                    });
+                } else {
+                    unaffected.remove(&weak_editor);
+                }
+
+                if new_state == EditorState::Reviewing && previous_state != Some(new_state) {
+                    // Jump to first hunk when we enter review mode
+                    editor.update(cx, |editor, cx| {
+                        let snapshot = multibuffer.read(cx).snapshot(cx);
+                        if let Some(first_hunk) = snapshot.diff_hunks().next() {
+                            let first_hunk_start = first_hunk.multi_buffer_range().start;
+
+                            editor.change_selections(
+                                Some(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([first_hunk_start..first_hunk_start])
+                                },
+                            );
+                        }
+                    });
+                }
+            }
+        }
+
+        // Remove editors from this workspace that are no longer under review
+        for (editor, _) in unaffected {
+            // Note: We could avoid this check by storing `reviewing_editors` by Workspace,
+            // but that would add another lookup in `AgentDiff::editor_state`
+            // which gets called much more frequently.
+            let in_workspace = editor
+                .read_with(cx, |editor, _cx| editor.workspace())
+                .ok()
+                .flatten()
+                .map_or(false, |editor_workspace| {
+                    editor_workspace.entity_id() == workspace.entity_id()
+                });
+
+            if in_workspace {
+                editor
+                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .ok();
+                self.reviewing_editors.remove(&editor);
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn editor_state(&self, editor: &WeakEntity<Editor>) -> EditorState {
+        self.reviewing_editors
+            .get(&editor)
+            .cloned()
+            .unwrap_or(EditorState::Idle)
+    }
+
+    fn deploy_pane_from_editor(&self, editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+        let Some(workspace) = editor.read(cx).workspace() else {
+            return;
+        };
+
+        let Some(WorkspaceThread { thread, .. }) =
+            self.workspace_threads.get(&workspace.downgrade())
+        else {
+            return;
+        };
+
+        let Some(thread) = thread.upgrade() else {
+            return;
+        };
+
+        AgentDiffPane::deploy(thread, workspace.downgrade(), window, cx).log_err();
+    }
+
+    fn keep_all(
+        editor: &Entity<Editor>,
+        thread: &Entity<Thread>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> PostReviewState {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            keep_edits_in_ranges(
+                editor,
+                &snapshot,
+                thread,
+                vec![editor::Anchor::min()..editor::Anchor::max()],
+                window,
+                cx,
+            );
+        });
+        PostReviewState::AllReviewed
+    }
+
+    fn reject_all(
+        editor: &Entity<Editor>,
+        thread: &Entity<Thread>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> PostReviewState {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_ranges(
+                editor,
+                &snapshot,
+                thread,
+                vec![editor::Anchor::min()..editor::Anchor::max()],
+                window,
+                cx,
+            );
+        });
+        PostReviewState::AllReviewed
+    }
+
+    fn keep(
+        editor: &Entity<Editor>,
+        thread: &Entity<Thread>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> PostReviewState {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            keep_edits_in_selection(editor, &snapshot, thread, window, cx);
+            Self::post_review_state(&snapshot)
+        })
+    }
+
+    fn reject(
+        editor: &Entity<Editor>,
+        thread: &Entity<Thread>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> PostReviewState {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            reject_edits_in_selection(editor, &snapshot, thread, window, cx);
+            Self::post_review_state(&snapshot)
+        })
+    }
+
+    fn post_review_state(snapshot: &MultiBufferSnapshot) -> PostReviewState {
+        for (i, _) in snapshot.diff_hunks().enumerate() {
+            if i > 0 {
+                return PostReviewState::Pending;
+            }
+        }
+        PostReviewState::AllReviewed
+    }
+
+    fn review_in_active_editor(
+        &mut self,
+        workspace: &mut Workspace,
+        review: impl Fn(&Entity<Editor>, &Entity<Thread>, &mut Window, &mut App) -> PostReviewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let active_item = workspace.active_item(cx)?;
+        let editor = active_item.act_as::<Editor>(cx)?;
+
+        if !matches!(
+            self.editor_state(&editor.downgrade()),
+            EditorState::Reviewing
+        ) {
+            return None;
+        }
+
+        let WorkspaceThread { thread, .. } =
+            self.workspace_threads.get(&workspace.weak_handle())?;
+
+        let thread = thread.upgrade()?;
+
+        if let PostReviewState::AllReviewed = review(&editor, &thread, window, cx) {
+            if let Some(curr_buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
+
+                let mut keys = changed_buffers.keys().cycle();
+                keys.find(|k| *k == &curr_buffer);
+                let next_project_path = keys
+                    .next()
+                    .filter(|k| *k != &curr_buffer)
+                    .and_then(|after| after.read(cx).project_path(cx));
+
+                if let Some(path) = next_project_path {
+                    let task = workspace.open_path(path, None, true, window, cx);
+                    let task = cx.spawn(async move |_, _cx| task.await.map(|_| ()));
+                    return Some(task);
+                }
+            }
+        }
+
+        return Some(Task::ready(Ok(())));
+    }
+}
+
+enum PostReviewState {
+    AllReviewed,
+    Pending,
+}
+
+pub struct EditorAgentDiffAddon;
+
+impl editor::Addon for EditorAgentDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn extend_key_context(&self, key_context: &mut gpui::KeyContext, _: &App) {
+        key_context.add("agent_diff");
+        key_context.add("editor_agent_diff");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ThreadStore, thread_store};
+    use crate::{Keep, ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolWorkingSet;
     use context_server::ContextServerSettings;
     use editor::EditorSettings;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
@@ -938,7 +1759,7 @@ mod tests {
     use util::path;
 
     #[gpui::test]
-    async fn test_agent_diff(cx: &mut TestAppContext) {
+    async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -951,6 +1772,7 @@ mod tests {
             ThemeSettings::register(cx);
             ContextServerSettings::register(cx);
             EditorSettings::register(cx);
+            language_model::init_settings(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -985,7 +1807,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let agent_diff = cx.new_window_entity(|window, cx| {
-            AgentDiff::new(thread.clone(), workspace.downgrade(), window, cx)
+            AgentDiffPane::new(thread.clone(), workspace.downgrade(), window, cx)
         });
         let editor = agent_diff.read_with(cx, |diff, _cx| diff.editor.clone());
 
@@ -994,7 +1816,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit(
@@ -1026,7 +1848,7 @@ mod tests {
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.
-        agent_diff.update_in(cx, |diff, window, cx| diff.keep(&crate::Keep, window, cx));
+        agent_diff.update_in(cx, |diff, window, cx| diff.keep(&Keep, window, cx));
         cx.run_until_parked();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -1061,14 +1883,24 @@ mod tests {
         );
 
         // Keeping a range that doesn't intersect the current selection doesn't move it.
-        agent_diff.update_in(cx, |diff, window, cx| {
+        agent_diff.update_in(cx, |_diff, window, cx| {
             let position = editor
                 .read(cx)
                 .buffer()
                 .read(cx)
                 .read(cx)
                 .anchor_before(Point::new(7, 0));
-            diff.keep_edits_in_ranges(vec![position..position], window, cx)
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                keep_edits_in_ranges(
+                    editor,
+                    &snapshot,
+                    &thread,
+                    vec![position..position],
+                    window,
+                    cx,
+                )
+            });
         });
         cx.run_until_parked();
         assert_eq!(
@@ -1081,5 +1913,317 @@ mod tests {
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
+    }
+
+    #[gpui::test]
+    async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            prompt_store::init(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            ContextServerSettings::register(cx);
+            EditorSettings::register(cx);
+            language_model::init_settings(cx);
+            workspace::register_project_item::<Editor>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"file1": "abc\ndef\nghi\njkl\nmno\npqr\nstu\nvwx\nyz"}),
+        )
+        .await;
+        fs.insert_tree(path!("/test"), json!({"file2": "abc\ndef\nghi"}))
+            .await;
+
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let buffer_path1 = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/file1", cx)
+            })
+            .unwrap();
+        let buffer_path2 = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("test/file2", cx)
+            })
+            .unwrap();
+
+        let prompt_store = None;
+        let thread_store = cx
+            .update(|cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    cx.new(|_| ToolWorkingSet::default()),
+                    prompt_store,
+                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Add the diff toolbar to the active pane
+        let diff_toolbar = cx.new_window_entity(|_, cx| AgentDiffToolbar::new(cx));
+
+        workspace.update_in(cx, {
+            let diff_toolbar = diff_toolbar.clone();
+
+            move |workspace, window, cx| {
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.toolbar().update(cx, |toolbar, cx| {
+                        toolbar.add_item(diff_toolbar, window, cx);
+                    });
+                })
+            }
+        });
+
+        // Set the active thread
+        cx.update(|window, cx| {
+            AgentDiff::set_active_thread(&workspace.downgrade(), &thread, window, cx)
+        });
+
+        let buffer1 = project
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path1.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let buffer2 = project
+            .update(cx, |project, cx| {
+                project.open_buffer(buffer_path2.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        // Open an editor for buffer1
+        let editor1 = cx.new_window_entity(|window, cx| {
+            Editor::for_buffer(buffer1.clone(), Some(project.clone()), window, cx)
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor1.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Toolbar knows about the current editor, but it's hidden since there are no changes yet
+        assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Idle,
+                ..
+            })
+        )));
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::Hidden
+        );
+
+        // Make changes
+        cx.update(|_, cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer1.clone(), cx));
+            buffer1.update(cx, |buffer, cx| {
+                buffer
+                    .edit(
+                        [
+                            (Point::new(1, 1)..Point::new(1, 2), "E"),
+                            (Point::new(3, 2)..Point::new(3, 3), "L"),
+                            (Point::new(5, 0)..Point::new(5, 1), "P"),
+                            (Point::new(7, 1)..Point::new(7, 2), "W"),
+                        ],
+                        None,
+                        cx,
+                    )
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer1.clone(), cx));
+
+            action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
+            buffer2.update(cx, |buffer, cx| {
+                buffer
+                    .edit(
+                        [
+                            (Point::new(0, 0)..Point::new(0, 1), "A"),
+                            (Point::new(2, 1)..Point::new(2, 2), "H"),
+                        ],
+                        None,
+                        cx,
+                    )
+                    .unwrap();
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // The already opened editor displays the diff and the cursor is at the first hunk
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndef\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nvWx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+
+        // The toolbar is displayed in the right state
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::PrimaryRight
+        );
+        assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Reviewing,
+                ..
+            })
+        )));
+
+        // The toolbar respects its setting
+        override_toolbar_agent_review_setting(false, cx);
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::Hidden
+        );
+        override_toolbar_agent_review_setting(true, cx);
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::PrimaryRight
+        );
+
+        // After keeping a hunk, the cursor should be positioned on the second hunk.
+        workspace.update(cx, |_, cx| {
+            cx.dispatch_action(&Keep);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nvWx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Rejecting a hunk also moves the cursor to the next hunk, possibly cycling if it's at the end.
+        editor1.update_in(cx, |editor, window, cx| {
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
+            });
+        });
+        workspace.update(cx, |_, cx| {
+            cx.dispatch_action(&Reject);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\npqr\nPqr\nstu\nvwx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Keeping a range that doesn't intersect the current selection doesn't move it.
+        editor1.update_in(cx, |editor, window, cx| {
+            let buffer = editor.buffer().read(cx);
+            let position = buffer.read(cx).anchor_before(Point::new(7, 0));
+            let snapshot = buffer.snapshot(cx);
+            keep_edits_in_ranges(
+                editor,
+                &snapshot,
+                &thread,
+                vec![position..position],
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            editor1.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\ndEf\nghi\njkl\njkL\nmno\nPqr\nstu\nvwx\nyz"
+        );
+        assert_eq!(
+            editor1
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(3, 0)..Point::new(3, 0)
+        );
+
+        // Reviewing the last change opens the next changed buffer
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                AgentDiff::global(cx).update(cx, |agent_diff, cx| {
+                    agent_diff.review_in_active_editor(workspace, AgentDiff::keep, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let editor2 = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        });
+
+        let editor2_path = editor2
+            .read_with(cx, |editor, cx| editor.project_path(cx))
+            .unwrap();
+        assert_eq!(editor2_path, buffer_path2);
+
+        assert_eq!(
+            editor2.read_with(cx, |editor, cx| editor.text(cx)),
+            "abc\nAbc\ndef\nghi\ngHi"
+        );
+        assert_eq!(
+            editor2
+                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .range(),
+            Point::new(0, 0)..Point::new(0, 0)
+        );
+
+        // Editor 1 toolbar is hidden since all changes have been reviewed
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.activate_item(&editor1, true, true, window, cx)
+        });
+
+        assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
+            toolbar.active_item,
+            Some(AgentDiffToolbarItem::Editor {
+                state: EditorState::Idle,
+                ..
+            })
+        )));
+        assert_eq!(
+            diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
+            ToolbarItemLocation::Hidden
+        );
+    }
+
+    fn override_toolbar_agent_review_setting(active: bool, cx: &mut VisualTestContext) {
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, _cx| {
+                let mut editor_settings = store.get::<EditorSettings>(None).clone();
+                editor_settings.toolbar.agent_review = active;
+                store.override_global(editor_settings);
+            })
+        });
+        cx.run_until_parked();
     }
 }

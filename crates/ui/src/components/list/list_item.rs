@@ -16,6 +16,7 @@ pub enum ListItemSpacing {
 #[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
+    group_name: Option<SharedString>,
     disabled: bool,
     selected: bool,
     spacing: ListItemSpacing,
@@ -48,6 +49,7 @@ impl ListItem {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
+            group_name: None,
             disabled: false,
             selected: false,
             spacing: ListItemSpacing::Dense,
@@ -70,6 +72,11 @@ impl ListItem {
             overflow_x: false,
             focused: None,
         }
+    }
+
+    pub fn group_name(mut self, group_name: impl Into<SharedString>) -> Self {
+        self.group_name = Some(group_name.into());
+        self
     }
 
     pub fn spacing(mut self, spacing: ListItemSpacing) -> Self {
@@ -196,6 +203,7 @@ impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(self.id)
+            .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
             .relative()
             // When an item is inset draw the indent spacing outside of the item

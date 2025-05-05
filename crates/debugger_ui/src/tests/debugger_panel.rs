@@ -14,7 +14,7 @@ use dap::{
     },
 };
 use editor::{
-    Editor, EditorMode, MultiBuffer,
+    ActiveDebugLine, Editor, EditorMode, MultiBuffer,
     actions::{self},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -44,14 +44,14 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -84,11 +84,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 debug_panel.update(cx, |debug_panel, _| debug_panel.active_session().unwrap());
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             debug_panel.update(cx, |this, cx| {
@@ -120,11 +116,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             assert_eq!(client.id(), running_state.read(cx).session_id());
@@ -153,11 +145,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             debug_panel.update(cx, |this, cx| {
@@ -181,14 +169,14 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -247,11 +235,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             assert_eq!(client.id(), active_session.read(cx).session_id(cx));
@@ -284,11 +268,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             assert_eq!(client.id(), active_session.read(cx).session_id(cx));
@@ -316,11 +296,7 @@ async fn test_we_can_only_have_one_panel_per_debug_session(
                 .unwrap();
 
             let running_state = active_session.update(cx, |active_session, _| {
-                active_session
-                    .mode()
-                    .as_running()
-                    .expect("Session should be running by this point")
-                    .clone()
+                active_session.running_state().clone()
             });
 
             debug_panel.update(cx, |this, cx| {
@@ -346,14 +322,14 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -417,14 +393,14 @@ async fn test_handle_start_debugging_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -493,14 +469,14 @@ async fn test_handle_error_run_in_terminal_reverse_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -523,8 +499,8 @@ async fn test_handle_error_run_in_terminal_reverse_request(
         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
             kind: None,
             title: None,
-            cwd: "/non-existing/path".into(), // invalid/non-existing path will cause the terminal spawn to fail
-            args: vec![],
+            cwd: "".into(),
+            args: vec!["oops".into(), "oops".into()],
             env: None,
             args_can_be_interpreted_by_shell: None,
         })
@@ -561,14 +537,14 @@ async fn test_handle_start_debugging_reverse_request(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -657,14 +633,14 @@ async fn test_shutdown_children_when_parent_session_shutdown(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let dap_store = project.update(cx, |project, _| project.dap_store());
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -763,14 +739,14 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let dap_store = project.update(cx, |project, _| project.dap_store());
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -883,14 +859,14 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -1009,12 +985,8 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     cx.run_until_parked();
 
-    let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
-        item.mode()
-            .as_running()
-            .expect("Session should be running by this point")
-            .clone()
-    });
+    let running_state = active_debug_session_panel(workspace, cx)
+        .update(cx, |item, _| item.running_state().clone());
 
     cx.run_until_parked();
     let thread_id = ThreadId(1);
@@ -1326,7 +1298,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
                 .expect("We should always send a breakpoint's path")
                 .as_str()
             {
-                "/project/main.rs" | "/project/second.rs" => {}
+                path!("/project/main.rs") | path!("/project/second.rs") => {}
                 _ => {
                     panic!("Unset breakpoints for path that doesn't have any")
                 }
@@ -1354,14 +1326,14 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -1402,14 +1374,14 @@ async fn test_we_send_arguments_from_user_config(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let debug_definition = DebugTaskDefinition {
@@ -1417,7 +1389,7 @@ async fn test_we_send_arguments_from_user_config(
         request: dap::DebugRequest::Launch(LaunchRequest {
             program: "main.rs".to_owned(),
             args: vec!["arg1".to_owned(), "arg2".to_owned()],
-            cwd: Some("/Random_path".into()),
+            cwd: Some(path!("/Random_path").into()),
             env: HashMap::from_iter(vec![("KEY".to_owned(), "VALUE".to_owned())]),
         }),
         label: "test".into(),
@@ -1459,4 +1431,289 @@ async fn test_we_send_arguments_from_user_config(
         launch_handler_called.load(Ordering::SeqCst),
         "Launch request handler was not called"
     );
+}
+
+#[gpui::test]
+async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+            "second.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project_path = Path::new(path!("/project"));
+    let worktree = project
+        .update(cx, |project, cx| project.find_worktree(project_path, cx))
+        .expect("This worktree should exist in project")
+        .0;
+
+    let worktree_id = workspace
+        .update(cx, |_, _, cx| worktree.read(cx).id())
+        .unwrap();
+
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let second_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "second.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (main_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(main_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let (second_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(second_buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
+        })
+    });
+
+    client.on_request::<dap::requests::Scopes, _>(move |_, _| {
+        Ok(dap::ScopesResponse {
+            scopes: Vec::default(),
+        })
+    });
+
+    client.on_request::<StackTrace, _>(move |_, args| {
+        assert_eq!(args.thread_id, 1);
+
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![dap::StackFrame {
+                id: 1,
+                name: "frame 1".into(),
+                source: Some(dap::Source {
+                    name: Some("main.rs".into()),
+                    path: Some(path!("/project/main.rs").into()),
+                    source_reference: None,
+                    presentation_hint: None,
+                    origin: None,
+                    sources: None,
+                    adapter_data: None,
+                    checksums: None,
+                }),
+                line: 2,
+                column: 0,
+                end_line: None,
+                end_column: None,
+                can_restart: None,
+                instruction_pointer_reference: None,
+                module_id: None,
+                presentation_hint: None,
+            }],
+            total_frames: None,
+        })
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    main_editor.update_in(cx, |editor, window, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert_eq!(
+            active_debug_lines.len(),
+            1,
+            "There should be only one active debug line"
+        );
+
+        let point = editor
+            .snapshot(window, cx)
+            .buffer_snapshot
+            .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
+
+        assert_eq!(point.row, 1);
+    });
+
+    second_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    let handled_second_stacktrace = Arc::new(AtomicBool::new(false));
+    client.on_request::<StackTrace, _>({
+        let handled_second_stacktrace = handled_second_stacktrace.clone();
+        move |_, args| {
+            handled_second_stacktrace.store(true, Ordering::SeqCst);
+            assert_eq!(args.thread_id, 1);
+
+            Ok(dap::StackTraceResponse {
+                stack_frames: vec![dap::StackFrame {
+                    id: 2,
+                    name: "frame 2".into(),
+                    source: Some(dap::Source {
+                        name: Some("second.rs".into()),
+                        path: Some(path!("/project/second.rs").into()),
+                        source_reference: None,
+                        presentation_hint: None,
+                        origin: None,
+                        sources: None,
+                        adapter_data: None,
+                        checksums: None,
+                    }),
+                    line: 3,
+                    column: 0,
+                    end_line: None,
+                    end_column: None,
+                    can_restart: None,
+                    instruction_pointer_reference: None,
+                    module_id: None,
+                    presentation_hint: None,
+                }],
+                total_frames: None,
+            })
+        }
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    second_editor.update_in(cx, |editor, window, cx| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert_eq!(
+            active_debug_lines.len(),
+            1,
+            "There should be only one active debug line"
+        );
+
+        let point = editor
+            .snapshot(window, cx)
+            .buffer_snapshot
+            .summary_for_anchor::<language::Point>(&active_debug_lines.first().unwrap().0.start);
+
+        assert_eq!(point.row, 2);
+    });
+
+    main_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    assert!(
+        handled_second_stacktrace.load(Ordering::SeqCst),
+        "Second stacktrace request handler was not called"
+    );
+
+    client
+        .fake_event(dap::messages::Events::Continued(dap::ContinuedEvent {
+            thread_id: 0,
+            all_threads_continued: Some(true),
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    second_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    main_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    // Clean up
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+
+    main_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines after session shutdown"
+        );
+    });
+
+    second_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines after session shutdown"
+        );
+    });
 }

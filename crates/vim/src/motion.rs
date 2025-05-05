@@ -1309,6 +1309,16 @@ impl Motion {
                     end_point.row -= 1;
                     end_point.column = 0;
                     selection.end = map.clip_point(map.next_line_boundary(end_point).1, Bias::Left);
+                } else if let Motion::EndOfParagraph = self {
+                    // Special case: When using the "}" motion, it's possible
+                    // that there's no blank lines after the paragraph the
+                    // cursor is currently on.
+                    // In this situation the `end_point.column` value will be
+                    // greater than 0, so the selection doesn't actually end on
+                    // the first character of a blank line. In that case, we'll
+                    // want to move one column to the right, to actually include
+                    // all characters of the last non-blank line.
+                    selection.end = movement::saturating_right(map, selection.end)
                 }
             }
         } else if kind == MotionKind::Inclusive {

@@ -28,7 +28,6 @@ use crate::{
     scroll::scroll_amount::ScrollAmount,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use file_icons::FileIcons;
@@ -82,7 +81,7 @@ use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt, debug_panic};
-use workspace::{Workspace, item::Item, notifications::NotifyTaskExt};
+use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 
@@ -171,7 +170,7 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub const SCROLLBAR_WIDTH: Pixels = px(15.);
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -1126,7 +1125,7 @@ impl EditorElement {
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
-                        editor.leader_peer_id.is_none(),
+                        editor.leader_id.is_none(),
                         None,
                     );
                     if is_newest {
@@ -1150,18 +1149,29 @@ impl EditorElement {
 
             if let Some(collaboration_hub) = &editor.collaboration_hub {
                 // When following someone, render the local selections in their color.
-                if let Some(leader_id) = editor.leader_peer_id {
-                    if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id)
-                    {
-                        if let Some(participant_index) = collaboration_hub
-                            .user_participant_indices(cx)
-                            .get(&collaborator.user_id)
-                        {
+                if let Some(leader_id) = editor.leader_id {
+                    match leader_id {
+                        CollaboratorId::PeerId(peer_id) => {
+                            if let Some(collaborator) =
+                                collaboration_hub.collaborators(cx).get(&peer_id)
+                            {
+                                if let Some(participant_index) = collaboration_hub
+                                    .user_participant_indices(cx)
+                                    .get(&collaborator.user_id)
+                                {
+                                    if let Some((local_selection_style, _)) = selections.first_mut()
+                                    {
+                                        *local_selection_style = cx
+                                            .theme()
+                                            .players()
+                                            .color_for_participant(participant_index.0);
+                                    }
+                                }
+                            }
+                        }
+                        CollaboratorId::Agent => {
                             if let Some((local_selection_style, _)) = selections.first_mut() {
-                                *local_selection_style = cx
-                                    .theme()
-                                    .players()
-                                    .color_for_participant(participant_index.0);
+                                *local_selection_style = cx.theme().players().agent();
                             }
                         }
                     }
@@ -1173,12 +1183,9 @@ impl EditorElement {
                     collaboration_hub.as_ref(),
                     cx,
                 ) {
-                    let selection_style =
-                        Self::get_participant_color(selection.participant_index, cx);
-
                     // Don't re-render the leader's selections, since the local selections
                     // match theirs.
-                    if Some(selection.peer_id) == editor.leader_peer_id {
+                    if Some(selection.collaborator_id) == editor.leader_id {
                         continue;
                     }
                     let key = HoveredCursor {
@@ -1191,7 +1198,7 @@ impl EditorElement {
 
                     remote_selections
                         .entry(selection.replica_id)
-                        .or_insert((selection_style, Vec::new()))
+                        .or_insert((selection.color, Vec::new()))
                         .1
                         .push(SelectionLayout::new(
                             selection.selection,
@@ -1246,9 +1253,11 @@ impl EditorElement {
                 collaboration_hub.deref(),
                 cx,
             ) {
-                let color = Self::get_participant_color(remote_selection.participant_index, cx);
-                add_cursor(remote_selection.selection.head(), color.cursor);
-                if Some(remote_selection.peer_id) == editor.leader_peer_id {
+                add_cursor(
+                    remote_selection.selection.head(),
+                    remote_selection.color.cursor,
+                );
+                if Some(remote_selection.collaborator_id) == editor.leader_id {
                     skip_local = true;
                 }
             }
@@ -2276,6 +2285,9 @@ impl EditorElement {
                     }
 
                     let display_row = multibuffer_point.to_display_point(snapshot).row();
+                    if !range.contains(&display_row) {
+                        return None;
+                    }
                     if row_infos
                         .get((display_row - range.start).0 as usize)
                         .is_some_and(|row_info| row_info.expand_info.is_some())
@@ -2441,14 +2453,6 @@ impl EditorElement {
         );
 
         Some(button)
-    }
-
-    fn get_participant_color(participant_index: Option<ParticipantIndex>, cx: &App) -> PlayerColor {
-        if let Some(index) = participant_index {
-            cx.theme().players().color_for_participant(index.0)
-        } else {
-            cx.theme().players().absent()
-        }
     }
 
     fn calculate_relative_line_numbers(
@@ -5678,9 +5682,7 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
-        if !self.editor.read(cx).disable_scrolling {
-            self.paint_scroll_wheel_listener(layout, window, cx);
-        }
+        self.paint_scroll_wheel_listener(layout, window, cx);
 
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -6808,10 +6810,27 @@ impl Element for EditorElement {
                             cx,
                         )
                         .unwrap_or_default();
-                    let text_width = bounds.size.width - gutter_dimensions.width;
+                    let hitbox = window.insert_hitbox(bounds, false);
+                    let gutter_hitbox =
+                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    let text_hitbox = window.insert_hitbox(
+                        Bounds {
+                            origin: gutter_hitbox.top_right()
+                                + point(style.horizontal_padding, Pixels::default()),
+                            size: size(
+                                bounds.size.width
+                                    - gutter_dimensions.width
+                                    - 2. * style.horizontal_padding,
+                                bounds.size.height,
+                            ),
+                        },
+                        false,
+                    );
 
-                    let editor_width =
-                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
+                    let editor_width = text_hitbox.size.width
+                        - gutter_dimensions.margin
+                        - em_width
+                        - style.scrollbar_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -6847,24 +6866,13 @@ impl Element for EditorElement {
                         .map(|(guide, active)| (self.column_pixels(*guide, window, cx), *active))
                         .collect::<SmallVec<[_; 2]>>();
 
-                    let hitbox = window.insert_hitbox(bounds, false);
-                    let gutter_hitbox =
-                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
-                    let text_hitbox = window.insert_hitbox(
-                        Bounds {
-                            origin: gutter_hitbox.top_right(),
-                            size: size(text_width, bounds.size.height),
-                        },
-                        false,
-                    );
-
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
                     let content_offset = point(gutter_dimensions.margin, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
                     let editor_text_bounds =
-                        Bounds::from_corners(content_origin, bounds.bottom_right());
+                        Bounds::from_corners(content_origin, text_hitbox.bounds.bottom_right());
 
                     let height_in_lines = editor_text_bounds.size.height / line_height;
 
@@ -6873,7 +6881,12 @@ impl Element for EditorElement {
                     // The max scroll position for the top of the window
                     let max_scroll_top = if matches!(
                         snapshot.mode,
-                        EditorMode::AutoHeight { .. } | EditorMode::SingleLine { .. }
+                        EditorMode::SingleLine { .. }
+                            | EditorMode::AutoHeight { .. }
+                            | EditorMode::Full {
+                                sized_by_content: true,
+                                ..
+                            }
                     ) {
                         (max_row - height_in_lines + 1.).max(0.)
                     } else {
@@ -8708,8 +8721,10 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if editor.set_wrap_width(Some(editor_width), cx) {
-        snapshot = editor.snapshot(window, cx);
+    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
+        if editor.set_wrap_width(Some(editor_width), cx) {
+            snapshot = editor.snapshot(window, cx);
+        }
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
