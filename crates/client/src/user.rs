@@ -339,7 +339,6 @@ impl UserStore {
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
 
-            dbg!(&message.payload);
             if let Some(usage) = message.payload.usage {
                 this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
                 this.model_request_usage_limit = usage.model_requests_usage_limit;
