@@ -639,11 +639,11 @@
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Default width when the agent is docked to the left or right.
+    // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new chats.
+    // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -711,7 +711,7 @@
         "tools": {}
       }
     },
-    // Where to show notifications when an agent has either completed
+    // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
     // "primary_screen" - Show the notification only on your primary screen (default)
