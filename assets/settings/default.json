@@ -705,8 +705,8 @@
           "web_search": true
         }
       },
-      "manual": {
-        "name": "Manual",
+      "minimal": {
+        "name": "Minimal",
         "enable_all_context_servers": false,
         "tools": {}
       }
