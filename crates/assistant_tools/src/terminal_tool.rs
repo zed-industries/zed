@@ -392,11 +392,7 @@ impl ToolCard for TerminalToolCard {
             .colors()
             .element_background
             .blend(cx.theme().colors().editor_foreground.opacity(0.025));
-        let command_bg = cx
-            .theme()
-            .colors()
-            .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.035));
+
         let border_color = cx.theme().colors().border.opacity(0.6);
 
         let path = self
@@ -407,37 +403,24 @@ impl ToolCard for TerminalToolCard {
             .map(|path| format!("{}", path.display()))
             .unwrap_or_else(|| "current directory".to_string());
 
-        let label = if tool_failed || command_failed {
-            "Command Failed"
-        } else {
-            "Run Command"
-        };
-
-        let header_label = h_flex()
-            .id(("terminal-tool-header-input-command", self.entity_id))
-            .px_1()
-            .w_full()
-            .max_w_full()
-            .overflow_x_scroll()
-            .child(
-                h_flex()
-                    .child(
-                        Icon::new(IconName::Terminal)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(div().text_size(rems(0.8125)).child(label).ml_1p5().mr_0p5()),
-            )
-            .into_any_element();
-
         let header = h_flex()
             .flex_none()
-            .p_1()
             .gap_1()
             .justify_between()
             .rounded_t_md()
-            .bg(header_bg)
-            .child(header_label)
+            .child(
+                div()
+                    .id(("command-target-path", self.entity_id))
+                    .w_full()
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .child(
+                        Label::new(path)
+                            .buffer_font(cx)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    ),
+            )
             .when(self.was_content_truncated, |header| {
                 let tooltip = if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
                     "Output exceeded terminal max lines and was \
@@ -451,11 +434,17 @@ impl ToolCard for TerminalToolCard {
                     )
                 };
                 header.child(
-                    div()
+                    h_flex()
                         .id(("terminal-tool-truncated-label", self.entity_id))
                         .tooltip(Tooltip::text(tooltip))
+                        .gap_0p5()
                         .child(
-                            Label::new("(truncated)")
+                            Icon::new(IconName::Info)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("Truncated")
                                 .color(Color::Error)
                                 .size(LabelSize::Small),
                         ),
@@ -497,7 +486,7 @@ impl ToolCard for TerminalToolCard {
                         ),
                 )
             })
-            .when(!tool_failed, |header| {
+            .when(!should_hide_terminal, |header| {
                 header.child(
                     Disclosure::new(
                         ("terminal-tool-disclosure", self.entity_id),
@@ -520,41 +509,23 @@ impl ToolCard for TerminalToolCard {
             .border_color(border_color)
             .rounded_lg()
             .overflow_hidden()
-            .child(header)
-            .when(self.preview_expanded, |this| {
+            .child(
+                v_flex().p_2().gap_0p5().bg(header_bg).child(header).child(
+                    Label::new(self.input_command.clone())
+                        .buffer_font(cx)
+                        .size(LabelSize::Small),
+                ),
+            )
+            .when(self.preview_expanded && !should_hide_terminal, |this| {
                 this.child(
-                    v_flex()
+                    div()
+                        .pt_2()
+                        .min_h_72()
                         .border_t_1()
                         .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
-                        .child(
-                            v_flex()
-                                .p_2()
-                                .gap_1()
-                                .bg(command_bg)
-                                .child(
-                                    Label::new(path)
-                                        .buffer_font(cx)
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    Label::new(self.input_command.clone())
-                                        .buffer_font(cx)
-                                        .size(LabelSize::Small),
-                                ),
-                        )
-                        .when(!should_hide_terminal, |this| {
-                            this.child(
-                                div()
-                                    .pt_2()
-                                    .min_h_72()
-                                    .border_t_1()
-                                    .border_color(border_color)
-                                    .bg(cx.theme().colors().editor_background)
-                                    .child(terminal.clone()),
-                            )
-                        }),
+                        .child(terminal.clone()),
                 )
             })
             .into_any()
