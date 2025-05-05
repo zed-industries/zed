@@ -85,6 +85,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_5Haiku
+    }
+
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id.starts_with("claude-3-5-sonnet-v2") {
             Ok(Self::Claude3_5SonnetV2)

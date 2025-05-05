@@ -3,8 +3,8 @@ use editor::{Editor, scroll::Autoscroll};
 use gpui::{
     AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollHandle, ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div,
-    impl_actions, list, prelude::*, uniform_list,
+    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, impl_actions,
+    list, prelude::*, uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -22,6 +22,11 @@ pub mod highlighted_match_with_paths;
 enum ElementContainer {
     List(ListState),
     UniformList(UniformListScrollHandle),
+}
+
+pub enum Direction {
+    Up,
+    Down,
 }
 
 actions!(picker, [ConfirmCompletion]);
@@ -86,6 +91,15 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     );
+    fn can_select(
+        &mut self,
+        _ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        true
+    }
+
     // Allows binding some optional effect to when the selection changes.
     fn selected_index_changed(
         &self,
@@ -271,10 +285,7 @@ impl<D: PickerDelegate> Picker<D> {
             ElementContainer::UniformList(scroll_handle) => {
                 ScrollbarState::new(scroll_handle.clone())
             }
-            ElementContainer::List(_) => {
-                // todo smit: implement for list
-                ScrollbarState::new(ScrollHandle::new())
-            }
+            ElementContainer::List(state) => ScrollbarState::new(state.clone()),
         };
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -359,16 +370,58 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.
-    /// If `scroll_to_index` is true, the new selected index will be scrolled into view.
+    /// If `fallback_direction` is set to `None`, the index will not be selected
+    /// if the element at that index cannot be selected.
+    /// If `fallback_direction` is set to
+    /// `Some(..)`, the next selectable element will be selected in the
+    /// specified direction (Down or Up), cycling through all elements until
+    /// finding one that can be selected or returning if there are no selectable elements.
+    /// If `scroll_to_index` is true, the new selected index will be scrolled into
+    /// view.
     ///
     /// If some effect is bound to `selected_index_changed`, it will be executed.
     pub fn set_selected_index(
         &mut self,
-        ix: usize,
+        mut ix: usize,
+        fallback_direction: Option<Direction>,
         scroll_to_index: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let match_count = self.delegate.match_count();
+        if match_count == 0 {
+            return;
+        }
+
+        if let Some(bias) = fallback_direction {
+            let mut curr_ix = ix;
+            while !self.delegate.can_select(curr_ix, window, cx) {
+                curr_ix = match bias {
+                    Direction::Down => {
+                        if curr_ix == match_count - 1 {
+                            0
+                        } else {
+                            curr_ix + 1
+                        }
+                    }
+                    Direction::Up => {
+                        if curr_ix == 0 {
+                            match_count - 1
+                        } else {
+                            curr_ix - 1
+                        }
+                    }
+                };
+                // There is no item that can be selected
+                if ix == curr_ix {
+                    return;
+                }
+            }
+            ix = curr_ix;
+        } else if !self.delegate.can_select(ix, window, cx) {
+            return;
+        }
+
         let previous_index = self.delegate.selected_index();
         self.delegate.set_selected_index(ix, window, cx);
         let current_index = self.delegate.selected_index();
@@ -393,7 +446,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == count - 1 { 0 } else { index + 1 };
-            self.set_selected_index(ix, true, window, cx);
+            self.set_selected_index(ix, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -408,7 +461,7 @@ impl<D: PickerDelegate> Picker<D> {
         if count > 0 {
             let index = self.delegate.selected_index();
             let ix = if index == 0 { count - 1 } else { index - 1 };
-            self.set_selected_index(ix, true, window, cx);
+            self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -416,7 +469,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(0, true, window, cx);
+            self.set_selected_index(0, Some(Direction::Down), true, window, cx);
             cx.notify();
         }
     }
@@ -424,7 +477,7 @@ impl<D: PickerDelegate> Picker<D> {
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
-            self.set_selected_index(count - 1, true, window, cx);
+            self.set_selected_index(count - 1, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
     }
@@ -433,7 +486,7 @@ impl<D: PickerDelegate> Picker<D> {
         let count = self.delegate.match_count();
         let index = self.delegate.selected_index();
         let new_index = if index + 1 == count { 0 } else { index + 1 };
-        self.set_selected_index(new_index, true, window, cx);
+        self.set_selected_index(new_index, Some(Direction::Down), true, window, cx);
         cx.notify();
     }
 
@@ -506,14 +559,14 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         cx.stop_propagation();
         window.prevent_default();
-        self.set_selected_index(ix, false, window, cx);
+        self.set_selected_index(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(update_query, window, cx);
-            self.delegate.set_selected_index(0, window, cx);
+            self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
         }
@@ -535,7 +588,9 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                self.cancel(&menu::Cancel, window, cx);
+                if self.is_modal {
+                    self.cancel(&menu::Cancel, window, cx);
+                }
             }
             _ => {}
         }

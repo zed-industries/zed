@@ -334,7 +334,11 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
-        self.marked_range = Some(range.start..range.start + new_text.len());
+        if !new_text.is_empty() {
+            self.marked_range = Some(range.start..range.start + new_text.len());
+        } else {
+            self.marked_range = None;
+        }
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
@@ -635,7 +639,7 @@ impl Render for InputExample {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(format!("Keyboard {}", cx.keyboard_layout()))
+                    .child(format!("Keyboard {}", cx.keyboard_layout().name()))
                     .child(
                         div()
                             .border_1()

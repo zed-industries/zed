@@ -731,17 +731,21 @@ impl Item for NotebookEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
+        Label::new(self.tab_content_text(params.detail.unwrap_or(0), cx))
+            .single_line()
+            .color(params.text_color())
+            .when(params.preview, |this| this.italic())
+            .into_any_element()
+    }
+
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let path = &self.notebook_item.read(cx).path;
         let title = path
             .file_name()
             .unwrap_or_else(|| path.as_os_str())
             .to_string_lossy()
             .to_string();
-        Label::new(title)
-            .single_line()
-            .color(params.text_color())
-            .when(params.preview, |this| this.italic())
-            .into_any_element()
+        title.into()
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -825,7 +829,7 @@ impl ProjectItem for NotebookEditor {
 
     fn for_project_item(
         project: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         item: Entity<Self::Item>,
         window: &mut Window,
         cx: &mut Context<Self>,

@@ -278,7 +278,7 @@ impl RegisteredBuffer {
                                         content_changes,
                                     },
                                 )
-                                .log_err();
+                                .ok();
                         }
                         let _ = done_tx.send((buffer.snapshot_version, buffer.snapshot.clone()));
                         Some(())
@@ -732,7 +732,7 @@ impl Copilot {
                                 },
                             },
                         )
-                        .log_err();
+                        .ok();
 
                     RegisteredBuffer {
                         uri,
@@ -827,7 +827,7 @@ impl Copilot {
                             text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                         },
                     )
-                    .log_err();
+                    .ok();
             }
         }
     }
@@ -1277,10 +1277,6 @@ mod tests {
         }
 
         fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn as_any(&self) -> &dyn std::any::Any {
             unimplemented!()
         }
 

@@ -1,0 +1,53 @@
+url = "https://github.com/tree-sitter/tree-sitter.git"
+revision = "635c49909ce4aa7f58a9375374f91b1b434f6f9c"
+language_extension = "rs"
+
+prompt = """
+Change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
+Use `ureq` to download the SDK for the current platform and architecture.
+Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
+Compile the parser to wasm using the `bin/clang` executable (or `bin/clang.exe` on windows)
+that's inside of the archive.
+Don't re-download the SDK if that executable already exists.
+
+Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{language_name}
+
+Here are the available wasi-sdk assets:
+- wasi-sdk-25.0-x86_64-macos.tar.gz
+- wasi-sdk-25.0-arm64-macos.tar.gz
+- wasi-sdk-25.0-x86_64-linux.tar.gz
+- wasi-sdk-25.0-arm64-linux.tar.gz
+- wasi-sdk-25.0-x86_64-linux.tar.gz
+- wasi-sdk-25.0-arm64-linux.tar.gz
+- wasi-sdk-25.0-x86_64-windows.tar.gz
+"""
+
+[diff_assertions]
+
+modify_function = """
+The patch modifies the `compile_parser_to_wasm` function, removing logic for running `emscripten`,
+and adding logic to download `wasi-sdk`.
+"""
+
+use_listed_assets = """
+The patch implements logic for selecting from the assets listed in the prompt by detecting the
+current platform and architecture.
+"""
+
+add_deps = """
+The patch adds a dependency for `ureq` to the Cargo.toml, and adds an import to the top of `loader/lib.rs`
+If the patch uses any other dependencies (such as `tar` or `flate2`), it also correctly adds them
+to the Cargo.toml and imports them.
+"""
+
+[thread_assertions]
+
+find_specified_function = """
+The agent finds the specified function `compile_parser_to_wasm` in a logical way.
+It does not begin by guessing any paths to files in the codebase, but rather searches for the function by name.
+"""
+
+no_syntax_errors = """
+As it edits the file, the agent never introduces syntax errors. It's ok if there are other compile errors,
+but it should not introduce glaring issues like mismatched curly braces.
+"""

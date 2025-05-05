@@ -1,2 +1,7 @@
 allow-private-module-inception = true
 avoid-breaking-exported-api = false
+ignore-interior-mutability = [
+    # Suppresses clippy::mutable_key_type, which is a false positive as the Eq
+    # and Hash impls do not use fields with interior mutability.
+    "agent::context::AgentContextKey"
+]

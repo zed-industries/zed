@@ -72,6 +72,7 @@ impl AskPassSession {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+        let zed_path = get_shell_safe_zed_path()?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -110,21 +111,10 @@ impl AskPassSession {
             drop(temp_dir)
         });
 
-        anyhow::ensure!(
-            which::which("nc").is_ok(),
-            "Cannot find `nc` command (netcat), which is required to connect over SSH."
-        );
-
         // Create an askpass script that communicates back to this process.
         let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
-            // on macOS `brew install netcat` provides the GNU netcat implementation
-            // which does not support -U.
-            nc = if cfg!(target_os = "macos") {
-                "/usr/bin/nc"
-            } else {
-                "nc"
-            },
+            "{shebang}\n{print_args} | {zed_exe} --askpass={askpass_socket} 2> /dev/null \n",
+            zed_exe = zed_path,
             askpass_socket = askpass_socket.display(),
             print_args = "printf '%s\\0' \"$@\"",
             shebang = "#!/bin/sh",
@@ -169,6 +159,77 @@ impl AskPassSession {
         }
     }
 }
+
+#[cfg(unix)]
+fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+    let zed_path = std::env::current_exe()
+        .context("Failed to figure out current executable path for use in askpass")?
+        .to_string_lossy()
+        .to_string();
+
+    // sanity check on unix systems that the path exists and is executable
+    // todo(windows): implement this check for windows (or just use `is-executable` crate)
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(&zed_path)
+        .context("Failed to check metadata of Zed executable path for use in askpass")?;
+    let is_executable = metadata.is_file() && metadata.mode() & 0o111 != 0;
+    anyhow::ensure!(
+        is_executable,
+        "Failed to verify Zed executable path for use in askpass"
+    );
+    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+    // errors are introduced in the future :(
+    let zed_path_escaped = shlex::try_quote(&zed_path)
+        .context("Failed to shell-escape Zed executable path for use in askpass")?;
+
+    return Ok(zed_path_escaped.to_string());
+}
+
+/// The main function for when Zed is running in netcat mode for use in askpass.
+/// Called from both the remote server binary and the zed binary in their respective main functions.
+#[cfg(unix)]
+pub fn main(socket: &str) {
+    use std::io::{self, Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::process::exit;
+
+    let mut stream = match UnixStream::connect(socket) {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("Error connecting to socket {}: {}", socket, err);
+            exit(1);
+        }
+    };
+
+    let mut buffer = Vec::new();
+    if let Err(err) = io::stdin().read_to_end(&mut buffer) {
+        eprintln!("Error reading from stdin: {}", err);
+        exit(1);
+    }
+
+    if buffer.last() != Some(&b'\0') {
+        buffer.push(b'\0');
+    }
+
+    if let Err(err) = stream.write_all(&buffer) {
+        eprintln!("Error writing to socket: {}", err);
+        exit(1);
+    }
+
+    let mut response = Vec::new();
+    if let Err(err) = stream.read_to_end(&mut response) {
+        eprintln!("Error reading from socket: {}", err);
+        exit(1);
+    }
+
+    if let Err(err) = io::stdout().write_all(&response) {
+        eprintln!("Error writing to stdout: {}", err);
+        exit(1);
+    }
+}
+#[cfg(not(unix))]
+pub fn main(_socket: &str) {}
 
 #[cfg(not(unix))]
 pub struct AskPassSession {

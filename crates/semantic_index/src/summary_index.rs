@@ -557,6 +557,9 @@ impl SummaryIndex {
         );
 
         let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![prompt.into()],

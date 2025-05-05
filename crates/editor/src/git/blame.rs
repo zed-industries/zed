@@ -7,10 +7,11 @@ use git::{
     parse_git_remote_url,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
-    WeakEntity, Window,
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, Subscription, Task,
+    TextStyle, WeakEntity, Window,
 };
 use language::{Bias, Buffer, BufferSnapshot, Edit};
+use markdown::Markdown;
 use multi_buffer::RowInfo;
 use project::{
     Project, ProjectItem,
@@ -98,10 +99,18 @@ pub trait BlameRenderer {
         &self,
         _: &TextStyle,
         _: BlameEntry,
+        _: &mut App,
+    ) -> Option<AnyElement>;
+
+    fn render_blame_entry_popover(
+        &self,
+        _: BlameEntry,
+        _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: Entity<Editor>,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -139,10 +148,20 @@ impl BlameRenderer for () {
         &self,
         _: &TextStyle,
         _: BlameEntry,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    fn render_blame_entry_popover(
+        &self,
+        _: BlameEntry,
+        _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: Entity<Editor>,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
         None
@@ -436,7 +455,9 @@ impl GitBlame {
         }
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let blame = self.project.update(cx, |project, cx| {
+            project.blame_buffer(&self.buffer, None, cx)
+        });
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(async move |this, cx| {
@@ -485,7 +506,7 @@ impl GitBlame {
                     } else {
                         // If we weren't triggered by a user, we just log errors in the background, instead of sending
                         // notifications.
-                        log::error!("failed to get git blame data: {error:?}");
+                        log::debug!("failed to get git blame data: {error:?}");
                     }
                 }),
             })

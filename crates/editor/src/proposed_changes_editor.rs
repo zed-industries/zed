@@ -285,8 +285,8 @@ impl Item for ProposedChangesEditor {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.title.clone())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        self.title.clone()
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -453,6 +453,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
         let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
         self.0.inlay_hints(buffer, range, cx)
+    }
+
+    fn inline_values(
+        &self,
+        _: Entity<Buffer>,
+        _: Range<text::Anchor>,
+        _: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+        None
     }
 
     fn resolve_inlay_hint(

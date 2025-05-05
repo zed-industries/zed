@@ -202,7 +202,7 @@ pub struct VimGlobals {
     pub pre_count: Option<usize>,
     /// post_count is the number after an operator is specified (2 in 3d2d)
     pub post_count: Option<usize>,
-
+    pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,
@@ -954,7 +954,7 @@ impl Operator {
             Operator::AutoIndent => "eq",
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
-            Operator::ReplaceWithRegister => "gr",
+            Operator::ReplaceWithRegister => "gR",
             Operator::Exchange => "cx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
@@ -1644,6 +1644,7 @@ impl VimDb {
         path: Arc<Path>,
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
+        log::debug!("Setting path {path:?} for {} marks", marks.len());
         let result = self
             .write(move |conn| {
                 let mut query = conn.exec_bound(sql!(
@@ -1694,6 +1695,7 @@ impl VimDb {
         mark_name: String,
         path: Arc<Path>,
     ) -> Result<()> {
+        log::debug!("Setting global mark path {path:?} for {mark_name}");
         self.write(move |conn| {
             conn.exec_bound(sql!(
                 INSERT OR REPLACE INTO vim_global_marks_paths

@@ -5,7 +5,7 @@ pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
-use http_client::{HttpClient, Uri};
+use http_client::{HttpClient, Url};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -247,7 +247,7 @@ trait NodeRuntimeTrait: Send + Sync {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output>;
@@ -312,7 +312,7 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::support_dir().join("node");
+        let node_containing_dir = paths::data_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
@@ -394,7 +394,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
@@ -473,7 +473,7 @@ pub struct SystemNodeRuntime {
 }
 
 impl SystemNodeRuntime {
-    const MIN_VERSION: semver::Version = Version::new(18, 0, 0);
+    const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")
@@ -498,7 +498,7 @@ impl SystemNodeRuntime {
             )
         }
 
-        let scratch_dir = paths::support_dir().join("node");
+        let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
 
@@ -535,7 +535,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
@@ -613,7 +613,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         _: Option<&Path>,
-        _: Option<&Uri>,
+        _: Option<&Url>,
         _: &str,
         _: &[&str],
     ) -> anyhow::Result<Output> {
@@ -632,7 +632,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
 fn configure_npm_command(
     command: &mut smol::process::Command,
     directory: Option<&Path>,
-    proxy: Option<&Uri>,
+    proxy: Option<&Url>,
 ) {
     if let Some(directory) = directory {
         command.current_dir(directory);

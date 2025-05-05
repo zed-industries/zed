@@ -1,0 +1,25 @@
+You are an expert software developer. Your task is to evaluate a diff produced by an AI agent
+in response to a prompt. Here is the prompt and the diff:
+
+<prompt>
+{{{prompt}}}
+</prompt>
+
+<diff>
+{{{repository_diff}}}
+</diff>
+
+Evaluate whether or not the diff passes the following assertion:
+
+<assertion>
+{{assertion}}
+</assertion>
+
+Analyze the diff hunk by hunk, and structure your answer in the following XML format:
+
+```
+<analysis>{YOUR ANALYSIS HERE}</analysis>
+<passed>{PASSED_ASSERTION}</passed>
+```
+
+Where `PASSED_ASSERTION` is either `true` or `false`.
