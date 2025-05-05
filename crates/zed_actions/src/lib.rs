@@ -205,9 +205,12 @@ pub mod assistant {
     }
 
     impl_action_with_deprecated_aliases!(
-        assistant,
+        agent,
         OpenRulesLibrary,
-        ["assistant::DeployPromptLibrary"]
+        [
+            "assistant::OpenRulesLibrary",
+            "assistant::DeployPromptLibrary"
+        ]
     );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
