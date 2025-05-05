@@ -753,6 +753,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "terminal_view",
+ "theme",
  "tree-sitter-rust",
  "ui",
  "unindent",
