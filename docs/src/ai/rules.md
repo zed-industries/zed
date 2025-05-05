@@ -155,3 +155,7 @@ The following templates can be overridden:
 You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk.
 
 Consult Zed's [assets/prompts](https://github.com/zed-industries/zed/tree/main/assets/prompts) directory for current versions you can play with.
+
+- todo! replace more instances of "prompt" with "rules"
+- todo! - needs more tweaks, not done
+- todo! - for old docs covering features that were in old assistant, but not new, do we we mention, or omit?

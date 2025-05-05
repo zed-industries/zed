@@ -1,1 +1,3 @@
 # AI
+
+todo! complete linktree

@@ -42,3 +42,5 @@ To create a custom keybinding that prefills a prompt, you can add the following 
   }
 ]
 ```
+
+- todo! - needs more tweaks
