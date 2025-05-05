@@ -665,24 +665,6 @@
     "single_file_review": true,
     "default_profile": "write",
     "profiles": {
-      "ask": {
-        "name": "Ask",
-        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
-        // "enable_all_context_servers": true,
-        "tools": {
-          "contents": true,
-          "diagnostics": true,
-          "fetch": true,
-          "list_directory": true,
-          "now": true,
-          "find_path": true,
-          "read_file": true,
-          "open": true,
-          "grep": true,
-          "thinking": true,
-          "web_search": true
-        }
-      },
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
@@ -701,6 +683,24 @@
           "read_file": true,
           "grep": true,
           "terminal": true,
+          "thinking": true,
+          "web_search": true
+        }
+      },
+      "ask": {
+        "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
+        "tools": {
+          "contents": true,
+          "diagnostics": true,
+          "fetch": true,
+          "list_directory": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "open": true,
+          "grep": true,
           "thinking": true,
           "web_search": true
         }

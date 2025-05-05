@@ -31,16 +31,19 @@ use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
+use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
+    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{CollaboratorId, Workspace};
+use workspace::{CollaboratorId, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
+use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
 use crate::agent_diff::AgentDiff;
@@ -50,7 +53,6 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::ui::UsageBanner;
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
     InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -150,6 +152,7 @@ enum ActiveView {
     PromptEditor {
         context_editor: Entity<ContextEditor>,
         title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     History,
@@ -215,6 +218,7 @@ impl ActiveView {
 
     pub fn prompt_editor(
         context_editor: Entity<ContextEditor>,
+        language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -283,9 +287,16 @@ impl ActiveView {
             }),
         ];
 
+        let buffer_search_bar =
+            cx.new(|cx| BufferSearchBar::new(Some(language_registry), window, cx));
+        buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+            buffer_search_bar.set_active_pane_item(Some(&context_editor), window, cx)
+        });
+
         Self::PromptEditor {
             context_editor,
             title_editor: editor,
+            buffer_search_bar,
             _subscriptions: subscriptions,
         }
     }
@@ -432,6 +443,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -735,6 +747,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -782,7 +795,12 @@ impl AssistantPanel {
         });
 
         self.set_active_view(
-            ActiveView::prompt_editor(context_editor.clone(), window, cx),
+            ActiveView::prompt_editor(
+                context_editor.clone(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
             window,
             cx,
         );
@@ -858,7 +876,12 @@ impl AssistantPanel {
                 });
 
                 this.set_active_view(
-                    ActiveView::prompt_editor(editor.clone(), window, cx),
+                    ActiveView::prompt_editor(
+                        editor.clone(),
+                        this.language_registry.clone(),
+                        window,
+                        cx,
+                    ),
                     window,
                     cx,
                 );
@@ -933,6 +956,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1367,6 +1391,8 @@ impl AssistantPanel {
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
+        let last_usage = active_thread.thread().read(cx).last_usage();
+        let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty,
@@ -1452,30 +1478,74 @@ impl AssistantPanel {
             .anchor(Corner::TopRight)
             .with_handle(self.assistant_dropdown_menu_handle.clone())
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                    menu.when(!is_empty, |menu| {
-                        menu.action(
-                            "Start New From Summary",
-                            Box::new(NewThread {
-                                from_thread_id: Some(thread_id.clone()),
+                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                    menu = menu
+                        .action("New Thread", NewThread::default().boxed_clone())
+                        .action("New Text Thread", NewTextThread.boxed_clone())
+                        .when(!is_empty, |menu| {
+                            menu.action(
+                                "New From Summary",
+                                Box::new(NewThread {
+                                    from_thread_id: Some(thread_id.clone()),
+                                }),
+                            )
+                        })
+                        .separator();
+
+                    menu = menu
+                        .header("MCP Servers")
+                        .action(
+                            "View Server Extensions",
+                            Box::new(zed_actions::Extensions {
+                                category_filter: Some(
+                                    zed_actions::ExtensionCategoryFilter::ContextServers,
+                                ),
                             }),
                         )
-                        .separator()
-                    })
-                    .action("New Text Thread", NewTextThread.boxed_clone())
-                    .action("Rules Library", Box::new(OpenRulesLibrary::default()))
-                    .action("Settings", Box::new(OpenConfiguration))
-                    .separator()
-                    .header("MCPs")
-                    .action(
-                        "View Server Extensions",
-                        Box::new(zed_actions::Extensions {
-                            category_filter: Some(
-                                zed_actions::ExtensionCategoryFilter::ContextServers,
-                            ),
-                        }),
-                    )
-                    .action("Add Custom Server", Box::new(AddContextServer))
+                        .action("Add Custom Server…", Box::new(AddContextServer))
+                        .separator();
+
+                    if let Some(usage) = last_usage {
+                        menu = menu
+                            .header_with_link("Prompt Usage", "Manage", account_url.clone())
+                            .custom_entry(
+                                move |_window, cx| {
+                                    let used_percentage = match usage.limit {
+                                        UsageLimit::Limited(limit) => {
+                                            Some((usage.amount as f32 / limit as f32) * 100.)
+                                        }
+                                        UsageLimit::Unlimited => None,
+                                    };
+
+                                    h_flex()
+                                        .flex_1()
+                                        .gap_1p5()
+                                        .children(used_percentage.map(|percent| {
+                                            ProgressBar::new("usage", percent, 100., cx)
+                                        }))
+                                        .child(
+                                            Label::new(match usage.limit {
+                                                UsageLimit::Limited(limit) => {
+                                                    format!("{} / {limit}", usage.amount)
+                                                }
+                                                UsageLimit::Unlimited => {
+                                                    format!("{} / ∞", usage.amount)
+                                                }
+                                            })
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        )
+                                        .into_any_element()
+                                },
+                                move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                            )
+                            .separator()
+                    }
+
+                    menu = menu
+                        .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                        .action("Settings", Box::new(OpenConfiguration));
+                    menu
                 }))
             });
 
@@ -1944,22 +2014,6 @@ impl AssistantPanel {
             })
     }
 
-    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let plan = self
-            .user_store
-            .read(cx)
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
-
-        Some(UsageBanner::new(plan, usage).into_any_element())
-    }
-
     fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tool_use_limit_reached = self
             .thread
@@ -2277,12 +2331,45 @@ impl Render for AssistantPanel {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
                     .children(self.render_tool_use_limit_reached(cx))
-                    .children(self.render_usage_banner(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor { context_editor, .. } => {
-                    parent.child(context_editor.clone())
+                ActiveView::PromptEditor {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => {
+                    let mut registrar = DivRegistrar::new(
+                        |this, _, _cx| match &this.active_view {
+                            ActiveView::PromptEditor {
+                                buffer_search_bar, ..
+                            } => Some(buffer_search_bar.clone()),
+                            _ => None,
+                        },
+                        cx,
+                    );
+                    BufferSearchBar::register(&mut registrar);
+                    parent.child(
+                        registrar
+                            .into_div()
+                            .size_full()
+                            .map(|parent| {
+                                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                                    if buffer_search_bar.is_dismissed() {
+                                        return parent;
+                                    }
+                                    parent.child(
+                                        div()
+                                            .p(DynamicSpacing::Base08.rems(cx))
+                                            .border_b_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .bg(cx.theme().colors().editor_background)
+                                            .child(buffer_search_bar.render(window, cx)),
+                                    )
+                                })
+                            })
+                            .child(context_editor.clone()),
+                    )
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })

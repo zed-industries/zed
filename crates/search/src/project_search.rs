@@ -1774,10 +1774,18 @@ impl Render for ProjectSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let input_base_styles = || {
+        enum BaseStyle {
+            SingleInput,
+            MultipleInputs,
+        }
+
+        let input_base_styles = |base_style: BaseStyle| {
             h_flex()
                 .min_w_32()
-                .w(input_width)
+                .map(|div| match base_style {
+                    BaseStyle::SingleInput => div.w(input_width),
+                    BaseStyle::MultipleInputs => div.flex_grow(),
+                })
                 .h_8()
                 .pl_2()
                 .pr_1()
@@ -1787,7 +1795,7 @@ impl Render for ProjectSearchBar {
                 .rounded_lg()
         };
 
-        let query_column = input_base_styles()
+        let query_column = input_base_styles(BaseStyle::SingleInput)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
                 this.previous_history_query(action, window, cx)
@@ -1976,8 +1984,8 @@ impl Render for ProjectSearchBar {
             .child(h_flex().min_w_64().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column =
-                input_base_styles().child(self.render_text_input(&search.replacement_editor, cx));
+            let replace_column = input_base_styles(BaseStyle::SingleInput)
+                .child(self.render_text_input(&search.replacement_editor, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
 
@@ -2046,24 +2054,29 @@ impl Render for ProjectSearchBar {
                 .w_full()
                 .gap_2()
                 .child(
-                    input_base_styles()
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.previous_history_query(action, window, cx)
-                        }))
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.next_history_query(action, window, cx)
-                        }))
-                        .child(self.render_text_input(&search.included_files_editor, cx)),
-                )
-                .child(
-                    input_base_styles()
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.previous_history_query(action, window, cx)
-                        }))
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.next_history_query(action, window, cx)
-                        }))
-                        .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                    h_flex()
+                        .gap_2()
+                        .w(input_width)
+                        .child(
+                            input_base_styles(BaseStyle::MultipleInputs)
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.previous_history_query(action, window, cx)
+                                }))
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.next_history_query(action, window, cx)
+                                }))
+                                .child(self.render_text_input(&search.included_files_editor, cx)),
+                        )
+                        .child(
+                            input_base_styles(BaseStyle::MultipleInputs)
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.previous_history_query(action, window, cx)
+                                }))
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.next_history_query(action, window, cx)
+                                }))
+                                .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                        ),
                 )
                 .child(
                     h_flex()

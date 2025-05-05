@@ -6092,7 +6092,7 @@ impl LspStore {
                         content_changes,
                     },
                 )
-                .log_err();
+                .ok();
         }
 
         None
@@ -6125,7 +6125,7 @@ impl LspStore {
                             text,
                         },
                     )
-                    .log_err();
+                    .ok();
             }
         }
 
@@ -7472,7 +7472,7 @@ impl LspStore {
                                 new_uri: new_uri.clone(),
                             }],
                         })
-                        .log_err();
+                        .ok();
                 }
             }
             Some(())
@@ -7575,7 +7575,7 @@ impl LspStore {
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
                         &lsp::DidChangeWatchedFilesParams { changes },
                     )
-                    .log_err();
+                    .ok();
             }
             Some(())
         });
@@ -9140,7 +9140,7 @@ impl LspStore {
                     if !params.changes.is_empty() {
                         server
                             .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
-                            .log_err();
+                            .ok();
                     }
                 }
             }

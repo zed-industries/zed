@@ -1,11 +1,13 @@
 use crate::schema::json_schema_for;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
     Transformation, WeakEntity, Window, percentage,
 };
+use language::LineEnding;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -87,26 +89,65 @@ impl Tool for TerminalTool {
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        let Some(window) = window else {
-            return Task::ready(Err(anyhow!("no window options"))).into();
-        };
-
         let input: TerminalToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let input_path = Path::new(&input.cd);
-        let working_dir = match working_dir(cx, &input, &project, input_path) {
+        let working_dir = match working_dir(&input, &project, input_path, cx) {
             Ok(dir) => dir,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
+            Err(err) => return Task::ready(Err(err)).into(),
         };
+        let command = get_system_shell();
+        let args = vec!["-c".into(), input.command.clone()];
+        let cwd = working_dir.clone();
+
+        let Some(window) = window else {
+            // Headless setup, a test or eval. Our terminal subsystem requires a workspace,
+            // so bypass it and provide a convincing imitation using a pty.
+            let task = cx.background_spawn(async move {
+                let pty_system = native_pty_system();
+                let mut cmd = CommandBuilder::new(command);
+                cmd.args(args);
+                if let Some(cwd) = cwd {
+                    cmd.cwd(cwd);
+                }
+                let pair = pty_system.openpty(PtySize {
+                    rows: 24,
+                    cols: 80,
+                    ..Default::default()
+                })?;
+                let mut child = pair.slave.spawn_command(cmd)?;
+                let mut reader = pair.master.try_clone_reader()?;
+                drop(pair);
+                let mut content = Vec::new();
+                reader.read_to_end(&mut content)?;
+                let mut content = String::from_utf8(content)?;
+                // Massage the pty output a bit to try to match what the terminal codepath gives us
+                LineEnding::normalize(&mut content);
+                content = content
+                    .chars()
+                    .filter(|c| c.is_ascii_whitespace() || !c.is_ascii_control())
+                    .collect();
+                let content = content.trim_start().trim_start_matches("^D");
+                let exit_status = child.wait()?;
+                let (processed_content, _) =
+                    process_content(content, &input.command, Some(exit_status));
+                Ok(processed_content)
+            });
+            return ToolResult {
+                output: task,
+                card: None,
+            };
+        };
+
         let terminal = project.update(cx, |project, cx| {
             project.create_terminal(
                 TerminalKind::Task(task::SpawnInTerminal {
-                    command: get_system_shell(),
-                    args: vec!["-c".into(), input.command.clone()],
-                    cwd: working_dir.clone(),
+                    command,
+                    args,
+                    cwd,
                     ..Default::default()
                 }),
                 window,
@@ -152,8 +193,11 @@ impl Tool for TerminalTool {
                 })?;
 
                 let previous_len = content.len();
-                let (processed_content, finished_with_empty_output) =
-                    process_content(content, &input.command, exit_status);
+                let (processed_content, finished_with_empty_output) = process_content(
+                    &content,
+                    &input.command,
+                    exit_status.map(portable_pty::ExitStatus::from),
+                );
 
                 let _ = card.update(cx, |card, _| {
                     card.command_finished = true;
@@ -177,9 +221,9 @@ impl Tool for TerminalTool {
 }
 
 fn process_content(
-    content: String,
+    content: &str,
     command: &str,
-    exit_status: Option<ExitStatus>,
+    exit_status: Option<portable_pty::ExitStatus>,
 ) -> (String, bool) {
     let should_truncate = content.len() > COMMAND_OUTPUT_LIMIT;
 
@@ -192,7 +236,7 @@ fn process_content(
         end_ix = content[..end_ix].rfind('\n').unwrap_or(end_ix);
         &content[..end_ix]
     } else {
-        content.as_str()
+        content
     };
     let is_empty = content.trim().is_empty();
 
@@ -221,11 +265,16 @@ fn process_content(
             }
         }
         Some(exit_status) => {
-            let code = exit_status.code().unwrap_or(-1);
             if is_empty {
-                format!("Command \"{command}\" failed with exit code {code}.")
+                format!(
+                    "Command \"{command}\" failed with exit code {}.",
+                    exit_status.exit_code()
+                )
             } else {
-                format!("Command \"{command}\" failed with exit code {code}.\n\n{content}")
+                format!(
+                    "Command \"{command}\" failed with exit code {}.\n\n{content}",
+                    exit_status.exit_code()
+                )
             }
         }
         None => {
@@ -239,11 +288,11 @@ fn process_content(
 }
 
 fn working_dir(
-    cx: &mut App,
     input: &TerminalToolInput,
     project: &Entity<Project>,
     input_path: &Path,
-) -> Result<Option<PathBuf>, &'static str> {
+    cx: &mut App,
+) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
 
     if input.cd == "." {
@@ -253,7 +302,7 @@ fn working_dir(
         match worktrees.next() {
             Some(worktree) => {
                 if worktrees.next().is_some() {
-                    return Err(
+                    bail!(
                         "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
                     );
                 }
@@ -267,13 +316,13 @@ fn working_dir(
             .worktrees(cx)
             .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
         {
-            return Err("The absolute path must be within one of the project's worktrees");
+            bail!("The absolute path must be within one of the project's worktrees");
         }
 
         Ok(Some(input_path.into()))
     } else {
         let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
-            return Err("`cd` directory {} not found in the project");
+            bail!("`cd` directory {:?} not found in the project", input.cd);
         };
 
         Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
@@ -505,5 +554,143 @@ impl ToolCard for TerminalToolCard {
                 this.child(div().child(terminal.clone()).min_h(px(250.0)))
             })
             .into_any()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use editor::EditorSettings;
+    use fs::RealFs;
+    use gpui::{BackgroundExecutor, TestAppContext};
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+    use settings::{Settings, SettingsStore};
+    use terminal::terminal_settings::TerminalSettings;
+    use theme::ThemeSettings;
+    use util::{ResultExt as _, test::TempTree};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_working_directory(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        if cfg!(windows) {
+            return;
+        }
+
+        zlog::init();
+        zlog::init_output_stdout();
+        executor.allow_parking();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            TerminalSettings::register(cx);
+            EditorSettings::register(cx);
+        });
+
+        let fs = Arc::new(RealFs::new(None, executor));
+        let tree = TempTree::new(json!({
+            "project": {},
+            "other-project": {},
+        }));
+        let project: Entity<Project> =
+            Project::test(fs, [tree.path().join("project").as_path()], cx).await;
+        let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+
+        let check = |input, expected, cx: &mut App| {
+            let headless_result = TerminalTool::run(
+                Arc::new(TerminalTool),
+                serde_json::to_value(input).unwrap(),
+                &[],
+                project.clone(),
+                action_log.clone(),
+                None,
+                cx,
+            );
+            cx.spawn(async move |_| {
+                let output = headless_result.output.await.log_err();
+                assert_eq!(output, expected);
+            })
+        };
+
+        cx.update(|cx| {
+            check(
+                TerminalToolInput {
+                    command: "pwd".into(),
+                    cd: "project".into(),
+                },
+                Some(format!(
+                    "```\n{}\n```",
+                    tree.path().join("project").display()
+                )),
+                cx,
+            )
+        })
+        .await;
+
+        cx.update(|cx| {
+            check(
+                TerminalToolInput {
+                    command: "pwd".into(),
+                    cd: ".".into(),
+                },
+                Some(format!(
+                    "```\n{}\n```",
+                    tree.path().join("project").display()
+                )),
+                cx,
+            )
+        })
+        .await;
+
+        // Absolute path above the worktree root
+        cx.update(|cx| {
+            check(
+                TerminalToolInput {
+                    command: "pwd".into(),
+                    cd: tree.path().to_string_lossy().into(),
+                },
+                None,
+                cx,
+            )
+        })
+        .await;
+
+        project
+            .update(cx, |project, cx| {
+                project.create_worktree(tree.path().join("other-project"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            check(
+                TerminalToolInput {
+                    command: "pwd".into(),
+                    cd: "other-project".into(),
+                },
+                Some(format!(
+                    "```\n{}\n```",
+                    tree.path().join("other-project").display()
+                )),
+                cx,
+            )
+        })
+        .await;
+
+        cx.update(|cx| {
+            check(
+                TerminalToolInput {
+                    command: "pwd".into(),
+                    cd: ".".into(),
+                },
+                None,
+                cx,
+            )
+        })
+        .await;
     }
 }
