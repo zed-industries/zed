@@ -6,7 +6,7 @@ mod symbol_context_picker;
 mod thread_context_picker;
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -22,6 +22,7 @@ use gpui::{
 };
 use language::Buffer;
 use multi_buffer::MultiBufferRow;
+use paths::contexts_dir;
 use project::{Entry, ProjectPath};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_context_picker::{RulesContextEntry, RulesContextPicker};
@@ -447,7 +448,7 @@ impl ContextPicker {
 
     fn add_recent_thread(
         &self,
-        thread: ThreadContextEntry,
+        entry: ThreadContextEntry,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
@@ -462,15 +463,23 @@ impl ContextPicker {
             return Task::ready(Err(anyhow!("thread store not available")));
         };
 
-        let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&thread.id, cx));
-        cx.spawn(async move |this, cx| {
-            let thread = open_thread_task.await?;
-            context_store.update(cx, |context_store, cx| {
-                context_store.add_thread(thread, true, cx);
-            })?;
+        match entry {
+            ThreadContextEntry::Thread { id, .. } => {
+                let open_thread_task =
+                    thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
+                cx.spawn(async move |this, cx| {
+                    let thread = open_thread_task.await?;
+                    context_store.update(cx, |context_store, cx| {
+                        context_store.add_thread(thread, true, cx);
+                    })?;
 
-            this.update(cx, |_this, cx| cx.notify())
-        })
+                    this.update(cx, |_this, cx| cx.notify())
+                })
+            }
+            ThreadContextEntry::Context { path, title } => {
+                todo!()
+            }
+        }
     }
 
     fn recent_entries(&self, cx: &mut App) -> Vec<RecentEntry> {
@@ -615,6 +624,7 @@ fn recent_context_picker_entries(
         .map(|panel| panel.read(cx).active_thread(cx).read(cx).id());
 
     if let Some(thread_store) = thread_store.and_then(|thread_store| thread_store.upgrade()) {
+        // todo! Also include recent text threads?
         recent.extend(
             thread_store
                 .read(cx)
@@ -625,9 +635,9 @@ fn recent_context_picker_entries(
                 })
                 .take(2)
                 .map(|thread| {
-                    RecentEntry::Thread(ThreadContextEntry {
+                    RecentEntry::Thread(ThreadContextEntry::Thread {
                         id: thread.id,
-                        summary: thread.summary,
+                        title: thread.summary,
                     })
                 }),
         );
@@ -827,6 +837,7 @@ pub enum MentionLink {
     Selection(ProjectPath, Range<usize>),
     Fetch(String),
     Thread(ThreadId),
+    TextThread(Arc<Path>),
     Rule(UserPromptId),
 }
 
@@ -837,6 +848,8 @@ impl MentionLink {
     const THREAD: &str = "@thread";
     const FETCH: &str = "@fetch";
     const RULE: &str = "@rule";
+
+    const TEXT_THREAD_URL_PREFIX: &str = "text-thread://";
 
     const SEPARATOR: &str = ":";
 
@@ -877,7 +890,22 @@ impl MentionLink {
     }
 
     pub fn for_thread(thread: &ThreadContextEntry) -> String {
-        format!("[@{}]({}:{})", thread.summary, Self::THREAD, thread.id)
+        match thread {
+            ThreadContextEntry::Thread { id, title } => {
+                format!("[@{}]({}:{})", title, Self::THREAD, id)
+            }
+            ThreadContextEntry::Context { path, title } => {
+                let filename = path.file_name().unwrap_or_default();
+                let escaped_filename = urlencoding::encode(&filename.to_string_lossy()).to_string();
+                format!(
+                    "[@{}]({}:{}{})",
+                    title,
+                    Self::THREAD,
+                    Self::TEXT_THREAD_URL_PREFIX,
+                    escaped_filename
+                )
+            }
+        }
     }
 
     pub fn for_fetch(url: &str) -> String {
@@ -939,8 +967,15 @@ impl MentionLink {
                 Some(MentionLink::Selection(project_path, line_range))
             }
             Self::THREAD => {
-                let thread_id = ThreadId::from(argument);
-                Some(MentionLink::Thread(thread_id))
+                if let Some(encoded_filename) = argument.strip_prefix(Self::TEXT_THREAD_URL_PREFIX)
+                {
+                    let filename = urlencoding::decode(encoded_filename).ok()?;
+                    let path = contexts_dir().join(filename.as_ref()).into();
+                    Some(MentionLink::TextThread(path))
+                } else {
+                    let thread_id = ThreadId::from(argument);
+                    Some(MentionLink::Thread(thread_id))
+                }
             }
             Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
             Self::RULE => {

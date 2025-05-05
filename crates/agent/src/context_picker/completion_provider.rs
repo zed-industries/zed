@@ -411,38 +411,43 @@ impl ContextPickerCompletionProvider {
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(thread_entry.summary.to_string(), None),
+            label: CodeLabel::plain(thread_entry.title().to_string(), None),
             documentation: None,
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
                 IconName::MessageBubbles.path().into(),
-                thread_entry.summary.clone(),
+                thread_entry.title().clone(),
                 excerpt_id,
                 source_range.start,
                 new_text_len,
                 editor.clone(),
                 context_store.clone(),
-                move |cx| {
-                    let thread_id = thread_entry.id.clone();
-                    let context_store = context_store.clone();
-                    let thread_store = thread_store.clone();
-                    cx.spawn::<_, Option<_>>(async move |cx| {
-                        let thread: Entity<Thread> = thread_store
-                            .update(cx, |thread_store, cx| {
-                                thread_store.open_thread(&thread_id, cx)
-                            })
-                            .ok()?
-                            .await
-                            .log_err()?;
-                        let context = context_store
-                            .update(cx, |context_store, cx| {
-                                context_store.add_thread(thread, false, cx)
-                            })
-                            .ok()??;
-                        Some(context)
-                    })
+                move |cx| match &thread_entry {
+                    ThreadContextEntry::Thread { id, .. } => {
+                        let thread_id = id.clone();
+                        let context_store = context_store.clone();
+                        let thread_store = thread_store.clone();
+                        cx.spawn::<_, Option<_>>(async move |cx| {
+                            let thread: Entity<Thread> = thread_store
+                                .update(cx, |thread_store, cx| {
+                                    thread_store.open_thread(&thread_id, cx)
+                                })
+                                .ok()?
+                                .await
+                                .log_err()?;
+                            let context = context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store.add_thread(thread, false, cx)
+                                })
+                                .ok()??;
+                            Some(context)
+                        })
+                    }
+                    ThreadContextEntry::Context { path, title } => {
+                        todo!()
+                    }
                 },
             )),
         }

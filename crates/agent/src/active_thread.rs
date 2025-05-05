@@ -719,6 +719,13 @@ fn open_markdown_link(
                 });
             }
         }),
+        Some(MentionLink::TextThread(path)) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    todo!();
+                });
+            }
+        }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
         Some(MentionLink::Rule(prompt_id)) => window.dispatch_action(
             Box::new(OpenRulesLibrary {

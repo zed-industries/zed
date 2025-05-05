@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -44,9 +45,24 @@ impl Render for ThreadContextPicker {
 }
 
 #[derive(Debug, Clone)]
-pub struct ThreadContextEntry {
-    pub id: ThreadId,
-    pub summary: SharedString,
+pub enum ThreadContextEntry {
+    Thread {
+        id: ThreadId,
+        title: SharedString,
+    },
+    Context {
+        path: Arc<Path>,
+        title: SharedString,
+    },
+}
+
+impl ThreadContextEntry {
+    pub fn title(&self) -> &SharedString {
+        match self {
+            Self::Thread { title, .. } => title,
+            Self::Context { title, .. } => title,
+        }
+    }
 }
 
 pub struct ThreadContextPickerDelegate {
@@ -128,20 +144,28 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             return;
         };
 
-        let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&entry.id, cx));
+        match entry {
+            ThreadContextEntry::Thread { id, .. } => {
+                let open_thread_task =
+                    thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
 
-        cx.spawn(async move |this, cx| {
-            let thread = open_thread_task.await?;
-            this.update(cx, |this, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.add_thread(thread, true, cx)
+                cx.spawn(async move |this, cx| {
+                    let thread = open_thread_task.await?;
+                    this.update(cx, |this, cx| {
+                        this.delegate
+                            .context_store
+                            .update(cx, |context_store, cx| {
+                                context_store.add_thread(thread, true, cx)
+                            })
+                            .ok();
                     })
-                    .ok();
-            })
-        })
-        .detach_and_log_err(cx);
+                })
+                .detach_and_log_err(cx);
+            }
+            ThreadContextEntry::Context { path, title } => {
+                todo!()
+            }
+        }
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -168,13 +192,18 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 }
 
 pub fn render_thread_context_entry(
-    thread: &ThreadContextEntry,
+    entry: &ThreadContextEntry,
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
 ) -> Div {
-    let added = context_store.upgrade().map_or(false, |ctx_store| {
-        ctx_store.read(cx).includes_thread(&thread.id)
-    });
+    let is_added = match entry {
+        ThreadContextEntry::Thread { id, .. } => context_store
+            .upgrade()
+            .map_or(false, |ctx_store| ctx_store.read(cx).includes_thread(&id)),
+        ThreadContextEntry::Context { path, title } => {
+            todo!();
+        }
+    };
 
     h_flex()
         .gap_1p5()
@@ -189,9 +218,9 @@ pub fn render_thread_context_entry(
                         .size(IconSize::XSmall)
                         .color(Color::Muted),
                 )
-                .child(Label::new(thread.summary.clone()).truncate()),
+                .child(Label::new(entry.title().clone()).truncate()),
         )
-        .when(added, |el| {
+        .when(is_added, |el| {
             el.child(
                 h_flex()
                     .gap_1()
@@ -221,9 +250,9 @@ pub(crate) fn search_threads(
         .read(cx)
         .reverse_chronological_threads()
         .into_iter()
-        .map(|thread| ThreadContextEntry {
+        .map(|thread| ThreadContextEntry::Thread {
             id: thread.id,
-            summary: thread.summary,
+            title: thread.summary,
         })
         .collect::<Vec<_>>();
 
@@ -241,7 +270,7 @@ pub(crate) fn search_threads(
             let candidates = threads
                 .iter()
                 .enumerate()
-                .map(|(id, thread)| StringMatchCandidate::new(id, &thread.summary))
+                .map(|(id, thread)| StringMatchCandidate::new(id, &thread.title()))
                 .collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
                 &candidates,
