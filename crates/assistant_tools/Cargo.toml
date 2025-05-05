@@ -56,6 +56,7 @@ web_search.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
+theme.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
