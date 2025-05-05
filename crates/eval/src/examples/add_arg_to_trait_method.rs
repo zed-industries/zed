@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion, LanguageServer};
@@ -19,6 +20,7 @@ impl Example for AddArgToTraitMethod {
                 allow_preexisting_diagnostics: false,
             }),
             max_assertions: None,
+            profile_id: AgentProfileId::default(),
         }
     }
 

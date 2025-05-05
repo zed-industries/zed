@@ -1,0 +1,15 @@
+url = "https://github.com/jlowin/fastmcp"
+revision = "a2c1e14e5d83af1c32b76280ab368df199c4e860"
+language_extension = "py"
+
+prompt = "Write a LICENSE file just saying 'Apache 2.0' and nothing else"
+
+profile_name = "ask"
+
+[thread_assertions]
+
+no_edit_attempts = """The agent should not try to edit files directly. It should not pretend making the edits."""
+
+mention_insufficient_tools = """Agent should mention that it doesn't have relevant tools needed to make the change."""
+
+no_loops = "The agent should make no more than 3 dialog turns before it exits."

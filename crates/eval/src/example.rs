@@ -12,6 +12,7 @@ use crate::{
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
 use anyhow::{Result, anyhow};
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
@@ -46,6 +47,7 @@ pub struct ExampleMetadata {
     pub revision: String,
     pub language_server: Option<LanguageServer>,
     pub max_assertions: Option<usize>,
+    pub profile_id: AgentProfileId,
 }
 
 #[derive(Clone, Debug)]
