@@ -1637,6 +1637,16 @@ impl Project {
         })
     }
 
+    pub fn directory_environment<'a>(
+        &self,
+        abs_path: Arc<Path>,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_directory_environment(abs_path, cx)
+        })
+    }
+
     pub fn shell_environment_errors<'a>(
         &'a self,
         cx: &'a App,
