@@ -910,7 +910,7 @@ impl RunningState {
                     .await;
 
                 let Some((adapter_name, pane_layout)) = this
-                    .update(cx, |this, cx| {
+                    .read_with(cx, |this, cx| {
                         let adapter_name = this.session.read(cx).adapter_name();
                         (
                             adapter_name,
@@ -1050,6 +1050,11 @@ impl RunningState {
     #[cfg(test)]
     pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
+    }
+
+    #[cfg(test)]
+    pub(crate) fn serialized_layout(&self, cx: &App) -> SerializedLayout {
+        persistence::build_serialized_layout(&self.panes.root, self.dock_axis, cx)
     }
 
     pub fn capabilities(&self, cx: &App) -> Capabilities {

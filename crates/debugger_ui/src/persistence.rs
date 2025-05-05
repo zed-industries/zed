@@ -74,20 +74,17 @@ pub(crate) struct SerializedLayout {
     pub(crate) dock_axis: Axis,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct SerializedAxis(pub Axis);
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) enum SerializedPaneLayout {
     Pane(SerializedPane),
     Group {
-        axis: SerializedAxis,
+        axis: Axis,
         flexes: Option<Vec<f32>>,
         children: Vec<SerializedPaneLayout>,
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct SerializedPane {
     pub children: Vec<DebuggerPaneItem>,
     pub active_item: Option<DebuggerPaneItem>,
@@ -116,7 +113,7 @@ pub(crate) async fn serialize_pane_layout(
 pub(crate) fn build_serialized_layout(
     pane_group: &Member,
     dock_axis: Axis,
-    cx: &mut App,
+    cx: &App,
 ) -> SerializedLayout {
     SerializedLayout {
         dock_axis,
@@ -124,10 +121,7 @@ pub(crate) fn build_serialized_layout(
     }
 }
 
-pub(crate) fn build_serialized_pane_layout(
-    pane_group: &Member,
-    cx: &mut App,
-) -> SerializedPaneLayout {
+pub(crate) fn build_serialized_pane_layout(pane_group: &Member, cx: &App) -> SerializedPaneLayout {
     match pane_group {
         Member::Axis(PaneAxis {
             axis,
@@ -135,7 +129,7 @@ pub(crate) fn build_serialized_pane_layout(
             flexes,
             bounding_boxes: _,
         }) => SerializedPaneLayout::Group {
-            axis: SerializedAxis(*axis),
+            axis: *axis,
             children: members
                 .iter()
                 .map(|member| build_serialized_pane_layout(member, cx))
@@ -146,7 +140,7 @@ pub(crate) fn build_serialized_pane_layout(
     }
 }
 
-fn serialize_pane(pane: &Entity<Pane>, cx: &mut App) -> SerializedPane {
+fn serialize_pane(pane: &Entity<Pane>, cx: &App) -> SerializedPane {
     let pane = pane.read(cx);
     let children = pane
         .items()
@@ -232,11 +226,7 @@ pub(crate) fn deserialize_pane_layout(
             }
 
             Some(Member::Axis(PaneAxis::load(
-                if should_invert {
-                    axis.0.invert()
-                } else {
-                    axis.0
-                },
+                if should_invert { axis.invert() } else { axis },
                 members,
                 flexes.clone(),
             )))
@@ -327,6 +317,31 @@ pub(crate) fn deserialize_pane_layout(
             });
 
             Some(Member::Pane(pane.clone()))
+        }
+    }
+}
+
+#[cfg(test)]
+impl SerializedPaneLayout {
+    pub(crate) fn in_order(&self) -> Vec<SerializedPaneLayout> {
+        let mut panes = vec![];
+
+        Self::inner_in_order(&self, &mut panes);
+        panes
+    }
+
+    fn inner_in_order(&self, panes: &mut Vec<SerializedPaneLayout>) {
+        match self {
+            SerializedPaneLayout::Pane(_) => panes.push((*self).clone()),
+            SerializedPaneLayout::Group {
+                axis: _,
+                flexes: _,
+                children,
+            } => {
+                for child in children {
+                    child.inner_in_order(panes);
+                }
+            }
         }
     }
 }
