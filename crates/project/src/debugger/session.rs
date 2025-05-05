@@ -342,7 +342,8 @@ impl LocalMode {
         let worktree = self.worktree().clone();
         let configuration_sequence = cx.spawn({
             async move |cx| {
-                let breakpoint_store = dap_store.update(cx, |dap_store, _| {dap_store.breakpoint_store().clone()})?;
+                let breakpoint_store =
+                    dap_store.update(cx, |dap_store, _| dap_store.breakpoint_store().clone())?;
                 initialized_rx.await?;
                 let errors_by_path = cx
                     .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
