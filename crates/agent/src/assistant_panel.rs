@@ -54,8 +54,8 @@ use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
-    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
-    InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
+    Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
     OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
@@ -315,6 +315,7 @@ pub struct AssistantPanel {
     _default_model_subscription: Subscription,
     context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    inline_assist_context_store: Entity<crate::context_store::ContextStore>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -433,6 +434,12 @@ impl AssistantPanel {
         let weak_self = cx.entity().downgrade();
 
         let message_editor_context_store = cx.new(|_cx| {
+            crate::context_store::ContextStore::new(
+                project.downgrade(),
+                Some(thread_store.downgrade()),
+            )
+        });
+        let inline_assist_context_store = cx.new(|_cx| {
             crate::context_store::ContextStore::new(
                 project.downgrade(),
                 Some(thread_store.downgrade()),
@@ -640,6 +647,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
+            inline_assist_context_store,
             previous_view: None,
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
@@ -672,6 +680,12 @@ impl AssistantPanel {
 
     pub(crate) fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
         &self.prompt_store
+    }
+
+    pub(crate) fn inline_assist_context_store(
+        &self,
+    ) -> &Entity<crate::context_store::ContextStore> {
+        &self.inline_assist_context_store
     }
 
     pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
@@ -2436,9 +2450,11 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let prompt_store = None;
             let thread_store = None;
             let text_thread_store = None;
+            let context_store = cx.new(|_| ContextStore::new(project.clone(), None));
             assistant.assist(
                 &prompt_editor,
                 self.workspace.clone(),
+                context_store,
                 project,
                 prompt_store,
                 thread_store,
