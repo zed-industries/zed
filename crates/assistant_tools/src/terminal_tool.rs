@@ -47,7 +47,7 @@ impl TerminalTool {
     pub(crate) fn new(cx: &mut App) -> Self {
         let determine_shell = cx.background_spawn(async move {
             if cfg!(windows) {
-                return get_system_shell().into();
+                return get_system_shell();
             }
 
             let status = new_std_command("which")

@@ -1637,7 +1637,7 @@ impl Project {
         })
     }
 
-    pub fn directory_environment<'a>(
+    pub fn directory_environment(
         &self,
         abs_path: Arc<Path>,
         cx: &mut App,
