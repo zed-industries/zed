@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use assistant_context_editor::SavedContextMetadata;
-use chrono::{TimeDelta, Utc};
+use chrono::{Datelike as _, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -144,7 +144,7 @@ impl ThreadHistory {
 
             for (index, entry) in all_entries.iter().enumerate() {
                 let entry_date = entry.updated_at().naive_local().date();
-                let entry_bucket = TimeBucket::from(today - entry_date);
+                let entry_bucket = TimeBucket::from_dates(today, entry_date);
 
                 if Some(entry_bucket) != bucket {
                     bucket = Some(entry_bucket);
@@ -811,8 +811,8 @@ impl From<TimeBucket> for EntryTimeFormat {
         match bucket {
             TimeBucket::Today => EntryTimeFormat::TimeOnly,
             TimeBucket::Yesterday => EntryTimeFormat::TimeOnly,
-            TimeBucket::LastWeek => EntryTimeFormat::DateAndTime,
-            TimeBucket::LastMonth => EntryTimeFormat::DateAndTime,
+            TimeBucket::ThisWeek => EntryTimeFormat::DateAndTime,
+            TimeBucket::PastWeek => EntryTimeFormat::DateAndTime,
             TimeBucket::All => EntryTimeFormat::DateAndTime,
         }
     }
@@ -822,24 +822,41 @@ impl From<TimeBucket> for EntryTimeFormat {
 enum TimeBucket {
     Today,
     Yesterday,
-    LastWeek,
-    LastMonth,
+    ThisWeek,
+    PastWeek,
     All,
 }
 
-impl From<TimeDelta> for TimeBucket {
-    fn from(delta: TimeDelta) -> Self {
-        if delta < TimeDelta::days(1) {
-            Self::Today
-        } else if delta < TimeDelta::days(2) {
-            Self::Yesterday
-        } else if delta < TimeDelta::days(7) {
-            Self::LastWeek
-        } else if delta < TimeDelta::days(30) {
-            Self::LastMonth
-        } else {
-            Self::All
+impl TimeBucket {
+    fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
+        dbg!(
+            reference,
+            date,
+            date.iso_week(),
+            (reference - TimeDelta::days(7)).iso_week()
+        );
+
+        if date == reference {
+            return TimeBucket::Today;
         }
+
+        if date == reference - TimeDelta::days(1) {
+            return TimeBucket::Yesterday;
+        }
+
+        let week = date.iso_week();
+
+        if reference.iso_week() == week {
+            return TimeBucket::ThisWeek;
+        }
+
+        let last_week = (reference - TimeDelta::days(7)).iso_week();
+
+        if week == last_week {
+            return TimeBucket::PastWeek;
+        }
+
+        TimeBucket::All
     }
 }
 
@@ -848,8 +865,8 @@ impl Display for TimeBucket {
         match self {
             TimeBucket::Today => write!(f, "Today"),
             TimeBucket::Yesterday => write!(f, "Yesterday"),
-            TimeBucket::LastWeek => write!(f, "Last Week"),
-            TimeBucket::LastMonth => write!(f, "Last Month"),
+            TimeBucket::ThisWeek => write!(f, "This Week"),
+            TimeBucket::PastWeek => write!(f, "Past Week"),
             TimeBucket::All => write!(f, "All"),
         }
     }
@@ -861,47 +878,41 @@ mod tests {
     use chrono::NaiveDate;
 
     #[test]
-    fn test_time_bucket_from_time_delta() {
+    fn test_time_bucket_from_dates() {
         let today = NaiveDate::from_ymd_opt(2023, 1, 15).unwrap();
 
-        // Today: 0 days
-        let same_day = today;
-        let delta = today - same_day;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::Today);
+        let date = today;
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Today);
 
-        // Yesterday: 1 day
-        let yesterday = NaiveDate::from_ymd_opt(2023, 1, 14).unwrap();
-        let delta = today - yesterday;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::Yesterday);
+        let date = NaiveDate::from_ymd_opt(2023, 1, 14).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::Yesterday);
 
-        // LastWeek: 2 days
-        let two_days_ago = NaiveDate::from_ymd_opt(2023, 1, 13).unwrap();
-        let delta = today - two_days_ago;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::LastWeek);
+        let date = NaiveDate::from_ymd_opt(2023, 1, 13).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
 
-        // LastWeek: 6 days (just below 7)
-        let six_days_ago = NaiveDate::from_ymd_opt(2023, 1, 9).unwrap();
-        let delta = today - six_days_ago;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::LastWeek);
+        let date = NaiveDate::from_ymd_opt(2023, 1, 11).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::ThisWeek);
 
-        // LastMonth: 7 days
-        let seven_days_ago = NaiveDate::from_ymd_opt(2023, 1, 8).unwrap();
-        let delta = today - seven_days_ago;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::LastMonth);
+        let date = NaiveDate::from_ymd_opt(2023, 1, 8).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
 
-        // LastMonth: 29 days (just below 30)
-        let twenty_nine_days_ago = NaiveDate::from_ymd_opt(2022, 12, 17).unwrap();
-        let delta = today - twenty_nine_days_ago;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::LastMonth);
+        let date = NaiveDate::from_ymd_opt(2023, 1, 5).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::PastWeek);
 
-        // All: 30 days
-        let thirty_days_ago = NaiveDate::from_ymd_opt(2022, 12, 16).unwrap();
-        let delta = today - thirty_days_ago;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::All);
+        // All: not in this week or last week
+        let date = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
+        assert_eq!(TimeBucket::from_dates(today, date), TimeBucket::All);
 
-        // All: more than 30 days (e.g., 60 days)
-        let sixty_days_ago = NaiveDate::from_ymd_opt(2022, 11, 16).unwrap();
-        let delta = today - sixty_days_ago;
-        assert_eq!(TimeBucket::from(delta), TimeBucket::All);
+        // Test year boundary cases
+        let new_year = NaiveDate::from_ymd_opt(2023, 1, 1).unwrap();
+
+        let date = NaiveDate::from_ymd_opt(2022, 12, 31).unwrap();
+        assert_eq!(
+            TimeBucket::from_dates(new_year, date),
+            TimeBucket::Yesterday
+        );
+
+        let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
+        assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::PastWeek);
     }
 }
