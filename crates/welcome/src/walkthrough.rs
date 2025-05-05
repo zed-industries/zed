@@ -6,14 +6,17 @@ use gpui::{
     ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
 use persistence::WALKTHROUGH_DB;
+use settings::Settings;
 use settings::SettingsStore;
 use std::collections::BTreeMap;
 use std::convert::identity;
+use std::path::PathBuf;
 use std::sync::Arc;
 use theme::ThemeRegistry;
 use theme::ThemeSettings;
-use ui::Checkbox;
+use ui::CheckboxWithLabel;
 use ui::prelude::*;
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::{Item, ItemEvent},
@@ -21,8 +24,9 @@ use workspace::{
 };
 use zed_actions::{ExtensionCategoryFilter, Extensions, OpenKeymap, OpenSettings};
 
-use crate::welcome_ui::theme_preview::ThemePreviewTile;
-use crate::welcome_ui::transparent_tabs::TransparentTabs;
+use crate::BaseKeymap;
+use crate::recent_projects;
+use crate::welcome_ui::{theme_preview::ThemePreviewTile, transparent_tabs::TransparentTabs};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
@@ -37,8 +41,8 @@ pub fn init(cx: &mut App) {
 }
 
 enum WalkthroughStep {
-    ThemeStep { tab_selection: Entity<usize> },
-    SettingsStep,
+    Theme { tab_selection: Entity<usize> },
+    Settings,
     AiIntegrations,
     DataSharing,
     OpenProject { tab_selection: Entity<usize> },
@@ -52,11 +56,12 @@ pub struct Walkthrough {
     _telemetry: Arc<Telemetry>,
     list: ListState,
     steps: Vec<WalkthroughStep>,
+    recent_projects: BTreeMap<&'static str, Vec<String>>,
     _settings_subscription: Subscription,
 }
 
 impl Walkthrough {
-    pub fn checkbox_section(
+    pub fn section_button(
         &mut self,
         ix: usize,
         title: &'static str,
@@ -94,24 +99,59 @@ impl Walkthrough {
 
     pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         let this = cx.new(|cx| {
-            let this = cx.weak_entity();
+            let fs = workspace.app_state().fs.clone();
 
             let steps = vec![
-                WalkthroughStep::ThemeStep {
+                WalkthroughStep::Theme {
                     tab_selection: cx.new(|_| 0),
                 },
-                WalkthroughStep::SettingsStep,
+                WalkthroughStep::Settings,
                 WalkthroughStep::AiIntegrations,
                 WalkthroughStep::DataSharing,
                 WalkthroughStep::OpenProject {
                     tab_selection: cx.new(|_| 0),
                 },
             ];
+            cx.spawn({
+                let fs = fs.clone();
+                async move |this: WeakEntity<Self>, cx| {
+                    let mut recents: BTreeMap<&str, Vec<String>> = BTreeMap::default();
+                    if let Some(projects) = recent_projects::get_vscode_projects(fs.clone()).await {
+                        if !projects.is_empty() {
+                            recents.insert(
+                                "vscode",
+                                projects
+                                    .into_iter()
+                                    .map(|p: PathBuf| p.to_string_lossy().to_string())
+                                    .collect(),
+                            );
+                        }
+                    }
+                    if let Some(projects) = recent_projects::get_neovim_projects(fs).await {
+                        if !projects.is_empty() {
+                            recents.insert(
+                                "neovim",
+                                projects
+                                    .into_iter()
+                                    .map(|p: PathBuf| p.to_string_lossy().to_string())
+                                    .collect(),
+                            );
+                        }
+                    }
+
+                    this.update(cx, |this, cx| {
+                        this.recent_projects = recents;
+                    })
+                }
+            })
+            .detach();
+
             let steps_len = steps.len();
+            let this = cx.weak_entity();
             Walkthrough {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
-                fs: workspace.app_state().fs.clone(),
+                fs,
                 _telemetry: workspace.client().telemetry().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_: &mut Walkthrough, cx| cx.notify()),
@@ -121,10 +161,11 @@ impl Walkthrough {
                     gpui::ListAlignment::Top,
                     px(1000.),
                     move |ix, _window, cx| {
-                        this.update(cx, |this, cx| this.render_checkbox(ix, cx))
+                        this.update(cx, |this, cx| this.render_section_button(ix, cx))
                             .unwrap_or_else(|_| div().into_any())
                     },
                 ),
+                recent_projects: BTreeMap::default(),
                 active_step: 0,
             }
         });
@@ -139,10 +180,10 @@ impl Walkthrough {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match &self.steps[ix] {
-            WalkthroughStep::ThemeStep { tab_selection } => {
+            WalkthroughStep::Theme { tab_selection } => {
                 self.render_theme_step(tab_selection, window, cx)
             }
-            WalkthroughStep::SettingsStep => self.render_settings_step(window, cx),
+            WalkthroughStep::Settings => self.render_settings_step(window, cx),
             WalkthroughStep::AiIntegrations => self.render_ai_integrations_step(window, cx),
             WalkthroughStep::DataSharing => self.render_data_sharing_step(window, cx),
             WalkthroughStep::OpenProject { tab_selection } => {
@@ -151,34 +192,34 @@ impl Walkthrough {
         }
     }
 
-    fn render_checkbox(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_section_button(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match &self.steps[ix] {
-            WalkthroughStep::ThemeStep { .. } => self.checkbox_section(
+            WalkthroughStep::Theme { .. } => self.section_button(
                 ix,
                 "Pick a Theme",
                 "Select one of our built-in themes, or download one from the extensions page",
                 cx,
             ),
-            WalkthroughStep::SettingsStep => self.checkbox_section(
+            WalkthroughStep::Settings => self.section_button(
                 ix,
                 "Configure Zed",
                 "Set initial settings and/or import from other editors",
                 cx,
             ),
-            WalkthroughStep::AiIntegrations => self.checkbox_section(
+            WalkthroughStep::AiIntegrations => self.section_button(
                 ix,
                 "AI Setup",
                 "Log in and pick providers for agentic editing and edit predictions",
                 cx,
             ),
-            WalkthroughStep::DataSharing => self.checkbox_section(
+            WalkthroughStep::DataSharing => self.section_button(
                 ix,
                 "Data Sharing",
                 "Pick which data you send to the zed team",
                 cx,
             ),
 
-            WalkthroughStep::OpenProject { .. } => self.checkbox_section(
+            WalkthroughStep::OpenProject { .. } => self.section_button(
                 ix,
                 "Open a Project",
                 "Pick a recent project you had open in another editor",
@@ -196,11 +237,31 @@ impl Walkthrough {
             .items_center()
             .justify_center()
             .children([
-                "Send Crash Reports",
-                "Send Telemetry",
-                "---",
-                "Help Improve completions",
-                "Rate agentic edits",
+                CheckboxWithLabel::new(
+                    "crashes",
+                    Label::new("Send Crash Reports"),
+                    true.into(),
+                    |_, _, _| todo!(),
+                ),
+                CheckboxWithLabel::new(
+                    "telemetry",
+                    Label::new("Send Telemetry"),
+                    true.into(),
+                    |_, _, _| todo!(),
+                ),
+                // "---", // TODO: line break?
+                CheckboxWithLabel::new(
+                    "predictions",
+                    Label::new("Help Improve Edit Predictions"),
+                    false.into(),
+                    |_, _, _| todo!(),
+                ),
+                CheckboxWithLabel::new(
+                    "agent",
+                    Label::new("Rate Agentic Edits"),
+                    false.into(),
+                    |_, _, _| todo!(),
+                ),
                 // TODO: add note about how zed never shares your code/data by default
             ])
             .into_any()
@@ -211,34 +272,68 @@ impl Walkthrough {
         window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
+        let fs = self.fs.clone();
         v_flex()
             .items_center()
             .justify_center()
             .child(
                 h_flex().children(
-                    [
-                        "VS Code",
-                        "Atom",
-                        "Sublime",
-                        "Jetbrains",
-                        "Text Mate",
-                        "Emacs (beta)",
-                    ]
+                    {
+                        use BaseKeymap::*;
+                        [VSCode, Atom, SublimeText, JetBrains, TextMate, Emacs]
+                    }
                     .into_iter()
                     .enumerate()
                     .map(|(i, name)| {
-                        Button::new(i, name)
+                        let fs = fs.clone();
+                        Button::new(i, {
+                            let s = name.to_string();
+                            s.strip_suffix(" (beta)")
+                                .map(ToOwned::to_owned)
+                                .unwrap_or(s)
+                        })
+                        .on_click(move |_event, _window, cx| {
+                            telemetry::event!(
+                                "Settings Changed",
+                                setting = "keymap",
+                                value = &name
+                            );
+                            settings::update_settings_file::<BaseKeymap>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| *settings = Some(name),
+                            );
+                        })
+                        .toggle_state(name == *BaseKeymap::get_global(cx))
                         // TODO: styling from transparent_tabs and on-click from theme previews
                     }),
                 ),
             )
+            .child(CheckboxWithLabel::new(
+                "vim-mode",
+                Label::new("Vim mode?"),
+                VimModeSetting::get_global(cx).0.into(),
+                move |state, _, cx| {
+                    let fs = fs.clone();
+                    let enabled = *state == ToggleState::Selected;
+                    telemetry::event!("Settings Changed", setting = "vim mode", value = enabled);
+                    settings::update_settings_file::<VimModeSetting>(
+                        fs.clone(),
+                        cx,
+                        move |settings, _| *settings = Some(enabled),
+                    );
+                },
+            ))
             .child(
-                Checkbox::new("vim-mode", false.into()) // TODO: current setting
-                    .on_click(|state, _, _| {
-                        // TODO: set setting
-                    }),
+                Button::new("extensions", "Browse extensions").on_click(|_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(Extensions {
+                            category_filter: None,
+                        }),
+                        cx,
+                    )
+                }),
             )
-            .child(Button::new("extensions", "Browse extensions"))
             .when(cfg!(macos), |this| {
                 this.child(
                     h_flex()
@@ -391,30 +486,26 @@ impl Walkthrough {
         _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        // let mut recents = BTreeMap::new();
-        // let fs = todo!();
-        // if let Some(projects) = recent_projects::get_vscode_projects(fs).await {
-        //     if !projects.is_empty() {
-        //         recents.insert("vscode", projects);
-        //     }
-        // }
-        // if let Some(projects) = recent_projects::get_neovim_projects(fs).await {
-        //     if !projects.is_empty() {
-        //         recents.insert("neovim", projects);
-        //     }
-        // }
-        // let project_list = |projects| div();
-        // if !recents.is_empty() {
-        //     let mut tabs = TransparentTabs::new(tab_selection.clone());
-        //     for (name, projects) in recents.into_iter() {
-        //         tabs = tabs.tab(name, |_, _| project_list(projects))
-        //     }
-        //     tabs.into_any_element()
-        // } else {
-        //     "No Recent projects found".into_any()
-        // }
+        dbg!(&self.recent_projects);
+        if !self.recent_projects.is_empty() {
+            let mut tabs = TransparentTabs::new(tab_selection.clone());
+            for (name, projects) in &self.recent_projects {
+                let projects = projects.clone(); // TODO: is this needed?
+                tabs = tabs.tab(name.to_owned(), move |_, _| {
+                    v_flex().children(projects.iter().enumerate().map(|(i, path)| {
+                        Button::new(
+                            i,
+                            // path.replace(String::from_utf8_lossy(paths::home_dir()), "~"),
+                            path,
+                        )
+                    }))
+                })
+            }
+            tabs.into_any_element()
+        } else {
+            "No Recent projects found".into_any()
+        }
         // TODO: add "open project", "connect to remote host", and "new file" buttons
-        "".into_any()
     }
 }
 
