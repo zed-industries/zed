@@ -466,6 +466,7 @@ impl AssistantPanel {
                 thread_store.downgrade(),
                 context_store.downgrade(),
                 thread.clone(),
+                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -795,6 +796,7 @@ impl AssistantPanel {
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
                 thread,
+                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1003,6 +1005,7 @@ impl AssistantPanel {
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
                 thread,
+                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1330,6 +1333,14 @@ impl Focusable for AssistantPanel {
     }
 }
 
+fn agent_panel_dock_position(cx: &App) -> DockPosition {
+    match AssistantSettings::get_global(cx).dock {
+        AssistantDockPosition::Left => DockPosition::Left,
+        AssistantDockPosition::Bottom => DockPosition::Bottom,
+        AssistantDockPosition::Right => DockPosition::Right,
+    }
+}
+
 impl EventEmitter<PanelEvent> for AssistantPanel {}
 
 impl Panel for AssistantPanel {
@@ -1338,18 +1349,18 @@ impl Panel for AssistantPanel {
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
-        match AssistantSettings::get_global(cx).dock {
-            AssistantDockPosition::Left => DockPosition::Left,
-            AssistantDockPosition::Bottom => DockPosition::Bottom,
-            AssistantDockPosition::Right => DockPosition::Right,
-        }
+        agent_panel_dock_position(cx)
     }
 
-    fn position_is_valid(&self, _: DockPosition) -> bool {
-        true
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        position != DockPosition::Bottom
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.set_dock_position(position, cx);
+        });
+
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
             cx,

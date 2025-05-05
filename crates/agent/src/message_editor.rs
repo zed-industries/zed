@@ -35,8 +35,9 @@ use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Disclosure, DocumentationSide, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
+use workspace::dock::DockPosition;
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionMode;
 
@@ -130,6 +131,14 @@ pub(crate) fn create_editor(
     editor
 }
 
+fn documentation_side(position: DockPosition) -> DocumentationSide {
+    match position {
+        DockPosition::Left => DocumentationSide::Right,
+        DockPosition::Bottom => DocumentationSide::Left,
+        DockPosition::Right => DocumentationSide::Left,
+    }
+}
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -140,6 +149,7 @@ impl MessageEditor {
         thread_store: WeakEntity<ThreadStore>,
         text_thread_store: WeakEntity<TextThreadStore>,
         thread: Entity<Thread>,
+        dock_position: DockPosition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -213,8 +223,15 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector: cx.new(|cx| {
+                ProfileSelector::new(
+                    fs,
+                    thread_store,
+                    editor.focus_handle(cx),
+                    documentation_side(dock_position),
+                    cx,
+                )
+            }),
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -1253,6 +1270,12 @@ impl MessageEditor {
             .ok();
         }));
     }
+
+    pub fn set_dock_position(&mut self, position: DockPosition, cx: &mut Context<Self>) {
+        self.profile_selector.update(cx, |profile_selector, cx| {
+            profile_selector.set_documentation_side(documentation_side(position), cx)
+        });
+    }
 }
 
 pub fn extract_message_creases(
@@ -1426,6 +1449,7 @@ impl AgentPreview for MessageEditor {
                     thread_store.downgrade(),
                     text_thread_store.downgrade(),
                     thread,
+                    DockPosition::Left,
                     window,
                     cx,
                 )
