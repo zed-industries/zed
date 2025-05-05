@@ -1842,3 +1842,159 @@ fn test_sort_matches_for_python_init(_cx: &mut TestAppContext) {
         ]
     );
 }
+
+#[gpui::test]
+fn test_sort_matches_for_rust_into(_cx: &mut TestAppContext) {
+    // Case 1: "int"
+    let query: Option<&str> = Some("int");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 67,
+                score: 0.75,
+                positions: vec![],
+                string: "into".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000004"),
+            sort_key: (3, "into"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 68,
+                score: 0.30000000000000004,
+                positions: vec![],
+                string: "try_into".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000004"),
+            sort_key: (3, "try_into"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 108,
+                score: 0.2571428571428571,
+                positions: vec![],
+                string: "println".to_string(),
+            },
+            is_snippet: true,
+            sort_text: Some("80000004"),
+            sort_key: (3, "println"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 73,
+                score: 0.24,
+                positions: vec![],
+                string: "clone_into".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000004"),
+            sort_key: (3, "clone_into"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1,
+                score: 0.23076923076923078,
+                positions: vec![],
+                string: "into_searcher".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "into_searcher"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 109,
+                score: 0.22499999999999998,
+                positions: vec![],
+                string: "eprintln".to_string(),
+            },
+            is_snippet: true,
+            sort_text: Some("80000004"),
+            sort_key: (3, "eprintln"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches[0].string_match.string.as_str(),
+        "into",
+        "Match order not expected"
+    );
+    // Case 2: "into"
+    let query: Option<&str> = Some("into");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 65,
+                score: 1.0,
+                positions: vec![],
+                string: "into".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000004"),
+            sort_key: (3, "into"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 66,
+                score: 0.4,
+                positions: vec![],
+                string: "try_into".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000004"),
+            sort_key: (3, "try_into"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 71,
+                score: 0.32,
+                positions: vec![],
+                string: "clone_into".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000004"),
+            sort_key: (3, "clone_into"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 0,
+                score: 0.3076923076923077,
+                positions: vec![],
+                string: "into_searcher".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "into_searcher"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 27,
+                score: 0.09,
+                positions: vec![],
+                string: "split_terminator".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "split_terminator"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 28,
+                score: 0.08470588235294117,
+                positions: vec![],
+                string: "rsplit_terminator".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7fffffff"),
+            sort_key: (3, "rsplit_terminator"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches[0].string_match.string.as_str(),
+        "into",
+        "Match order not expected"
+    );
+}
