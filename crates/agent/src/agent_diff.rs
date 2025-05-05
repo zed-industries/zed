@@ -1366,7 +1366,6 @@ impl AgentDiff {
             }
             // intentionally being exhaustive in case we add a variant we should handle
             ThreadEvent::Stopped(Ok(StopReason::ToolUse))
-            | ThreadEvent::UsageUpdated(_)
             | ThreadEvent::StreamedCompletion
             | ThreadEvent::ReceivedTextChunk
             | ThreadEvent::StreamedAssistantText(_, _)

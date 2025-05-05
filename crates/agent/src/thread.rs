@@ -1545,7 +1545,6 @@ impl Thread {
                                             let usage = RequestUsage { limit, amount: amount as i32 };
 
                                             thread.last_usage = Some(usage);
-                                            cx.emit(ThreadEvent::UsageUpdated(usage));
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1714,11 +1713,11 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |_, cx| {
-                                cx.emit(ThreadEvent::UsageUpdated(RequestUsage {
+                            this.update(cx, |thread, _cx| {
+                                thread.last_usage = Some(RequestUsage {
                                     limit,
                                     amount: amount as i32,
-                                }));
+                                });
                             })?;
                             continue;
                         }
@@ -2565,7 +2564,6 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
-    UsageUpdated(RequestUsage),
     StreamedCompletion,
     ReceivedTextChunk,
     NewRequest,
