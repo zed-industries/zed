@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
@@ -34,6 +35,7 @@ use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
+use ui::utils::WithRemSize;
 use ui::{
     Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
     ProgressBar, Tab, Tooltip, prelude::*,
@@ -45,7 +47,7 @@ use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_llm_client::UsageLimit;
 
-use crate::active_thread::{ActiveThread, ActiveThreadEvent};
+use crate::active_thread::{ActiveThread, ActiveThreadEvent, default_markdown_style};
 use crate::agent_diff::AgentDiff;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
@@ -56,7 +58,8 @@ use crate::thread_store::ThreadStore;
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
     InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    OpenHistory, ResetTrialUpsell, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu,
+    ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -137,6 +140,9 @@ pub fn init(cx: &mut App) {
                             panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
                     }
+                })
+                .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
+                    set_trial_upsell_dismissed(false, cx);
                 });
         },
     )
@@ -329,6 +335,7 @@ pub struct AssistantPanel {
     height: Option<Pixels>,
     pending_serialization: Option<Task<Result<()>>>,
     hide_trial_upsell: bool,
+    trial_markdown: Entity<Markdown>,
 }
 
 impl AssistantPanel {
@@ -615,6 +622,15 @@ impl AssistantPanel {
             },
         );
 
+        let trial_markdown = cx.new(|cx| {
+            Markdown::new(
+                include_str!("trial_markdown.md").into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        });
+
         Self {
             active_view,
             workspace,
@@ -649,6 +665,7 @@ impl AssistantPanel {
             height: None,
             pending_serialization: None,
             hide_trial_upsell: false,
+            trial_markdown,
         }
     }
 
@@ -1716,36 +1733,46 @@ impl AssistantPanel {
         }
     }
 
-    fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
+    fn should_render_upsell(&self, _cx: &mut Context<Self>) -> bool {
         if self.hide_trial_upsell || dismissed_trial_upsell() {
             return false;
         }
 
-        let plan = self.user_store.read(cx).current_plan();
-        if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
-            return false;
-        }
+        // let plan = self.user_store.read(cx).current_plan();
+        // if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
+        //     return false;
+        // }
 
-        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
-        if has_previous_trial {
-            return false;
-        }
+        // let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
+        // if has_previous_trial {
+        //     return false;
+        // }
 
         true
     }
 
     fn render_trial_upsell(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         if !self.should_render_upsell(cx) {
             return None;
         }
 
+        let default_md_style = default_markdown_style(window, cx);
+
+        let mut text_style = default_md_style.base_text_style;
+        text_style.font_size = px(4.0).into();
+
+        let md_style = MarkdownStyle {
+            base_text_style: text_style,
+            ..default_markdown_style(window, cx)
+        };
+
         let checkbox = CheckboxWithLabel::new(
             "dont-show-again",
-            Label::new("Don't show again"),
+            Label::new("Don't show again").color(Color::Muted),
             ToggleState::Unselected,
             move |toggle_state, _window, cx| {
                 let toggle_state_bool = toggle_state.selected();
@@ -1755,62 +1782,57 @@ impl AssistantPanel {
         );
 
         Some(
-            v_flex()
-                .w_full()
-                .p_4()
-                .gap_3()
-                .bg(cx.theme().colors().surface_background)
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            Label::new("Try Zed Pro")
-                                .size(ui::LabelSize::Large)
-                                .weight(gpui::FontWeight::BOLD),
-                        )
-                        .child(Label::new("Get 150 prompts and unlimited edit predictions for 2 weeks, for free.").color(Color::Muted)),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .items_center()
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .gap_1()
-                                .child(
-                                    checkbox
-                                )
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("dismiss-button", "No Thanks")
-                                        .style(ButtonStyle::Subtle)
-                                        .on_click({
-                                            let assistant_panel = cx.entity();
-                                            move |_, _, cx| {
-                                                assistant_panel.update(cx, |this, cx| {
-                                                    this.hide_trial_upsell = true;
-                                                    cx.notify();
-                                                });
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    Button::new("cta-button", "Upgrade Now")
-                                        .style(ButtonStyle::Filled)
-                                        .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)),
-                                ),
-                        ),
+            div().p_4().child(
+                v_flex()
+                    .w_full()
+                    .elevation_2(cx)
+                    .bg(cx.theme().colors().background.alpha(0.5))
+                    .p_4()
+                    .gap_6()
+                    .child(
+                        WithRemSize::new(14.)
+                            .max_w(px(540.))
+                            .child(MarkdownElement::new(self.trial_markdown.clone(), md_style)),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px_neg_2()
+                            .justify_between()
+                            .items_center()
+                            .child(h_flex().items_center().gap_1().child(checkbox))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("dismiss-button", "No Thanks")
+                                            .style(ButtonStyle::Subtle)
+                                            .color(Color::Muted)
+                                            .on_click({
+                                                let assistant_panel = cx.entity();
+                                                move |_, _, cx| {
+                                                    assistant_panel.update(cx, |this, cx| {
+                                                        let hidden = this.hide_trial_upsell;
+                                                        println!("hidden: {}", hidden);
+                                                        this.hide_trial_upsell = true;
+                                                        let new_hidden = this.hide_trial_upsell;
+                                                        println!("new_hidden: {}", new_hidden);
 
-                ),
-            )
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("cta-button", "Upgrade Now")
+                                            .style(ButtonStyle::Filled)
+                                            .on_click(|_, _, cx| {
+                                                cx.open_url(&zed_urls::account_url(cx))
+                                            }),
+                                    ),
+                            ),
+                    ),
+            ),
         )
     }
 
@@ -1997,7 +2019,6 @@ impl AssistantPanel {
                         })
                 )
             })
-            .children(self.render_trial_upsell(window, cx))
             .when(!recent_history.is_empty(), |parent| {
                 let focus_handle = focus_handle.clone();
                 let configuration_error_ref = &configuration_error;
@@ -2428,6 +2449,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::toggle_navigation_menu))
             .on_action(cx.listener(Self::toggle_options_menu))
             .child(self.render_toolbar(window, cx))
+            .children(self.render_trial_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))

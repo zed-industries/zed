@@ -175,7 +175,7 @@ fn parse_markdown(
     cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
-fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
