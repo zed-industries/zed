@@ -106,7 +106,6 @@ pub fn init(
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
-    context_server::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(

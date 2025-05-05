@@ -25,21 +25,22 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
+use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
     Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
     prelude::*,
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{CollaboratorId, Workspace};
+use workspace::{CollaboratorId, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_llm_client::UsageLimit;
@@ -151,6 +152,7 @@ enum ActiveView {
     PromptEditor {
         context_editor: Entity<ContextEditor>,
         title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     History,
@@ -216,6 +218,7 @@ impl ActiveView {
 
     pub fn prompt_editor(
         context_editor: Entity<ContextEditor>,
+        language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -284,9 +287,16 @@ impl ActiveView {
             }),
         ];
 
+        let buffer_search_bar =
+            cx.new(|cx| BufferSearchBar::new(Some(language_registry), window, cx));
+        buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+            buffer_search_bar.set_active_pane_item(Some(&context_editor), window, cx)
+        });
+
         Self::PromptEditor {
             context_editor,
             title_editor: editor,
+            buffer_search_bar,
             _subscriptions: subscriptions,
         }
     }
@@ -785,7 +795,12 @@ impl AssistantPanel {
         });
 
         self.set_active_view(
-            ActiveView::prompt_editor(context_editor.clone(), window, cx),
+            ActiveView::prompt_editor(
+                context_editor.clone(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
             window,
             cx,
         );
@@ -861,7 +876,12 @@ impl AssistantPanel {
                 });
 
                 this.set_active_view(
-                    ActiveView::prompt_editor(editor.clone(), window, cx),
+                    ActiveView::prompt_editor(
+                        editor.clone(),
+                        this.language_registry.clone(),
+                        window,
+                        cx,
+                    ),
                     window,
                     cx,
                 );
@@ -1006,14 +1026,14 @@ impl AssistantPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let context_server_manager = self.thread_store.read(cx).context_server_manager();
+        let context_server_store = self.project.read(cx).context_server_store();
         let tools = self.thread_store.read(cx).tools();
         let fs = self.fs.clone();
 
         self.set_active_view(ActiveView::Configuration, window, cx);
         self.configuration =
             Some(cx.new(|cx| {
-                AssistantConfiguration::new(fs, context_server_manager, tools, window, cx)
+                AssistantConfiguration::new(fs, context_server_store, tools, window, cx)
             }));
 
         if let Some(configuration) = self.configuration.as_ref() {
@@ -1368,10 +1388,29 @@ impl AssistantPanel {
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
+        let user_store = self.user_store.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
-        let last_usage = active_thread.thread().read(cx).last_usage();
+        let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
+            maybe!({
+                let amount = user_store.model_request_usage_amount()?;
+                let limit = user_store.model_request_usage_limit()?.variant?;
+
+                Some(RequestUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        });
+
         let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
@@ -2314,8 +2353,42 @@ impl Render for AssistantPanel {
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor { context_editor, .. } => {
-                    parent.child(context_editor.clone())
+                ActiveView::PromptEditor {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => {
+                    let mut registrar = DivRegistrar::new(
+                        |this, _, _cx| match &this.active_view {
+                            ActiveView::PromptEditor {
+                                buffer_search_bar, ..
+                            } => Some(buffer_search_bar.clone()),
+                            _ => None,
+                        },
+                        cx,
+                    );
+                    BufferSearchBar::register(&mut registrar);
+                    parent.child(
+                        registrar
+                            .into_div()
+                            .size_full()
+                            .map(|parent| {
+                                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                                    if buffer_search_bar.is_dismissed() {
+                                        return parent;
+                                    }
+                                    parent.child(
+                                        div()
+                                            .p(DynamicSpacing::Base08.rems(cx))
+                                            .border_b_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .bg(cx.theme().colors().editor_background)
+                                            .child(buffer_search_bar.render(window, cx)),
+                                    )
+                                })
+                            })
+                            .child(context_editor.clone()),
+                    )
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })

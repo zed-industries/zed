@@ -40,7 +40,7 @@ pub enum RequestId {
     Str(String),
 }
 
-pub struct Client {
+pub(crate) struct Client {
     server_id: ContextServerId,
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
@@ -59,7 +59,7 @@ pub struct Client {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct ContextServerId(pub Arc<str>);
+pub(crate) struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
     if let Ok(Value::Null) = serde_json::to_value(value) {
@@ -367,6 +367,7 @@ impl Client {
         Ok(())
     }
 
+    #[allow(unused)]
     pub fn on_notification<F>(&self, method: &'static str, f: F)
     where
         F: 'static + Send + FnMut(Value, AsyncApp),
@@ -374,14 +375,6 @@ impl Client {
         self.notification_handlers
             .lock()
             .insert(method, Box::new(f));
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn server_id(&self) -> ContextServerId {
-        self.server_id.clone()
     }
 }
 

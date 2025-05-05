@@ -708,7 +708,6 @@ impl ToolCard for EditFileToolCard {
                                 .cursor_pointer()
                                 .h_5()
                                 .justify_center()
-                                .rounded_b_md()
                                 .border_t_1()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)

@@ -106,6 +106,7 @@ dependencies = [
  "rope",
  "rules_library",
  "schemars",
+ "search",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -483,7 +484,6 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "context_server",
  "ctor",
  "db",
  "editor",
@@ -3327,40 +3327,19 @@ name = "context_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_tool",
  "async-trait",
  "collections",
- "command_palette_hooks",
- "context_server_settings",
- "extension",
  "futures 0.3.31",
  "gpui",
- "icons",
- "language_model",
  "log",
  "parking_lot",
  "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "url",
- "util",
- "workspace-hack",
-]
-
-[[package]]
-name = "context_server_settings"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "gpui",
  "schemars",
  "serde",
  "serde_json",
- "settings",
+ "smol",
+ "url",
+ "util",
  "workspace-hack",
 ]
 
@@ -5018,6 +4997,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-trait",
@@ -5027,7 +5007,6 @@ dependencies = [
  "clap",
  "client",
  "collections",
- "context_server",
  "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
@@ -5180,7 +5159,6 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
- "context_server_settings",
  "ctor",
  "env_logger 0.11.8",
  "extension",
@@ -11110,6 +11088,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_server",
  "dap",
  "dap_adapters",
  "env_logger 0.11.8",

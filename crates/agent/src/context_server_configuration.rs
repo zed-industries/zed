@@ -1,14 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use context_server::ContextServerDescriptorRegistry;
+use context_server::ContextServerId;
 use extension::ExtensionManifest;
 use language::LanguageRegistry;
+use project::context_server_store::registry::ContextServerDescriptorRegistry;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::{AssistantPanel, assistant_configuration::ConfigureContextServerModal};
+use crate::assistant_configuration::ConfigureContextServerModal;
 
 pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
     cx.observe_new(move |_: &mut Workspace, window, cx| {
@@ -60,18 +61,10 @@ fn show_configure_mcp_modal(
     window: &mut Window,
     cx: &mut Context<'_, Workspace>,
 ) {
-    let Some(context_server_manager) = workspace.panel::<AssistantPanel>(cx).map(|panel| {
-        panel
-            .read(cx)
-            .thread_store()
-            .read(cx)
-            .context_server_manager()
-    }) else {
-        return;
-    };
+    let context_server_store = workspace.project().read(cx).context_server_store();
 
-    let registry = ContextServerDescriptorRegistry::global(cx).read(cx);
-    let project = workspace.project().clone();
+    let registry = ContextServerDescriptorRegistry::default_global(cx).read(cx);
+    let worktree_store = workspace.project().read(cx).worktree_store();
     let configuration_tasks = manifest
         .context_servers
         .keys()
@@ -80,15 +73,15 @@ fn show_configure_mcp_modal(
             |key| {
                 let descriptor = registry.context_server_descriptor(&key)?;
                 Some(cx.spawn({
-                    let project = project.clone();
+                    let worktree_store = worktree_store.clone();
                     async move |_, cx| {
                         descriptor
-                            .configuration(project, &cx)
+                            .configuration(worktree_store.clone(), &cx)
                             .await
                             .context("Failed to resolve context server configuration")
                             .log_err()
                             .flatten()
-                            .map(|config| (key, config))
+                            .map(|config| (ContextServerId(key), config))
                     }
                 }))
             }
@@ -104,8 +97,8 @@ fn show_configure_mcp_modal(
         this.update_in(cx, |this, window, cx| {
             let modal = ConfigureContextServerModal::new(
                 descriptors.into_iter().flatten(),
+                context_server_store,
                 jsonc_language,
-                context_server_manager,
                 language_registry,
                 cx.entity().downgrade(),
                 window,

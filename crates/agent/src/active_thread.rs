@@ -1070,6 +1070,22 @@ impl ActiveThread {
                     cx,
                 );
             }
+            ThreadEvent::MissingToolUse {
+                tool_use_id,
+                ui_text,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text,
+                    "",
+                    self.thread
+                        .read(cx)
+                        .output_for_tool(tool_use_id)
+                        .map(|output| output.clone().into())
+                        .unwrap_or("".into()),
+                    cx,
+                );
+            }
         }
     }
 
@@ -3471,7 +3487,6 @@ fn open_editor_at_position(
 #[cfg(test)]
 mod tests {
     use assistant_tool::{ToolRegistry, ToolWorkingSet};
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
@@ -3543,7 +3558,6 @@ mod tests {
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
