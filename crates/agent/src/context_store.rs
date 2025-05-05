@@ -392,6 +392,18 @@ impl ContextStore {
                     );
                 }
             }
+            SuggestedContext::TextThread { context, name: _ } => {
+                if let Some(context) = context.upgrade() {
+                    let context_id = self.next_context_id.post_inc();
+                    self.insert_context(
+                        AgentContextHandle::TextThread(TextThreadContextHandle {
+                            context,
+                            context_id,
+                        }),
+                        cx,
+                    );
+                }
+            }
         }
     }
 

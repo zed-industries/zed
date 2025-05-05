@@ -648,7 +648,7 @@ fn recent_context_picker_entries(
 
     let active_thread_id = workspace
         .panel::<AssistantPanel>(cx)
-        .map(|panel| panel.read(cx).active_thread(cx).read(cx).id());
+        .and_then(|panel| Some(panel.read(cx).active_thread()?.read(cx).id()));
 
     if let Some((thread_store, text_thread_store)) = thread_store
         .and_then(|store| store.upgrade())

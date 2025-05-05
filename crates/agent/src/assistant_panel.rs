@@ -1074,7 +1074,9 @@ impl AssistantPanel {
             .app_state()
             .languages
             .language_for_name("Markdown");
-        let thread = self.active_thread(cx);
+        let Some(thread) = self.active_thread() else {
+            return;
+        };
         cx.spawn_in(window, async move |_this, cx| {
             let markdown_language = markdown_language_task.await?;
 
@@ -1140,8 +1142,11 @@ impl AssistantPanel {
         }
     }
 
-    pub(crate) fn active_thread(&self, cx: &App) -> Entity<Thread> {
-        self.thread.read(cx).thread().clone()
+    pub(crate) fn active_thread(&self) -> Option<Entity<Thread>> {
+        match &self.active_view {
+            ActiveView::Thread { thread, .. } => thread.upgrade(),
+            _ => None,
+        }
     }
 
     pub(crate) fn delete_thread(

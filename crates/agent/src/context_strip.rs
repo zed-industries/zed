@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use assistant_context_editor::AssistantContext;
 use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
@@ -143,27 +144,42 @@ impl ContextStrip {
         }
 
         let workspace = self.workspace.upgrade()?;
-        let active_thread = workspace
-            .read(cx)
-            .panel::<AssistantPanel>(cx)?
-            .read(cx)
-            .active_thread(cx);
-        let weak_active_thread = active_thread.downgrade();
+        let panel = workspace.read(cx).panel::<AssistantPanel>(cx)?.read(cx);
 
-        let active_thread = active_thread.read(cx);
+        if let Some(active_thread) = panel.active_thread() {
+            let weak_active_thread = active_thread.downgrade();
 
-        if self
-            .context_store
-            .read(cx)
-            .includes_thread(active_thread.id())
-        {
-            return None;
+            let active_thread = active_thread.read(cx);
+
+            if self
+                .context_store
+                .read(cx)
+                .includes_thread(active_thread.id())
+            {
+                return None;
+            }
+
+            Some(SuggestedContext::Thread {
+                name: active_thread.summary_or_default(),
+                thread: weak_active_thread,
+            })
+        } else if let Some(active_context_editor) = panel.active_context_editor() {
+            let context = active_context_editor.read(cx).context();
+            let weak_context = context.downgrade();
+            let context = context.read(cx);
+            let path = context.path()?;
+
+            if self.context_store.read(cx).includes_text_thread(path) {
+                return None;
+            }
+
+            Some(SuggestedContext::TextThread {
+                name: context.summary_or_default(),
+                context: weak_context,
+            })
+        } else {
+            None
         }
-
-        Some(SuggestedContext::Thread {
-            name: active_thread.summary_or_default(),
-            thread: weak_active_thread,
-        })
     }
 
     fn handle_context_picker_event(
@@ -540,6 +556,10 @@ pub enum SuggestedContext {
         name: SharedString,
         thread: WeakEntity<Thread>,
     },
+    TextThread {
+        name: SharedString,
+        context: WeakEntity<AssistantContext>,
+    },
 }
 
 impl SuggestedContext {
@@ -547,6 +567,7 @@ impl SuggestedContext {
         match self {
             Self::File { name, .. } => name,
             Self::Thread { name, .. } => name,
+            Self::TextThread { name, .. } => name,
         }
     }
 
@@ -554,6 +575,7 @@ impl SuggestedContext {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
             Self::Thread { .. } => None,
+            Self::TextThread { .. } => None,
         }
     }
 
@@ -561,6 +583,7 @@ impl SuggestedContext {
         match self {
             Self::File { .. } => ContextKind::File,
             Self::Thread { .. } => ContextKind::Thread,
+            Self::TextThread { .. } => ContextKind::TextThread,
         }
     }
 }
