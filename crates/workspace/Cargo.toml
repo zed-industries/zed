@@ -36,7 +36,6 @@ clock.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
-derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

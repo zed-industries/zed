@@ -300,8 +300,10 @@
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
-    // Whether to show the Selections menu in the editor toolbar
-    "selections_menu": true
+    // Whether to show the Selections menu in the editor toolbar.
+    "selections_menu": true,
+    // Whether to show agent review buttons in the editor toolbar.
+    "agent_review": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -659,26 +661,10 @@
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
     "stream_edits": false,
+    // When enabled, agent edits will be displayed in single-file editors for review
+    "single_file_review": true,
     "default_profile": "write",
     "profiles": {
-      "ask": {
-        "name": "Ask",
-        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
-        // "enable_all_context_servers": true,
-        "tools": {
-          "contents": true,
-          "diagnostics": true,
-          "fetch": true,
-          "list_directory": true,
-          "now": true,
-          "find_path": true,
-          "read_file": true,
-          "open": true,
-          "grep": true,
-          "thinking": true,
-          "web_search": true
-        }
-      },
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
@@ -697,6 +683,24 @@
           "read_file": true,
           "grep": true,
           "terminal": true,
+          "thinking": true,
+          "web_search": true
+        }
+      },
+      "ask": {
+        "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
+        "tools": {
+          "contents": true,
+          "diagnostics": true,
+          "fetch": true,
+          "list_directory": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "open": true,
+          "grep": true,
           "thinking": true,
           "web_search": true
         }

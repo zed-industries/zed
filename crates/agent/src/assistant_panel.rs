@@ -37,8 +37,8 @@ use ui::{
     Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
+use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 
@@ -50,9 +50,8 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::ui::UsageBanner;
 use crate::{
-    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor,
+    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
     InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
     OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
@@ -106,6 +105,9 @@ pub fn init(cx: &mut App) {
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
+                })
+                .register_action(|workspace, _: &Follow, window, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
@@ -429,6 +431,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -732,6 +735,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -930,6 +934,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1890,7 +1895,7 @@ impl AssistantPanel {
                                     .child(
                                         Banner::new()
                                             .severity(ui::Severity::Warning)
-                                            .children(
+                                            .child(
                                                 Label::new(
                                                     "Configure at least one LLM provider to start using the panel.",
                                                 )
@@ -1923,7 +1928,7 @@ impl AssistantPanel {
                                     .child(
                                         Banner::new()
                                             .severity(ui::Severity::Warning)
-                                            .children(
+                                            .child(
                                                 h_flex()
                                                     .w_full()
                                                     .children(
@@ -1941,20 +1946,39 @@ impl AssistantPanel {
             })
     }
 
-    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let plan = self
-            .user_store
+    fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tool_use_limit_reached = self
+            .thread
             .read(cx)
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
+            .thread()
+            .read(cx)
+            .tool_use_limit_reached();
+        if !tool_use_limit_reached {
+            return None;
+        }
 
-        Some(UsageBanner::new(plan, usage).into_any_element())
+        let model = self
+            .thread
+            .read(cx)
+            .thread()
+            .read(cx)
+            .configured_model()?
+            .model;
+
+        let max_mode_upsell = if model.supports_max_mode() {
+            " Enable max mode for unlimited tool use."
+        } else {
+            ""
+        };
+
+        Some(
+            Banner::new()
+                .severity(ui::Severity::Info)
+                .child(h_flex().child(Label::new(format!(
+                    "Consecutive tool use limit reached.{max_mode_upsell}"
+                ))))
+                .into_any_element(),
+        )
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2238,7 +2262,7 @@ impl Render for AssistantPanel {
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_usage_banner(cx))
+                    .children(self.render_tool_use_limit_reached(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),

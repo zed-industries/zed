@@ -7,10 +7,7 @@ use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
-use ui::{
-    ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
-};
+use ui::{ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
@@ -19,8 +16,8 @@ pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
-    focus_handle: FocusHandle,
     menu_handle: PopoverMenuHandle<ContextMenu>,
+    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -39,8 +36,8 @@ impl ProfileSelector {
             profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
             fs,
             thread_store,
-            focus_handle,
             menu_handle: PopoverMenuHandle::default(),
+            focus_handle,
             _subscriptions: vec![settings_subscription],
         }
     }
@@ -132,7 +129,7 @@ impl ProfileSelector {
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AssistantSettings::get_global(cx);
         let profile_id = &settings.default_profile;
         let profile = settings.profiles.get(profile_id);
@@ -146,59 +143,42 @@ impl Render for ProfileSelector {
             .default_model()
             .map_or(false, |default| default.model.supports_tools());
 
-        let icon = match profile_id.as_str() {
-            builtin_profiles::WRITE => IconName::Pencil,
-            builtin_profiles::ASK => IconName::MessageBubbles,
-            builtin_profiles::MANUAL => IconName::MessageBubbleDashed,
-            _ => IconName::UserRoundPen,
-        };
-
         let this = cx.entity().clone();
         let focus_handle = self.focus_handle.clone();
 
+        let trigger_button = if supports_tools {
+            Button::new("profile-selector-model", selected_profile)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ChevronDown)
+                .icon_size(IconSize::XSmall)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted)
+        } else {
+            Button::new("tools-not-supported-button", "No Tools")
+                .disabled(true)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .tooltip(Tooltip::text("The current model does not support tools."))
+        };
+
         PopoverMenu::new("profile-selector")
-            .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
-            })
-            .trigger(if supports_tools {
-                ButtonLike::new("profile-selector-button").child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-                        .child(
-                            Label::new(selected_profile)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(div().opacity(0.5).children({
-                            let focus_handle = focus_handle.clone();
-                            KeyBinding::for_action_in(
-                                &ToggleProfileSelector,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(10.)))
-                        })),
-                )
-            } else {
-                ButtonLike::new("tools-not-supported-button")
-                    .disabled(true)
-                    .child(
-                        h_flex().gap_1().child(
-                            Label::new("No Tools")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+            .trigger_with_tooltip(trigger_button, {
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    Tooltip::for_action_in(
+                        "Toggle Profile Menu",
+                        &ToggleProfileSelector,
+                        &focus_handle,
+                        window,
+                        cx,
                     )
-                    .tooltip(Tooltip::text("The current model does not support tools."))
+                }
             })
             .anchor(gpui::Corner::BottomRight)
             .with_handle(self.menu_handle.clone())
+            .menu(move |window, cx| {
+                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+            })
     }
 }
