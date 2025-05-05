@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     ops::Not,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use collections::{HashMap, HashSet};
@@ -13,7 +14,7 @@ use gpui::{
     Subscription, TextStyle, WeakEntity,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskSourceKind, task_store::TaskStore};
+use project::{TaskContexts, TaskSourceKind, task_store::TaskStore};
 use session_modes::{AttachMode, DebugScenarioDelegate, LaunchMode};
 use settings::Settings;
 use task::{DebugScenario, LaunchRequest};
@@ -30,7 +31,6 @@ use workspace::{ModalView, Workspace};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
-#[derive(Clone)]
 pub(super) struct NewSessionModal {
     workspace: WeakEntity<Workspace>,
     debug_panel: WeakEntity<DebugPanel>,
@@ -39,6 +39,7 @@ pub(super) struct NewSessionModal {
     initialize_args: Option<serde_json::Value>,
     debugger: Option<SharedString>,
     last_selected_profile_name: Option<SharedString>,
+    task_contexts: Arc<TaskContexts>,
 }
 
 fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
@@ -65,6 +66,7 @@ impl NewSessionModal {
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         task_store: Option<Entity<TaskStore>>,
+        task_contexts: TaskContexts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -103,6 +105,7 @@ impl NewSessionModal {
                 .unwrap_or(ToggleState::Unselected),
             last_selected_profile_name: None,
             initialize_args: None,
+            task_contexts: Arc::new(task_contexts),
         }
     }
 
@@ -143,15 +146,8 @@ impl NewSessionModal {
         };
 
         let debug_panel = self.debug_panel.clone();
-        let workspace = self.workspace.clone();
-
+        let task_contexts = self.task_contexts.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let task_contexts = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    tasks_ui::task_contexts(workspace, window, cx)
-                })?
-                .await;
-
             let task_context = task_contexts.active_context().cloned().unwrap_or_default();
 
             debug_panel.update_in(cx, |debug_panel, window, cx| {
@@ -196,7 +192,7 @@ impl NewSessionModal {
         let workspace = self.workspace.clone();
         let language_registry = self
             .workspace
-            .update(cx, |this, cx| this.app_state().languages.clone())
+            .update(cx, |this, _| this.app_state().languages.clone())
             .ok()?;
         let weak = cx.weak_entity();
         let debugger = self.debugger.clone();
