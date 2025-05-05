@@ -1,3 +1,4 @@
+use client::zed_urls;
 use component::{empty_example, example_group_with_title, single_example};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use language_model::RequestUsage;
@@ -17,7 +18,7 @@ impl UsageCallout {
 }
 
 impl RenderOnce for UsageCallout {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let (is_limit_reached, is_approaching_limit, remaining) = match self.usage.limit {
             UsageLimit::Limited(limit) => {
                 let percentage = self.usage.amount as f32 / limit as f32;
@@ -43,40 +44,38 @@ impl RenderOnce for UsageCallout {
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),
                     "Upgrade",
-                    "https://zed.dev/pricing",
+                    zed_urls::account_url(cx),
                 ),
                 Plan::ZedProTrial => (
                     "Out of trial prompts",
                     "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
-                    "https://zed.dev/pricing",
+                    zed_urls::account_url(cx),
                 ),
                 Plan::ZedPro => (
                     "Out of included prompts",
-                    "Enable usage based billing to continue.".to_string(),
+                    "Enable usage-based billing to continue.".to_string(),
                     "Manage",
-                    "https://zed.dev/account",
+                    zed_urls::account_url(cx),
                 ),
             }
         } else {
             match self.plan {
                 Plan::Free => (
-                    "Reaching Free tier limit soon",
+                    "Reaching free plan limit soon",
                     format!(
-                        "{} remaining - Upgrade to increase limit, or switch providers",
-                        remaining
+                        "{remaining} remaining - Upgrade to increase limit, or switch providers",
                     ),
                     "Upgrade",
-                    "https://zed.dev/pricing",
+                    zed_urls::account_url(cx),
                 ),
                 Plan::ZedProTrial => (
-                    "Reaching Trial limit soon",
+                    "Reaching trial limit soon",
                     format!(
-                        "{} remaining - Upgrade to increase limit, or switch providers",
-                        remaining
+                        "{remaining} remaining - Upgrade to increase limit, or switch providers",
                     ),
                     "Upgrade",
-                    "https://zed.dev/pricing",
+                    zed_urls::account_url(cx),
                 ),
                 _ => return div().into_any_element(),
             }
@@ -98,7 +97,7 @@ impl RenderOnce for UsageCallout {
             icon,
             button_text,
             Box::new(move |_, _, cx| {
-                cx.open_url(url);
+                cx.open_url(&url);
             }),
         )
         .into_any_element()
