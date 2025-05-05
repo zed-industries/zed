@@ -33,6 +33,7 @@ use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
+use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::{
     Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
@@ -43,6 +44,7 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{CollaboratorId, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
@@ -1030,6 +1032,54 @@ impl AssistantPanel {
         cx: &mut Context<Self>,
     ) {
         self.assistant_dropdown_menu_handle.toggle(window, cx);
+    }
+
+    pub fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(1.0), cx);
+    }
+
+    pub fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(-1.0), cx);
+    }
+
+    fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, cx| {
+                let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                let _ = settings
+                    .agent_font_size
+                    .insert(theme::clamp_font_size(agent_font_size).0);
+            });
+        } else {
+            theme::adjust_agent_font_size(cx, |size| {
+                *size += delta;
+            });
+        }
+    }
+
+    pub fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
+                settings.agent_font_size = None;
+            });
+        } else {
+            theme::reset_agent_font_size(cx);
+        }
     }
 
     pub fn open_agent_diff(
@@ -2371,6 +2421,9 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
             .on_action(cx.listener(Self::toggle_options_menu))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
