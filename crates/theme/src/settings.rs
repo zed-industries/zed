@@ -765,6 +765,26 @@ pub fn reset_ui_font_size(cx: &mut App) {
     }
 }
 
+/// Sets the adjusted UI font size.
+pub fn adjust_agent_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+    let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
+    let mut adjusted_size = cx
+        .try_global::<AgentFontSize>()
+        .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    cx.set_global(AgentFontSize(clamp_font_size(adjusted_size)));
+    cx.refresh_windows();
+}
+
+/// Resets the UI font size to the default value.
+pub fn reset_agent_font_size(cx: &mut App) {
+    if cx.has_global::<AgentFontSize>() {
+        cx.remove_global::<AgentFontSize>();
+        cx.refresh_windows();
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.max(MIN_FONT_SIZE)
