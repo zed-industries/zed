@@ -16,7 +16,7 @@ use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
-use client::{zed_urls, UserStore};
+use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{

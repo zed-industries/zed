@@ -98,7 +98,7 @@ impl RenderOnce for UsageCallout {
             icon,
             button_text.into(),
             Box::new(move |_, _, cx| {
-                _ = cx.open_url(url);
+                cx.open_url(url);
             }),
         )
         .into_any_element()
