@@ -674,6 +674,7 @@ impl CompletionsMenu {
         enum MatchTier<'a> {
             WordStartMatch {
                 sort_prefix: Reverse<usize>,
+                sort_fuzzy_bracket: Reverse<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_text: Option<&'a str>,
                 sort_score: Reverse<OrderedFloat<f64>>,
@@ -686,6 +687,14 @@ impl CompletionsMenu {
 
         // Our goal here is to intelligently sort completion suggestions. We want to
         // balance the raw fuzzy match score with hints from the language server
+
+        // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
+        // The remaining matches are partitioned into two groups at 2/3 of the max_score.
+        let max_score = matches
+            .iter()
+            .map(|mat| mat.string_match.score)
+            .fold(0.0, f64::max);
+        let second_bracket_threshold = max_score * (2.0 / 3.0);
 
         let query_start_lower = query
             .and_then(|q| q.chars().next())
@@ -709,6 +718,13 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
+                let sort_fuzzy_bracket = Reverse(if score == 1.0 {
+                    2
+                } else if score >= second_bracket_threshold {
+                    1
+                } else {
+                    0
+                });
                 let sort_snippet = match snippet_sort_order {
                     SnippetSortOrder::Top => Reverse(if mat.is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
@@ -735,6 +751,7 @@ impl CompletionsMenu {
                 );
                 MatchTier::WordStartMatch {
                     sort_prefix: mixed_case_prefix_length,
+                    sort_fuzzy_bracket,
                     sort_snippet,
                     sort_text: mat.sort_text,
                     sort_score,
