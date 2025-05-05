@@ -1496,9 +1496,19 @@ async fn sync_model_request_usage_with_stripe(
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
+    let staff_users = app.db.get_staff_users().await?;
+    let staff_user_ids = staff_users
+        .iter()
+        .map(|user| user.id)
+        .collect::<HashSet<UserId>>();
+
     let usage_meters = llm_db
         .get_current_subscription_usage_meters(Utc::now())
         .await?;
+    let usage_meters = usage_meters
+        .into_iter()
+        .filter(|(_, usage)| !staff_user_ids.contains(&usage.user_id))
+        .collect::<Vec<_>>();
     let user_ids = usage_meters
         .iter()
         .map(|(_, usage)| usage.user_id)
