@@ -829,13 +829,6 @@ enum TimeBucket {
 
 impl TimeBucket {
     fn from_dates(reference: NaiveDate, date: NaiveDate) -> Self {
-        dbg!(
-            reference,
-            date,
-            date.iso_week(),
-            (reference - TimeDelta::days(7)).iso_week()
-        );
-
         if date == reference {
             return TimeBucket::Today;
         }
