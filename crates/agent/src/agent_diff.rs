@@ -1372,6 +1372,7 @@ impl AgentDiff {
             | ThreadEvent::StreamedAssistantThinking(_, _)
             | ThreadEvent::StreamedToolUse { .. }
             | ThreadEvent::InvalidToolInput { .. }
+            | ThreadEvent::MissingToolUse { .. }
             | ThreadEvent::MessageAdded(_)
             | ThreadEvent::MessageEdited(_)
             | ThreadEvent::MessageDeleted(_)
