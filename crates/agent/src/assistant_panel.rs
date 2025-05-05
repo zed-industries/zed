@@ -25,7 +25,7 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -38,7 +38,7 @@ use ui::{
     Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
     prelude::*,
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{CollaboratorId, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
@@ -1388,10 +1388,29 @@ impl AssistantPanel {
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
+        let user_store = self.user_store.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
-        let last_usage = active_thread.thread().read(cx).last_usage();
+        let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
+            maybe!({
+                let amount = user_store.model_request_usage_amount()?;
+                let limit = user_store.model_request_usage_limit()?.variant?;
+
+                Some(RequestUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        });
+
         let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
