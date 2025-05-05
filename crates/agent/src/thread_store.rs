@@ -733,6 +733,8 @@ pub struct SerializedMessage {
     pub tool_results: Vec<SerializedToolResult>,
     #[serde(default)]
     pub context: String,
+    #[serde(default)]
+    pub creases: Vec<SerializedCrease>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -813,8 +815,17 @@ impl LegacySerializedMessage {
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
             context: String::new(),
+            creases: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SerializedCrease {
+    pub start: usize,
+    pub end: usize,
+    pub icon_path: SharedString,
+    pub label: SharedString,
 }
 
 struct GlobalThreadsDatabase(

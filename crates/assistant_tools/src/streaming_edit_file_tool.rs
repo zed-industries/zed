@@ -38,7 +38,7 @@ pub struct StreamingEditFileToolInput {
     /// so that we can display it immediately.
     pub display_description: String,
 
-    /// The full path of the file to modify in the project.
+    /// The full path of the file to create or modify in the project.
     ///
     /// WARNING: When specifying which file path need changing, you MUST
     /// start each path with one of the project's root directories.
@@ -58,6 +58,13 @@ pub struct StreamingEditFileToolInput {
     /// `frontend/db.js`
     /// </example>
     pub path: PathBuf,
+
+    /// If true, this tool will recreate the file from scratch.
+    /// If false, this tool will produce granular edits to an existing file.
+    ///
+    /// When a file already exists or you just created it, always prefer editing
+    /// it as opposed to recreating it from scratch.
+    pub create_or_overwrite: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -158,7 +165,7 @@ impl Tool for StreamingEditFileTool {
         let card_clone = card.clone();
         let messages = messages.to_vec();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            if !exists.await? {
+            if !input.create_or_overwrite && !exists.await? {
                 return Err(anyhow!("{} not found", input.path.display()));
             }
 
@@ -166,7 +173,7 @@ impl Tool for StreamingEditFileTool {
                 .update(|cx| LanguageModelRegistry::read_global(cx).default_model())?
                 .context("default model not set")?
                 .model;
-            let edit_agent = EditAgent::new(model, action_log, Templates::new());
+            let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {
@@ -182,12 +189,21 @@ impl Tool for StreamingEditFileTool {
                 })
                 .await;
 
-            let (output, mut events) = edit_agent.edit(
-                buffer.clone(),
-                input.display_description.clone(),
-                messages,
-                cx,
-            );
+            let (output, mut events) = if input.create_or_overwrite {
+                edit_agent.overwrite(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    messages,
+                    cx,
+                )
+            } else {
+                edit_agent.edit(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    messages,
+                    cx,
+                )
+            };
 
             let mut hallucinated_old_text = false;
             while let Some(event) = events.next().await {
@@ -213,7 +229,7 @@ impl Tool for StreamingEditFileTool {
                             .log_err();
                         }
                     }
-                    EditAgentOutputEvent::HallucinatedOldText(_) => hallucinated_old_text = true,
+                    EditAgentOutputEvent::OldTextNotFound(_) => hallucinated_old_text = true,
                 }
             }
             output.await?;

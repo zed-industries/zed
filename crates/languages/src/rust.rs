@@ -260,15 +260,6 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, cx: &App) -> bool {
-        let zed_provides_cargo_diagnostics = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        // Zed manages the lifecycle of cargo diagnostics when configured so.
-        zed_provides_cargo_diagnostics
-            && previous_diagnostic.source.as_deref() == Some(CARGO_DIAGNOSTICS_SOURCE_NAME)
-    }
-
     fn process_diagnostics(
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
@@ -516,10 +507,10 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        let zed_provides_cargo_diagnostics = ProjectSettings::get_global(cx)
+        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
             .diagnostics
             .fetch_cargo_diagnostics();
-        if zed_provides_cargo_diagnostics {
+        if cargo_diagnostics_fetched_separately {
             let disable_check_on_save = json!({
                 "checkOnSave": false,
             });

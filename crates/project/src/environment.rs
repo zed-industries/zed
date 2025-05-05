@@ -59,8 +59,8 @@ impl ProjectEnvironment {
 
     pub(crate) fn get_buffer_environment(
         &mut self,
-        buffer: Entity<Buffer>,
-        worktree_store: Entity<WorktreeStore>,
+        buffer: &Entity<Buffer>,
+        worktree_store: &Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if cfg!(any(test, feature = "test-support")) {

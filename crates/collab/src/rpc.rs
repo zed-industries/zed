@@ -180,6 +180,10 @@ impl Session {
     }
 
     pub async fn current_plan(&self, db: &MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
+        if self.is_staff() {
+            return Ok(proto::Plan::ZedPro);
+        }
+
         let user_id = self.user_id();
 
         let subscription = db.get_active_billing_subscription(user_id).await?;
@@ -328,6 +332,9 @@ impl Server {
                 forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
             )
             .add_request_handler(forward_read_only_project_request::<proto::LspExtGoToParentModule>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
             .add_request_handler(
                 forward_read_only_project_request::<proto::LanguageServerIdForName>,
             )

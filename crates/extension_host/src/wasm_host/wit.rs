@@ -62,7 +62,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_4_0::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -113,8 +113,6 @@ impl Extension {
         let _ = release_channel;
 
         if version >= latest::MIN_VERSION {
-            authorize_access_to_unreleased_wasm_api_version(release_channel)?;
-
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await

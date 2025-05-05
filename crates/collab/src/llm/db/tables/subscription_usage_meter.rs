@@ -4,11 +4,11 @@ use serde::Serialize;
 use crate::llm::db::ModelId;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "subscription_usage_meters")]
+#[sea_orm(table_name = "subscription_usage_meters_v2")]
 pub struct Model {
     #[sea_orm(primary_key)]
-    pub id: i32,
-    pub subscription_usage_id: i32,
+    pub id: Uuid,
+    pub subscription_usage_id: Uuid,
     pub model_id: ModelId,
     pub mode: CompletionMode,
     pub requests: i32,

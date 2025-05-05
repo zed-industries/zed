@@ -198,10 +198,10 @@ impl ConfigureContextServerModal {
             .update(cx, {
                 |workspace, cx| {
                     let status_toast = StatusToast::new(
-                        format!("{} MCP configured successfully", id),
+                        format!("{} configured successfully.", id),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::DatabaseZap).color(Color::Muted))
+                            this.icon(ToastIcon::new(IconName::Hammer).color(Color::Muted))
                                 .action("Dismiss", |_, _| {})
                         },
                     );
@@ -276,7 +276,7 @@ impl Render for ConfigureContextServerModal {
                     .header(ModalHeader::new().headline(format!("Configure {}", configuration.id)))
                     .section(
                         Section::new()
-                            .child(div().py_2().child(MarkdownElement::new(
+                            .child(div().pb_2().text_sm().child(MarkdownElement::new(
                                 configuration.installation_instructions.clone(),
                                 default_markdown_style(window, cx),
                             )))

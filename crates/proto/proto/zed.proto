@@ -381,7 +381,10 @@ message Envelope {
         DebugRequest debug_request = 342;
 
         LspExtGoToParentModule lsp_ext_go_to_parent_module = 343;
-        LspExtGoToParentModuleResponse lsp_ext_go_to_parent_module_response = 344;// current max
+        LspExtGoToParentModuleResponse lsp_ext_go_to_parent_module_response = 344;
+        LspExtCancelFlycheck lsp_ext_cancel_flycheck = 345;
+        LspExtRunFlycheck lsp_ext_run_flycheck = 346;
+        LspExtClearFlycheck lsp_ext_clear_flycheck = 347; // current max
     }
 
     reserved 87 to 88;

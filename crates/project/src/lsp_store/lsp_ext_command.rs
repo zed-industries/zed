@@ -25,9 +25,9 @@ use std::{
 use task::TaskTemplate;
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
-pub enum LspExpandMacro {}
+pub enum LspExtExpandMacro {}
 
-impl lsp::request::Request for LspExpandMacro {
+impl lsp::request::Request for LspExtExpandMacro {
     type Params = ExpandMacroParams;
     type Result = Option<ExpandedMacro>;
     const METHOD: &'static str = "rust-analyzer/expandMacro";
@@ -60,7 +60,7 @@ pub struct ExpandMacro {
 #[async_trait(?Send)]
 impl LspCommand for ExpandMacro {
     type Response = ExpandedMacro;
-    type LspRequest = LspExpandMacro;
+    type LspRequest = LspExtExpandMacro;
     type ProtoRequest = proto::LspExtExpandMacro;
 
     fn display_name(&self) -> &str {
@@ -752,4 +752,34 @@ impl LspCommand for GetLspRunnables {
     fn buffer_id_from_proto(message: &proto::LspExtRunnables) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
+}
+
+#[derive(Debug)]
+pub struct LspExtCancelFlycheck {}
+
+#[derive(Debug)]
+pub struct LspExtRunFlycheck {}
+
+#[derive(Debug)]
+pub struct LspExtClearFlycheck {}
+
+impl lsp::notification::Notification for LspExtCancelFlycheck {
+    type Params = ();
+    const METHOD: &'static str = "rust-analyzer/cancelFlycheck";
+}
+
+impl lsp::notification::Notification for LspExtRunFlycheck {
+    type Params = RunFlycheckParams;
+    const METHOD: &'static str = "rust-analyzer/runFlycheck";
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RunFlycheckParams {
+    pub text_document: Option<lsp::TextDocumentIdentifier>,
+}
+
+impl lsp::notification::Notification for LspExtClearFlycheck {
+    type Params = ();
+    const METHOD: &'static str = "rust-analyzer/clearFlycheck";
 }
