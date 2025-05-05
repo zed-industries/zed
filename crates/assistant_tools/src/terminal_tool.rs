@@ -172,6 +172,7 @@ impl Tool for TerminalTool {
                             workspace.downgrade(),
                             None,
                             project.downgrade(),
+                            true,
                             window,
                             cx,
                         )

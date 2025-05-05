@@ -1,9 +1,9 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
-    ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
-    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    ElementId, Entity, FocusHandle, Focusable, Font, FontStyle, FontWeight, GlobalElementId,
+    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
     StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
     UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
     relative, size,
@@ -158,6 +158,7 @@ pub struct TerminalElement {
     focused: bool,
     cursor_visible: bool,
     interactivity: Interactivity,
+    embedded: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
 }
 
@@ -178,6 +179,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         block_below_cursor: Option<Rc<BlockProperties>>,
+        embedded: bool,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
@@ -187,6 +189,7 @@ impl TerminalElement {
             focus: focus.clone(),
             cursor_visible,
             block_below_cursor,
+            embedded,
             interactivity: Default::default(),
         }
         .track_focus(&focus)
@@ -503,11 +506,15 @@ impl TerminalElement {
         );
         self.interactivity.on_scroll_wheel({
             let terminal_view = self.terminal_view.downgrade();
-            move |e, _, cx| {
+            move |e, window, cx| {
                 terminal_view
                     .update(cx, |terminal_view, cx| {
-                        terminal_view.scroll_wheel(e, cx);
-                        cx.notify();
+                        if !terminal_view.embedded
+                            || terminal_view.focus_handle(cx).is_focused(window)
+                        {
+                            terminal_view.scroll_wheel(e, cx);
+                            cx.notify();
+                        }
                     })
                     .ok();
             }
@@ -580,6 +587,16 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        if self.embedded {
+            let scrollable = {
+                let term = self.terminal.read(cx);
+                !term.scrolled_to_top() && !term.scrolled_to_bottom() && self.focused
+            };
+            if scrollable {
+                self.interactivity.occlude_mouse();
+            }
+        }
+
         let layout_id =
             self.interactivity
                 .request_layout(global_id, window, cx, |mut style, window, cx| {
