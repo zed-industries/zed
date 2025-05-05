@@ -111,7 +111,7 @@ impl TryFrom<&str> for ContextPickerMode {
             "symbol" => Ok(Self::Symbol),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
-            "rules" => Ok(Self::Rules),
+            "rule" => Ok(Self::Rules),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -124,7 +124,7 @@ impl ContextPickerMode {
             Self::Symbol => "symbol",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
-            Self::Rules => "rules",
+            Self::Rules => "rule",
         }
     }
 
@@ -827,7 +827,7 @@ pub enum MentionLink {
     Selection(ProjectPath, Range<usize>),
     Fetch(String),
     Thread(ThreadId),
-    Rules(UserPromptId),
+    Rule(UserPromptId),
 }
 
 impl MentionLink {
@@ -836,7 +836,7 @@ impl MentionLink {
     const SELECTION: &str = "@selection";
     const THREAD: &str = "@thread";
     const FETCH: &str = "@fetch";
-    const RULES: &str = "@rules";
+    const RULE: &str = "@rule";
 
     const SEPARATOR: &str = ":";
 
@@ -846,7 +846,7 @@ impl MentionLink {
             || url.starts_with(Self::FETCH)
             || url.starts_with(Self::SELECTION)
             || url.starts_with(Self::THREAD)
-            || url.starts_with(Self::RULES)
+            || url.starts_with(Self::RULE)
     }
 
     pub fn for_file(file_name: &str, full_path: &str) -> String {
@@ -884,8 +884,8 @@ impl MentionLink {
         format!("[@{}]({}:{})", url, Self::FETCH, url)
     }
 
-    pub fn for_rules(rules: &RulesContextEntry) -> String {
-        format!("[@{}]({}:{})", rules.title, Self::RULES, rules.prompt_id.0)
+    pub fn for_rule(rule: &RulesContextEntry) -> String {
+        format!("[@{}]({}:{})", rule.title, Self::RULE, rule.prompt_id.0)
     }
 
     pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
@@ -943,9 +943,9 @@ impl MentionLink {
                 Some(MentionLink::Thread(thread_id))
             }
             Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
-            Self::RULES => {
+            Self::RULE => {
                 let prompt_id = UserPromptId(Uuid::try_parse(argument).ok()?);
-                Some(MentionLink::Rules(prompt_id))
+                Some(MentionLink::Rule(prompt_id))
             }
             _ => None,
         }
