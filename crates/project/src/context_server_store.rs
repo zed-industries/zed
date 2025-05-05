@@ -386,11 +386,8 @@ impl ContextServerStore {
         if self.update_servers_task.is_some() {
             self.needs_server_update = true;
         } else {
+            self.needs_server_update = false;
             self.update_servers_task = Some(cx.spawn(async move |this, cx| {
-                this.update(cx, |this, _| {
-                    this.needs_server_update = false;
-                })?;
-
                 if let Err(err) = Self::maintain_servers(this.clone(), cx).await {
                     log::error!("Error maintaining context servers: {}", err);
                 }
