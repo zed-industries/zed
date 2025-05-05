@@ -504,13 +504,7 @@ impl MessageEditor {
             }))
     }
 
-    fn render_editor(
-        &self,
-        font_size: Rems,
-        line_height: Pixels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn render_editor(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
 
@@ -616,6 +610,10 @@ impl MessageEditor {
                             .when(is_editor_expanded, |this| this.h_full())
                             .child({
                                 let settings = ThemeSettings::get_global(cx);
+                                let font_size = TextSize::Small
+                                    .rems(cx)
+                                    .to_pixels(settings.agent_font_size(cx));
+                                let line_height = settings.buffer_line_height.value() * font_size;
 
                                 let text_style = TextStyle {
                                     color: cx.theme().colors().text,
@@ -1324,15 +1322,14 @@ impl Render for MessageEditor {
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let font_size = TextSize::Small.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
-            .child(self.render_editor(font_size, line_height, window, cx))
+            .child(self.render_editor(window, cx))
             .children({
                 let usage_callout = self.render_usage_callout(line_height, cx);
 

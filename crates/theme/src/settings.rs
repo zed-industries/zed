@@ -106,6 +106,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
+    /// The agent font size. Determines the size of text in the agent panel.
+    agent_font_size: Pixels,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -250,6 +252,11 @@ impl Global for BufferFontSize {}
 pub(crate) struct UiFontSize(Pixels);
 
 impl Global for UiFontSize {}
+
+#[derive(Default)]
+pub(crate) struct AgentFontSize(Pixels);
+
+impl Global for AgentFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -409,6 +416,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
+    /// The font size for the agent panel.
+    #[serde(default)]
+    pub agent_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -576,6 +586,15 @@ impl ThemeSettings {
             .try_global::<UiFontSize>()
             .map(|size| size.0)
             .unwrap_or(self.ui_font_size);
+        clamp_font_size(font_size)
+    }
+
+    /// Returns the UI font size.
+    pub fn agent_font_size(&self, cx: &App) -> Pixels {
+        let font_size = cx
+            .try_global::<AgentFontSize>()
+            .map(|size| size.0)
+            .unwrap_or(self.agent_font_size);
         clamp_font_size(font_size)
     }
 
@@ -789,6 +808,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
+            agent_font_size: defaults.agent_font_size.unwrap().into(),
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
@@ -890,6 +910,12 @@ impl settings::Settings for ThemeSettings {
                 value.buffer_font_size.map(Into::into),
             );
             this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
+
+            merge(
+                &mut this.agent_font_size,
+                value.agent_font_size.map(Into::into),
+            );
+            this.agent_font_size = this.agent_font_size.clamp(px(6.), px(100.));
 
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 

@@ -540,7 +540,6 @@ impl ToolCard for EditFileToolCard {
             });
 
         let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
-            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
             let line_height = editor
                 .style()
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
@@ -558,7 +557,7 @@ impl ToolCard for EditFileToolCard {
                         font_family: settings.buffer_font.family.clone(),
                         font_features: settings.buffer_font.features.clone(),
                         font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                        font_size: ui_font_size.into(),
+                        font_size: TextSize::Default.rems(cx).into(),
                         font_weight: settings.buffer_font.weight,
                         line_height: relative(settings.buffer_line_height.value()),
                         ..Default::default()
