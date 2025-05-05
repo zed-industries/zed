@@ -610,7 +610,7 @@ pub enum ToolResponseContent {
     Resource { resource: ResourceContents },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListToolsResponse {
     pub tools: Vec<Tool>,

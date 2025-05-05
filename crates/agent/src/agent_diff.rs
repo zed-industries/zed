@@ -1748,7 +1748,6 @@ mod tests {
     use crate::{Keep, ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolWorkingSet;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1771,7 +1770,6 @@ mod tests {
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
         });
@@ -1928,7 +1926,6 @@ mod tests {
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);

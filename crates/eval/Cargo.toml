@@ -30,7 +30,6 @@ chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 collections.workspace = true
-context_server.workspace = true
 dirs.workspace = true
 dotenv.workspace = true
 env_logger.workspace = true

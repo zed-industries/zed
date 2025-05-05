@@ -7,7 +7,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use context_server_settings::ContextServerSettings;
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
@@ -676,21 +675,23 @@ impl ExtensionImports for WasmState {
                         })?)
                     }
                     "context_servers" => {
-                        let settings = key
+                        let configuration = key
                             .and_then(|key| {
-                                ContextServerSettings::get(location, cx)
+                                ProjectSettings::get(location, cx)
                                     .context_servers
                                     .get(key.as_str())
                             })
                             .cloned()
                             .unwrap_or_default();
                         Ok(serde_json::to_string(&settings::ContextServerSettings {
-                            command: settings.command.map(|command| settings::CommandSettings {
-                                path: Some(command.path),
-                                arguments: Some(command.args),
-                                env: command.env.map(|env| env.into_iter().collect()),
+                            command: configuration.command.map(|command| {
+                                settings::CommandSettings {
+                                    path: Some(command.path),
+                                    arguments: Some(command.args),
+                                    env: command.env.map(|env| env.into_iter().collect()),
+                                }
                             }),
-                            settings: settings.settings,
+                            settings: configuration.settings,
                         })?)
                     }
                     _ => {

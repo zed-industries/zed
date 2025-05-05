@@ -3487,7 +3487,6 @@ fn open_editor_at_position(
 #[cfg(test)]
 mod tests {
     use assistant_tool::{ToolRegistry, ToolWorkingSet};
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
@@ -3559,7 +3558,6 @@ mod tests {
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
