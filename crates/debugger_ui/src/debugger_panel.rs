@@ -1133,7 +1133,6 @@ impl Panel for DebugPanel {
         cx: &mut Context<Self>,
     ) {
         if position.axis() != self.position(window, cx).axis() {
-            dbg!("Inverting axies");
             self.sessions.iter().for_each(|session_item| {
                 session_item.update(cx, |item, cx| {
                     item.running_state()
