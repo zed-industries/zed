@@ -5216,12 +5216,12 @@ impl Editor {
                                             .first()
                                             .map(SharedString::from)
                                             .or_else(|| {
-                                                language.context_provider().and_then(|provider| {
-                                                    provider
-                                                        .debug_adapters()
-                                                        .first()
-                                                        .map(SharedString::from)
-                                                })
+                                                language
+                                                    .config()
+                                                    .debuggers
+                                                    .first()
+                                                    .as_deref()
+                                                    .map(SharedString::from)
                                             })?;
 
                                     dap_store.update(cx, |this, cx| {

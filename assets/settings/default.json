@@ -1297,16 +1297,14 @@
       "use_on_type_format": false,
       "prettier": {
         "allowed": false
-      },
-      "debuggers": ["CodeLLDB", "GDB"]
+      }
     },
     "C++": {
       "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false
-      },
-      "debuggers": ["CodeLLDB", "GDB"]
+      }
     },
     "CSS": {
       "prettier": {
@@ -1333,8 +1331,7 @@
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
-      },
-      "debuggers": ["Delve"]
+      }
     },
     "GraphQL": {
       "prettier": {
@@ -1359,8 +1356,7 @@
       "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
-      },
-      "debuggers": ["JavaScript"]
+      }
     },
     "JSON": {
       "prettier": {
@@ -1395,20 +1391,13 @@
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
         "parser": "php"
-      },
-      "debuggers": ["PHP"]
-    },
-    "Python": {
-      "debuggers": ["Debugpy"]
+      }
     },
     "Plain Text": {
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
-    },
-    "Rust": {
-      "debuggers": ["CodeLLDB", "GDB"]
     },
     "SCSS": {
       "prettier": {
@@ -1446,8 +1435,7 @@
       "language_servers": ["!typescript-language-server", "vtsls", "..."],
       "prettier": {
         "allowed": true
-      },
-      "debuggers": ["JavaScript"]
+      }
     },
     "Vue.js": {
       "language_servers": ["vue-language-server", "..."],
@@ -1467,8 +1455,7 @@
       }
     },
     "Zig": {
-      "language_servers": ["zls", "..."],
-      "debuggers": ["CodeLLDB", "GDB"]
+      "language_servers": ["zls", "..."]
     }
   },
   // Different settings for specific language models.

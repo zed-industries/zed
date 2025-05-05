@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use collections::HashMap;
 use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -191,8 +192,12 @@ impl NewSessionModal {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ui::DropdownMenu {
+    ) -> Option<ui::DropdownMenu> {
         let workspace = self.workspace.clone();
+        let language_registry = self
+            .workspace
+            .update(cx, |this, cx| this.app_state().languages.clone())
+            .ok()?;
         let weak = cx.weak_entity();
         let debugger = self.debugger.clone();
         DropdownMenu::new(
@@ -227,6 +232,7 @@ impl NewSessionModal {
                 menu
             }),
         )
+        .into()
     }
 
     fn debug_config_drop_down_menu(
@@ -618,7 +624,7 @@ impl Render for NewSessionModal {
                             ),
                     )
                     .justify_between()
-                    .child(self.adapter_drop_down_menu(window, cx))
+                    .children(self.adapter_drop_down_menu(window, cx))
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )

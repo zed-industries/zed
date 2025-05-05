@@ -47,9 +47,4 @@ pub trait ContextProvider: Send + Sync {
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         None
     }
-
-    /// Default debug adapters for a given language.
-    fn debug_adapters(&self) -> Vec<String> {
-        vec![]
-    }
 }
