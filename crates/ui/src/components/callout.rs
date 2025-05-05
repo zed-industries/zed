@@ -1,5 +1,6 @@
-use crate::prelude::*;
 use gpui::ClickEvent;
+
+use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct Callout {
@@ -13,33 +14,33 @@ pub struct Callout {
 
 impl Callout {
     pub fn single_line(
-        title: SharedString,
+        title: impl Into<SharedString>,
         icon: Icon,
-        cta_label: SharedString,
+        cta_label: impl Into<SharedString>,
         cta_action: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> Self {
         Self {
-            title,
+            title: title.into(),
             message: None,
             icon,
-            cta_label,
+            cta_label: cta_label.into(),
             cta_action,
             line_height: None,
         }
     }
 
     pub fn multi_line(
-        title: SharedString,
-        message: SharedString,
+        title: impl Into<SharedString>,
+        message: impl Into<SharedString>,
         icon: Icon,
-        cta_label: SharedString,
+        cta_label: impl Into<SharedString>,
         cta_action: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> Self {
         Self {
-            title,
-            message: Some(message),
+            title: title.into(),
+            message: Some(message.into()),
             icon,
-            cta_label,
+            cta_label: cta_label.into(),
             cta_action,
             line_height: None,
         }
@@ -127,11 +128,11 @@ impl Component for Callout {
             single_example(
                 "Single Line",
                 Callout::single_line(
-                    "Your settings contain deprecated values, please update them.".into(),
+                    "Your settings contain deprecated values, please update them.",
                     Icon::new(IconName::Warning)
                         .color(Color::Warning)
                         .size(IconSize::Small),
-                    "Backup & Update".into(),
+                    "Backup & Update",
                     Box::new(|_, _, _| {}),
                 )
                 .into_any_element(),
@@ -140,12 +141,12 @@ impl Component for Callout {
             single_example(
                 "Multi Line",
                 Callout::multi_line(
-                    "Thread reached the token limit".into(),
-                    "Start a new thread from a summary to continue the conversation.".into(),
+                    "Thread reached the token limit",
+                    "Start a new thread from a summary to continue the conversation.",
                     Icon::new(IconName::X)
                         .color(Color::Error)
                         .size(IconSize::Small),
-                    "Start New Thread".into(),
+                    "Start New Thread",
                     Box::new(|_, _, _| {}),
                 )
                 .into_any_element(),
