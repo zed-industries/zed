@@ -9,11 +9,11 @@ use gpui::{
 use project::Project;
 use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
-use rpc::proto::{self, PeerId};
+use rpc::proto;
 use running::RunningState;
 use ui::{Indicator, prelude::*};
 use workspace::{
-    FollowableItem, ViewId, Workspace,
+    CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},
 };
 
@@ -192,9 +192,9 @@ impl FollowableItem for DebugSession {
         Task::ready(Ok(()))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        _leader_peer_id: Option<PeerId>,
+        _leader_id: Option<CollaboratorId>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {

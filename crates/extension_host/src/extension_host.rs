@@ -1130,6 +1130,10 @@ impl ExtensionStore {
                         .remove_language_server(&language, language_server_name);
                 }
             }
+
+            for (server_id, _) in extension.manifest.context_servers.iter() {
+                self.proxy.unregister_context_server(server_id.clone(), cx);
+            }
         }
 
         self.wasm_extensions

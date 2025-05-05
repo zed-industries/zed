@@ -118,7 +118,7 @@ impl Tool for CreateFileTool {
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
             cx.update(|cx| {
                 action_log.update(cx, |action_log, cx| {
-                    action_log.track_buffer(buffer.clone(), cx)
+                    action_log.buffer_created(buffer.clone(), cx)
                 });
                 buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx));
                 action_log.update(cx, |action_log, cx| {

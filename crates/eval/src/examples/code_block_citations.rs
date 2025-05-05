@@ -1,4 +1,5 @@
 use anyhow::Result;
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use markdown::PathWithRange;
 
@@ -20,6 +21,7 @@ impl Example for CodeBlockCitations {
                 allow_preexisting_diagnostics: false,
             }),
             max_assertions: None,
+            profile_id: AgentProfileId::default(),
         }
     }
 

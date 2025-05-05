@@ -6,7 +6,7 @@ use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
     ThreadFeedback,
 };
-use crate::thread_store::{RulesLoadingError, ThreadStore};
+use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
@@ -29,8 +29,7 @@ use gpui::{
 };
 use language::{Buffer, Language, LanguageRegistry};
 use language_model::{
-    LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, RequestUsage, Role,
-    StopReason,
+    LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
@@ -57,6 +56,7 @@ pub struct ActiveThread {
     context_store: Entity<ContextStore>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
@@ -72,7 +72,6 @@ pub struct ActiveThread {
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     expanded_code_blocks: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
-    last_usage: Option<RequestUsage>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     copied_code_block_ids: HashSet<(MessageId, usize)>,
     _subscriptions: Vec<Subscription>,
@@ -721,8 +720,17 @@ fn open_markdown_link(
                 });
             }
         }),
+        Some(MentionLink::TextThread(path)) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel
+                        .open_saved_prompt_editor(path, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }),
         Some(MentionLink::Fetch(url)) => cx.open_url(&url),
-        Some(MentionLink::Rules(prompt_id)) => window.dispatch_action(
+        Some(MentionLink::Rule(prompt_id)) => window.dispatch_action(
             Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(prompt_id.0),
             }),
@@ -745,6 +753,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
         context_store: Entity<ContextStore>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
@@ -764,10 +773,10 @@ impl ActiveThread {
                     .unwrap()
             }
         });
-
         let mut this = Self {
             language_registry,
             thread_store,
+            text_thread_store,
             context_store,
             thread: thread.clone(),
             workspace,
@@ -784,7 +793,6 @@ impl ActiveThread {
             hide_scrollbar_task: None,
             editing_message: None,
             last_error: None,
-            last_usage: None,
             copied_code_block_ids: HashSet::default(),
             notifications: Vec::new(),
             _subscriptions: subscriptions,
@@ -841,15 +849,19 @@ impl ActiveThread {
         self.last_error.take();
     }
 
-    pub fn last_usage(&self) -> Option<RequestUsage> {
-        self.last_usage
-    }
-
     /// Returns the editing message id and the estimated token count in the content
     pub fn editing_message_id(&self) -> Option<(MessageId, usize)> {
         self.editing_message
             .as_ref()
             .map(|(id, state)| (*id, state.last_estimated_token_count.unwrap_or(0)))
+    }
+
+    pub fn thread_store(&self) -> &Entity<ThreadStore> {
+        &self.thread_store
+    }
+
+    pub fn text_thread_store(&self) -> &Entity<TextThreadStore> {
+        &self.text_thread_store
     }
 
     fn push_message(
@@ -950,8 +962,8 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::UsageUpdated(usage) => {
-                self.last_usage = Some(*usage);
+            ThreadEvent::NewRequest | ThreadEvent::CompletionCanceled => {
+                cx.notify();
             }
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryGenerated
@@ -1070,6 +1082,22 @@ impl ActiveThread {
                     tool_use_id.clone(),
                     ui_text,
                     invalid_input_json,
+                    self.thread
+                        .read(cx)
+                        .output_for_tool(tool_use_id)
+                        .map(|output| output.clone().into())
+                        .unwrap_or("".into()),
+                    cx,
+                );
+            }
+            ThreadEvent::MissingToolUse {
+                tool_use_id,
+                ui_text,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text,
+                    "",
                     self.thread
                         .read(cx)
                         .output_for_tool(tool_use_id)
@@ -1249,10 +1277,14 @@ impl ActiveThread {
             return;
         };
 
+        // Cancel any ongoing streaming when user starts editing a previous message
+        self.cancel_last_completion(window, cx);
+
         let editor = crate::message_editor::create_editor(
             self.workspace.clone(),
             self.context_store.downgrade(),
             self.thread_store.downgrade(),
+            self.text_thread_store.downgrade(),
             window,
             cx,
         );
@@ -1274,6 +1306,7 @@ impl ActiveThread {
                 self.context_store.clone(),
                 self.workspace.clone(),
                 Some(self.thread_store.downgrade()),
+                Some(self.text_thread_store.downgrade()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 window,
@@ -1723,14 +1756,13 @@ impl ActiveThread {
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
         let is_generating = thread.is_generating();
+        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
 
         let is_first_message = ix == 0;
         let is_last_message = ix == self.messages.len() - 1;
 
-        let show_feedback = thread.is_turn_end(ix);
-
-        let generating_label = (is_generating && is_last_message)
-            .then(|| AnimatedLabel::new("Generating").size(LabelSize::Small));
+        let loading_dots = (is_generating_stale && is_last_message)
+            .then(|| AnimatedLabel::new("").size(LabelSize::Small));
 
         let editing_message_state = self
             .editing_message
@@ -1752,6 +1784,8 @@ impl ActiveThread {
 
         // For all items that should be aligned with the LLM's response.
         const RESPONSE_PADDING_X: Pixels = px(19.);
+
+        let show_feedback = thread.is_turn_end(ix);
 
         let feedback_container = h_flex()
             .group("feedback_container")
@@ -2029,80 +2063,84 @@ impl ActiveThread {
 
         v_flex()
             .w_full()
-            .when_some(checkpoint, |parent, checkpoint| {
-                let mut is_pending = false;
-                let mut error = None;
-                if let Some(last_restore_checkpoint) =
-                    self.thread.read(cx).last_restore_checkpoint()
-                {
-                    if last_restore_checkpoint.message_id() == message_id {
-                        match last_restore_checkpoint {
-                            LastRestoreCheckpoint::Pending { .. } => is_pending = true,
-                            LastRestoreCheckpoint::Error { error: err, .. } => {
-                                error = Some(err.clone());
+            .map(|parent| {
+                if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                    let mut is_pending = false;
+                    let mut error = None;
+                    if let Some(last_restore_checkpoint) =
+                        self.thread.read(cx).last_restore_checkpoint()
+                    {
+                        if last_restore_checkpoint.message_id() == message_id {
+                            match last_restore_checkpoint {
+                                LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+                                LastRestoreCheckpoint::Error { error: err, .. } => {
+                                    error = Some(err.clone());
+                                }
                             }
                         }
                     }
-                }
 
-                let restore_checkpoint_button =
-                    Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                        .icon(if error.is_some() {
-                            IconName::XCircle
-                        } else {
-                            IconName::Undo
-                        })
-                        .icon_size(IconSize::XSmall)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(if error.is_some() {
-                            Some(Color::Error)
-                        } else {
-                            None
-                        })
-                        .label_size(LabelSize::XSmall)
-                        .disabled(is_pending)
-                        .on_click(cx.listener(move |this, _, _window, cx| {
-                            this.thread.update(cx, |thread, cx| {
-                                thread
-                                    .restore_checkpoint(checkpoint.clone(), cx)
-                                    .detach_and_log_err(cx);
-                            });
-                        }));
+                    let restore_checkpoint_button =
+                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                            .icon(if error.is_some() {
+                                IconName::XCircle
+                            } else {
+                                IconName::Undo
+                            })
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(if error.is_some() {
+                                Some(Color::Error)
+                            } else {
+                                None
+                            })
+                            .label_size(LabelSize::XSmall)
+                            .disabled(is_pending)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }));
 
-                let restore_checkpoint_button = if is_pending {
-                    restore_checkpoint_button
-                        .with_animation(
-                            ("pulsating-restore-checkpoint-button", ix),
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.6, 1.)),
-                            |label, delta| label.alpha(delta),
-                        )
-                        .into_any_element()
-                } else if let Some(error) = error {
-                    restore_checkpoint_button
-                        .tooltip(Tooltip::text(error.to_string()))
-                        .into_any_element()
+                    let restore_checkpoint_button = if is_pending {
+                        restore_checkpoint_button
+                            .with_animation(
+                                ("pulsating-restore-checkpoint-button", ix),
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.6, 1.)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else if let Some(error) = error {
+                        restore_checkpoint_button
+                            .tooltip(Tooltip::text(error.to_string()))
+                            .into_any_element()
+                    } else {
+                        restore_checkpoint_button.into_any_element()
+                    };
+
+                    parent.child(
+                        h_flex()
+                            .pt_2p5()
+                            .px_2p5()
+                            .w_full()
+                            .gap_1()
+                            .child(ui::Divider::horizontal())
+                            .child(restore_checkpoint_button)
+                            .child(ui::Divider::horizontal()),
+                    )
                 } else {
-                    restore_checkpoint_button.into_any_element()
-                };
-
-                parent.child(
-                    h_flex()
-                        .pt_2p5()
-                        .px_2p5()
-                        .w_full()
-                        .gap_1()
-                        .child(ui::Divider::horizontal())
-                        .child(restore_checkpoint_button)
-                        .child(ui::Divider::horizontal()),
-                )
+                    parent
+                }
             })
             .when(is_first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(generating_label.is_some(), |this| {
+            .when(is_generating && is_last_message, |this| {
                 this.child(
                     h_flex()
                         .h_8()
@@ -2110,7 +2148,7 @@ impl ActiveThread {
                         .mb_4()
                         .ml_4()
                         .py_1p5()
-                        .child(generating_label.unwrap()),
+                        .when_some(loading_dots, |this, loading_dots| this.child(loading_dots)),
                 )
             })
             .when(show_feedback, move |parent| {
@@ -3423,13 +3461,20 @@ pub(crate) fn open_context(
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    let thread_id = thread_context.thread.read(cx).id().clone();
-                    panel
-                        .open_thread_by_id(&thread_id, window, cx)
-                        .detach_and_log_err(cx)
+                    panel.open_thread(thread_context.thread.clone(), window, cx);
                 });
             }
         }),
+
+        AgentContextHandle::TextThread(text_thread_context) => {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.open_prompt_editor(text_thread_context.context.clone(), window, cx)
+                    });
+                }
+            })
+        }
 
         AgentContextHandle::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenRulesLibrary {
@@ -3466,4 +3511,153 @@ fn open_editor_at_position(
                 .log_err();
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use assistant_tool::{ToolRegistry, ToolWorkingSet};
+    use editor::EditorSettings;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use language_model::{LanguageModel, fake_provider::FakeLanguageModel};
+    use project::Project;
+    use prompt_store::PromptBuilder;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    use crate::{ContextLoadResult, thread_store};
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_current_completion_cancelled_when_message_edited(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (cx, active_thread, thread, model) = setup_test_environment(cx, project.clone()).await;
+
+        // Insert user message without any context (empty context vector)
+        let message = thread.update(cx, |thread, cx| {
+            let message_id = thread.insert_user_message(
+                "What is the best way to learn Rust?",
+                ContextLoadResult::default(),
+                None,
+                vec![],
+                cx,
+            );
+            thread
+                .message(message_id)
+                .expect("message should exist")
+                .clone()
+        });
+
+        // Stream response to user message
+        thread.update(cx, |thread, cx| {
+            let request = thread.to_completion_request(model.clone(), cx);
+            thread.stream_completion(request, model, cx.active_window(), cx)
+        });
+        let generating = thread.update(cx, |thread, _cx| thread.is_generating());
+        assert!(generating, "There should be one pending completion");
+
+        // Edit the previous message
+        active_thread.update_in(cx, |active_thread, window, cx| {
+            active_thread.start_editing_message(message.id, &message.segments, window, cx);
+        });
+
+        // Check that the stream was cancelled
+        let generating = thread.update(cx, |thread, _cx| thread.is_generating());
+        assert!(!generating, "The completion should have been cancelled");
+    }
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AssistantSettings::register(cx);
+            prompt_store::init(cx);
+            thread_store::init(cx);
+            workspace::init_settings(cx);
+            language_model::init_settings(cx);
+            ThemeSettings::register(cx);
+            EditorSettings::register(cx);
+            ToolRegistry::default_global(cx);
+        });
+    }
+
+    // Helper to create a test project with test files
+    async fn create_test_project(
+        cx: &mut TestAppContext,
+        files: serde_json::Value,
+    ) -> Entity<Project> {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), files).await;
+        Project::test(fs, [path!("/test").as_ref()], cx).await
+    }
+
+    async fn setup_test_environment(
+        cx: &mut TestAppContext,
+        project: Entity<Project>,
+    ) -> (
+        &mut VisualTestContext,
+        Entity<ActiveThread>,
+        Entity<Thread>,
+        Arc<dyn LanguageModel>,
+    ) {
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let thread_store = cx
+            .update(|_, cx| {
+                ThreadStore::load(
+                    project.clone(),
+                    cx.new(|_| ToolWorkingSet::default()),
+                    None,
+                    prompt_builder.clone(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let text_thread_store = cx
+            .update(|_, cx| {
+                TextThreadStore::new(project.clone(), prompt_builder, Default::default(), cx)
+            })
+            .await
+            .unwrap();
+
+        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
+        let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
+
+        let model = FakeLanguageModel::default();
+        let model: Arc<dyn LanguageModel> = Arc::new(model);
+
+        let language_registry = LanguageRegistry::new(cx.executor());
+        let language_registry = Arc::new(language_registry);
+
+        let active_thread = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ActiveThread::new(
+                    thread.clone(),
+                    thread_store.clone(),
+                    text_thread_store.clone(),
+                    context_store.clone(),
+                    language_registry.clone(),
+                    workspace.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        (cx, active_thread, thread, model)
+    }
 }

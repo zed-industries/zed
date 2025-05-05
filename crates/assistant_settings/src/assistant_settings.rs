@@ -69,7 +69,7 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default, Clone, Debug)]
 pub struct AssistantSettings {
     pub enabled: bool,
     pub button: bool,
@@ -88,6 +88,7 @@ pub struct AssistantSettings {
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
+    pub single_file_review: bool,
 }
 
 impl AssistantSettings {
@@ -224,6 +225,7 @@ impl AssistantSettingsContent {
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
                     stream_edits: None,
+                    single_file_review: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -252,6 +254,7 @@ impl AssistantSettingsContent {
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
                 stream_edits: None,
+                single_file_review: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -312,7 +315,12 @@ impl AssistantSettingsContent {
                                 _ => None,
                             };
                             settings.provider = Some(AssistantProviderContentV1::Ollama {
-                                default_model: Some(ollama::Model::new(&model, None, None)),
+                                default_model: Some(ollama::Model::new(
+                                    &model,
+                                    None,
+                                    None,
+                                    language_model.supports_tools(),
+                                )),
                                 api_url,
                             });
                         }
@@ -430,6 +438,14 @@ impl AssistantSettingsContent {
         .ok();
     }
 
+    pub fn set_single_file_review(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.single_file_review = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.v2_setting(|setting| {
             setting.default_profile = Some(profile_id);
@@ -503,6 +519,7 @@ impl Default for VersionedAssistantSettingsContent {
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
             stream_edits: None,
+            single_file_review: None,
         })
     }
 }
@@ -562,6 +579,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     stream_edits: Option<bool>,
+    /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
+    ///
+    /// Default: true
+    single_file_review: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -725,6 +746,7 @@ impl Settings for AssistantSettings {
                 value.notify_when_agent_waiting,
             );
             merge(&mut settings.stream_edits, value.stream_edits);
+            merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
 
             if let Some(profiles) = value.profiles {
@@ -857,6 +879,7 @@ mod tests {
                                 always_allow_tool_actions: None,
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
+                                single_file_review: None,
                             },
                         )),
                     }

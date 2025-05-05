@@ -79,7 +79,6 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
- "indexmap",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
@@ -107,6 +106,7 @@ dependencies = [
  "rope",
  "rules_library",
  "schemars",
+ "search",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -125,6 +125,7 @@ dependencies = [
  "time_format",
  "ui",
  "ui_input",
+ "urlencoding",
  "util",
  "uuid",
  "workspace",
@@ -484,7 +485,6 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
- "context_server",
  "ctor",
  "db",
  "editor",
@@ -736,7 +736,10 @@ dependencies = [
  "language_model",
  "language_models",
  "linkme",
+ "log",
  "open",
+ "paths",
+ "portable-pty",
  "pretty_assertions",
  "project",
  "rand 0.8.5",
@@ -754,14 +757,17 @@ dependencies = [
  "tempfile",
  "terminal",
  "terminal_view",
+ "theme",
  "tree-sitter-rust",
  "ui",
  "unindent",
  "util",
  "web_search",
+ "which 6.0.3",
  "workspace",
  "workspace-hack",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
@@ -3246,6 +3252,7 @@ dependencies = [
  "collections",
  "component",
  "db",
+ "futures 0.3.31",
  "gpui",
  "languages",
  "log",
@@ -3255,6 +3262,7 @@ dependencies = [
  "serde",
  "ui",
  "ui_input",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -3324,40 +3332,19 @@ name = "context_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_tool",
  "async-trait",
  "collections",
- "command_palette_hooks",
- "context_server_settings",
- "extension",
  "futures 0.3.31",
  "gpui",
- "icons",
- "language_model",
  "log",
  "parking_lot",
  "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "url",
- "util",
- "workspace-hack",
-]
-
-[[package]]
-name = "context_server_settings"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "gpui",
  "schemars",
  "serde",
  "serde_json",
- "settings",
+ "smol",
+ "url",
+ "util",
  "workspace-hack",
 ]
 
@@ -3991,7 +3978,7 @@ version = "3.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "697b5419f348fd5ae2478e8018cb016c00a5881c7f46c717de98ffd135a5651c"
 dependencies = [
- "nix",
+ "nix 0.29.0",
  "windows-sys 0.59.0",
 ]
 
@@ -5015,6 +5002,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-trait",
@@ -5024,7 +5012,6 @@ dependencies = [
  "clap",
  "client",
  "collections",
- "context_server",
  "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
@@ -5177,7 +5164,6 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
- "context_server_settings",
  "ctor",
  "env_logger 0.11.8",
  "extension",
@@ -7993,6 +7979,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "parking_lot",
  "paths",
  "pet",
  "pet-conda",
@@ -9074,6 +9061,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags 2.9.0",
+ "cfg-if",
+ "cfg_aliases 0.1.1",
+ "libc",
+]
 
 [[package]]
 name = "nix"
@@ -10899,6 +10898,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-pty"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "downcast-rs",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "nix 0.28.0",
+ "serial2",
+ "shared_library",
+ "shell-words",
+ "winapi",
+ "winreg 0.10.1",
+]
+
+[[package]]
 name = "postage"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11073,6 +11093,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_server",
  "dap",
  "dap_adapters",
  "env_logger 0.11.8",
@@ -13310,6 +13331,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serial2"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7d1d08630509d69f90eff4afcd02c3bd974d979225cbd815ff5942351b14375"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "session"
 version = "0.1.0"
 dependencies = [
@@ -13407,6 +13439,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shared_library"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9e7e0f2bfae24d8a5b5a66c5b257a83c7412304311512a0c054cd5e619da11"
+dependencies = [
+ "lazy_static",
+ "libc",
 ]
 
 [[package]]
@@ -17765,6 +17807,15 @@ dependencies = [
 
 [[package]]
 name = "winreg"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
+name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
@@ -18093,7 +18144,6 @@ dependencies = [
  "component",
  "dap",
  "db",
- "derive_more",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -18216,7 +18266,7 @@ dependencies = [
  "miniz_oxide",
  "mio",
  "naga",
- "nix",
+ "nix 0.29.0",
  "nom",
  "num-bigint",
  "num-bigint-dig",
@@ -18593,7 +18643,7 @@ dependencies = [
  "futures-core",
  "futures-lite 2.6.0",
  "hex",
- "nix",
+ "nix 0.29.0",
  "ordered-stream",
  "serde",
  "serde_repr",
@@ -18706,7 +18756,7 @@ dependencies = [
  "menu",
  "migrator",
  "mimalloc",
- "nix",
+ "nix 0.29.0",
  "node_runtime",
  "notifications",
  "outline",
@@ -18827,9 +18877,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.1"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc9ec491b7112cb8c2fba3c17d9a349d8ab695fb1a4ef6c5c4b9fd8d7aa975c1"
+checksum = "2adf9bc80def4ec93c190f06eb78111865edc2576019a9753eaef6fd7bc3b72c"
 dependencies = [
  "anyhow",
  "serde",

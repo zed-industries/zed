@@ -8,7 +8,7 @@ mod preview_support;
 use std::iter::Iterator;
 use std::sync::Arc;
 
-use agent::{ActiveThread, ThreadStore};
+use agent::{ActiveThread, TextThreadStore, ThreadStore};
 use client::UserStore;
 use component::{ComponentId, ComponentMetadata, components};
 use gpui::{
@@ -21,11 +21,13 @@ use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use languages::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use persistence::COMPONENT_PREVIEW_DB;
-use preview_support::active_thread::{load_preview_thread_store, static_active_thread};
+use preview_support::active_thread::{
+    load_preview_text_thread_store, load_preview_thread_store, static_active_thread,
+};
 use project::Project;
 use ui::{Divider, HighlightedLabel, ListItem, ListSubHeader, prelude::*};
-
 use ui_input::SingleLineInput;
+use util::ResultExt as _;
 use workspace::{AppState, ItemId, SerializableItem, delete_unloaded_items};
 use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
 
@@ -110,7 +112,6 @@ struct ComponentPreview {
     active_page: PreviewPage,
     components: Vec<ComponentMetadata>,
     component_list: ListState,
-    agent_previews: Vec<ComponentId>,
     cursor_index: usize,
     language_registry: Arc<LanguageRegistry>,
     workspace: WeakEntity<Workspace>,
@@ -121,6 +122,7 @@ struct ComponentPreview {
 
     // preview support
     thread_store: Option<Entity<ThreadStore>>,
+    text_thread_store: Option<Entity<TextThreadStore>>,
     active_thread: Option<Entity<ActiveThread>>,
 }
 
@@ -138,23 +140,29 @@ impl ComponentPreview {
         let workspace_clone = workspace.clone();
         let project_clone = project.clone();
 
-        let entity = cx.weak_entity();
-        window
-            .spawn(cx, async move |cx| {
-                let thread_store_task =
-                    load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx)
-                        .await;
+        cx.spawn_in(window, async move |entity, cx| {
+            let thread_store_future =
+                load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx);
+            let text_thread_store_future =
+                load_preview_text_thread_store(workspace_clone.clone(), project_clone.clone(), cx);
 
-                if let Ok(thread_store) = thread_store_task.await {
-                    entity
-                        .update_in(cx, |this, window, cx| {
-                            this.thread_store = Some(thread_store.clone());
-                            this.create_active_thread(window, cx);
-                        })
-                        .ok();
-                }
-            })
-            .detach();
+            let (thread_store_result, text_thread_store_result) =
+                futures::join!(thread_store_future, text_thread_store_future);
+
+            if let (Some(thread_store), Some(text_thread_store)) = (
+                thread_store_result.log_err(),
+                text_thread_store_result.log_err(),
+            ) {
+                entity
+                    .update_in(cx, |this, window, cx| {
+                        this.thread_store = Some(thread_store.clone());
+                        this.text_thread_store = Some(text_thread_store.clone());
+                        this.create_active_thread(window, cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
 
         let sorted_components = components().all_sorted();
         let selected_index = selected_index.into().unwrap_or(0);
@@ -179,9 +187,6 @@ impl ComponentPreview {
             },
         );
 
-        // Initialize agent previews
-        let agent_previews = agent::all_agent_previews();
-
         let mut component_preview = Self {
             workspace_id: None,
             focus_handle: cx.focus_handle(),
@@ -195,11 +200,11 @@ impl ComponentPreview {
             component_map: components().0,
             components: sorted_components,
             component_list,
-            agent_previews,
             cursor_index: selected_index,
             filter_editor,
             filter_text: String::new(),
             thread_store: None,
+            text_thread_store: None,
             active_thread: None,
         };
 
@@ -225,12 +230,17 @@ impl ComponentPreview {
         let weak_handle = self.workspace.clone();
         if let Some(workspace) = workspace.upgrade() {
             let project = workspace.read(cx).project().clone();
-            if let Some(thread_store) = self.thread_store.clone() {
+            if let Some((thread_store, text_thread_store)) = self
+                .thread_store
+                .clone()
+                .zip(self.text_thread_store.clone())
+            {
                 let active_thread = static_active_thread(
                     weak_handle,
                     project,
                     language_registry,
                     thread_store,
+                    text_thread_store,
                     window,
                     cx,
                 );
@@ -630,15 +640,11 @@ impl ComponentPreview {
 
         // Check if the component's scope is Agent
         if scope == ComponentScope::Agent {
-            if let (Some(thread_store), Some(active_thread)) = (
-                self.thread_store.as_ref().map(|ts| ts.downgrade()),
-                self.active_thread.clone(),
-            ) {
+            if let Some(active_thread) = self.active_thread.clone() {
                 if let Some(element) = agent::get_agent_preview(
                     &component.id(),
                     self.workspace.clone(),
                     active_thread,
-                    thread_store,
                     window,
                     cx,
                 ) {
@@ -693,7 +699,6 @@ impl ComponentPreview {
                 .child(ComponentPreviewPage::new(
                     component.clone(),
                     self.workspace.clone(),
-                    self.thread_store.as_ref().map(|ts| ts.downgrade()),
                     self.active_thread.clone(),
                 ))
                 .into_any_element()
@@ -707,38 +712,22 @@ impl ComponentPreview {
         }
     }
 
-    fn render_active_thread(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_active_thread(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("render-active-thread")
             .size_full()
             .child(
-                v_flex().children(self.agent_previews.iter().filter_map(|component_id| {
-                    if let (Some(thread_store), Some(active_thread)) = (
-                        self.thread_store.as_ref().map(|ts| ts.downgrade()),
-                        self.active_thread.clone(),
-                    ) {
-                        agent::get_agent_preview(
-                            component_id,
-                            self.workspace.clone(),
-                            active_thread,
-                            thread_store,
-                            window,
-                            cx,
-                        )
-                        .map(|element| div().child(element))
-                    } else {
-                        None
-                    }
-                })),
+                div()
+                    .mx_auto()
+                    .w(px(640.))
+                    .h_full()
+                    .py_8()
+                    .bg(cx.theme().colors().panel_background)
+                    .children(self.active_thread.clone().map(|thread| thread.clone()))
+                    .when_none(&self.active_thread.clone(), |this| {
+                        this.child("No active thread")
+                    }),
             )
-            .children(self.active_thread.clone().map(|thread| thread.clone()))
-            .when_none(&self.active_thread.clone(), |this| {
-                this.child("No active thread")
-            })
             .into_any_element()
     }
 
@@ -852,7 +841,7 @@ impl Render for ComponentPreview {
                             .render_component_page(&id, window, cx)
                             .into_any_element(),
                         PreviewPage::ActiveThread => {
-                            self.render_active_thread(window, cx).into_any_element()
+                            self.render_active_thread(cx).into_any_element()
                         }
                     }),
             )
@@ -1058,7 +1047,6 @@ pub struct ComponentPreviewPage {
     // languages: Arc<LanguageRegistry>,
     component: ComponentMetadata,
     workspace: WeakEntity<Workspace>,
-    thread_store: Option<WeakEntity<ThreadStore>>,
     active_thread: Option<Entity<ActiveThread>>,
 }
 
@@ -1066,7 +1054,6 @@ impl ComponentPreviewPage {
     pub fn new(
         component: ComponentMetadata,
         workspace: WeakEntity<Workspace>,
-        thread_store: Option<WeakEntity<ThreadStore>>,
         active_thread: Option<Entity<ActiveThread>>,
         // languages: Arc<LanguageRegistry>
     ) -> Self {
@@ -1074,7 +1061,6 @@ impl ComponentPreviewPage {
             // languages,
             component,
             workspace,
-            thread_store,
             active_thread,
         }
     }
@@ -1107,14 +1093,11 @@ impl ComponentPreviewPage {
 
     fn render_preview(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         // Try to get agent preview first if we have an active thread
-        let maybe_agent_preview = if let (Some(thread_store), Some(active_thread)) =
-            (self.thread_store.as_ref(), self.active_thread.as_ref())
-        {
+        let maybe_agent_preview = if let Some(active_thread) = self.active_thread.as_ref() {
             agent::get_agent_preview(
                 &self.component.id(),
                 self.workspace.clone(),
                 active_thread.clone(),
-                thread_store.clone(),
                 window,
                 cx,
             )
