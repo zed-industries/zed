@@ -856,6 +856,10 @@ impl ActiveThread {
             .map(|(id, state)| (*id, state.last_estimated_token_count.unwrap_or(0)))
     }
 
+    pub fn context_store(&self) -> &Entity<ContextStore> {
+        &self.context_store
+    }
+
     pub fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
     }
