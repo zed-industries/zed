@@ -71,3 +71,11 @@ pub const SETTINGS_ASSISTANT_TOOLS_PATTERN: &str = r#"(document
     (#eq? @profiles "profiles")
     (#eq? @tools_key "tools")
 )"#;
+
+pub const SETTINGS_ASSISTANT_PATTERN: &str = r#"(document
+    (object
+        (pair
+            key: (string (string_content) @key)
+        )
+    )
+)"#;

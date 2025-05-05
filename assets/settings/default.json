@@ -630,18 +630,18 @@
     // Default width of the notification panel.
     "default_width": 380
   },
-  "assistant": {
+  "agent": {
     // Version of this setting.
     "version": "2",
-    // Whether the assistant is enabled.
+    // Whether the agent is enabled.
     "enabled": true,
-    // Whether to show the assistant panel button in the status bar.
+    // Whether to show the agent panel button in the status bar.
     "button": true,
-    // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
+    // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Default width when the assistant is docked to the left or right.
+    // Default width when the agent is docked to the left or right.
     "default_width": 640,
-    // Default height when the assistant is docked to the bottom.
+    // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
     // The default model to use when creating new chats.
     "default_model": {
@@ -650,7 +650,7 @@
       // The model to use.
       "model": "claude-3-7-sonnet-latest"
     },
-    // The model to use when applying edits from the assistant.
+    // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -1612,7 +1612,7 @@
   //   }
   // ]
   "ssh_connections": [],
-  // Configures context servers for use in the Assistant.
+  // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
     "stepping_granularity": "line",

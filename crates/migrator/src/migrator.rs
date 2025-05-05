@@ -36,7 +36,9 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
 
     let mut edits = vec![];
     while let Some(mat) = matches.next() {
+        dbg!("match");
         if let Some((_, callback)) = patterns.get(mat.pattern_index) {
+            dbg!("extend");
             edits.extend(callback(&text, &mat, query));
         }
     }
@@ -72,7 +74,8 @@ fn run_migrations(
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
     for (patterns, query) in migrations.iter() {
-        if let Some(migrated_text) = migrate(&current_text, patterns, query)? {
+        if let Some(migrated_text) = migrate(&current_text, dbg!(patterns), query)? {
+            dbg!(&migrated_text);
             current_text = migrated_text.clone();
             result = Some(migrated_text);
         }
@@ -135,6 +138,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         (
             migrations::m_2025_04_23::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_23,
+        ),
+        (
+            migrations::m_2025_05_05::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_05_05,
         ),
     ];
     run_migrations(text, migrations)
@@ -221,6 +228,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_04_23,
     migrations::m_2025_04_23::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_05_05,
+    migrations::m_2025_05_05::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -691,6 +702,24 @@ mod tests {
                     }
                 }
             "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_assistant() {
+        assert_migrate_settings(
+            r#"{
+                "assistant": {
+                    "foo": "bar"
+                }
+            }"#,
+            Some(
+                r#"{
+                "agent": {
+                    "foo": "bar"
+                }
+            }"#,
             ),
         );
     }
