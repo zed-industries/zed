@@ -29,6 +29,10 @@ impl ActionLog {
         }
     }
 
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
     /// Notifies a diagnostics check
     pub fn checked_project_diagnostics(&mut self) {
         self.edited_since_project_diagnostics_check = false;
@@ -42,6 +46,7 @@ impl ActionLog {
     fn track_buffer_internal(
         &mut self,
         buffer: Entity<Buffer>,
+        is_created: bool,
         cx: &mut Context<Self>,
     ) -> &mut TrackedBuffer {
         let tracked_buffer = self
@@ -58,11 +63,7 @@ impl ActionLog {
                 let base_text;
                 let status;
                 let unreviewed_changes;
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(true, |file| !file.disk_state().exists())
-                {
+                if is_created {
                     base_text = Rope::default();
                     status = TrackedBufferStatus::Created;
                     unreviewed_changes = Patch::new(vec![Edit {
@@ -149,7 +150,7 @@ impl ActionLog {
                     // resurrected externally, we want to clear the changes we
                     // were tracking and reset the buffer's state.
                     self.tracked_buffers.remove(&buffer);
-                    self.track_buffer_internal(buffer, cx);
+                    self.track_buffer_internal(buffer, false, cx);
                 }
                 cx.notify();
             }
@@ -263,15 +264,22 @@ impl ActionLog {
     }
 
     /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn track_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer_internal(buffer, cx);
+    pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.track_buffer_internal(buffer, false, cx);
+    }
+
+    /// Mark a buffer as edited, so we can refresh it in the context
+    pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.edited_since_project_diagnostics_check = true;
+        self.tracked_buffers.remove(&buffer);
+        self.track_buffer_internal(buffer.clone(), true, cx);
     }
 
     /// Mark a buffer as edited, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
 
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
@@ -279,7 +287,7 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer_internal(buffer.clone(), cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
             TrackedBufferStatus::Created => {
                 self.tracked_buffers.remove(&buffer);
@@ -389,7 +397,7 @@ impl ActionLog {
 
                 // Clear all tracked changes for this buffer and start over as if we just read it.
                 self.tracked_buffers.remove(&buffer);
-                self.track_buffer_internal(buffer.clone(), cx);
+                self.buffer_read(buffer.clone(), cx);
                 cx.notify();
                 save
             }
@@ -700,7 +708,7 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
@@ -781,7 +789,7 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit([(Point::new(1, 0)..Point::new(2, 0), "")], None, cx)
@@ -863,7 +871,7 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit([(Point::new(1, 2)..Point::new(2, 3), "F\nGHI")], None, cx)
@@ -959,7 +967,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| buffer.set_text("lorem", cx));
             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
@@ -1082,7 +1090,7 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer(file2_path, cx))
             .await
             .unwrap();
-        action_log.update(cx, |log, cx| log.track_buffer(buffer2.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
         action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
         project
@@ -1129,7 +1137,7 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit([(Point::new(1, 1)..Point::new(1, 2), "E\nXYZ")], None, cx)
@@ -1264,7 +1272,7 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit([(Point::new(1, 1)..Point::new(1, 2), "E\nXYZ")], None, cx)
@@ -1397,7 +1405,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| buffer.set_text("content", cx));
             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
@@ -1455,7 +1463,7 @@ mod tests {
             .await
             .unwrap();
 
-        action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
             match rng.gen_range(0..100) {
@@ -1507,7 +1515,7 @@ mod tests {
             log::info!("quiescing...");
             cx.run_until_parked();
             action_log.update(cx, |log, cx| {
-                let tracked_buffer = log.track_buffer_internal(buffer.clone(), cx);
+                let tracked_buffer = log.tracked_buffers.get(&buffer).unwrap();
                 let mut old_text = tracked_buffer.base_text.clone();
                 let new_text = buffer.read(cx).as_rope();
                 for edit in tracked_buffer.unreviewed_changes.edits() {

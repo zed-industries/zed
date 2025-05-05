@@ -445,7 +445,6 @@ impl DapStore {
         };
 
         let dap_store = cx.weak_entity();
-        let breakpoint_store = self.breakpoint_store.clone();
 
         cx.spawn({
             let session = session.clone();
@@ -462,7 +461,7 @@ impl DapStore {
 
                 session
                     .update(cx, |session, cx| {
-                        session.boot(binary, worktree, breakpoint_store, dap_store, cx)
+                        session.boot(binary, worktree, dap_store, cx)
                     })?
                     .await
             }

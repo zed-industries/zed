@@ -8,6 +8,7 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
+use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
@@ -252,7 +253,7 @@ impl LspAdapter for RustLspAdapter {
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
-        vec!["rustc".into()]
+        vec![CARGO_DIAGNOSTICS_SOURCE_NAME.to_owned()]
     }
 
     fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
@@ -281,6 +282,12 @@ impl LspAdapter for RustLspAdapter {
                 }
             }
         }
+    }
+
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?m)\n *").expect("Failed to create REGEX"));
+        Some(REGEX.replace_all(message, "\n\n").to_string())
     }
 
     async fn label_for_completion(
@@ -493,12 +500,27 @@ impl LspAdapter for RustLspAdapter {
                     "kinds": [ "cargo", "shell" ],
                 },
             });
-            if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            if let Some(original_experimental) = &mut original.capabilities.experimental {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
             }
         }
+
+        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+        if cargo_diagnostics_fetched_separately {
+            let disable_check_on_save = json!({
+                "checkOnSave": false,
+            });
+            if let Some(initialization_options) = &mut original.initialization_options {
+                merge_json_value_into(disable_check_on_save, initialization_options);
+            } else {
+                original.initialization_options = Some(disable_check_on_save);
+            }
+        }
+
         Ok(original)
     }
 }

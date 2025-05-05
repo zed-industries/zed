@@ -19,8 +19,8 @@ pub use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
-use clock::Lamport;
 pub use clock::ReplicaId;
+use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -59,9 +59,9 @@ use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
     Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
-    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection, SelectionGoal,
-    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
-    Transaction, TransactionId, Unclipped,
+    LineIndent, OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection,
+    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
+    ToPointUtf16, Transaction, TransactionId, Unclipped,
 };
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
@@ -213,6 +213,8 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
     pub message: String,
+    /// The human-readable message (in markdown format)
+    pub markdown: Option<String>,
     /// An id that identifies the group to which this diagnostic belongs.
     ///
     /// When a language server produces a diagnostic with
@@ -2130,6 +2132,31 @@ impl Buffer {
         }
     }
 
+    pub fn set_agent_selections(
+        &mut self,
+        selections: Arc<[Selection<Anchor>]>,
+        line_mode: bool,
+        cursor_shape: CursorShape,
+        cx: &mut Context<Self>,
+    ) {
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.remote_selections.insert(
+            AGENT_REPLICA_ID,
+            SelectionSet {
+                selections: selections.clone(),
+                lamport_timestamp,
+                line_mode,
+                cursor_shape,
+            },
+        );
+        self.non_text_state_update_count += 1;
+        cx.notify();
+    }
+
+    pub fn remove_agent_selections(&mut self, cx: &mut Context<Self>) {
+        self.set_agent_selections(Arc::default(), false, Default::default(), cx);
+    }
+
     /// Replaces the buffer's entire text.
     pub fn set_text<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
     where
@@ -2137,6 +2164,14 @@ impl Buffer {
     {
         self.autoindent_requests.clear();
         self.edit([(0..self.len(), text)], None, cx)
+    }
+
+    /// Appends the given text to the end of the buffer.
+    pub fn append<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
+    where
+        T: Into<Arc<str>>,
+    {
+        self.edit([(self.len()..self.len(), text)], None, cx)
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
@@ -4616,6 +4651,7 @@ impl Default for Diagnostic {
             code_description: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
+            markdown: None,
             group_id: 0,
             is_primary: false,
             is_disk_based: false,

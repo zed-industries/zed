@@ -35,7 +35,7 @@ use std::{
     fmt::Debug,
     iter, mem,
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr as _,
     sync::Arc,
     time::{Duration, Instant},
@@ -46,7 +46,7 @@ use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
-#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
 
 impl ContextId {
@@ -648,7 +648,7 @@ pub struct AssistantContext {
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
     pending_cache_warming_task: Task<Option<()>>,
-    path: Option<PathBuf>,
+    path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
@@ -839,7 +839,7 @@ impl AssistantContext {
 
     pub fn deserialize(
         saved_context: SavedContext,
-        path: PathBuf,
+        path: Arc<Path>,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -1147,8 +1147,8 @@ impl AssistantContext {
         self.prompt_builder.clone()
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        self.path.as_ref()
     }
 
     pub fn summary(&self) -> Option<&ContextSummary> {
@@ -2371,6 +2371,7 @@ impl AssistantContext {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StatusUpdate { .. } => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
@@ -2428,8 +2429,8 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(_) => {}
-                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
+                                    LanguageModelCompletionEvent::ToolUse(_) |
+                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
                                 }
                             });
 
@@ -3181,7 +3182,7 @@ impl AssistantContext {
                 fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
                 if let Some(old_path) = old_path {
-                    if new_path != old_path {
+                    if new_path.as_path() != old_path.as_ref() {
                         fs.remove_file(
                             &old_path,
                             RemoveOptions {
@@ -3193,7 +3194,7 @@ impl AssistantContext {
                     }
                 }
 
-                this.update(cx, |this, _| this.path = Some(new_path))?;
+                this.update(cx, |this, _| this.path = Some(new_path.into()))?;
             }
 
             Ok(())
@@ -3589,6 +3590,6 @@ impl SavedContextV0_1_0 {
 #[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub mtime: chrono::DateTime<chrono::Local>,
 }
