@@ -1070,6 +1070,22 @@ impl ActiveThread {
                     cx,
                 );
             }
+            ThreadEvent::MissingToolUse {
+                tool_use_id,
+                ui_text,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text,
+                    "",
+                    self.thread
+                        .read(cx)
+                        .output_for_tool(tool_use_id)
+                        .map(|output| output.clone().into())
+                        .unwrap_or("".into()),
+                    cx,
+                );
+            }
         }
     }
 
