@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use dap::adapters::{DebugTaskDefinition, InlineValueProvider, latest_github_release};
 use gpui::AsyncApp;
 use task::DebugRequest;
+use util::ResultExt;
 
 use crate::*;
 
@@ -53,29 +54,6 @@ impl CodeLldbDebugAdapter {
             request,
             configuration,
         }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for CodeLldbDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    async fn install_binary(
-        &self,
-        version: AdapterVersion,
-        delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::Vsix,
-            delegate,
-        )
-        .await?;
-
-        Ok(())
     }
 
     async fn fetch_latest_adapter_version(
@@ -153,7 +131,35 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             connection: None,
         })
     }
+}
 
+#[async_trait(?Send)]
+impl DebugAdapter for CodeLldbDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
+        &self,
+        delegate: &dyn DapDelegate,
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+            adapters::download_adapter_from_github(
+                self.name(),
+                version,
+                adapters::DownloadedFileType::Vsix,
+                delegate,
+            )
+            .await?;
+        }
+
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
+    }
     fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
         Some(Box::new(CodeLldbInlineValueProvider))
     }

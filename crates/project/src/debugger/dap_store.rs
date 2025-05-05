@@ -38,10 +38,9 @@ use rpc::{
     proto::{self},
 };
 use settings::{Settings, WorktreeId};
-use smol::lock::Mutex;
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     ffi::OsStr,
     net::Ipv4Addr,
     path::{Path, PathBuf},
@@ -867,7 +866,6 @@ pub struct DapAdapterDelegate {
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
 
@@ -889,7 +887,6 @@ impl DapAdapterDelegate {
             node_runtime,
             toolchain_store,
             load_shell_env_task,
-            updated_adapters: Default::default(),
         }
     }
 }
@@ -910,10 +907,6 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn fs(&self) -> Arc<dyn Fs> {
         self.fs.clone()
-    }
-
-    fn updated_adapters(&self) -> Arc<Mutex<HashSet<DebugAdapterName>>> {
-        self.updated_adapters.clone()
     }
 
     fn output_to_console(&self, msg: String) {
