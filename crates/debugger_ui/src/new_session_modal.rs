@@ -14,7 +14,7 @@ use gpui::{
     WeakEntity,
 };
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest, TaskContext};
+use task::{DebugScenario, LaunchRequest};
 use tasks_ui::task_contexts;
 use theme::ThemeSettings;
 use ui::{
