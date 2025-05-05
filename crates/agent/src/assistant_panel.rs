@@ -51,7 +51,7 @@ use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurat
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
-use crate::thread_history::{PastContext, PastThread, ThreadHistory};
+use crate::thread_history::{EntryTimestampFormat, PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
@@ -1944,11 +1944,11 @@ impl AssistantPanel {
                                     // TODO: Add keyboard navigation.
                                     match entry {
                                         HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![])
+                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![], EntryTimestampFormat::DateAndTime)
                                                 .into_any_element()
                                         }
                                         HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false, vec![])
+                                            PastContext::new(context, cx.entity().downgrade(), false, vec![], EntryTimestampFormat::DateAndTime)
                                                 .into_any_element()
                                         }
                                     }

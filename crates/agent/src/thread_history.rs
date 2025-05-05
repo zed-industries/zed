@@ -2,11 +2,12 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use assistant_context_editor::SavedContextMetadata;
+use chrono::{NaiveDate, TimeZone};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task, UniformListScrollHandle,
-    WeakEntity, Window, uniform_list,
+    App, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
@@ -26,16 +27,18 @@ pub struct ThreadHistory {
     selected_index: usize,
     search_editor: Entity<Editor>,
     all_entries: Arc<Vec<HistoryEntry>>,
-    list_content: ListContent,
+    // When the search is empty, we display date separators between history entries
+    // This vector contains an enum of either a separator or an actual entry
+    separated_items: Vec<HistoryListItem>,
+    _separated_items_task: Option<Task<()>>,
+    search_state: SearchState,
     scrollbar_visibility: bool,
     scrollbar_state: ScrollbarState,
     _subscriptions: Vec<gpui::Subscription>,
 }
 
-#[derive(Default)]
-enum ListContent {
-    #[default]
-    All,
+enum SearchState {
+    Empty,
     Searching {
         query: SharedString,
         _task: Task<()>,
@@ -44,6 +47,20 @@ enum ListContent {
         query: SharedString,
         matches: Vec<StringMatch>,
     },
+}
+
+enum HistoryListItem {
+    DateSeparator(NaiveDate),
+    Entry(usize),
+}
+
+impl HistoryListItem {
+    fn entry_index(&self) -> Option<usize> {
+        match self {
+            HistoryListItem::DateSeparator(_) => None,
+            HistoryListItem::Entry(index) => Some(*index),
+        }
+    }
 }
 
 impl ThreadHistory {
@@ -74,18 +91,22 @@ impl ThreadHistory {
         let scroll_handle = UniformListScrollHandle::default();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
-        Self {
+        let mut this = Self {
             assistant_panel,
             history_store,
             scroll_handle,
             selected_index: 0,
-            list_content: ListContent::default(),
+            search_state: SearchState::Empty,
             all_entries: Default::default(),
+            separated_items: Default::default(),
             search_editor,
-            _subscriptions: vec![search_editor_subscription, history_store_subscription],
             scrollbar_visibility: true,
             scrollbar_state,
-        }
+            _subscriptions: vec![search_editor_subscription, history_store_subscription],
+            _separated_items_task: None,
+        };
+        this.update_all_entries(cx);
+        this
     }
 
     fn update_all_entries(&mut self, cx: &mut Context<Self>) {
@@ -95,17 +116,57 @@ impl ThreadHistory {
             .into();
 
         self.set_selected_index(0, cx);
+        self.update_separated_items(cx);
 
-        match &self.list_content {
-            ListContent::All => {}
-            ListContent::Searching { query, .. } | ListContent::Searched { query, .. } => {
+        match &self.search_state {
+            SearchState::Empty => {}
+            SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
                 self.search(query.clone(), cx);
             }
         }
         cx.notify();
     }
 
+    fn update_separated_items(&mut self, cx: &mut Context<Self>) {
+        self._separated_items_task.take();
+
+        let mut separated_items = std::mem::take(&mut self.separated_items);
+        separated_items.clear();
+        let all_entries = self.all_entries.clone();
+
+        let bg_task = cx.background_spawn(async move {
+            let mut date = None;
+
+            for (ix, entry) in all_entries.iter().enumerate() {
+                let entry_date = entry.updated_at().naive_local().date();
+
+                if Some(entry_date) != date {
+                    date = Some(entry_date);
+                    separated_items.push(HistoryListItem::DateSeparator(entry_date));
+                }
+                separated_items.push(HistoryListItem::Entry(ix));
+            }
+            separated_items
+        });
+
+        let task = cx.spawn(async move |this, cx| {
+            let separated_items = bg_task.await;
+            this.update(cx, |this, cx| {
+                this.separated_items = separated_items;
+                cx.notify();
+            })
+            .log_err();
+        });
+        self._separated_items_task = Some(task);
+    }
+
     fn search(&mut self, query: SharedString, cx: &mut Context<Self>) {
+        if query.is_empty() {
+            self.search_state = SearchState::Empty;
+            cx.notify();
+            return;
+        }
+
         let all_entries = self.all_entries.clone();
 
         let fuzzy_search_task = cx.background_spawn({
@@ -145,21 +206,20 @@ impl ThreadHistory {
                 let matches = fuzzy_search_task.await;
 
                 this.update(cx, |this, cx| {
-                    let ListContent::Searching {
+                    let SearchState::Searching {
                         query: current_query,
                         _task,
-                    } = &this.list_content
+                    } = &this.search_state
                     else {
                         return;
                     };
 
-                    if &query != current_query {
-                        this.list_content = ListContent::Searched {
+                    if &query == current_query {
+                        this.search_state = SearchState::Searched {
                             query: query.clone(),
                             matches,
                         };
 
-                        // todo! move to list content?
                         this.set_selected_index(0, cx);
                         cx.notify();
                     };
@@ -168,7 +228,7 @@ impl ThreadHistory {
             }
         });
 
-        self.list_content = ListContent::Searching {
+        self.search_state = SearchState::Searching {
             query: query.clone(),
             _task: task,
         };
@@ -176,26 +236,34 @@ impl ThreadHistory {
     }
 
     fn matched_count(&self) -> usize {
-        match &self.list_content {
-            ListContent::All => self.all_entries.len(),
-            ListContent::Searching { .. } => 0,
-            ListContent::Searched { matches, .. } => matches.len(),
+        match &self.search_state {
+            SearchState::Empty => self.all_entries.len(),
+            SearchState::Searching { .. } => 0,
+            SearchState::Searched { matches, .. } => matches.len(),
+        }
+    }
+
+    fn searching(&self) -> bool {
+        match &self.search_state {
+            SearchState::Empty => false,
+            SearchState::Searching { .. } => false,
+            SearchState::Searched { .. } => true,
         }
     }
 
     fn search_produced_no_matches(&self) -> bool {
-        match &self.list_content {
-            ListContent::All => false,
-            ListContent::Searching { .. } => false,
-            ListContent::Searched { matches, .. } => matches.is_empty(),
+        match &self.search_state {
+            SearchState::Empty => false,
+            SearchState::Searching { .. } => false,
+            SearchState::Searched { matches, .. } => matches.is_empty(),
         }
     }
 
     fn get_match(&self, ix: usize) -> Option<&HistoryEntry> {
-        match &self.list_content {
-            ListContent::All => self.all_entries.get(ix),
-            ListContent::Searching { .. } => None,
-            ListContent::Searched { matches, .. } => matches
+        match &self.search_state {
+            SearchState::Empty => self.all_entries.get(ix),
+            SearchState::Searching { .. } => None,
+            SearchState::Searched { matches, .. } => matches
                 .get(ix)
                 .and_then(|m| self.all_entries.get(m.candidate_id)),
         }
@@ -345,26 +413,34 @@ impl ThreadHistory {
         &mut self,
         range: Range<usize>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Vec<Div> {
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let range_start = range.start;
 
-        match &self.list_content {
-            ListContent::All => self.all_entries[range]
+        match &self.search_state {
+            SearchState::Empty => self
+                .separated_items
+                .get(range)
                 .iter()
-                .enumerate()
-                .map(|(index, entry)| self.render_list_item(index + range_start, entry, vec![]))
-                .collect(),
-            ListContent::Searched { matches, .. } => matches[range]
-                .iter()
-                .enumerate()
-                .filter_map(|(index, m)| {
-                    self.all_entries.get(m.candidate_id).map(|entry| {
-                        self.render_list_item(index + range_start, entry, m.positions.clone())
-                    })
+                .flat_map(|items| {
+                    items
+                        .iter()
+                        .map(|item| self.render_list_item(item.entry_index(), item, vec![], cx))
                 })
                 .collect(),
-            ListContent::Searching { .. } => {
+            SearchState::Searched { matches, .. } => matches[range]
+                .iter()
+                .enumerate()
+                .map(|(ix, m)| {
+                    self.render_list_item(
+                        Some(range_start + ix),
+                        &HistoryListItem::Entry(m.candidate_id),
+                        m.positions.clone(),
+                        cx,
+                    )
+                })
+                .collect(),
+            SearchState::Searching { .. } => {
                 vec![]
             }
         }
@@ -372,26 +448,83 @@ impl ThreadHistory {
 
     fn render_list_item(
         &self,
-        index: usize,
-        entry: &HistoryEntry,
+        list_entry_ix: Option<usize>,
+        item: &HistoryListItem,
         highlight_positions: Vec<usize>,
-    ) -> Div {
-        h_flex().w_full().pb_1().child(match entry {
+        cx: &App,
+    ) -> AnyElement {
+        match item {
+            HistoryListItem::Entry(entry_ix) => match self.all_entries.get(*entry_ix) {
+                Some(entry) => h_flex()
+                    .w_full()
+                    .pb_1()
+                    .child(self.render_history_entry(
+                        entry,
+                        list_entry_ix == Some(self.selected_index),
+                        highlight_positions,
+                    ))
+                    .into_any(),
+                None => Empty.into_any_element(),
+            },
+            HistoryListItem::DateSeparator(date) => div()
+                .px(DynamicSpacing::Base06.rems(cx))
+                .pt_2()
+                .pb_1()
+                .child(
+                    Label::new(self.format_relative_date(*date).unwrap_or("".to_string()))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .into_any_element(),
+        }
+    }
+
+    fn format_relative_date(&self, date: NaiveDate) -> Option<String> {
+        let unix_timestamp = chrono::Local
+            .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
+            .single()?
+            .timestamp();
+
+        let timestamp = OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
+
+        Some(time_format::format_date_medium(
+            timestamp,
+            OffsetDateTime::now_utc(),
+            true,
+        ))
+    }
+
+    fn render_history_entry(
+        &self,
+        entry: &HistoryEntry,
+        is_active: bool,
+        highlight_positions: Vec<usize>,
+    ) -> AnyElement {
+        let format = if self.searching() {
+            EntryTimestampFormat::DateAndTime
+        } else {
+            // Date is already displayed in separator
+            EntryTimestampFormat::TimeOnly
+        };
+
+        match entry {
             HistoryEntry::Thread(thread) => PastThread::new(
                 thread.clone(),
                 self.assistant_panel.clone(),
-                self.selected_index == index,
+                is_active,
                 highlight_positions,
+                format,
             )
             .into_any_element(),
             HistoryEntry::Context(context) => PastContext::new(
                 context.clone(),
                 self.assistant_panel.clone(),
-                self.selected_index == index,
+                is_active,
                 highlight_positions,
+                format,
             )
             .into_any_element(),
-        })
+        }
     }
 }
 
@@ -479,6 +612,7 @@ pub struct PastThread {
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
+    timestamp_format: EntryTimestampFormat,
 }
 
 impl PastThread {
@@ -487,12 +621,14 @@ impl PastThread {
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
+        timestamp_format: EntryTimestampFormat,
     ) -> Self {
         Self {
             thread,
             assistant_panel,
             selected,
             highlight_positions,
+            timestamp_format,
         }
     }
 }
@@ -501,13 +637,10 @@ impl RenderOnce for PastThread {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.thread.summary;
 
-        let thread_timestamp = time_format::format_localized_timestamp(
-            OffsetDateTime::from_unix_timestamp(self.thread.updated_at.timestamp()).unwrap(),
-            OffsetDateTime::now_utc(),
-            self.assistant_panel
-                .update(cx, |this, _cx| this.local_timezone())
-                .unwrap_or(UtcOffset::UTC),
-            time_format::TimestampFormat::EnhancedAbsolute,
+        let thread_timestamp = self.timestamp_format.format_timestamp(
+            &self.assistant_panel,
+            self.thread.updated_at.timestamp(),
+            cx,
         );
 
         ListItem::new(SharedString::from(self.thread.id.to_string()))
@@ -571,6 +704,7 @@ pub struct PastContext {
     assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
+    timestamp_format: EntryTimestampFormat,
 }
 
 impl PastContext {
@@ -579,12 +713,14 @@ impl PastContext {
         assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
+        timestamp_format: EntryTimestampFormat,
     ) -> Self {
         Self {
             context,
             assistant_panel,
             selected,
             highlight_positions,
+            timestamp_format,
         }
     }
 }
@@ -592,13 +728,10 @@ impl PastContext {
 impl RenderOnce for PastContext {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.context.title;
-        let context_timestamp = time_format::format_localized_timestamp(
-            OffsetDateTime::from_unix_timestamp(self.context.mtime.timestamp()).unwrap(),
-            OffsetDateTime::now_utc(),
-            self.assistant_panel
-                .update(cx, |this, _cx| this.local_timezone())
-                .unwrap_or(UtcOffset::UTC),
-            time_format::TimestampFormat::EnhancedAbsolute,
+        let context_timestamp = self.timestamp_format.format_timestamp(
+            &self.assistant_panel,
+            self.context.mtime.timestamp(),
+            cx,
         );
 
         ListItem::new(SharedString::from(
@@ -656,5 +789,34 @@ impl RenderOnce for PastContext {
                     .ok();
             }
         })
+    }
+}
+
+pub enum EntryTimestampFormat {
+    DateAndTime,
+    TimeOnly,
+}
+
+impl EntryTimestampFormat {
+    fn format_timestamp(
+        &self,
+        assistant_panel: &WeakEntity<AssistantPanel>,
+        timestamp: i64,
+        cx: &App,
+    ) -> String {
+        let timestamp = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
+        let timezone = assistant_panel
+            .read_with(cx, |this, _cx| this.local_timezone())
+            .unwrap_or(UtcOffset::UTC);
+
+        match &self {
+            EntryTimestampFormat::DateAndTime => time_format::format_localized_timestamp(
+                timestamp,
+                OffsetDateTime::now_utc(),
+                timezone,
+                time_format::TimestampFormat::EnhancedAbsolute,
+            ),
+            EntryTimestampFormat::TimeOnly => time_format::format_time(timestamp),
+        }
     }
 }
