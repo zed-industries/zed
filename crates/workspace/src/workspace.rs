@@ -7178,6 +7178,32 @@ fn move_all_items(
     }
 }
 
+pub fn clone_item(
+    source: &Entity<Pane>,
+    destination: &Entity<Pane>,
+    item_id_to_clone: EntityId,
+    workspace_id: Option<WorkspaceId>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some((_, item_handle)) = source
+        .read(cx)
+        .items()
+        .enumerate()
+        .find(|(_, item_handle)| item_handle.item_id() == item_id_to_clone)
+        .map(|(ix, item)| (ix, item.clone()))
+    else {
+        // Tab was closed during drag
+        return;
+    };
+
+    if let Some(clone) = item_handle.clone_on_split(workspace_id, window, cx) {
+        destination.update(cx, |pane, cx| {
+            pane.add_item(clone, true, true, None, window, cx);
+        });
+    }
+}
+
 pub fn move_item(
     source: &Entity<Pane>,
     destination: &Entity<Pane>,
