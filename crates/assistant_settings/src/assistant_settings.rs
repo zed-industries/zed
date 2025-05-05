@@ -69,22 +69,6 @@ pub enum AssistantProviderContentV1 {
     },
 }
 
-/// Tracks which prompts have been dismissed by the user
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DismissedPrompts {
-    /// Whether the Zed Pro trial prompt has been dismissed
-    #[serde(default)]
-    pub zed_pro_trial: bool,
-}
-
-impl Default for DismissedPrompts {
-    fn default() -> Self {
-        Self {
-            zed_pro_trial: false,
-        }
-    }
-}
-
 #[derive(Default, Clone, Debug)]
 pub struct AssistantSettings {
     pub enabled: bool,
@@ -105,7 +89,6 @@ pub struct AssistantSettings {
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
     pub single_file_review: bool,
-    pub dismissed_prompts: DismissedPrompts,
 }
 
 impl AssistantSettings {
@@ -243,7 +226,6 @@ impl AssistantSettingsContent {
                     notify_when_agent_waiting: None,
                     stream_edits: None,
                     single_file_review: None,
-                    dismissed_prompts: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -273,7 +255,6 @@ impl AssistantSettingsContent {
                 notify_when_agent_waiting: None,
                 stream_edits: None,
                 single_file_review: None,
-                dismissed_prompts: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -460,14 +441,6 @@ impl AssistantSettingsContent {
         .ok();
     }
 
-    pub fn set_dismissed_prompts(&mut self, dismissed_prompts: DismissedPrompts) {
-        self.v2_setting(|setting| {
-            setting.dismissed_prompts = Some(dismissed_prompts);
-            Ok(())
-        })
-        .ok();
-    }
-
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.v2_setting(|setting| {
             setting.default_profile = Some(profile_id);
@@ -542,7 +515,6 @@ impl Default for VersionedAssistantSettingsContent {
             notify_when_agent_waiting: None,
             stream_edits: None,
             single_file_review: None,
-            dismissed_prompts: None,
         })
     }
 }
@@ -606,10 +578,6 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     single_file_review: Option<bool>,
-    /// Tracks which prompts have been dismissed by the user
-    ///
-    /// Default: none dismissed
-    dismissed_prompts: Option<DismissedPrompts>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -907,7 +875,6 @@ mod tests {
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,
-                                dismissed_prompts: None,
                             },
                         )),
                     }

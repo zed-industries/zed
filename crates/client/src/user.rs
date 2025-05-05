@@ -697,6 +697,10 @@ impl UserStore {
         self.current_plan
     }
 
+    pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
+        self.trial_started_at
+    }
+
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
     }

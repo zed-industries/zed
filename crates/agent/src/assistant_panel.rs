@@ -12,7 +12,7 @@ use assistant_context_editor::{
     SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
     render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings, DismissedPrompts};
+use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
@@ -615,11 +615,6 @@ impl AssistantPanel {
             },
         );
 
-        let hide_trial_upsell = AssistantSettings::get_global(cx)
-            .dismissed_prompts
-            .zed_pro_trial
-            .clone();
-
         Self {
             active_view,
             workspace,
@@ -653,7 +648,7 @@ impl AssistantPanel {
             width: None,
             height: None,
             pending_serialization: None,
-            hide_trial_upsell,
+            hide_trial_upsell: false,
         }
     }
 
@@ -1721,9 +1716,22 @@ impl AssistantPanel {
         }
     }
 
-    pub(crate) fn hide_trial_upsell(&mut self, cx: &mut Context<Self>) {
-        self.hide_trial_upsell = true;
-        cx.notify();
+    fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if self.hide_trial_upsell || dismissed_trial_upsell() {
+            return false;
+        }
+
+        let plan = self.user_store.read(cx).current_plan();
+        if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
+            return false;
+        }
+
+        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
+        if has_previous_trial {
+            return false;
+        }
+
+        true
     }
 
     fn render_trial_upsell(
@@ -1731,13 +1739,9 @@ impl AssistantPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        let hide_trial_upsell = self.hide_trial_upsell.clone();
-
-        if hide_trial_upsell {
+        if !self.should_render_upsell(cx) {
             return None;
         }
-
-        let fs = self.fs.clone();
 
         let checkbox = CheckboxWithLabel::new(
             "dont-show-again",
@@ -1745,16 +1749,8 @@ impl AssistantPanel {
             ToggleState::Unselected,
             move |toggle_state, _window, cx| {
                 let toggle_state_bool = toggle_state.selected();
-                let fs = fs.clone();
-                let dismissed_prompts = AssistantSettings::get_global(cx).dismissed_prompts.clone();
-                update_settings_file::<AssistantSettings>(fs.clone(), cx, move |settings, _| {
-                    let new_dismissed_prompts = DismissedPrompts {
-                        zed_pro_trial: toggle_state_bool,
-                        ..dismissed_prompts.clone()
-                    };
 
-                    settings.set_dismissed_prompts(new_dismissed_prompts)
-                });
+                set_trial_upsell_dismissed(toggle_state_bool, cx);
             },
         );
 
@@ -1800,7 +1796,8 @@ impl AssistantPanel {
                                             let assistant_panel = cx.entity();
                                             move |_, _, cx| {
                                                 assistant_panel.update(cx, |this, cx| {
-                                                    this.hide_trial_upsell(cx);
+                                                    this.hide_trial_upsell = true;
+                                                    cx.notify();
                                                 });
                                             }
                                         }),
@@ -2628,4 +2625,27 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             });
         });
     }
+}
+
+const DISMISSED_TRIAL_UPSELL_KEY: &str = "dismissed-trial-upsell";
+
+fn dismissed_trial_upsell() -> bool {
+    db::kvp::KEY_VALUE_STORE
+        .read_kvp(DISMISSED_TRIAL_UPSELL_KEY)
+        .log_err()
+        .map_or(false, |s| s.is_some())
+}
+
+fn set_trial_upsell_dismissed(is_dismissed: bool, cx: &mut App) {
+    db::write_and_log(cx, move || async move {
+        if is_dismissed {
+            db::kvp::KEY_VALUE_STORE
+                .write_kvp(DISMISSED_TRIAL_UPSELL_KEY.into(), "1".into())
+                .await
+        } else {
+            db::kvp::KEY_VALUE_STORE
+                .delete_kvp(DISMISSED_TRIAL_UPSELL_KEY.into())
+                .await
+        }
+    })
 }
