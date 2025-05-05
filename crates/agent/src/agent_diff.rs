@@ -324,10 +324,6 @@ fn keep_edits_in_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if thread.read(cx).is_generating() {
-        return;
-    }
-
     let diff_hunks_in_ranges = editor
         .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
@@ -353,10 +349,6 @@ fn reject_edits_in_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if thread.read(cx).is_generating() {
-        return;
-    }
-
     let diff_hunks_in_ranges = editor
         .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
@@ -702,10 +694,6 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
-
-    if thread.read(cx).is_generating() {
-        return Empty.into_any();
-    }
 
     h_flex()
         .h(line_height)
