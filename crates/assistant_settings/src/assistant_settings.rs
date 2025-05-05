@@ -6,7 +6,7 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use anyhow::{Result, bail};
 use deepseek::Model as DeepseekModel;
-use feature_flags::{AgentStreamEditsFeatureFlag, Assistant2FeatureFlag, FeatureFlagAppExt};
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels};
 use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
@@ -92,10 +92,6 @@ pub struct AssistantSettings {
 }
 
 impl AssistantSettings {
-    pub fn stream_edits(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentStreamEditsFeatureFlag>() || self.stream_edits
-    }
-
     pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
         if cx.has_flag::<Assistant2FeatureFlag>() {
             return false;

@@ -71,16 +71,6 @@ impl FeatureFlag for Assistant2FeatureFlag {
     }
 }
 
-pub struct AgentStreamEditsFeatureFlag;
-
-impl FeatureFlag for AgentStreamEditsFeatureFlag {
-    const NAME: &'static str = "agent-stream-edits";
-
-    fn enabled_for_all() -> bool {
-        AGENT_LAUNCH
-    }
-}
-
 pub struct NewBillingFeatureFlag;
 
 impl FeatureFlag for NewBillingFeatureFlag {
