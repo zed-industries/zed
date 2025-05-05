@@ -219,7 +219,7 @@ impl AgentDiffPane {
             .thread
             .read(cx)
             .summary()
-            .unwrap_or("Assistant Changes".into());
+            .unwrap_or("Agent Changes".into());
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
@@ -481,7 +481,7 @@ impl Item for AgentDiffPane {
             .thread
             .read(cx)
             .summary()
-            .unwrap_or("Assistant Changes".into());
+            .unwrap_or("Agent Changes".into());
         Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default
