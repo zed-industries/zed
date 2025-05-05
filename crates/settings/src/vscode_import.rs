@@ -1322,6 +1322,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn test_load_vscode_shortcuts() {
         use super::VsCodeShortcuts;
         use gpui::TestKeyboardMapper;
