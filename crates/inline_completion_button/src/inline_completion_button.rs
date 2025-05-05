@@ -14,6 +14,7 @@ use gpui::{
     pulsating_between,
 };
 use indoc::indoc;
+use inline_completion::EditPredictionUsage;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
@@ -29,6 +30,7 @@ use ui::{
     Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator, PopoverMenu,
     PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
+use util::maybe;
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
@@ -404,7 +406,28 @@ impl InlineCompletionButton {
         let line_height = window.line_height();
 
         if let Some(provider) = self.edit_prediction_provider.as_ref() {
-            if let Some(usage) = provider.usage(cx) {
+            let usage = provider.usage(cx).or_else(|| {
+                let user_store = self.user_store.read(cx);
+
+                maybe!({
+                    let amount = user_store.edit_predictions_usage_amount()?;
+                    let limit = user_store.edit_predictions_usage_limit()?.variant?;
+
+                    Some(EditPredictionUsage {
+                        amount: amount as i32,
+                        limit: match limit {
+                            proto::usage_limit::Variant::Limited(limited) => {
+                                zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                            }
+                            proto::usage_limit::Variant::Unlimited(_) => {
+                                zed_llm_client::UsageLimit::Unlimited
+                            }
+                        },
+                    })
+                })
+            });
+
+            if let Some(usage) = usage {
                 menu = menu.header("Usage");
                 menu = menu.custom_entry(
                     move |_window, cx| {

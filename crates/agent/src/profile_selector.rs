@@ -93,7 +93,7 @@ impl ProfileSelector {
         let documentation = match profile.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
-            builtin_profiles::MANUAL => Some("Chat about anything with no tools."),
+            builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
             _ => None,
         };
 

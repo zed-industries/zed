@@ -7,6 +7,7 @@ mod buffer_codegen;
 mod context;
 mod context_picker;
 mod context_server_configuration;
+mod context_server_tool;
 mod context_store;
 mod context_strip;
 mod debug;
@@ -45,7 +46,7 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
-pub use crate::thread_store::ThreadStore;
+pub use crate::thread_store::{TextThreadStore, ThreadStore};
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use context_store::ContextStore;
 pub use ui::preview::{all_agent_previews, get_agent_preview};
