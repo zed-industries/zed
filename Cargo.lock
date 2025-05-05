@@ -125,6 +125,7 @@ dependencies = [
  "time_format",
  "ui",
  "ui_input",
+ "urlencoding",
  "util",
  "uuid",
  "workspace",
@@ -3251,6 +3252,7 @@ dependencies = [
  "collections",
  "component",
  "db",
+ "futures 0.3.31",
  "gpui",
  "languages",
  "log",
@@ -3260,6 +3262,7 @@ dependencies = [
  "serde",
  "ui",
  "ui_input",
+ "util",
  "workspace",
  "workspace-hack",
 ]

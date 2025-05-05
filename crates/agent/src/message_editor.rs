@@ -45,7 +45,7 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
     RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
@@ -80,6 +80,7 @@ pub(crate) fn create_editor(
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: WeakEntity<ThreadStore>,
+    text_thread_store: WeakEntity<TextThreadStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Editor> {
@@ -121,6 +122,7 @@ pub(crate) fn create_editor(
             workspace,
             context_store,
             Some(thread_store),
+            Some(text_thread_store),
             editor_entity,
             None,
         ))));
@@ -136,6 +138,7 @@ impl MessageEditor {
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
+        text_thread_store: WeakEntity<TextThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -147,6 +150,7 @@ impl MessageEditor {
             workspace.clone(),
             context_store.downgrade(),
             thread_store.clone(),
+            text_thread_store.clone(),
             window,
             cx,
         );
@@ -156,6 +160,7 @@ impl MessageEditor {
                 context_store.clone(),
                 workspace.clone(),
                 Some(thread_store.clone()),
+                Some(text_thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 window,
@@ -1400,16 +1405,19 @@ impl AgentPreview for MessageEditor {
     fn agent_preview(
         workspace: WeakEntity<Workspace>,
         active_thread: Entity<ActiveThread>,
-        thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         if let Some(workspace) = workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let user_store = workspace.read(cx).app_state().user_store.clone();
-            let weak_project = workspace.read(cx).project().clone().downgrade();
+            let project = workspace.read(cx).project().clone();
+            let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
-            let thread = active_thread.read(cx).thread().clone();
+            let active_thread = active_thread.read(cx);
+            let thread = active_thread.thread().clone();
+            let thread_store = active_thread.thread_store().clone();
+            let text_thread_store = active_thread.text_thread_store().clone();
 
             let default_message_editor = cx.new(|cx| {
                 MessageEditor::new(
@@ -1418,7 +1426,8 @@ impl AgentPreview for MessageEditor {
                     user_store,
                     context_store,
                     None,
-                    thread_store,
+                    thread_store.downgrade(),
+                    text_thread_store.downgrade(),
                     thread,
                     window,
                     cx,
