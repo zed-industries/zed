@@ -347,6 +347,11 @@ impl ContextServerStore {
         Ok(())
     }
 
+    fn is_configuration_valid(&self, configuration: &ContextServerConfiguration) -> bool {
+        // Command must be some when we are running in stdio mode.
+        self.context_server_factory.as_ref().is_some() || configuration.command.is_some()
+    }
+
     fn create_context_server(
         &self,
         id: ContextServerId,
@@ -424,7 +429,7 @@ impl ContextServerStore {
         for (id, descriptor) in
             registry.read_with(cx, |registry, _| registry.context_server_descriptors())?
         {
-            let config = desired_servers.entry(id).or_default();
+            let config = desired_servers.entry(id.clone()).or_default();
             if config.command.is_none() {
                 if let Some(extension_command) = descriptor
                     .command(worktree_store.clone(), &cx)
@@ -435,6 +440,11 @@ impl ContextServerStore {
                 }
             }
         }
+
+        this.update(cx, |this, _| {
+            // Filter out configurations without commands, the user uninstalled an extension.
+            desired_servers.retain(|_, configuration| this.is_configuration_valid(configuration));
+        })?;
 
         let mut servers_to_start = Vec::new();
         let mut servers_to_remove = HashSet::default();
