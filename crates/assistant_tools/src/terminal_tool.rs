@@ -15,15 +15,15 @@ use serde::{Deserialize, Serialize};
 use std::{
     env,
     path::{Path, PathBuf},
-    process::{ExitStatus, Stdio},
+    process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
 };
 use terminal_view::TerminalView;
 use ui::{Disclosure, IconName, Tooltip, prelude::*};
 use util::{
-    command::new_std_command, get_system_shell, markdown::MarkdownInlineCode,
-    size::format_file_size, time::duration_alt_display,
+    get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
+    time::duration_alt_display,
 };
 use workspace::Workspace;
 
@@ -50,13 +50,7 @@ impl TerminalTool {
                 return get_system_shell();
             }
 
-            let status = new_std_command("which")
-                .arg("bash")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            if status.is_ok_and(|status| status.success()) {
+            if which::which("bash").is_ok() {
                 log::info!("agent selected bash for terminal tool");
                 "bash".into()
             } else {
