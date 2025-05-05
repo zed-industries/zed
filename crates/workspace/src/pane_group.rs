@@ -177,6 +177,10 @@ impl PaneGroup {
         };
         self.pane_at_pixel_position(target)
     }
+
+    pub fn invert_axies(&mut self) {
+        self.root.invert_pane_axies();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -423,6 +427,18 @@ impl Member {
                 }
             }
             Member::Pane(pane) => panes.push(pane),
+        }
+    }
+
+    fn invert_pane_axies(&mut self) {
+        match self {
+            Self::Axis(axis) => {
+                axis.axis = axis.axis.invert();
+                for member in axis.members.iter_mut() {
+                    member.invert_pane_axies();
+                }
+            }
+            Self::Pane(_) => {}
         }
     }
 }

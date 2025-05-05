@@ -69,6 +69,12 @@ impl From<DebuggerPaneItem> for SharedString {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct SerializedLayout {
+    pub(crate) panes: SerializedPaneLayout,
+    pub(crate) dock_axis: Axis,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SerializedAxis(pub Axis);
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,7 +97,7 @@ const DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
 
 pub(crate) async fn serialize_pane_layout(
     adapter_name: SharedString,
-    pane_group: SerializedPaneLayout,
+    pane_group: SerializedLayout,
 ) -> anyhow::Result<()> {
     if let Ok(serialized_pane_group) = serde_json::to_string(&pane_group) {
         KEY_VALUE_STORE
@@ -104,6 +110,17 @@ pub(crate) async fn serialize_pane_layout(
         Err(anyhow::anyhow!(
             "Failed to serialize pane group with serde_json as a string"
         ))
+    }
+}
+
+pub(crate) fn build_serialized_layout(
+    pane_group: &Member,
+    dock_axis: Axis,
+    cx: &mut App,
+) -> SerializedLayout {
+    SerializedLayout {
+        dock_axis,
+        panes: build_serialized_pane_layout(pane_group, cx),
     }
 }
 
@@ -150,20 +167,21 @@ fn serialize_pane(pane: &Entity<Pane>, cx: &mut App) -> SerializedPane {
     }
 }
 
-pub(crate) async fn get_serialized_pane_layout(
+pub(crate) async fn get_serialized_layout(
     adapter_name: impl AsRef<str>,
-) -> Option<SerializedPaneLayout> {
+) -> Option<SerializedLayout> {
     let key = format!("{DEBUGGER_PANEL_PREFIX}-{}", adapter_name.as_ref());
 
     KEY_VALUE_STORE
         .read_kvp(&key)
         .log_err()
         .flatten()
-        .and_then(|value| serde_json::from_str::<SerializedPaneLayout>(&value).ok())
+        .and_then(|value| serde_json::from_str::<SerializedLayout>(&value).ok())
 }
 
 pub(crate) fn deserialize_pane_layout(
     serialized: SerializedPaneLayout,
+    should_invert: bool,
     workspace: &WeakEntity<Workspace>,
     project: &Entity<Project>,
     stack_frame_list: &Entity<StackFrameList>,
@@ -187,6 +205,7 @@ pub(crate) fn deserialize_pane_layout(
             for child in children {
                 if let Some(new_member) = deserialize_pane_layout(
                     child,
+                    should_invert,
                     workspace,
                     project,
                     stack_frame_list,
@@ -213,7 +232,11 @@ pub(crate) fn deserialize_pane_layout(
             }
 
             Some(Member::Axis(PaneAxis::load(
-                axis.0,
+                if should_invert {
+                    axis.0.invert()
+                } else {
+                    axis.0
+                },
                 members,
                 flexes.clone(),
             )))

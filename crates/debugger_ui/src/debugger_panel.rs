@@ -10,6 +10,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::DebugRequest;
+use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
@@ -22,12 +23,14 @@ use gpui::{
 };
 
 use language::Buffer;
+use project::Fs;
 use project::debugger::session::{Session, SessionStateEvent};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::any::TypeId;
 use std::path::PathBuf;
+use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
 use workspace::SplitDirection;
@@ -64,6 +67,7 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    fs: Arc<dyn Fs>,
 }
 
 impl DebugPanel {
@@ -84,6 +88,7 @@ impl DebugPanel {
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
+                fs: workspace.app_state().fs.clone(),
             };
 
             debug_panel
@@ -298,7 +303,7 @@ impl DebugPanel {
         })
         .ok();
 
-        let serialized_layout = persistence::get_serialized_pane_layout(adapter_name).await;
+        let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
 
         let workspace = this.update_in(cx, |this, window, cx| {
             this.sessions.retain(|session| {
@@ -317,6 +322,7 @@ impl DebugPanel {
                 session,
                 cx.weak_entity(),
                 serialized_layout,
+                this.position(window, cx).axis(),
                 window,
                 cx,
             );
@@ -716,10 +722,14 @@ impl DebugPanel {
     fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let active_session = self.active_session.clone();
         let focus_handle = self.focus_handle.clone();
+        let div = if self.position(window, cx) == DockPosition::Bottom {
+            h_flex()
+        } else {
+            v_flex()
+        };
 
         Some(
-            h_flex()
-                .border_b_1()
+            div.border_b_1()
                 .border_color(cx.theme().colors().border)
                 .p_1()
                 .justify_between()
@@ -1084,20 +1094,46 @@ impl Panel for DebugPanel {
         "DebugPanel"
     }
 
-    fn position(&self, _window: &Window, _cx: &App) -> DockPosition {
-        DockPosition::Bottom
+    fn position(&self, _window: &Window, cx: &App) -> DockPosition {
+        match DebuggerSettings::get_global(cx).dock {
+            DebugPanelDockPosition::Left => DockPosition::Left,
+            DebugPanelDockPosition::Bottom => DockPosition::Bottom,
+            DebugPanelDockPosition::Right => DockPosition::Right,
+        }
     }
 
-    fn position_is_valid(&self, position: DockPosition) -> bool {
-        position == DockPosition::Bottom
+    fn position_is_valid(&self, _: DockPosition) -> bool {
+        true
     }
 
     fn set_position(
         &mut self,
-        _position: DockPosition,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        position: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
+        if position.axis() != self.position(window, cx).axis() {
+            dbg!("Inverting axies");
+            self.sessions.iter().for_each(|session_item| {
+                session_item.update(cx, |item, cx| {
+                    item.running_state()
+                        .update(cx, |state, _| state.invert_axies())
+                })
+            });
+        }
+
+        settings::update_settings_file::<DebuggerSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left => DebugPanelDockPosition::Left,
+                    DockPosition::Bottom => DebugPanelDockPosition::Bottom,
+                    DockPosition::Right => DebugPanelDockPosition::Right,
+                };
+                settings.dock = dock;
+            },
+        );
     }
 
     fn size(&self, _window: &Window, _: &App) -> Pixels {
