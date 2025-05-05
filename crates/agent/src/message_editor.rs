@@ -26,7 +26,7 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent};
+use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -36,7 +36,7 @@ use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 use zed_llm_client::CompletionMode;
 
@@ -1043,9 +1043,17 @@ impl MessageEditor {
             return None;
         }
 
-        let plan = self
-            .user_store
-            .read(cx)
+        let user_store = self.user_store.read(cx);
+
+        let ubb_enable = user_store
+            .usage_based_billing_enabled()
+            .map_or(false, |enabled| enabled);
+
+        if ubb_enable {
+            return None;
+        }
+
+        let plan = user_store
             .current_plan()
             .map(|plan| match plan {
                 Plan::Free => zed_llm_client::Plan::Free,
@@ -1053,7 +1061,24 @@ impl MessageEditor {
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
             .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
+        let usage = self.thread.read(cx).last_usage().or_else(|| {
+            maybe!({
+                let amount = user_store.model_request_usage_amount()?;
+                let limit = user_store.model_request_usage_limit()?.variant?;
+
+                Some(RequestUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        })?;
 
         Some(
             div()
