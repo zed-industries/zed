@@ -175,8 +175,9 @@ impl Tool for TerminalTool {
                             window,
                             cx,
                         )
-                    })
+                    });
                 })?;
+
                 let _ = card.update(cx, |card, _| {
                     card.terminal = Some(terminal_view.clone());
                     card.start_instant = Instant::now();
@@ -437,15 +438,15 @@ impl ToolCard for TerminalToolCard {
                     h_flex()
                         .id(("terminal-tool-truncated-label", self.entity_id))
                         .tooltip(Tooltip::text(tooltip))
-                        .gap_0p5()
+                        .gap_1()
                         .child(
                             Icon::new(IconName::Info)
                                 .size(IconSize::XSmall)
-                                .color(Color::Muted),
+                                .color(Color::Ignored),
                         )
                         .child(
                             Label::new("Truncated")
-                                .color(Color::Error)
+                                .color(Color::Muted)
                                 .size(LabelSize::Small),
                         ),
                 )
