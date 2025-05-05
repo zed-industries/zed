@@ -145,7 +145,7 @@ git push origin v${NEW_VERSION}
 rm -rf extensions/$LANGNAME
 sed -i '' "/extensions\/$LANGNAME/d" Cargo.toml
 cargo check
-git checkoout -b remove_$LANGNAME
+git checkout -b remove_$LANGNAME
 git add extensions/$LANGNAME
 git add Cargo.toml Cargo.lock extensions/$LANGNAME
 git commit -m "Migrate to $LANGNAME extension to zed-extensions/$LANGNAME"

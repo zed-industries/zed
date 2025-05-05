@@ -1,9 +1,12 @@
 use crate::Editor;
 
+use collections::HashMap;
 use gpui::{App, Task, Window};
-use project::Location;
+use lsp::LanguageServerName;
+use project::{Location, project_settings::ProjectSettings};
+use settings::Settings as _;
 use task::{TaskContext, TaskVariables, VariableName};
-use text::{ToOffset, ToPoint};
+use text::{BufferId, ToOffset, ToPoint};
 
 impl Editor {
     pub fn task_context(&self, window: &mut Window, cx: &mut App) -> Task<Option<TaskContext>> {
@@ -69,5 +72,39 @@ impl Editor {
                 task_store.task_context_for_location(captured_variables, location, cx)
             })
         })
+    }
+
+    pub fn lsp_task_sources(&self, cx: &App) -> HashMap<LanguageServerName, Vec<BufferId>> {
+        let lsp_settings = &ProjectSettings::get_global(cx).lsp;
+
+        self.buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .filter_map(|buffer| {
+                let lsp_tasks_source = buffer
+                    .read(cx)
+                    .language()?
+                    .context_provider()?
+                    .lsp_task_source()?;
+                if lsp_settings
+                    .get(&lsp_tasks_source)
+                    .map_or(true, |s| s.enable_lsp_tasks)
+                {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    Some((lsp_tasks_source, buffer_id))
+                } else {
+                    None
+                }
+            })
+            .fold(
+                HashMap::default(),
+                |mut acc, (lsp_task_source, buffer_id)| {
+                    acc.entry(lsp_task_source)
+                        .or_insert_with(Vec::new)
+                        .push(buffer_id);
+                    acc
+                },
+            )
     }
 }

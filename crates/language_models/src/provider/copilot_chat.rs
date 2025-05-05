@@ -17,16 +17,16 @@ use gpui::{
     Transformation, percentage, svg,
 };
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
-use util::maybe;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -70,6 +70,13 @@ impl CopilotChatLanguageModelProvider {
 
         Self { state }
     }
+
+    fn create_language_model(&self, model: CopilotChatModel) -> Arc<dyn LanguageModel> {
+        Arc::new(CopilotChatLanguageModel {
+            model,
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
@@ -94,21 +101,16 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = CopilotChatModel::default();
-        Some(Arc::new(CopilotChatLanguageModel {
-            model,
-            request_limiter: RateLimiter::new(4),
-        }) as Arc<dyn LanguageModel>)
+        Some(self.create_language_model(CopilotChatModel::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(CopilotChatModel::default_fast()))
     }
 
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
-            .map(|model| {
-                Arc::new(CopilotChatLanguageModel {
-                    model,
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -186,7 +188,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn supports_tools(&self) -> bool {
         match self.model {
-            CopilotChatModel::Claude3_5Sonnet
+            CopilotChatModel::Gpt4o
+            | CopilotChatModel::Gpt4_1
+            | CopilotChatModel::O4Mini
+            | CopilotChatModel::Claude3_5Sonnet
             | CopilotChatModel::Claude3_7Sonnet
             | CopilotChatModel::Claude3_7SonnetThinking => true,
             _ => false,
@@ -210,17 +215,24 @@ impl LanguageModel for CopilotChatLanguageModel {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
+            CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
+                count_google_tokens(request, cx)
+            }
             _ => {
                 let model = match self.model {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
+                    CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
+                    CopilotChatModel::O1 => open_ai::Model::O1,
+                    CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
+                    CopilotChatModel::O3 => open_ai::Model::O3,
+                    CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
                     | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash => {
+                    | CopilotChatModel::Gemini20Flash
+                    | CopilotChatModel::Gemini25Pro => {
                         unreachable!()
                     }
                 };
@@ -233,7 +245,12 @@ impl LanguageModel for CopilotChatLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
@@ -254,6 +271,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err)).boxed(),
         };
+        let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
@@ -261,7 +279,10 @@ impl LanguageModel for CopilotChatLanguageModel {
             request_limiter
                 .stream(async move {
                     let response = request.await?;
-                    Ok(map_to_language_model_completion_events(response))
+                    Ok(map_to_language_model_completion_events(
+                        response,
+                        is_streaming,
+                    ))
                 })
                 .await
         });
@@ -271,7 +292,8 @@ impl LanguageModel for CopilotChatLanguageModel {
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    is_streaming: bool,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     #[derive(Default)]
     struct RawToolCall {
         id: String,
@@ -289,20 +311,26 @@ pub fn map_to_language_model_completion_events(
             events,
             tool_calls_by_index: HashMap::default(),
         },
-        |mut state| async move {
+        move |mut state| async move {
             if let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => {
                         let Some(choice) = event.choices.first() else {
                             return Some((
-                                vec![Err(anyhow!("Response contained no choices"))],
+                                vec![Err(anyhow!("Response contained no choices").into())],
                                 state,
                             ));
                         };
 
-                        let Some(delta) = choice.delta.as_ref() else {
+                        let delta = if is_streaming {
+                            choice.delta.as_ref()
+                        } else {
+                            choice.message.as_ref()
+                        };
+
+                        let Some(delta) = delta else {
                             return Some((
-                                vec![Err(anyhow!("Response contained no delta"))],
+                                vec![Err(anyhow!("Response contained no delta").into())],
                                 state,
                             ));
                         };
@@ -312,26 +340,26 @@ pub fn map_to_language_model_completion_events(
                             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                         }
 
-                            for tool_call in &delta.tool_calls {
-                                let entry = state
-                                    .tool_calls_by_index
-                                    .entry(tool_call.index)
-                                    .or_default();
+                        for tool_call in &delta.tool_calls {
+                            let entry = state
+                                .tool_calls_by_index
+                                .entry(tool_call.index)
+                                .or_default();
 
-                                if let Some(tool_id) = tool_call.id.clone() {
-                                    entry.id = tool_id;
+                            if let Some(tool_id) = tool_call.id.clone() {
+                                entry.id = tool_id;
+                            }
+
+                            if let Some(function) = tool_call.function.as_ref() {
+                                if let Some(name) = function.name.clone() {
+                                    entry.name = name;
                                 }
 
-                                if let Some(function) = tool_call.function.as_ref() {
-                                    if let Some(name) = function.name.clone() {
-                                        entry.name = name;
-                                    }
-
-                                    if let Some(arguments) = function.arguments.clone() {
-                                        entry.arguments.push_str(&arguments);
-                                    }
+                                if let Some(arguments) = function.arguments.clone() {
+                                    entry.arguments.push_str(&arguments);
                                 }
                             }
+                        }
 
                         match choice.finish_reason.as_deref() {
                             Some("stop") => {
@@ -341,18 +369,26 @@ pub fn map_to_language_model_completion_events(
                             }
                             Some("tool_calls") => {
                                 events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| {
-                                        maybe!({
-                                            Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id: tool_call.id.into(),
-                                                    name: tool_call.name.as_str().into(),
-                                                    input: serde_json::Value::from_str(
-                                                        &tool_call.arguments,
-                                                    )?,
-                                                },
-                                            ))
-                                        })
+                                    |(_, tool_call)| match serde_json::Value::from_str(
+                                        &tool_call.arguments,
+                                    ) {
+                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_call.id.clone().into(),
+                                                name: tool_call.name.as_str().into(),
+                                                is_input_complete: true,
+                                                input,
+                                                raw_input: tool_call.arguments.clone(),
+                                            },
+                                        )),
+                                        Err(error) => {
+                                            Err(LanguageModelCompletionError::BadInputJson {
+                                                id: tool_call.id.into(),
+                                                tool_name: tool_call.name.as_str().into(),
+                                                raw_input: tool_call.arguments.into(),
+                                                json_parse_error: error.to_string(),
+                                            })
+                                        }
                                     },
                                 ));
 
@@ -361,7 +397,7 @@ pub fn map_to_language_model_completion_events(
                                 )));
                             }
                             Some(stop_reason) => {
-                                log::error!("Unexpected Copilot Chat stop_reason: {stop_reason:?}",);
+                                log::error!("Unexpected Copilot Chat stop_reason: {stop_reason:?}");
                                 events.push(Ok(LanguageModelCompletionEvent::Stop(
                                     StopReason::EndTurn,
                                 )));
@@ -371,7 +407,7 @@ pub fn map_to_language_model_completion_events(
 
                         return Some((events, state));
                     }
-                    Err(err) => return Some((vec![Err(err)], state)),
+                    Err(err) => return Some((vec![Err(anyhow!(err).into())], state)),
                 }
             }
 
@@ -406,8 +442,11 @@ impl CopilotChatLanguageModel {
             let text_content = {
                 let mut buffer = String::new();
                 for string in message.content.iter().filter_map(|content| match content {
-                    MessageContent::Text(text) => Some(text.as_str()),
+                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        Some(text.as_str())
+                    }
                     MessageContent::ToolUse(_)
+                    | MessageContent::RedactedThinking(_)
                     | MessageContent::ToolResult(_)
                     | MessageContent::Image(_) => None,
                 }) {
@@ -428,9 +467,11 @@ impl CopilotChatLanguageModel {
                         }
                     }
 
-                    messages.push(ChatMessage::User {
-                        content: text_content,
-                    });
+                    if !text_content.is_empty() {
+                        messages.push(ChatMessage::User {
+                            content: text_content,
+                        });
+                    }
                 }
                 Role::Assistant => {
                     let mut tool_calls = Vec::new();
@@ -512,60 +553,51 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
-            const LABEL: &str = "Authorized.";
             h_flex()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(LABEL)),
+                        .child(Label::new("Authorized")),
                 )
                 .child(
                     Button::new("sign_out", "Sign Out")
-                        .style(ui::ButtonStyle::Filled)
+                        .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
                         }),
                 )
         } else {
-            let loading_icon = svg()
-                .size_8()
-                .path(IconName::ArrowCircle.path())
-                .text_color(window.text_style().color)
-                .with_animation(
-                    "icon_circle_arrow",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                );
+            let loading_icon = Icon::new(IconName::ArrowCircle).with_animation(
+                "arrow-circle",
+                Animation::new(Duration::from_secs(4)).repeat(),
+                |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+            );
 
             const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Starting { task: _ } => {
-                        const LABEL: &str = "Starting Copilot...";
-                        v_flex()
-                            .gap_6()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(LABEL))
-                            .child(loading_icon)
-                    }
+                    Status::Starting { task: _ } => h_flex()
+                        .gap_2()
+                        .child(loading_icon)
+                        .child(Label::new("Starting Copilot…")),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
-                    } => {
-                        const LABEL: &str = "Signing in to Copilot...";
-                        v_flex()
-                            .gap_6()
-                            .justify_center()
-                            .items_center()
-                            .child(Label::new(LABEL))
-                            .child(loading_icon)
-                    }
+                    } => h_flex()
+                        .gap_2()
+                        .child(loading_icon)
+                        .child(Label::new("Signing into Copilot…")),
                     Status::Error(_) => {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
@@ -575,28 +607,14 @@ impl Render for ConfigurationView {
                     }
                     _ => {
                         const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-                        v_flex().gap_6().child(Label::new(LABEL)).child(
-                            v_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("sign_in", "Sign In")
-                                        .icon_color(Color::Muted)
-                                        .icon(IconName::Github)
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::Medium)
-                                        .style(ui::ButtonStyle::Filled)
-                                        .full_width()
-                                        .on_click(|_, window, cx| {
-                                            copilot::initiate_sign_in(window, cx)
-                                        }),
-                                )
-                                .child(
-                                    div().flex().w_full().items_center().child(
-                                        Label::new("Sign in to start using Github Copilot Chat.")
-                                            .color(Color::Muted)
-                                            .size(ui::LabelSize::Small),
-                                    ),
-                                ),
+                        v_flex().gap_2().child(Label::new(LABEL)).child(
+                            Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                .icon_color(Color::Muted)
+                                .icon(IconName::Github)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Medium)
+                                .full_width()
+                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
                         )
                     }
                 },

@@ -1,4 +1,3 @@
-use crate::platform::scap_screen_capture::scap_screen_sources;
 use core::str;
 use std::{
     cell::RefCell,
@@ -41,8 +40,9 @@ use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSIO
 use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
-    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail, get_valuator_axis_index,
-    modifiers_from_state, pressed_button_from_mask,
+    ButtonOrScroll, ScrollDirection, button_or_scroll_from_event_detail,
+    clipboard::{self, Clipboard},
+    get_valuator_axis_index, modifiers_from_state, pressed_button_from_mask,
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
@@ -56,12 +56,14 @@ use crate::platform::{
         reveal_path_internal,
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+    scap_screen_capture::scap_screen_sources,
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScreenCaptureSource, ScrollDelta,
-    Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
+    ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -200,7 +202,7 @@ pub struct X11ClientState {
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
     pub(crate) common: LinuxCommon,
-    pub(crate) clipboard: x11_clipboard::Clipboard,
+    pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
     pub(crate) xdnd_state: Xdnd,
 }
@@ -387,7 +389,7 @@ impl X11Client {
             .reply()
             .unwrap();
 
-        let clipboard = x11_clipboard::Clipboard::new().unwrap();
+        let clipboard = Clipboard::new().unwrap();
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -1282,14 +1284,16 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-        state
-            .xkb
-            .get_keymap()
-            .layout_get_name(layout_idx)
-            .to_string()
+        Box::new(LinuxKeyboardLayout::new(
+            state
+                .xkb
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string(),
+        ))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -1493,39 +1497,36 @@ impl LinuxClient for X11Client {
         let state = self.0.borrow_mut();
         state
             .clipboard
-            .store(
-                state.clipboard.setter.atoms.primary,
-                state.clipboard.setter.atoms.utf8_string,
-                item.text().unwrap_or_default().as_bytes(),
+            .set_text(
+                std::borrow::Cow::Owned(item.text().unwrap_or_default()),
+                clipboard::ClipboardKind::Primary,
+                clipboard::WaitConfig::None,
             )
-            .ok();
+            .context("Failed to write to clipboard (primary)")
+            .log_with_level(log::Level::Debug);
     }
 
     fn write_to_clipboard(&self, item: crate::ClipboardItem) {
         let mut state = self.0.borrow_mut();
         state
             .clipboard
-            .store(
-                state.clipboard.setter.atoms.clipboard,
-                state.clipboard.setter.atoms.utf8_string,
-                item.text().unwrap_or_default().as_bytes(),
+            .set_text(
+                std::borrow::Cow::Owned(item.text().unwrap_or_default()),
+                clipboard::ClipboardKind::Clipboard,
+                clipboard::WaitConfig::None,
             )
-            .ok();
+            .context("Failed to write to clipboard (clipboard)")
+            .log_with_level(log::Level::Debug);
         state.clipboard_item.replace(item);
     }
 
     fn read_from_primary(&self) -> Option<crate::ClipboardItem> {
         let state = self.0.borrow_mut();
-        state
+        return state
             .clipboard
-            .load(
-                state.clipboard.getter.atoms.primary,
-                state.clipboard.getter.atoms.utf8_string,
-                state.clipboard.getter.atoms.property,
-                Duration::from_secs(3),
-            )
-            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
-            .ok()
+            .get_any(clipboard::ClipboardKind::Primary)
+            .context("Failed to read from clipboard (primary)")
+            .log_with_level(log::Level::Debug);
     }
 
     fn read_from_clipboard(&self) -> Option<crate::ClipboardItem> {
@@ -1534,26 +1535,15 @@ impl LinuxClient for X11Client {
         // which has metadata attached.
         if state
             .clipboard
-            .setter
-            .connection
-            .get_selection_owner(state.clipboard.setter.atoms.clipboard)
-            .ok()
-            .and_then(|r| r.reply().ok())
-            .map(|reply| reply.owner == state.clipboard.setter.window)
-            .unwrap_or(false)
+            .is_owner(clipboard::ClipboardKind::Clipboard)
         {
             return state.clipboard_item.clone();
         }
-        state
+        return state
             .clipboard
-            .load(
-                state.clipboard.getter.atoms.clipboard,
-                state.clipboard.getter.atoms.utf8_string,
-                state.clipboard.getter.atoms.property,
-                Duration::from_secs(3),
-            )
-            .map(|text| crate::ClipboardItem::new_string(String::from_utf8(text).unwrap()))
-            .ok()
+            .get_any(clipboard::ClipboardKind::Clipboard)
+            .context("Failed to read from clipboard (clipboard)")
+            .log_with_level(log::Level::Debug);
     }
 
     fn run(&self) {

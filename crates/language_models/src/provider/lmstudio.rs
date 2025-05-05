@@ -2,7 +2,9 @@ use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
-use language_model::{AuthenticateError, LanguageModelCompletionEvent};
+use language_model::{
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -16,10 +18,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, prelude::*};
+use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -154,6 +157,10 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         self.provided_models(cx).into_iter().next()
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -305,7 +312,12 @@ impl LanguageModel for LmStudioLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = self.to_lmstudio_request(request);
 
         let http_client = self.http_client.clone();
@@ -359,7 +371,11 @@ impl LanguageModel for LmStudioLanguageModel {
         async move {
             Ok(future
                 .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .map(|result| {
+                    result
+                        .map(LanguageModelCompletionEvent::Text)
+                        .map_err(LanguageModelCompletionError::Other)
+                })
                 .boxed())
         }
         .boxed()
@@ -408,40 +424,26 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
-        let lmstudio_reqs = "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
-
-        let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
         } else {
             v_flex()
-                .size_full()
-                .gap_3()
+                .gap_2()
                 .child(
-                    v_flex()
-                        .size_full()
-                        .gap_2()
-                        .p_1()
-                        .child(Label::new(lmstudio_intro))
-                        .child(Label::new(lmstudio_reqs))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Label::new("To get your first model, try running"))
-                                .child(
-                                    div()
-                                        .bg(inline_code_bg)
-                                        .px_1p5()
-                                        .rounded_sm()
-                                        .child(Label::new("lms get qwen2.5-coder-7b")),
-                                ),
-                        ),
+                    v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only(
+                                "LM Studio needs to be running with at least one model downloaded.",
+                            ))
+                            .child(InstructionListItem::text_only(
+                                "To get your first model, try running `lms get qwen2.5-coder-7b`",
+                            )),
+                    ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .pt_2()
                         .justify_between()
                         .gap_2()
                         .child(
@@ -489,29 +491,31 @@ impl Render for ConfigurationView {
                                         }),
                                 ),
                         )
-                        .child(if is_authenticated {
-                            // This is only a button to ensure the spacing is correct
-                            // it should stay disabled
-                            ButtonLike::new("connected")
-                                .disabled(true)
-                                // Since this won't ever be clickable, we can use the arrow cursor
-                                .cursor_style(gpui::CursorStyle::Arrow)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Indicator::dot().color(Color::Success))
-                                        .child(Label::new("Connected"))
-                                        .into_any_element(),
+                        .map(|this| {
+                            if is_authenticated {
+                                this.child(
+                                    ButtonLike::new("connected")
+                                        .disabled(true)
+                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected"))
+                                                .into_any_element(),
+                                        ),
                                 )
-                                .into_any_element()
-                        } else {
-                            Button::new("retry_lmstudio_models", "Connect")
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.retry_connection(cx)
-                                }))
-                                .into_any_element()
+                            } else {
+                                this.child(
+                                    Button::new("retry_lmstudio_models", "Connect")
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon(IconName::Play)
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            this.retry_connection(cx)
+                                        })),
+                                )
+                            }
                         }),
                 )
                 .into_any()

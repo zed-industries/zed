@@ -23,12 +23,13 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 async-watch.workspace = true
 backtrace = "0.3"
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
-dap.workspace = true
+dap_adapters.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true

@@ -2622,7 +2622,6 @@ impl Pixels {
     /// Returns:
     /// * `1.0` if the value is positive
     /// * `-1.0` if the value is negative
-    /// * `0.0` if the value is zero
     pub fn signum(&self) -> f32 {
         self.0.signum()
     }
