@@ -382,6 +382,7 @@ impl Thread {
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         system_prompt: SharedProjectContext,
+        completion_mode: CompletionMode,
         cx: &mut Context<Self>,
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
@@ -395,7 +396,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: default_completion_mode(cx),
+            completion_mode: completion_mode,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),

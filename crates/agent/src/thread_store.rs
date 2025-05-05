@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::{ContextServerManager, ContextServerStatus};
 use context_server::{ContextServerDescriptorRegistry, ContextServerTool};
+use feature_flags::FeatureFlagAppExt;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt as _, StreamExt as _};
@@ -29,6 +30,7 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
+use zed_llm_client::CompletionMode;
 
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
@@ -66,6 +68,7 @@ pub struct ThreadStore {
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
     project_context: SharedProjectContext,
+    preferred_completion_mode: CompletionMode,
     reload_system_prompt_tx: mpsc::Sender<()>,
     _reload_system_prompt_task: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -163,6 +166,7 @@ impl ThreadStore {
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
             project_context: SharedProjectContext::default(),
+            preferred_completion_mode: Self::default_completion_mode(cx),
             reload_system_prompt_tx,
             _reload_system_prompt_task: reload_system_prompt_task,
             _subscriptions: subscriptions,
@@ -171,6 +175,14 @@ impl ThreadStore {
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
         (this, ready_rx)
+    }
+
+    fn default_completion_mode(cx: &App) -> CompletionMode {
+        if cx.is_staff() {
+            CompletionMode::Max
+        } else {
+            CompletionMode::Normal
+        }
     }
 
     fn handle_project_event(
@@ -384,6 +396,7 @@ impl ThreadStore {
                 self.tools.clone(),
                 self.prompt_builder.clone(),
                 self.project_context.clone(),
+                self.preferred_completion_mode,
                 cx,
             )
         })
@@ -620,6 +633,14 @@ impl ThreadStore {
                 }
             }
         }
+    }
+
+    pub fn set_preferred_completion_mode(&mut self, mode: CompletionMode) {
+        self.preferred_completion_mode = mode;
+    }
+
+    pub fn preferred_completion_mode(&self) -> CompletionMode {
+        self.preferred_completion_mode
     }
 }
 

@@ -54,6 +54,7 @@ use crate::{
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
     thread: Entity<Thread>,
+    thread_store: WeakEntity<ThreadStore>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
@@ -197,6 +198,7 @@ impl MessageEditor {
             project: thread.read(cx).project().clone(),
             user_store,
             thread,
+            thread_store: thread_store.clone(),
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
@@ -455,6 +457,12 @@ impl MessageEditor {
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_completion_mode(match active_completion_mode {
+                            CompletionMode::Max => CompletionMode::Normal,
+                            CompletionMode::Normal => CompletionMode::Max,
+                        });
+                    });
+                    let _ = this.thread_store.update(cx, |store, _| {
+                        store.set_preferred_completion_mode(match active_completion_mode {
                             CompletionMode::Max => CompletionMode::Normal,
                             CompletionMode::Normal => CompletionMode::Max,
                         });
