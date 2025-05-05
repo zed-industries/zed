@@ -37,7 +37,7 @@ The items in this menu work similarly to tabs, and closing them from there doesn
 
 You can also view all historical conversations with the `View All` option from within the same menu or by reaching for the {#kb agent::OpenHistory} binding.
 
-todo! - figure out where to put this extra content related to history
+<!-- todo! - figure out where to put this extra content related to history -->
 
 *********************
 

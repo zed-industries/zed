@@ -1,6 +1,6 @@
 # Edit Prediction
 
-todo! header blurb?
+<!-- todo! header blurb? -->
 
 ### Configuring Zeta
 

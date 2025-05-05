@@ -8,7 +8,7 @@ The inline assistant allows you to send the current selection (or the current li
 
 You can also perform multiple generation requests in parallel by pressing `ctrl-enter` with multiple cursors, or by pressing `ctrl-enter` with a selection that spans multiple excerpts in a multibuffer.
 
-todo! - lines below likely needs to be updated
+<!-- todo! - lines below likely needs to be updated -->
 The inline assistant pulls its context from the agent panel, allowing you to provide additional instructions or rules for code transformations.
 
 > **Note**: The inline assistant sees the entire active context from the agent panel. This means the agent panel's context editor becomes one of the most powerful tools for shaping the results of the inline assistant.
@@ -44,5 +44,5 @@ To create a custom keybinding that prefills a prompt, you can add the following 
 ]
 ```
 
-- todo! - needs more tweaks, not done
-- todo! - see what needs to be pulled in from old docs here v
+<!-- - todo! - needs more tweaks, not done -->
+<!-- - todo! - see what needs to be pulled in from old docs here v -->

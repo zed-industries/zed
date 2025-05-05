@@ -2,7 +2,7 @@
 
 Rules are an essential part of interacting with AI assistants in Zed. They help guide the AI's responses and ensure you get the most relevant and useful information.
 
-Every new chat will start with the [default rules](#default-rules), which can be customized and is where your model prompting will stored
+Every new chat will start with the [default rules](#default-rules), which can be customized and is where your model prompting will stored.
 
 Remember that effective prompting is an iterative process. Experiment with different prompt structures and wordings to find what works best for your specific needs and the model you're using.
 
@@ -29,17 +29,17 @@ You can also use the `assistant: open rules library` command while in the agent 
 
 ### Managing Rules
 
-Once a rule is selected, you can edit it directly in the editor. Its title can be changed from the editor title bar as well.
+Once a rules file is selected, you can edit it directly in the built-in editor. Its title can be changed from the editor title bar as well.
 
 Rules can be duplicated, deleted, or added to the default rules using the buttons in the rules editor.
 
 ## Creating Rules {#creating-rules}
 
-To create a rule, simply open the Rules Library and click the `+` button. Rules are stored locally and can be accessed from the library at any time.
+To create a rule file, simply open the `Rules Library` and click the `+` button. Rules files are stored locally and can be accessed from the library at any time.
 
-Having a series of rules specifically tailored to prompt engineering can also help you write consistent and effective rules.
+Having a series of rules files specifically tailored to prompt engineering can also help you write consistent and effective rules.
 
-The process of writing and refining prompts commonly called "prompt engineering".
+The process of writing and refining prompts is commonly referred to as "prompt engineering."
 
 More on rule engineering:
 
@@ -61,100 +61,25 @@ A default set of rules might look something like:
   [+] Don't add comments
 ```
 
-Default rules are included in the context of new threads automatically. If using a Text Thread, @-mentioned rules can be edited directly—edits here will not propagate to the saved rules.
+Default rules are included in the context of new threads automatically.
 
 Default rules will show at the top of the rules list, and will be included with every new conversation.
 
-You can manually add other rules as context using the `@rule` command, or `/prompt` in Text Threads.
+You can manually add other rules as context using the `@rule` command.
 
+<!-- todo! - is this note accurate? -->
 > **Note:** Remember, commands are only evaluated when the context is created, so a command like `@file` won't continuously update.
 
-## Commands in Rules
+## Migrating from Prompt Library
 
-[Commands](./commands.md) can be used in rules to insert dynamic content or perform actions. For example, if you want to create a rule where it is important for the model to know the date, you can use the `/now` command to insert the current date.
+Previously, the Rules Library was called the Prompt Library. The new rules system replaces the Prompt Library except in a few specific cases, which are outlined below.
 
-> **Note:** Slash commands in rules **must** be on their own line.
+### Slash Commands in Rules
 
-See the [Commands](./commands.md) docs for more information on commands, and what slash commands are available.
+Previously, it was possible to use slash commands (now @-mentions) in custom prompts (now rules). There is currently no support for using @-mentions in rules files, however, slash commands are supported in rules files when used with text-threads. See the documentation for using [slash commands in rules](./text-threads.md#slash-commands-in-rules) for more information.
 
-### Example:
+### Prompt templates
 
-```plaintext
-You are an expert Rust engineer. The user has asked you to review their project and answer some questions.
+<!-- todo! improve wording -->
 
-Here is some information about their project:
-
-@file Cargo.toml
-```
-
-In the above example, the `@file` command is used to insert the contents of the `Cargo.toml` file (or all `Cargo.toml` files present in the project) into the rule.
-
-## Nesting Rules
-
-Similar to adding rules to the default rules, you can nest rules within other rules with the `/prompt` command (only supported in Text Threads currently).
-
-You might want to nest rules to:
-
-- Create templates on the fly
-- Break collections like docs or references into smaller, mix-and-matchable parts
-- Create variants of a similar rule (e.g., `Async Rust - Tokio` vs. `Async Rust - Async-std`)
-
-### Example:
-
-```plaintext
-Title: Zed-Flavored Rust
-
-## About Zed
-
-/prompt Zed: Zed (a rule about what Zed is)
-
-## Rust - Zed Style
-
-/prompt Rust: Async - Async-std (zed doesn't use tokio)
-/prompt Rust: Zed-style Crates (we have some unique conventions)
-/prompt Rust - Workspace deps (bias towards reusing deps from the workspace)
-```
-
-_The (text) above are comments and are not part of the rule._
-
-> **Note:** While you technically _can_ nest a rule within itself, we wouldn't recommend it (in the strongest of terms.) Use at your own risk!
-
-By using nested rules, you can create modular and reusable rule components that can be combined in various ways to suit different scenarios.
-
-## Advanced Concepts
-
-### Rule Templates
-
-Zed uses rule templates to power internal assistant features, like the terminal assistant, or the content rules used in the inline assistant.
-
-Zed has the following internal rule templates:
-
-- `content_prompt.hbs`: Used for generating content in the editor.
-- `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
-- `suggest_edits.hbs`: Used for generating the model instructions for the XML Suggest Edits should return.
-
-At this point it is unknown if we will expand templates further to be user-creatable.
-
-### Overriding Templates
-
-> **Note:** It is not recommended to override templates unless you know what you are doing. Editing templates will break your assistant if done incorrectly.
-
-Zed allows you to override the default rules used for various assistant features by placing custom Handlebars (.hbs) templates in your `~/.config/zed/prompt_overrides` directory.
-
-The following templates can be overridden:
-
-1. [`content_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/content_prompt.hbs): Used for generating content in the editor.
-
-2. [`terminal_assistant_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/terminal_assistant_prompt.hbs): Used for the terminal assistant feature.
-
-3. [`suggest_edits.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/suggest_edits.hbs): Used for generating the model instructions for the XML Suggest Edits should return.
-
-> **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
-
-You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk.
-
-Consult Zed's [assets/prompts](https://github.com/zed-industries/zed/tree/main/assets/prompts) directory for current versions you can play with.
-
-- todo! replace more instances of "prompt" with "rules"
-- todo! - needs more tweaks, not done
-- todo! - for old docs covering features that were in old assistant, but not new, do we we mention, or omit?
+Zed still uses the same template system it did before the introduction of the Rules Library for replacing the prompts used in various places within Zed such as the inline assistant. These templates can still be used to override those prompts, and are documented in the [Rules Templates](./text-threads.md#rule-templates) section under [Text Threads](./text-threads.md).

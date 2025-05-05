@@ -1,3 +1,3 @@
 # AI
 
-todo! complete linktree
+<!-- todo! complete linktree -->

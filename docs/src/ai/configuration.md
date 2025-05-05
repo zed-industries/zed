@@ -277,7 +277,7 @@ Example configuration for using X.ai Grok with Zed:
 
 ### LM Studio {#lmstudio}
 
-1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
+1. Download and install the latest version of LM Studio from [the official download page](https://lmstudio.ai/download)
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
 
    You can also get models via the LM Studio CLI:
