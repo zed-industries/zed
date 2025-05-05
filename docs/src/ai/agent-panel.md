@@ -38,7 +38,8 @@ The items in this menu work similarly to tabs, and closing them from there doesn
 You can also view all historical conversations with the `View All` option from within the same menu or by reaching for the {#kb agent::OpenHistory} binding.
 
 todo! - figure out where to put this extra content related to history
----
+
+*********************
 
 # Introducing Contexts
 
@@ -64,8 +65,7 @@ You can view all previous contexts by opening the `History` tab in the assistant
 
 Open the `History` using the menu in the top right of the assistant panel and choosing `History`.
 
-
----
+*********************
 
 ### Reviewing Changes
 
@@ -74,7 +74,7 @@ If you are using a profile that includes write tools, and the agent has made cha
 You can click on the accordion bar that shows up right above the panel's editor see which files have been changed, or click `Review Changes` ({#kb agent::OpenAgentDiff}) to open a multi-buffer to review them.
 Reviewing includes the option to accept or reject each edit, or accept or reject all edits.
 
-Diffs with changes also appear in indvidual buffers.
+Diffs with changes also appear in individual buffers.
 So, if your active tab is already one that had changes, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 
 ## Adding Context

@@ -1,4 +1,4 @@
-# Available Tools
+# Tools
 
 Zed's Agent has access to a variety of tools that allow it to interact with your codebase and perform tasks:
 

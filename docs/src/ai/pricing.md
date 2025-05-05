@@ -1,3 +1,0 @@
-# Pricing
-
-todo! complete

@@ -22,7 +22,7 @@ Here's a bird's-eye view of all the configuration options available in Zed's Ass
 
 ## Providers {#providers}
 
-To access the Assistant configuration view, run `assistant: show configuration` in the command palette, or click on the hamburger menu at the top-right of the Assistant Panel and select "Configure".
+To access the Assistant configuration view, run `agent: open configuration` in the command palette, or click on the hamburger menu at the top-right of the Assistant Panel and select "Configure".
 
 Below you can find all the supported providers available so far.
 
@@ -36,7 +36,7 @@ You can use Claude 3.5 Sonnet via [Zed AI](#zed-ai) for free. To use other Anthr
 
 1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
 2. Make sure that your Anthropic account has credits
-3. Open the configuration view (`assistant: show configuration`) and navigate to the Anthropic section
+3. Open the configuration view (`agent: open configuration`) and navigate to the Anthropic section
 4. Enter your Anthropic API key
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
@@ -96,7 +96,7 @@ You can use GitHub Copilot chat with the Zed assistant by choosing it via the mo
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
 1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
-2. Open the configuration view (`assistant: show configuration`) and navigate to the Google AI section
+2. Open the configuration view (`agent: open configuration`) and navigate to the Google AI section
 3. Enter your Google AI API key and press enter.
 
 The Google AI API key will be saved in your keychain.
@@ -176,7 +176,7 @@ You may also optionally specify a value for `keep_alive` for each available mode
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
-3. Open the configuration view (`assistant: show configuration`) and navigate to the OpenAI section
+3. Open the configuration view (`agent: open configuration`) and navigate to the OpenAI section
 4. Enter your OpenAI API key
 
 The OpenAI API key will be saved in your keychain.
@@ -215,7 +215,7 @@ You must provide the model's Context Window in the `max_tokens` parameter, this 
 ### DeepSeek {#deepseek}
 
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
-2. Open the configuration view (`assistant: show configuration`) and navigate to the DeepSeek section
+2. Open the configuration view (`agent: open configuration`) and navigate to the DeepSeek section
 3. Enter your DeepSeek API key
 
 The DeepSeek API key will be saved in your keychain.

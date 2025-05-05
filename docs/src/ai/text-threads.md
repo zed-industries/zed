@@ -1,12 +1,8 @@
 # Text Threads
 
+todo! - bring other text thread-specific docs in here
 
----
-
-
-# Assistant Commands
-
-## Overview
+## Commands Overview
 
 Slash commands enhance the assistant's capabilities. Begin by typing a `/` at the beginning of the line to see a list of available commands:
 
@@ -113,5 +109,3 @@ Usage: `/selection`
 Additional slash commands can be provided by extensions.
 
 See [Extension: Slash Commands](../extensions/slash-commands.md) to learn how to create your own.
-
-todo! combine

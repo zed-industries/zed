@@ -1,4 +1,3 @@
-
 ## Using Rules {#using-rules}
 
 Rules are an essential part of interacting with AI assistants in Zed. They help guide the AI's responses and ensure you get the most relevant and useful information.
