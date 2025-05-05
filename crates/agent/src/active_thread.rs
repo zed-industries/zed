@@ -35,7 +35,7 @@ use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
 use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
-use settings::{Settings as _, update_settings_file};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
@@ -43,6 +43,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{
     Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
     Tooltip, prelude::*,
@@ -176,7 +177,7 @@ fn parse_markdown(
     cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
-fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
@@ -764,6 +765,7 @@ impl ActiveThread {
             cx.observe(&thread, |_, _, cx| cx.notify()),
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
             cx.subscribe(&thread_store, Self::handle_rules_loading_error),
+            cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
         ];
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
@@ -1693,12 +1695,14 @@ impl ActiveThread {
     fn render_edit_message_editor(
         &self,
         state: &EditingMessageState,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
-        let font_size = TextSize::Small.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.75;
+        let font_size = TextSize::Small
+            .rems(cx)
+            .to_pixels(settings.agent_font_size(cx));
+        let line_height = font_size * 1.75;
 
         let colors = cx.theme().colors();
 
@@ -2065,185 +2069,202 @@ impl ActiveThread {
 
         let panel_background = cx.theme().colors().panel_background;
 
-        v_flex()
-            .w_full()
-            .map(|parent| {
-                if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
-                    let mut is_pending = false;
-                    let mut error = None;
-                    if let Some(last_restore_checkpoint) =
-                        self.thread.read(cx).last_restore_checkpoint()
-                    {
-                        if last_restore_checkpoint.message_id() == message_id {
-                            match last_restore_checkpoint {
-                                LastRestoreCheckpoint::Pending { .. } => is_pending = true,
-                                LastRestoreCheckpoint::Error { error: err, .. } => {
-                                    error = Some(err.clone());
+        WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+            .size_full()
+            .child(
+                v_flex()
+                    .w_full()
+                    .map(|parent| {
+                        if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                            let mut is_pending = false;
+                            let mut error = None;
+                            if let Some(last_restore_checkpoint) =
+                                self.thread.read(cx).last_restore_checkpoint()
+                            {
+                                if last_restore_checkpoint.message_id() == message_id {
+                                    match last_restore_checkpoint {
+                                        LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+                                        LastRestoreCheckpoint::Error { error: err, .. } => {
+                                            error = Some(err.clone());
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
 
-                    let restore_checkpoint_button =
-                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                            .icon(if error.is_some() {
-                                IconName::XCircle
-                            } else {
-                                IconName::Undo
-                            })
-                            .icon_size(IconSize::XSmall)
-                            .icon_position(IconPosition::Start)
-                            .icon_color(if error.is_some() {
-                                Some(Color::Error)
-                            } else {
-                                None
-                            })
-                            .label_size(LabelSize::XSmall)
-                            .disabled(is_pending)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread
-                                        .restore_checkpoint(checkpoint.clone(), cx)
-                                        .detach_and_log_err(cx);
-                                });
-                            }));
+                            let restore_checkpoint_button =
+                                Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                                    .icon(if error.is_some() {
+                                        IconName::XCircle
+                                    } else {
+                                        IconName::Undo
+                                    })
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_color(if error.is_some() {
+                                        Some(Color::Error)
+                                    } else {
+                                        None
+                                    })
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(is_pending)
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.thread.update(cx, |thread, cx| {
+                                            thread
+                                                .restore_checkpoint(checkpoint.clone(), cx)
+                                                .detach_and_log_err(cx);
+                                        });
+                                    }));
 
-                    let restore_checkpoint_button = if is_pending {
-                        restore_checkpoint_button
-                            .with_animation(
-                                ("pulsating-restore-checkpoint-button", ix),
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.6, 1.)),
-                                |label, delta| label.alpha(delta),
+                            let restore_checkpoint_button = if is_pending {
+                                restore_checkpoint_button
+                                    .with_animation(
+                                        ("pulsating-restore-checkpoint-button", ix),
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.6, 1.)),
+                                        |label, delta| label.alpha(delta),
+                                    )
+                                    .into_any_element()
+                            } else if let Some(error) = error {
+                                restore_checkpoint_button
+                                    .tooltip(Tooltip::text(error.to_string()))
+                                    .into_any_element()
+                            } else {
+                                restore_checkpoint_button.into_any_element()
+                            };
+
+                            parent.child(
+                                h_flex()
+                                    .pt_2p5()
+                                    .px_2p5()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(ui::Divider::horizontal())
+                                    .child(restore_checkpoint_button)
+                                    .child(ui::Divider::horizontal()),
                             )
-                            .into_any_element()
-                    } else if let Some(error) = error {
-                        restore_checkpoint_button
-                            .tooltip(Tooltip::text(error.to_string()))
-                            .into_any_element()
-                    } else {
-                        restore_checkpoint_button.into_any_element()
-                    };
-
-                    parent.child(
-                        h_flex()
-                            .pt_2p5()
-                            .px_2p5()
-                            .w_full()
-                            .gap_1()
-                            .child(ui::Divider::horizontal())
-                            .child(restore_checkpoint_button)
-                            .child(ui::Divider::horizontal()),
-                    )
-                } else {
-                    parent
-                }
-            })
-            .when(is_first_message, |parent| {
-                parent.child(self.render_rules_item(cx))
-            })
-            .child(styled_message)
-            .when(is_generating && is_last_message, |this| {
-                this.child(
-                    h_flex()
-                        .h_8()
-                        .mt_2()
-                        .mb_4()
-                        .ml_4()
-                        .py_1p5()
-                        .when_some(loading_dots, |this, loading_dots| this.child(loading_dots)),
-                )
-            })
-            .when(show_feedback, move |parent| {
-                parent.child(feedback_items).when_some(
-                    self.open_feedback_editors.get(&message_id),
-                    move |parent, feedback_editor| {
-                        let focus_handle = feedback_editor.focus_handle(cx);
-                        parent.child(
-                            v_flex()
-                                .key_context("AgentFeedbackMessageEditor")
-                                .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
-                                    this.open_feedback_editors.remove(&message_id);
-                                    cx.notify();
-                                }))
-                                .on_action(cx.listener(move |this, _: &menu::Confirm, _, cx| {
-                                    this.submit_feedback_message(message_id, cx);
-                                    cx.notify();
-                                }))
-                                .on_action(cx.listener(Self::confirm_editing_message))
-                                .mb_2()
-                                .mx_4()
-                                .p_2()
-                                .rounded_md()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_background)
-                                .child(feedback_editor.clone())
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .justify_end()
-                                        .child(
-                                            Button::new("dismiss-feedback-message", "Cancel")
-                                                .label_size(LabelSize::Small)
-                                                .key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        &menu::Cancel,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(rems_from_px(10.))),
-                                                )
-                                                .on_click(cx.listener(
-                                                    move |this, _, _window, cx| {
-                                                        this.open_feedback_editors
-                                                            .remove(&message_id);
-                                                        cx.notify();
-                                                    },
-                                                )),
-                                        )
-                                        .child(
-                                            Button::new(
-                                                "submit-feedback-message",
-                                                "Share Feedback",
-                                            )
-                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                            .label_size(LabelSize::Small)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &menu::Confirm,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.))),
-                                            )
-                                            .on_click(
-                                                cx.listener(move |this, _, _window, cx| {
-                                                    this.submit_feedback_message(message_id, cx);
-                                                    cx.notify()
-                                                }),
-                                            ),
-                                        ),
-                                ),
+                        } else {
+                            parent
+                        }
+                    })
+                    .when(is_first_message, |parent| {
+                        parent.child(self.render_rules_item(cx))
+                    })
+                    .child(styled_message)
+                    .when(is_generating && is_last_message, |this| {
+                        this.child(
+                            h_flex()
+                                .h_8()
+                                .mt_2()
+                                .mb_4()
+                                .ml_4()
+                                .py_1p5()
+                                .when_some(loading_dots, |this, loading_dots| {
+                                    this.child(loading_dots)
+                                }),
                         )
-                    },
-                )
-            })
-            .when(after_editing_message, |parent| {
-                // Backdrop to dim out the whole thread below the editing user message
-                parent.relative().child(
-                    div()
-                        .occlude()
-                        .absolute()
-                        .inset_0()
-                        .size_full()
-                        .bg(panel_background)
-                        .opacity(0.8),
-                )
-            })
+                    })
+                    .when(show_feedback, move |parent| {
+                        parent.child(feedback_items).when_some(
+                            self.open_feedback_editors.get(&message_id),
+                            move |parent, feedback_editor| {
+                                let focus_handle = feedback_editor.focus_handle(cx);
+                                parent.child(
+                                    v_flex()
+                                        .key_context("AgentFeedbackMessageEditor")
+                                        .on_action(cx.listener(
+                                            move |this, _: &menu::Cancel, _, cx| {
+                                                this.open_feedback_editors.remove(&message_id);
+                                                cx.notify();
+                                            },
+                                        ))
+                                        .on_action(cx.listener(
+                                            move |this, _: &menu::Confirm, _, cx| {
+                                                this.submit_feedback_message(message_id, cx);
+                                                cx.notify();
+                                            },
+                                        ))
+                                        .on_action(cx.listener(Self::confirm_editing_message))
+                                        .mb_2()
+                                        .mx_4()
+                                        .p_2()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_background)
+                                        .child(feedback_editor.clone())
+                                        .child(
+                                            h_flex()
+                                                .gap_1()
+                                                .justify_end()
+                                                .child(
+                                                    Button::new(
+                                                        "dismiss-feedback-message",
+                                                        "Cancel",
+                                                    )
+                                                    .label_size(LabelSize::Small)
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &menu::Cancel,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _window, cx| {
+                                                            this.open_feedback_editors
+                                                                .remove(&message_id);
+                                                            cx.notify();
+                                                        },
+                                                    )),
+                                                )
+                                                .child(
+                                                    Button::new(
+                                                        "submit-feedback-message",
+                                                        "Share Feedback",
+                                                    )
+                                                    .style(ButtonStyle::Tinted(
+                                                        ui::TintColor::Accent,
+                                                    ))
+                                                    .label_size(LabelSize::Small)
+                                                    .key_binding(
+                                                        KeyBinding::for_action_in(
+                                                            &menu::Confirm,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _window, cx| {
+                                                            this.submit_feedback_message(
+                                                                message_id, cx,
+                                                            );
+                                                            cx.notify()
+                                                        },
+                                                    )),
+                                                ),
+                                        ),
+                                )
+                            },
+                        )
+                    })
+                    .when(after_editing_message, |parent| {
+                        // Backdrop to dim out the whole thread below the editing user message
+                        parent.relative().child(
+                            div()
+                                .occlude()
+                                .absolute()
+                                .inset_0()
+                                .size_full()
+                                .bg(panel_background)
+                                .opacity(0.8),
+                        )
+                    }),
+            )
             .into_any()
     }
 
