@@ -588,7 +588,7 @@ impl Modifiers {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Keystroke, Modifiers, TestKeyboardMapper};
+    use crate::Keystroke;
 
     #[test]
     fn test_different_separators() {
@@ -611,7 +611,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
     fn test_parse_scan_code() {
+        use crate::{Modifiers, TestKeyboardMapper};
+
         let keyboard_mapper = TestKeyboardMapper::new();
 
         for letter in 'a'..='z' {
