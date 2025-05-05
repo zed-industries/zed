@@ -170,6 +170,7 @@ pub struct ExtensionIndexIconThemeEntry {
 pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
+    #[serde(skip)]
     pub config: LanguageConfig,
 }
 
@@ -1012,7 +1013,7 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
-        new_index: ExtensionIndex,
+        mut new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
@@ -1136,9 +1137,9 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        let languages_to_add = new_index
+        let mut languages_to_add = new_index
             .languages
-            .iter()
+            .iter_mut()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
@@ -1188,11 +1189,22 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
+            let Some(config) = std::fs::read_to_string(language_path.join("config.toml")).ok()
+            else {
+                log::error!("Could not load config.toml in {:?}", language_path);
+                continue;
+            };
+            let Some(config) = ::toml::from_str::<LanguageConfig>(&config).ok() else {
+                log::error!(
+                    "Could not parse language config.toml in {:?}",
+                    language_path
+                );
+                continue;
+            };
+            language.config = config.clone();
             self.proxy.register_language(
                 language.config.clone(),
                 Arc::new(move || {
-                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
                     let context_provider =
                         std::fs::read_to_string(language_path.join("tasks.json"))
@@ -1204,7 +1216,7 @@ impl ExtensionStore {
                             });
 
                     Ok(LoadedLanguage {
-                        config,
+                        config: config.clone(),
                         queries,
                         context_provider,
                         toolchain_provider: None,
