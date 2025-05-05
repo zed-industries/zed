@@ -2551,6 +2551,9 @@ impl AssistantContext {
             for chunk in buffer.text_for_range(message.offset_range) {
                 output.push_str(chunk);
             }
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
             writeln!(&mut output, "</{}>", message.role).unwrap();
         }
         output

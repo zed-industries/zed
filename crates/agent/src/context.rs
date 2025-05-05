@@ -885,12 +885,15 @@ pub fn load_context(
             }
         }
 
+        // Use empty text if there are no contexts that contribute to text (everything but image
+        // context).
         if file_context.is_empty()
             && directory_context.is_empty()
             && symbol_context.is_empty()
             && selection_context.is_empty()
             && fetched_url_context.is_empty()
             && thread_context.is_empty()
+            && text_thread_context.is_empty()
             && rules_context.is_empty()
         {
             return ContextLoadResult {
