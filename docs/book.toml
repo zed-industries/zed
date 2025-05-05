@@ -25,6 +25,17 @@ enable = false
 "/assistant.html" = "/docs/assistant/assistant.html"
 "/developing-zed.html" = "/docs/development.html"
 "/conversations.html" = "/community-links"
+"/assistant/assistant.html" = "/ai/ai.html"
+"/assistant/configuration.html" = "/ai/configuration.html"
+"/assistant/assistant-panel.html" = "/ai/agent-panel.html"
+"/assistant/contexts.html" = "/ai/text-threads.html"
+"/assistant/inline-assistant.html" = "/ai/inline-assistant.html"
+"/assistant/commands.html" = "/ai/text-threads.html" # todo! add #slash-commands or whatever it is
+"/assistant/prompting.html" = "/ai/rules.html"
+"/assistant/context-servers.html" = "/ai/mcp.html"
+"/assistant/model-context-protocol.html" = "/ai/mcp.html"
+"/model-improvement.html" = "/ai/ai-improvement.html"
+
 
 # Our custom preprocessor for expanding commands like `{#kb action::ActionName}`,
 # and other docs-related functions.
