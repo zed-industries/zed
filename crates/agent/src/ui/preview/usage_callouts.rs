@@ -93,10 +93,10 @@ impl RenderOnce for UsageCallout {
         };
 
         Callout::multi_line(
-            title.into(),
-            message.into(),
+            title,
+            message,
             icon,
-            button_text.into(),
+            button_text,
             Box::new(move |_, _, cx| {
                 cx.open_url(url);
             }),

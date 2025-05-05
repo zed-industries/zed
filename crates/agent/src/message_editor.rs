@@ -1093,10 +1093,10 @@ impl MessageEditor {
         Some(
             div()
                 .child(ui::Callout::multi_line(
-                    title.into(),
-                    message.into(),
+                    title,
+                    message,
                     icon,
-                    "Start New Thread".into(),
+                    "Start New Thread",
                     Box::new(cx.listener(|this, _, window, cx| {
                         let from_thread_id = Some(this.thread.read(cx).id().clone());
                         window.dispatch_action(Box::new(NewThread { from_thread_id }), cx);
