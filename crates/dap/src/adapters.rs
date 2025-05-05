@@ -42,7 +42,7 @@ pub trait DapDelegate {
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore>;
     fn fs(&self) -> Arc<dyn Fs>;
     fn updated_adapters(&self) -> Arc<Mutex<HashSet<DebugAdapterName>>>;
-    fn update_status(&self, dap_name: DebugAdapterName, status: DapStatus);
+    fn output_to_console(&self, msg: String);
     fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
@@ -442,25 +442,12 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
 
         log::info!("Getting latest version of debug adapter {}", self.name());
-        delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
+
+        delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
         if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
             log::info!("Installing latest version of debug adapter {}", self.name());
-            delegate.update_status(self.name(), DapStatus::Downloading);
-            match self.install_binary(version, delegate).await {
-                Ok(_) => {
-                    delegate.update_status(self.name(), DapStatus::None);
-                }
-                Err(error) => {
-                    delegate.update_status(
-                        self.name(),
-                        DapStatus::Failed {
-                            error: error.to_string(),
-                        },
-                    );
-
-                    return Err(error);
-                }
-            }
+            delegate.output_to_console(format!("Installing {}...", version.tag_name));
+            self.install_binary(version, delegate).await?;
 
             delegate
                 .updated_adapters()

@@ -16,22 +16,20 @@ use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
-    adapters::{
-        DapStatus, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
-    },
+    adapters::{DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments},
     client::SessionId,
     messages::Message,
     requests::{Completions, Evaluate},
 };
 use fs::Fs;
-use futures::future::{Shared, join_all};
+use futures::{
+    StreamExt,
+    channel::mpsc::{self, UnboundedSender},
+    future::{Shared, join_all},
+};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{
-    BinaryStatus, Buffer, LanguageRegistry, LanguageToolchainStore,
-    language_settings::InlayHintKind, range_from_lsp,
-};
-use lsp::LanguageServerName;
+use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind, range_from_lsp};
 use node_runtime::NodeRuntime;
 
 use remote::SshRemoteClient;
@@ -78,7 +76,6 @@ pub struct LocalDapStore {
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
-    language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
 }
 
@@ -102,12 +99,13 @@ impl EventEmitter<DapStoreEvent> for DapStore {}
 impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
         static ADD_LOCATORS: Once = Once::new();
-        client.add_entity_request_handler(Self::handle_run_debug_locator);
-        client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
         ADD_LOCATORS.call_once(|| {
             DapRegistry::global(cx)
                 .add_locator("cargo".into(), Arc::new(locators::cargo::CargoLocator {}))
         });
+        client.add_entity_request_handler(Self::handle_run_debug_locator);
+        client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
+        client.add_entity_message_handler(Self::handle_log_to_debug_console);
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -115,7 +113,6 @@ impl DapStore {
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
-        language_registry: Arc<LanguageRegistry>,
         environment: Entity<ProjectEnvironment>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         worktree_store: Entity<WorktreeStore>,
@@ -128,7 +125,6 @@ impl DapStore {
             http_client,
             node_runtime,
             toolchain_store,
-            language_registry,
         });
 
         Self::new(mode, breakpoint_store, worktree_store, cx)
@@ -179,6 +175,8 @@ impl DapStore {
     pub fn get_debug_adapter_binary(
         &mut self,
         definition: DebugTaskDefinition,
+        session_id: SessionId,
+        console: UnboundedSender<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugAdapterBinary>> {
         match &self.mode {
@@ -196,7 +194,7 @@ impl DapStore {
                     .get(&adapter.name())
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
-                let delegate = self.delegate(&worktree, cx);
+                let delegate = self.delegate(&worktree, console, cx);
                 let cwd: Arc<Path> = definition
                     .cwd()
                     .unwrap_or(worktree.read(cx).abs_path().as_ref())
@@ -228,6 +226,7 @@ impl DapStore {
             }
             DapStoreMode::Ssh(ssh) => {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
+                    session_id: session_id.to_proto(),
                     project_id: ssh.upstream_project_id,
                     definition: Some(definition.to_proto()),
                 });
@@ -445,13 +444,15 @@ impl DapStore {
         };
 
         let dap_store = cx.weak_entity();
+        let console = session.update(cx, |session, cx| session.console_output(cx));
+        let session_id = session.read(cx).session_id();
 
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
                 let mut binary = this
                     .update(cx, |this, cx| {
-                        this.get_debug_adapter_binary(definition.clone(), cx)
+                        this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
                     })?
                     .await?;
 
@@ -522,7 +523,12 @@ impl DapStore {
         Ok(())
     }
 
-    fn delegate(&self, worktree: &Entity<Worktree>, cx: &mut App) -> DapAdapterDelegate {
+    fn delegate(
+        &self,
+        worktree: &Entity<Worktree>,
+        console: UnboundedSender<String>,
+        cx: &mut App,
+    ) -> DapAdapterDelegate {
         let Some(local_store) = self.as_local() else {
             unimplemented!("Starting session on remote side");
         };
@@ -530,9 +536,9 @@ impl DapStore {
         DapAdapterDelegate::new(
             local_store.fs.clone(),
             worktree.read(cx).id(),
+            console,
             local_store.node_runtime.clone(),
             local_store.http_client.clone(),
-            local_store.language_registry.clone(),
             local_store.toolchain_store.clone(),
             local_store.environment.update(cx, |env, cx| {
                 env.get_worktree_environment(worktree.clone(), cx)
@@ -802,22 +808,64 @@ impl DapStore {
                 .definition
                 .ok_or_else(|| anyhow!("missing definition"))?,
         )?;
+        let (tx, mut rx) = mpsc::unbounded();
+        let session_id = envelope.payload.session_id;
+        cx.spawn({
+            let this = this.clone();
+            async move |cx| {
+                while let Some(message) = rx.next().await {
+                    this.update(cx, |this, _| {
+                        if let Some((downstream, project_id)) = this.downstream_client.clone() {
+                            downstream
+                                .send(proto::LogToDebugConsole {
+                                    project_id,
+                                    session_id,
+                                    message,
+                                })
+                                .ok();
+                        }
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+
         let binary = this
             .update(&mut cx, |this, cx| {
-                this.get_debug_adapter_binary(definition, cx)
+                this.get_debug_adapter_binary(definition, SessionId::from_proto(session_id), tx, cx)
             })?
             .await?;
         Ok(binary.to_proto())
+    }
+
+    async fn handle_log_to_debug_console(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LogToDebugConsole>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let session_id = SessionId::from_proto(envelope.payload.session_id);
+        this.update(&mut cx, |this, cx| {
+            let Some(session) = this.sessions.get(&session_id) else {
+                return;
+            };
+            session.update(cx, |session, cx| {
+                session
+                    .console_output(cx)
+                    .unbounded_send(envelope.payload.message)
+                    .ok();
+            })
+        })
     }
 }
 
 #[derive(Clone)]
 pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
+    console: mpsc::UnboundedSender<String>,
     worktree_id: WorktreeId,
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
-    language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
@@ -827,19 +875,19 @@ impl DapAdapterDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
         worktree_id: WorktreeId,
+        status: mpsc::UnboundedSender<String>,
         node_runtime: NodeRuntime,
         http_client: Arc<dyn HttpClient>,
-        language_registry: Arc<LanguageRegistry>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
     ) -> Self {
         Self {
             fs,
+            console: status,
             worktree_id,
             http_client,
             node_runtime,
             toolchain_store,
-            language_registry,
             load_shell_env_task,
             updated_adapters: Default::default(),
         }
@@ -868,17 +916,8 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         self.updated_adapters.clone()
     }
 
-    fn update_status(&self, dap_name: DebugAdapterName, status: dap::adapters::DapStatus) {
-        let name = SharedString::from(dap_name.to_string());
-        let status = match status {
-            DapStatus::None => BinaryStatus::None,
-            DapStatus::Downloading => BinaryStatus::Downloading,
-            DapStatus::Failed { error } => BinaryStatus::Failed { error },
-            DapStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
-        };
-
-        self.language_registry
-            .update_dap_status(LanguageServerName(name), status);
+    fn output_to_console(&self, msg: String) {
+        self.console.unbounded_send(msg).ok();
     }
 
     fn which(&self, command: &OsStr) -> Option<PathBuf> {

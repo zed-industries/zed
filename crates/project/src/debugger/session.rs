@@ -815,6 +815,33 @@ impl Session {
         self.is_session_terminated
     }
 
+    pub fn console_output(&mut self, cx: &mut Context<Self>) -> mpsc::UnboundedSender<String> {
+        let (tx, mut rx) = mpsc::unbounded();
+
+        cx.spawn(async move |this, cx| {
+            while let Some(output) = rx.next().await {
+                this.update(cx, |this, _| {
+                    this.output_token.0 += 1;
+                    this.output.push_back(dap::OutputEvent {
+                        category: None,
+                        output,
+                        group: None,
+                        variables_reference: None,
+                        source: None,
+                        line: None,
+                        column: None,
+                        data: None,
+                        location_reference: None,
+                    });
+                })?;
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+
+        return tx;
+    }
+
     pub fn is_local(&self) -> bool {
         matches!(self.mode, Mode::Running(_))
     }
