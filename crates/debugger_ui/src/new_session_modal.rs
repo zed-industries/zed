@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use collections::HashMap;
 use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};

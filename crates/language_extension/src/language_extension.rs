@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
-use language::{LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
+use language::{LanguageConfig, LanguageName, LanguageRegistry, LoadedLanguage};
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
