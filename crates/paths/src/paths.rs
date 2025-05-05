@@ -5,61 +5,107 @@ use std::sync::OnceLock;
 
 pub use util::paths::home_dir;
 
+/// A default editorconfig file name to use when resolving project settings.
+pub const EDITORCONFIG_NAME: &str = ".editorconfig";
+
+/// A custom data directory override, set only by `set_custom_data_dir`.
+/// This is used to override the default data directory location.
+/// The directory will be created if it doesn't exist when set.
+static CUSTOM_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// The resolved data directory, combining custom override or platform defaults.
+/// This is set once and cached for subsequent calls.
+/// On macOS, this is `~/Library/Application Support/Zed`.
+/// On Linux/FreeBSD, this is `$XDG_DATA_HOME/zed`.
+/// On Windows, this is `%LOCALAPPDATA%\Zed`.
+static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// The resolved config directory, combining custom override or platform defaults.
+/// This is set once and cached for subsequent calls.
+/// On macOS, this is `~/.config/zed`.
+/// On Linux/FreeBSD, this is `$XDG_CONFIG_HOME/zed`.
+/// On Windows, this is `%APPDATA%\Zed`.
+static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static Path {
     Path::new(".zed_server")
 }
 
+/// Sets a custom directory for all user data, overriding the default data directory.
+/// This function must be called before any other path operations that depend on the data directory.
+/// The directory will be created if it doesn't exist.
+///
+/// # Arguments
+///
+/// * `dir` - The path to use as the custom data directory. This will be used as the base
+///           directory for all user data, including databases, extensions, and logs.
+///
+/// # Returns
+///
+/// A reference to the static `PathBuf` containing the custom data directory path.
+///
+/// # Panics
+///
+/// Panics if:
+/// * Called after the data directory has been initialized (e.g., via `data_dir` or `config_dir`)
+/// * The directory cannot be created
+pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
+    if CURRENT_DATA_DIR.get().is_some() || CONFIG_DIR.get().is_some() {
+        panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
+    }
+    CUSTOM_DATA_DIR.get_or_init(|| {
+        let path = PathBuf::from(dir);
+        std::fs::create_dir_all(&path).expect("failed to create custom data directory");
+        path
+    })
+}
+
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
-    static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONFIG_DIR.get_or_init(|| {
-        if cfg!(target_os = "windows") {
-            return dirs::config_dir()
+        if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
+            custom_dir.join("config")
+        } else if cfg!(target_os = "windows") {
+            dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
-                .join("Zed");
-        }
-
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
+                .join("Zed")
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
                 dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
-            .join("zed");
+            .join("zed")
+        } else {
+            home_dir().join(".config").join("zed")
         }
-
-        home_dir().join(".config").join("zed")
     })
 }
 
-/// Returns the path to the support directory used by Zed.
-pub fn support_dir() -> &'static PathBuf {
-    static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPPORT_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            return home_dir().join("Library/Application Support/Zed");
-        }
-
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            return if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
+/// Returns the path to the data directory used by Zed.
+pub fn data_dir() -> &'static PathBuf {
+    CURRENT_DATA_DIR.get_or_init(|| {
+        if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
+            custom_dir.clone()
+        } else if cfg!(target_os = "macos") {
+            home_dir().join("Library/Application Support/Zed")
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
                 dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
-            .join("zed");
-        }
-
-        if cfg!(target_os = "windows") {
-            return dirs::data_local_dir()
+            .join("zed")
+        } else if cfg!(target_os = "windows") {
+            dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
-                .join("Zed");
+                .join("Zed")
+        } else {
+            config_dir().clone() // Fallback
         }
-
-        config_dir().clone()
     })
 }
-
 /// Returns the path to the temp directory used by Zed.
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -96,7 +142,7 @@ pub fn logs_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             home_dir().join("Library/Logs/Zed")
         } else {
-            support_dir().join("logs")
+            data_dir().join("logs")
         }
     })
 }
@@ -104,7 +150,7 @@ pub fn logs_dir() -> &'static PathBuf {
 /// Returns the path to the Zed server directory on this SSH host.
 pub fn remote_server_state_dir() -> &'static PathBuf {
     static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
-    REMOTE_SERVER_STATE.get_or_init(|| support_dir().join("server_state"))
+    REMOTE_SERVER_STATE.get_or_init(|| data_dir().join("server_state"))
 }
 
 /// Returns the path to the `Zed.log` file.
@@ -122,7 +168,7 @@ pub fn old_log_file() -> &'static PathBuf {
 /// Returns the path to the database directory.
 pub fn database_dir() -> &'static PathBuf {
     static DATABASE_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DATABASE_DIR.get_or_init(|| support_dir().join("db"))
+    DATABASE_DIR.get_or_init(|| data_dir().join("db"))
 }
 
 /// Returns the path to the crashes directory, if it exists for the current platform.
@@ -180,7 +226,7 @@ pub fn debug_tasks_file() -> &'static PathBuf {
 /// This is where installed extensions are stored.
 pub fn extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EXTENSIONS_DIR.get_or_init(|| support_dir().join("extensions"))
+    EXTENSIONS_DIR.get_or_init(|| data_dir().join("extensions"))
 }
 
 /// Returns the path to the extensions directory.
@@ -188,7 +234,7 @@ pub fn extensions_dir() -> &'static PathBuf {
 /// This is where installed extensions are stored on a remote.
 pub fn remote_extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EXTENSIONS_DIR.get_or_init(|| support_dir().join("remote_extensions"))
+    EXTENSIONS_DIR.get_or_init(|| data_dir().join("remote_extensions"))
 }
 
 /// Returns the path to the extensions directory.
@@ -222,7 +268,7 @@ pub fn contexts_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             config_dir().join("conversations")
         } else {
-            support_dir().join("conversations")
+            data_dir().join("conversations")
         }
     })
 }
@@ -236,7 +282,7 @@ pub fn prompts_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             config_dir().join("prompts")
         } else {
-            support_dir().join("prompts")
+            data_dir().join("prompts")
         }
     })
 }
@@ -262,7 +308,7 @@ pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
             if cfg!(target_os = "macos") {
                 config_dir().join("prompt_overrides")
             } else {
-                support_dir().join("prompt_overrides")
+                data_dir().join("prompt_overrides")
             }
         })
         .clone()
@@ -277,7 +323,7 @@ pub fn embeddings_dir() -> &'static PathBuf {
         if cfg!(target_os = "macos") {
             config_dir().join("embeddings")
         } else {
-            support_dir().join("embeddings")
+            data_dir().join("embeddings")
         }
     })
 }
@@ -287,7 +333,7 @@ pub fn embeddings_dir() -> &'static PathBuf {
 /// This is where language servers are downloaded to for languages built-in to Zed.
 pub fn languages_dir() -> &'static PathBuf {
     static LANGUAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    LANGUAGES_DIR.get_or_init(|| support_dir().join("languages"))
+    LANGUAGES_DIR.get_or_init(|| data_dir().join("languages"))
 }
 
 /// Returns the path to the debug adapters directory
@@ -295,36 +341,41 @@ pub fn languages_dir() -> &'static PathBuf {
 /// This is where debug adapters are downloaded to for DAPs that are built-in to Zed.
 pub fn debug_adapters_dir() -> &'static PathBuf {
     static DEBUG_ADAPTERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DEBUG_ADAPTERS_DIR.get_or_init(|| support_dir().join("debug_adapters"))
+    DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
 /// Returns the path to the Copilot directory.
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
-    COPILOT_DIR.get_or_init(|| support_dir().join("copilot"))
+    COPILOT_DIR.get_or_init(|| data_dir().join("copilot"))
 }
 
 /// Returns the path to the Supermaven directory.
 pub fn supermaven_dir() -> &'static PathBuf {
     static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| support_dir().join("supermaven"))
+    SUPERMAVEN_DIR.get_or_init(|| data_dir().join("supermaven"))
 }
 
 /// Returns the path to the default Prettier directory.
 pub fn default_prettier_dir() -> &'static PathBuf {
     static DEFAULT_PRETTIER_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DEFAULT_PRETTIER_DIR.get_or_init(|| support_dir().join("prettier"))
+    DEFAULT_PRETTIER_DIR.get_or_init(|| data_dir().join("prettier"))
 }
 
 /// Returns the path to the remote server binaries directory.
 pub fn remote_servers_dir() -> &'static PathBuf {
     static REMOTE_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    REMOTE_SERVERS_DIR.get_or_init(|| support_dir().join("remote_servers"))
+    REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
 }
 
 /// Returns the relative path to a `.zed` folder within a project.
 pub fn local_settings_folder_relative_path() -> &'static Path {
     Path::new(".zed")
+}
+
+/// Returns the relative path to a `.vscode` folder within a project.
+pub fn local_vscode_folder_relative_path() -> &'static Path {
+    Path::new(".vscode")
 }
 
 /// Returns the relative path to a `settings.json` file within a project.
@@ -350,7 +401,7 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-/// Returns the relative path to a `launch.json` file within a project.
+/// Returns the relative path to a `debug.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }
@@ -360,5 +411,17 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
 
-/// A default editorconfig file name to use when resolving project settings.
-pub const EDITORCONFIG_NAME: &str = ".editorconfig";
+/// Returns the path to the vscode user settings file
+pub fn vscode_settings_file() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let rel_path = "Code/User/Settings.json";
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        } else {
+            config_dir().join(rel_path)
+        }
+    })
+}

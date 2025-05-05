@@ -73,11 +73,11 @@ impl Tab {
         self
     }
 
-    pub fn content_height(cx: &mut App) -> Pixels {
+    pub fn content_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
-    pub fn container_height(cx: &mut App) -> Pixels {
+    pub fn container_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx)
     }
 }
@@ -122,9 +122,15 @@ impl RenderOnce for Tab {
         };
 
         let (start_slot, end_slot) = {
-            let start_slot = h_flex().size_3().justify_center().children(self.start_slot);
+            let start_slot = h_flex()
+                .size(px(12.)) // use px over rem from size_3
+                .justify_center()
+                .children(self.start_slot);
 
-            let end_slot = h_flex().size_3().justify_center().children(self.end_slot);
+            let end_slot = h_flex()
+                .size(px(12.)) // use px over rem from size_3
+                .justify_center()
+                .children(self.end_slot);
 
             match self.close_side {
                 TabCloseSide::End => (start_slot, end_slot),
@@ -148,7 +154,7 @@ impl RenderOnce for Tab {
                     if self.selected {
                         this.border_l_1().border_r_1().pb_px()
                     } else {
-                        this.pr_px().pl_px().border_b_1().border_r_1()
+                        this.pr_px().border_b_1().border_r_1()
                     }
                 }
                 TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),

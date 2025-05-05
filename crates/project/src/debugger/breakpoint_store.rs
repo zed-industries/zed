@@ -4,20 +4,23 @@
 use anyhow::{Result, anyhow};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
-use dap::client::SessionId;
+use dap::{StackFrameId, client::SessionId};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
+use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, proto::serialize_anchor as serialize_text_anchor};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
-use text::PointUtf16;
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
+use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
+use super::session::ThreadId;
+
 mod breakpoints_in_file {
-    use language::BufferEvent;
+    use language::{BufferEvent, DiskState};
 
     use super::*;
 
@@ -31,8 +34,9 @@ mod breakpoints_in_file {
 
     impl BreakpointsInFile {
         pub(super) fn new(buffer: Entity<Buffer>, cx: &mut Context<BreakpointStore>) -> Self {
-            let subscription =
-                Arc::from(cx.subscribe(&buffer, |_, buffer, event, cx| match event {
+            let subscription = Arc::from(cx.subscribe(
+                &buffer,
+                |breakpoint_store, buffer, event, cx| match event {
                     BufferEvent::Saved => {
                         if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
                             cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
@@ -41,8 +45,44 @@ mod breakpoints_in_file {
                             ));
                         }
                     }
+                    BufferEvent::FileHandleChanged => {
+                        let entity_id = buffer.entity_id();
+
+                        if buffer.read(cx).file().is_none_or(|f| f.disk_state() == DiskState::Deleted) {
+                            breakpoint_store.breakpoints.retain(|_, breakpoints_in_file| {
+                                breakpoints_in_file.buffer.entity_id() != entity_id
+                            });
+
+                            cx.notify();
+                            return;
+                        }
+
+                        if let Some(abs_path) = BreakpointStore::abs_path_from_buffer(&buffer, cx) {
+                            if breakpoint_store.breakpoints.contains_key(&abs_path) {
+                                return;
+                            }
+
+                            if let Some(old_path) = breakpoint_store
+                                .breakpoints
+                                .iter()
+                                .find(|(_, in_file)| in_file.buffer.entity_id() == entity_id)
+                                .map(|values| values.0)
+                                .cloned()
+                            {
+                                let Some(breakpoints_in_file) =
+                                    breakpoint_store.breakpoints.remove(&old_path) else {
+                                        log::error!("Couldn't get breakpoints in file from old path during buffer rename handling");
+                                        return;
+                                    };
+
+                                breakpoint_store.breakpoints.insert(abs_path, breakpoints_in_file);
+                                cx.notify();
+                            }
+                        }
+                    }
                     _ => {}
-                }));
+                },
+            ));
 
             BreakpointsInFile {
                 buffer,
@@ -70,10 +110,20 @@ enum BreakpointStoreMode {
     Local(LocalBreakpointStore),
     Remote(RemoteBreakpointStore),
 }
+
+#[derive(Clone, PartialEq)]
+pub struct ActiveStackFrame {
+    pub session_id: SessionId,
+    pub thread_id: ThreadId,
+    pub stack_frame_id: StackFrameId,
+    pub path: Arc<Path>,
+    pub position: text::Anchor,
+}
+
 pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    active_stack_frame: Option<(SessionId, Arc<Path>, text::Anchor)>,
+    active_stack_frame: Option<ActiveStackFrame>,
     // E.g ssh
     mode: BreakpointStoreMode,
 }
@@ -289,9 +339,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.message.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.message.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
             BreakpointEditAction::EditHitCondition(hit_condition) => {
@@ -316,9 +373,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.hit_condition.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.hit_condition.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
             BreakpointEditAction::EditCondition(condition) => {
@@ -343,9 +407,16 @@ impl BreakpointStore {
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
                 } else if breakpoint.1.condition.is_some() {
-                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
-                        &breakpoint.0 != other_pos && other.condition.is_none()
-                    })
+                    if let Some(position) = breakpoint_set
+                        .breakpoints
+                        .iter()
+                        .find_position(|(pos, bp)| &breakpoint.0 == pos && bp == &breakpoint.1)
+                        .map(|res| res.0)
+                    {
+                        breakpoint_set.breakpoints.remove(position);
+                    } else {
+                        log::error!("Failed to find position of breakpoint to delete")
+                    }
                 }
             }
         }
@@ -434,7 +505,7 @@ impl BreakpointStore {
             })
     }
 
-    pub fn active_position(&self) -> Option<&(SessionId, Arc<Path>, text::Anchor)> {
+    pub fn active_position(&self) -> Option<&ActiveStackFrame> {
         self.active_stack_frame.as_ref()
     }
 
@@ -445,23 +516,49 @@ impl BreakpointStore {
     ) {
         if let Some(session_id) = session_id {
             self.active_stack_frame
-                .take_if(|(id, _, _)| *id == session_id);
+                .take_if(|active_stack_frame| active_stack_frame.session_id == session_id);
         } else {
             self.active_stack_frame.take();
         }
 
-        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+        cx.emit(BreakpointStoreEvent::ClearDebugLines);
         cx.notify();
     }
 
-    pub fn set_active_position(
-        &mut self,
-        position: (SessionId, Arc<Path>, text::Anchor),
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_active_position(&mut self, position: ActiveStackFrame, cx: &mut Context<Self>) {
+        if self
+            .active_stack_frame
+            .as_ref()
+            .is_some_and(|active_position| active_position == &position)
+        {
+            return;
+        }
+
+        if self.active_stack_frame.is_some() {
+            cx.emit(BreakpointStoreEvent::ClearDebugLines);
+        }
+
         self.active_stack_frame = Some(position);
-        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+
+        cx.emit(BreakpointStoreEvent::SetDebugLine);
         cx.notify();
+    }
+
+    pub fn breakpoint_at_row(
+        &self,
+        path: &Path,
+        row: u32,
+        cx: &App,
+    ) -> Option<(Entity<Buffer>, (text::Anchor, Breakpoint))> {
+        self.breakpoints.get(path).and_then(|breakpoints| {
+            let snapshot = breakpoints.buffer.read(cx).text_snapshot();
+
+            breakpoints
+                .breakpoints
+                .iter()
+                .find(|(anchor, _)| anchor.summary::<Point>(&snapshot).row == row)
+                .map(|breakpoint| (breakpoints.buffer.clone(), breakpoint.clone()))
+        })
     }
 
     pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SourceBreakpoint> {
@@ -552,7 +649,13 @@ impl BreakpointStore {
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
-                        let position = snapshot.anchor_after(PointUtf16::new(bp.row, 0));
+                        let max_point = snapshot.max_point_utf16();
+                        let point = PointUtf16::new(bp.row, 0);
+                        if point > max_point {
+                            log::error!("skipping a deserialized breakpoint that's out of range");
+                            continue;
+                        }
+                        let position = snapshot.anchor_after(point);
                         breakpoints_for_file.breakpoints.push((
                             position,
                             Breakpoint {
@@ -603,7 +706,8 @@ pub enum BreakpointUpdatedReason {
 }
 
 pub enum BreakpointStoreEvent {
-    ActiveDebugLineChanged,
+    SetDebugLine,
+    ClearDebugLines,
     BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
     BreakpointsCleared(Vec<Arc<Path>>),
 }

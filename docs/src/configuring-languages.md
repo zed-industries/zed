@@ -143,7 +143,7 @@ Many language servers accept custom configuration options. You can set these in 
   "lsp": {
     "rust-analyzer": {
       "initialization_options": {
-        "checkOnSave": {
+        "check": {
           "command": "clippy"
         }
       }
@@ -180,6 +180,63 @@ Here's how you would structure these settings in Zed's `settings.json`:
     }
   }
 }
+```
+
+#### Possible configuration options
+
+Depending on how a particular language server is implemented, they may depend on different configuration options, both specified in the LSP.
+
+- [initializationOptions](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#version_3_17_0)
+
+Sent once during language server startup, requires server's restart to reapply changes.
+
+For example, rust-analyzer and clangd rely on this way of configuring only.
+
+```json
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "checkOnSave": false
+      }
+    }
+  }
+```
+
+- [Configuration Request](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_configuration)
+
+May be queried by the server multiple times.
+Most of the servers would rely on this way of configuring only.
+
+```json
+"lsp": {
+  "tailwindcss-language-server": {
+    "settings": {
+      "tailwindCSS": {
+        "emmetCompletions": true,
+      },
+    }
+  }
+}
+```
+
+Apart of the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
+
+Languages mention in the documentation, whether they support it or not and their defaults for the configuration values:
+
+```json
+  "languages": {
+    "Markdown": {
+      "binary": {
+        // Whether to fetch the binary from the internet, or attempt to find locally.
+        "ignore_system_version": false,
+        "path": "/path/to/langserver/bin",
+        "arguments": ["--option", "value"],
+        "env": {
+          "FOO": "BAR"
+        }
+      }
+    }
+  }
 ```
 
 ### Enabling or Disabling Language Servers

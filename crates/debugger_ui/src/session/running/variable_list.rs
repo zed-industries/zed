@@ -194,6 +194,10 @@ impl VariableList {
         }
     }
 
+    pub(super) fn has_open_context_menu(&self) -> bool {
+        self.open_context_menu.is_some()
+    }
+
     fn build_entries(&mut self, cx: &mut Context<Self>) {
         let Some(stack_frame_id) = self.selected_stack_frame_id else {
             return;
@@ -925,12 +929,12 @@ impl Render for VariableList {
         self.build_entries(cx);
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
             .overflow_y_scroll()
             .size_full()
-            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))

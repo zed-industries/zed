@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -14,7 +14,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownEscaped;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -128,13 +128,13 @@ impl Tool for FetchTool {
         IconName::Globe
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<FetchToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<FetchToolInput>(input.clone()) {
-            Ok(input) => format!("Fetch {}", MarkdownString::escape(&input.url)),
+            Ok(input) => format!("Fetch {}", MarkdownEscaped(&input.url)),
             Err(_) => "Fetch URL".to_string(),
         }
     }
@@ -145,11 +145,12 @@ impl Tool for FetchTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<FetchToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let text = cx.background_spawn({
@@ -158,13 +159,15 @@ impl Tool for FetchTool {
             async move { Self::build_message(http_client, &url).await }
         });
 
-        cx.foreground_executor().spawn(async move {
-            let text = text.await?;
-            if text.trim().is_empty() {
-                bail!("no textual content found");
-            }
+        cx.foreground_executor()
+            .spawn(async move {
+                let text = text.await?;
+                if text.trim().is_empty() {
+                    bail!("no textual content found");
+                }
 
-            Ok(text)
-        })
+                Ok(text)
+            })
+            .into()
     }
 }

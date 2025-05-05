@@ -1,39 +1,39 @@
+use crate::persistence::DebuggerPaneItem;
 use crate::{
-    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, FocusBreakpointList,
+    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
+    Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    persistence,
 };
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
-use anyhow::{Result, anyhow};
-use collections::HashMap;
+use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
+use dap::adapters::DebugAdapterName;
+use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
 };
-use futures::{SinkExt as _, channel::mpsc};
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity, actions,
+    Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
+    actions, anchored, deferred,
 };
 
-use project::{
-    Project,
-    debugger::{
-        dap_store::{self, DapStore},
-        session::ThreadStatus,
-    },
-    terminals::TerminalKind,
-};
+use language::Buffer;
+use project::Fs;
+use project::debugger::session::{Session, SessionStateEvent};
+use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
 use std::any::TypeId;
-use std::path::Path;
 use std::sync::Arc;
-use task::DebugTaskDefinition;
-use terminal_view::terminal_panel::TerminalPanel;
+use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use workspace::SplitDirection;
 use workspace::{
-    Workspace,
+    Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -61,34 +61,32 @@ pub struct DebugPanel {
     active_session: Option<Entity<DebugSession>>,
     /// This represents the last debug definition that was created in the new session modal
     pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
-    project: WeakEntity<Project>,
+    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    _subscriptions: Vec<Subscription>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    fs: Arc<dyn Fs>,
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
-            let dap_store = project.read(cx).dap_store();
-
-            let _subscriptions =
-                vec![cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event)];
 
             let debug_panel = Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                _subscriptions,
                 past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
-                project: project.downgrade(),
+                project,
                 workspace: workspace.weak_handle(),
+                context_menu: None,
+                fs: workspace.app_state().fs.clone(),
             };
 
             debug_panel
@@ -99,20 +97,14 @@ impl DebugPanel {
         let (has_active_session, supports_restart, support_step_back, status) = self
             .active_session()
             .map(|item| {
-                let running = item.read(cx).mode().as_running().cloned();
-
-                match running {
-                    Some(running) => {
-                        let caps = running.read(cx).capabilities(cx);
-                        (
-                            !running.read(cx).session().read(cx).is_terminated(),
-                            caps.supports_restart_request.unwrap_or_default(),
-                            caps.supports_step_back.unwrap_or_default(),
-                            running.read(cx).thread_status(cx),
-                        )
-                    }
-                    None => (false, false, false, None),
-                }
+                let running = item.read(cx).running_state().clone();
+                let caps = running.read(cx).capabilities(cx);
+                (
+                    !running.read(cx).session().read(cx).is_terminated(),
+                    caps.supports_restart_request.unwrap_or_default(),
+                    caps.supports_step_back.unwrap_or_default(),
+                    running.read(cx).thread_status(cx),
+                )
             })
             .unwrap_or((false, false, false, None));
 
@@ -178,7 +170,7 @@ impl DebugPanel {
 
     pub fn load(
         workspace: WeakEntity<Workspace>,
-        cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {
@@ -204,206 +196,275 @@ impl DebugPanel {
                     });
                 })
                 .detach();
+                workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
 
                 debug_panel
             })
         })
     }
 
-    pub fn active_session(&self) -> Option<Entity<DebugSession>> {
-        self.active_session.clone()
-    }
-
-    pub fn debug_panel_items_by_client(
-        &self,
-        client_id: &SessionId,
-        cx: &Context<Self>,
-    ) -> Vec<Entity<DebugSession>> {
-        self.sessions
-            .iter()
-            .filter(|item| item.read(cx).session_id(cx) == *client_id)
-            .map(|item| item.clone())
-            .collect()
-    }
-
-    pub fn debug_panel_item_by_client(
-        &self,
-        client_id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<DebugSession>> {
-        self.sessions
-            .iter()
-            .find(|item| {
-                let item = item.read(cx);
-
-                item.session_id(cx) == client_id
-            })
-            .cloned()
-    }
-
-    fn handle_dap_store_event(
+    pub fn start_session(
         &mut self,
-        dap_store: &Entity<DapStore>,
-        event: &dap_store::DapStoreEvent,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            dap_store::DapStoreEvent::DebugSessionInitialized(session_id) => {
-                let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
-                    return log::error!(
-                        "Couldn't get session with id: {session_id:?} from DebugClientStarted event"
-                    );
-                };
+        let dap_store = self.project.read(cx).dap_store();
+        let workspace = self.workspace.clone();
+        let session = dap_store.update(cx, |dap_store, cx| {
+            dap_store.new_session(
+                scenario.label.clone(),
+                DebugAdapterName(scenario.adapter.clone()),
+                None,
+                cx,
+            )
+        });
+        let task = cx.spawn_in(window, {
+            let session = session.clone();
+            async move |this, cx| {
+                let debug_session =
+                    Self::register_session(this.clone(), session.clone(), cx).await?;
+                let definition = debug_session
+                    .update_in(cx, |debug_session, window, cx| {
+                        debug_session.running_state().update(cx, |running, cx| {
+                            running.resolve_scenario(
+                                scenario,
+                                task_context,
+                                active_buffer,
+                                window,
+                                cx,
+                            )
+                        })
+                    })?
+                    .await?;
 
-                let Some(project) = self.project.upgrade() else {
-                    return log::error!("Debug Panel out lived it's weak reference to Project");
-                };
-
-                if self
-                    .sessions
-                    .iter()
-                    .any(|item| item.read(cx).session_id(cx) == *session_id)
-                {
-                    // We already have an item for this session.
-                    return;
-                }
-                let session_item = DebugSession::running(
-                    project,
-                    self.workspace.clone(),
-                    session,
-                    cx.weak_entity(),
-                    window,
-                    cx,
-                );
-
-                if let Some(running) = session_item.read(cx).mode().as_running().cloned() {
-                    // We might want to make this an event subscription and only notify when a new thread is selected
-                    // This is used to filter the command menu correctly
-                    cx.observe(&running, |_, _, cx| cx.notify()).detach();
-                }
-
-                self.sessions.push(session_item.clone());
-                self.activate_session(session_item, window, cx);
+                dap_store
+                    .update(cx, |dap_store, cx| {
+                        dap_store.boot_session(session.clone(), definition, cx)
+                    })?
+                    .await
             }
-            dap_store::DapStoreEvent::RunInTerminal {
-                title,
-                cwd,
-                command,
-                args,
-                envs,
-                sender,
-                ..
-            } => {
-                self.handle_run_in_terminal_request(
-                    title.clone(),
-                    cwd.clone(),
-                    command.clone(),
-                    args.clone(),
-                    envs.clone(),
-                    sender.clone(),
-                    window,
-                    cx,
-                )
-                .detach_and_log_err(cx);
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_run_in_terminal_request(
-        &self,
-        title: Option<String>,
-        cwd: Option<Arc<Path>>,
-        command: Option<String>,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-        mut sender: mpsc::Sender<Result<u32>>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let terminal_task = self.workspace.update(cx, |workspace, cx| {
-            let terminal_panel = workspace.panel::<TerminalPanel>(cx).ok_or_else(|| {
-                anyhow!("RunInTerminal DAP request failed because TerminalPanel wasn't found")
-            });
-
-            let terminal_panel = match terminal_panel {
-                Ok(panel) => panel,
-                Err(err) => return Task::ready(Err(err)),
-            };
-
-            terminal_panel.update(cx, |terminal_panel, cx| {
-                let terminal_task = terminal_panel.add_terminal(
-                    TerminalKind::Debug {
-                        command,
-                        args,
-                        envs,
-                        cwd,
-                        title,
-                    },
-                    task::RevealStrategy::Always,
-                    window,
-                    cx,
-                );
-
-                cx.spawn(async move |_, cx| {
-                    let pid_task = async move {
-                        let terminal = terminal_task.await?;
-
-                        terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())
-                    };
-
-                    pid_task.await
-                })
-            })
         });
 
-        cx.background_spawn(async move {
-            match terminal_task {
-                Ok(pid_task) => match pid_task.await {
-                    Ok(Some(pid)) => sender.send(Ok(pid.as_u32())).await?,
-                    Ok(None) => {
-                        sender
-                            .send(Err(anyhow!(
-                                "Terminal was spawned but PID was not available"
-                            )))
-                            .await?
-                    }
-                    Err(error) => sender.send(Err(anyhow!(error))).await?,
-                },
-                Err(error) => sender.send(Err(anyhow!(error))).await?,
-            };
-
-            Ok(())
+        cx.spawn(async move |_, cx| {
+            if let Err(error) = task.await {
+                log::error!("{:?}", error);
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_error(&error, cx);
+                    })
+                    .ok();
+                session
+                    .update(cx, |session, cx| session.shutdown(cx))?
+                    .await;
+            }
+            anyhow::Ok(())
         })
+        .detach_and_log_err(cx);
     }
 
-    fn close_session(&mut self, entity_id: EntityId, cx: &mut Context<Self>) {
+    async fn register_session(
+        this: WeakEntity<Self>,
+        session: Entity<Session>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Entity<DebugSession>> {
+        let adapter_name = session.update(cx, |session, _| session.adapter())?;
+        this.update_in(cx, |_, window, cx| {
+            cx.subscribe_in(
+                &session,
+                window,
+                move |this, session, event: &SessionStateEvent, window, cx| match event {
+                    SessionStateEvent::Restart => {
+                        this.handle_restart_request(session.clone(), window, cx);
+                    }
+                    SessionStateEvent::SpawnChildSession { request } => {
+                        this.handle_start_debugging_request(request, session.clone(), window, cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+        })
+        .ok();
+
+        let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+
+        let (debug_session, workspace) = this.update_in(cx, |this, window, cx| {
+            this.sessions.retain(|session| {
+                session
+                    .read(cx)
+                    .running_state()
+                    .read(cx)
+                    .session()
+                    .read(cx)
+                    .is_terminated()
+            });
+
+            let debug_session = DebugSession::running(
+                this.project.clone(),
+                this.workspace.clone(),
+                session,
+                cx.weak_entity(),
+                serialized_layout,
+                this.position(window, cx).axis(),
+                window,
+                cx,
+            );
+
+            // We might want to make this an event subscription and only notify when a new thread is selected
+            // This is used to filter the command menu correctly
+            cx.observe(
+                &debug_session.read(cx).running_state().clone(),
+                |_, _, cx| cx.notify(),
+            )
+            .detach();
+
+            this.sessions.push(debug_session.clone());
+            this.activate_session(debug_session.clone(), window, cx);
+
+            (debug_session, this.workspace.clone())
+        })?;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<Self>(window, cx);
+        })?;
+
+        Ok(debug_session)
+    }
+
+    fn handle_restart_request(
+        &mut self,
+        mut curr_session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        while let Some(parent_session) =
+            curr_session.read_with(cx, |session, _| session.parent_session().cloned())
+        {
+            curr_session = parent_session;
+        }
+
+        let Some(worktree) = curr_session.read(cx).worktree() else {
+            log::error!("Attempted to start a child session from non local debug session");
+            return;
+        };
+
+        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let label = curr_session.read(cx).label().clone();
+        let adapter = curr_session.read(cx).adapter().clone();
+        let binary = curr_session.read(cx).binary().clone();
+        let task = curr_session.update(cx, |session, cx| session.shutdown(cx));
+
+        cx.spawn_in(window, async move |this, cx| {
+            task.await;
+
+            let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
+                let session = dap_store.new_session(label, adapter, None, cx);
+
+                let task = session.update(cx, |session, cx| {
+                    session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
+                });
+                (session, task)
+            })?;
+            Self::register_session(this, session, cx).await?;
+            task.await
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn handle_start_debugging_request(
+        &mut self,
+        request: &StartDebuggingRequestArguments,
+        parent_session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(worktree) = parent_session.read(cx).worktree() else {
+            log::error!("Attempted to start a child session from non local debug session");
+            return;
+        };
+
+        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let label = parent_session.read(cx).label().clone();
+        let adapter = parent_session.read(cx).adapter().clone();
+        let mut binary = parent_session.read(cx).binary().clone();
+        binary.request_args = request.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
+                let session =
+                    dap_store.new_session(label, adapter, Some(parent_session.clone()), cx);
+
+                let task = session.update(cx, |session, cx| {
+                    session.boot(binary, worktree, dap_store_handle.downgrade(), cx)
+                });
+                (session, task)
+            })?;
+            Self::register_session(this, session, cx).await?;
+            task.await
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn active_session(&self) -> Option<Entity<DebugSession>> {
+        self.active_session.clone()
+    }
+    fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
             .iter()
             .find(|other| entity_id == other.entity_id())
+            .cloned()
         else {
             return;
         };
+        session.update(cx, |this, cx| {
+            this.running_state().update(cx, |this, cx| {
+                this.serialize_layout(window, cx);
+            });
+        });
+        let session_id = session.update(cx, |this, cx| this.session_id(cx));
+        let should_prompt = self
+            .project
+            .update(cx, |this, cx| {
+                let session = this.dap_store().read(cx).session_by_id(session_id);
+                session.map(|session| !session.read(cx).is_terminated())
+            })
+            .unwrap_or_default();
 
-        session.update(cx, |session, cx| session.shutdown(cx));
-
-        self.sessions.retain(|other| entity_id != other.entity_id());
-
-        if let Some(active_session_id) = self
-            .active_session
-            .as_ref()
-            .map(|session| session.entity_id())
-        {
-            if active_session_id == entity_id {
-                self.active_session = self.sessions.first().cloned();
+        cx.spawn_in(window, async move |this, cx| {
+            if should_prompt {
+                let response = cx.prompt(
+                    gpui::PromptLevel::Warning,
+                    "This Debug Session is still running. Are you sure you want to terminate it?",
+                    None,
+                    &["Yes", "No"],
+                );
+                if response.await == Ok(1) {
+                    return;
+                }
             }
-        }
+            session.update(cx, |session, cx| session.shutdown(cx)).ok();
+            this.update(cx, |this, cx| {
+                this.sessions.retain(|other| entity_id != other.entity_id());
 
-        cx.notify();
+                if let Some(active_session_id) = this
+                    .active_session
+                    .as_ref()
+                    .map(|session| session.entity_id())
+                {
+                    if active_session_id == entity_id {
+                        this.active_session = this.sessions.first().cloned();
+                    }
+                }
+                cx.notify()
+            })
+            .ok();
+        })
+        .detach();
     }
-
     fn sessions_drop_down_menu(
         &self,
         active_session: &Entity<DebugSession>,
@@ -417,7 +478,8 @@ impl DebugPanel {
         DropdownMenu::new_with_element(
             "debugger-session-list",
             label,
-            ContextMenu::build(window, cx, move |mut this, _, _| {
+            ContextMenu::build(window, cx, move |mut this, _, cx| {
+                let context_menu = cx.weak_entity();
                 for session in sessions.into_iter() {
                     let weak_session = session.downgrade();
                     let weak_session_id = weak_session.entity_id();
@@ -425,11 +487,17 @@ impl DebugPanel {
                     this = this.custom_entry(
                         {
                             let weak = weak.clone();
+                            let context_menu = context_menu.clone();
                             move |_, cx| {
                                 weak_session
                                     .read_with(cx, |session, cx| {
+                                        let context_menu = context_menu.clone();
+                                        let id: SharedString =
+                                            format!("debug-session-{}", session.session_id(cx).0)
+                                                .into();
                                         h_flex()
                                             .w_full()
+                                            .group(id.clone())
                                             .justify_between()
                                             .child(session.label_element(cx))
                                             .child(
@@ -437,15 +505,28 @@ impl DebugPanel {
                                                     "close-debug-session",
                                                     IconName::Close,
                                                 )
+                                                .visible_on_hover(id.clone())
                                                 .icon_size(IconSize::Small)
                                                 .on_click({
                                                     let weak = weak.clone();
-                                                    move |_, _, cx| {
+                                                    move |_, window, cx| {
                                                         weak.update(cx, |panel, cx| {
-                                                            panel
-                                                                .close_session(weak_session_id, cx);
+                                                            panel.close_session(
+                                                                weak_session_id,
+                                                                window,
+                                                                cx,
+                                                            );
                                                         })
                                                         .ok();
+                                                        context_menu
+                                                            .update(cx, |this, cx| {
+                                                                this.cancel(
+                                                                    &Default::default(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            })
+                                                            .ok();
                                                     }
                                                 }),
                                             )
@@ -470,238 +551,428 @@ impl DebugPanel {
         )
     }
 
+    fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(running_state) = self
+            .active_session
+            .as_ref()
+            .map(|session| session.read(cx).running_state().clone())
+        {
+            let pane_items_status = running_state.read(cx).pane_items_status(cx);
+            let this = cx.weak_entity();
+
+            let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                for (item_kind, is_visible) in pane_items_status.into_iter() {
+                    menu = menu.toggleable_entry(item_kind, is_visible, IconPosition::End, None, {
+                        let this = this.clone();
+                        move |window, cx| {
+                            this.update(cx, |this, cx| {
+                                if let Some(running_state) = this
+                                    .active_session
+                                    .as_ref()
+                                    .map(|session| session.read(cx).running_state().clone())
+                                {
+                                    running_state.update(cx, |state, cx| {
+                                        if is_visible {
+                                            state.remove_pane_item(item_kind, window, cx);
+                                        } else {
+                                            state.add_pane_item(item_kind, position, window, cx);
+                                        }
+                                    })
+                                }
+                            })
+                            .ok();
+                        }
+                    });
+                }
+
+                menu
+            });
+
+            window.focus(&context_menu.focus_handle(cx));
+            let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                this.context_menu.take();
+                cx.notify();
+            });
+            self.context_menu = Some((context_menu, position, subscription));
+        }
+    }
+
     fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let active_session = self.active_session.clone();
+        let focus_handle = self.focus_handle.clone();
+        let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
+        let div = if is_side { v_flex() } else { h_flex() };
+        let weak_panel = cx.weak_entity();
+
+        let new_session_button = || {
+            IconButton::new("debug-new-session", IconName::Plus)
+                .icon_size(IconSize::Small)
+                .on_click({
+                    let workspace = self.workspace.clone();
+                    let weak_panel = weak_panel.clone();
+                    let past_debug_definition = self.past_debug_definition.clone();
+                    move |_, window, cx| {
+                        let weak_panel = weak_panel.clone();
+                        let past_debug_definition = past_debug_definition.clone();
+
+                        let _ = workspace.update(cx, |this, cx| {
+                            let workspace = cx.weak_entity();
+                            this.toggle_modal(window, cx, |window, cx| {
+                                NewSessionModal::new(
+                                    past_debug_definition,
+                                    weak_panel,
+                                    workspace,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        });
+                    }
+                })
+                .tooltip({
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "New Debug Session",
+                            &CreateDebuggingSession,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+        };
 
         Some(
-            h_flex()
-                .border_b_1()
+            div.border_b_1()
                 .border_color(cx.theme().colors().border)
                 .p_1()
                 .justify_between()
                 .w_full()
+                .when(is_side, |this| this.gap_1())
                 .child(
-                    h_flex().gap_2().w_full().when_some(
-                        active_session
-                            .as_ref()
-                            .and_then(|session| session.read(cx).mode().as_running()),
-                        |this, running_session| {
-                            let thread_status = running_session
-                                .read(cx)
-                                .thread_status(cx)
-                                .unwrap_or(project::debugger::session::ThreadStatus::Exited);
-                            let capabilities = running_session.read(cx).capabilities(cx);
-                            this.map(|this| {
-                                if thread_status == ThreadStatus::Running {
-                                    this.child(
-                                        IconButton::new("debug-pause", IconName::DebugPause)
+                    h_flex()
+                        .child(
+                            h_flex().gap_2().w_full().when_some(
+                                active_session
+                                    .as_ref()
+                                    .map(|session| session.read(cx).running_state()),
+                                |this, running_session| {
+                                    let thread_status =
+                                        running_session.read(cx).thread_status(cx).unwrap_or(
+                                            project::debugger::session::ThreadStatus::Exited,
+                                        );
+                                    let capabilities = running_session.read(cx).capabilities(cx);
+                                    this.map(|this| {
+                                        if thread_status == ThreadStatus::Running {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-pause",
+                                                    IconName::DebugPause,
+                                                )
+                                                .icon_size(IconSize::XSmall)
+                                                .shape(ui::IconButtonShape::Square)
+                                                .on_click(window.listener_for(
+                                                    &running_session,
+                                                    |this, _, _window, cx| {
+                                                        this.pause_thread(cx);
+                                                    },
+                                                ))
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Pause program",
+                                                            &Pause,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
+                                                }),
+                                            )
+                                        } else {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-continue",
+                                                    IconName::DebugContinue,
+                                                )
+                                                .icon_size(IconSize::XSmall)
+                                                .shape(ui::IconButtonShape::Square)
+                                                .on_click(window.listener_for(
+                                                    &running_session,
+                                                    |this, _, _window, cx| this.continue_thread(cx),
+                                                ))
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Continue program",
+                                                            &Continue,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
+                                                }),
+                                            )
+                                        }
+                                    })
+                                    .child(
+                                        IconButton::new("debug-step-over", IconName::ArrowRight)
                                             .icon_size(IconSize::XSmall)
                                             .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
                                                 &running_session,
                                                 |this, _, _window, cx| {
-                                                    this.pause_thread(cx);
+                                                    this.step_over(cx);
                                                 },
                                             ))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Pause program")(window, cx)
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Step over",
+                                                        &StepOver,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
                                             }),
                                     )
-                                } else {
-                                    this.child(
-                                        IconButton::new("debug-continue", IconName::DebugContinue)
+                                    .child(
+                                        IconButton::new("debug-step-out", IconName::ArrowUpRight)
                                             .icon_size(IconSize::XSmall)
                                             .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
                                                 &running_session,
-                                                |this, _, _window, cx| this.continue_thread(cx),
+                                                |this, _, _window, cx| {
+                                                    this.step_out(cx);
+                                                },
                                             ))
                                             .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Continue program")(window, cx)
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Step out",
+                                                        &StepOut,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
                                             }),
                                     )
-                                }
-                            })
-                            .child(
-                                IconButton::new("debug-step-over", IconName::ArrowRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .on_click(window.listener_for(
-                                        &running_session,
-                                        |this, _, _window, cx| {
-                                            this.step_over(cx);
-                                        },
-                                    ))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step over")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-step-out", IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .on_click(window.listener_for(
-                                        &running_session,
-                                        |this, _, _window, cx| {
-                                            this.step_out(cx);
-                                        },
-                                    ))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step out")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-step-into", IconName::ArrowDownRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .on_click(window.listener_for(
-                                        &running_session,
-                                        |this, _, _window, cx| {
-                                            this.step_in(cx);
-                                        },
-                                    ))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step in")(window, cx)
-                                    }),
-                            )
-                            .child(Divider::vertical())
-                            .child(
-                                IconButton::new(
-                                    "debug-enable-breakpoint",
-                                    IconName::DebugDisabledBreakpoint,
-                                )
-                                .icon_size(IconSize::XSmall)
-                                .shape(ui::IconButtonShape::Square)
-                                .disabled(thread_status != ThreadStatus::Stopped),
-                            )
-                            .child(
-                                IconButton::new("debug-disable-breakpoint", IconName::CircleOff)
-                                    .icon_size(IconSize::XSmall)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .disabled(thread_status != ThreadStatus::Stopped),
-                            )
-                            .child(
-                                IconButton::new("debug-disable-all-breakpoints", IconName::BugOff)
-                                    .icon_size(IconSize::XSmall)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .disabled(
-                                        thread_status == ThreadStatus::Exited
-                                            || thread_status == ThreadStatus::Ended,
+                                    .child(
+                                        IconButton::new(
+                                            "debug-step-into",
+                                            IconName::ArrowDownRight,
+                                        )
+                                        .icon_size(IconSize::XSmall)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .on_click(window.listener_for(
+                                            &running_session,
+                                            |this, _, _window, cx| {
+                                                this.step_in(cx);
+                                            },
+                                        ))
+                                        .disabled(thread_status != ThreadStatus::Stopped)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Step in",
+                                                    &StepInto,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        }),
                                     )
-                                    .on_click(window.listener_for(
-                                        &running_session,
-                                        |this, _, _window, cx| {
-                                            this.toggle_ignore_breakpoints(cx);
-                                        },
-                                    ))
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Disable all breakpoints")(window, cx)
-                                    }),
-                            )
-                            .child(Divider::vertical())
-                            .child(
-                                IconButton::new("debug-restart", IconName::DebugRestart)
-                                    .icon_size(IconSize::XSmall)
-                                    .on_click(window.listener_for(
-                                        &running_session,
-                                        |this, _, _window, cx| {
-                                            this.restart_session(cx);
-                                        },
-                                    ))
-                                    .disabled(
-                                        !capabilities.supports_restart_request.unwrap_or_default(),
+                                    .child(Divider::vertical())
+                                    .child(
+                                        IconButton::new(
+                                            "debug-enable-breakpoint",
+                                            IconName::DebugDisabledBreakpoint,
+                                        )
+                                        .icon_size(IconSize::XSmall)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .disabled(thread_status != ThreadStatus::Stopped),
                                     )
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Restart")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-stop", IconName::Power)
-                                    .icon_size(IconSize::XSmall)
-                                    .on_click(window.listener_for(
-                                        &running_session,
-                                        |this, _, _window, cx| {
-                                            this.stop_thread(cx);
-                                        },
-                                    ))
-                                    .disabled(
-                                        thread_status != ThreadStatus::Stopped
-                                            && thread_status != ThreadStatus::Running,
+                                    .child(
+                                        IconButton::new(
+                                            "debug-disable-breakpoint",
+                                            IconName::CircleOff,
+                                        )
+                                        .icon_size(IconSize::XSmall)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .disabled(thread_status != ThreadStatus::Stopped),
                                     )
-                                    .tooltip({
-                                        let label = if capabilities
-                                            .supports_terminate_threads_request
-                                            .unwrap_or_default()
-                                        {
-                                            "Terminate Thread"
-                                        } else {
-                                            "Terminate all Threads"
-                                        };
-                                        move |window, cx| Tooltip::text(label)(window, cx)
-                                    }),
-                            )
-                        },
-                    ),
+                                    .child(
+                                        IconButton::new(
+                                            "debug-disable-all-breakpoints",
+                                            IconName::BugOff,
+                                        )
+                                        .icon_size(IconSize::XSmall)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .disabled(
+                                            thread_status == ThreadStatus::Exited
+                                                || thread_status == ThreadStatus::Ended,
+                                        )
+                                        .on_click(window.listener_for(
+                                            &running_session,
+                                            |this, _, _window, cx| {
+                                                this.toggle_ignore_breakpoints(cx);
+                                            },
+                                        ))
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Disable all breakpoints",
+                                                    &ToggleIgnoreBreakpoints,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        }),
+                                    )
+                                    .child(Divider::vertical())
+                                    .child(
+                                        IconButton::new("debug-restart", IconName::DebugRestart)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(window.listener_for(
+                                                &running_session,
+                                                |this, _, _window, cx| {
+                                                    this.restart_session(cx);
+                                                },
+                                            ))
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Restart",
+                                                        &Restart,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-stop", IconName::Power)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(window.listener_for(
+                                                &running_session,
+                                                |this, _, _window, cx| {
+                                                    this.stop_thread(cx);
+                                                },
+                                            ))
+                                            .disabled(
+                                                thread_status != ThreadStatus::Stopped
+                                                    && thread_status != ThreadStatus::Running,
+                                            )
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                let label = if capabilities
+                                                    .supports_terminate_threads_request
+                                                    .unwrap_or_default()
+                                                {
+                                                    "Terminate Thread"
+                                                } else {
+                                                    "Terminate All Threads"
+                                                };
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        label,
+                                                        &Stop,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                                },
+                            ),
+                        )
+                        .justify_around()
+                        .when(is_side, |this| this.child(new_session_button())),
                 )
                 .child(
                     h_flex()
                         .gap_2()
-                        .when_some(
-                            active_session
-                                .as_ref()
-                                .and_then(|session| session.read(cx).mode().as_running())
-                                .cloned(),
-                            |this, session| {
-                                this.child(
-                                    session.update(cx, |this, cx| this.thread_dropdown(window, cx)),
-                                )
-                                .child(Divider::vertical())
-                            },
-                        )
-                        .when_some(active_session.as_ref(), |this, session| {
-                            let context_menu = self.sessions_drop_down_menu(session, window, cx);
-                            this.child(context_menu).child(Divider::vertical())
-                        })
+                        .when(is_side, |this| this.justify_between())
                         .child(
-                            IconButton::new("debug-new-session", IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .on_click({
-                                    let workspace = self.workspace.clone();
-                                    let weak_panel = cx.weak_entity();
-                                    let past_debug_definition = self.past_debug_definition.clone();
-                                    move |_, window, cx| {
-                                        let weak_panel = weak_panel.clone();
-                                        let past_debug_definition = past_debug_definition.clone();
-
-                                        let _ = workspace.update(cx, |this, cx| {
-                                            let workspace = cx.weak_entity();
-                                            this.toggle_modal(window, cx, |window, cx| {
-                                                NewSessionModal::new(
-                                                    past_debug_definition,
-                                                    weak_panel,
-                                                    workspace,
-                                                    window,
-                                                    cx,
-                                                )
-                                            });
-                                        });
-                                    }
-                                })
-                                .tooltip(|window, cx| {
-                                    Tooltip::for_action(
-                                        "New Debug Session",
-                                        &CreateDebuggingSession,
-                                        window,
-                                        cx,
+                            h_flex().when_some(
+                                active_session
+                                    .as_ref()
+                                    .map(|session| session.read(cx).running_state())
+                                    .cloned(),
+                                |this, session| {
+                                    this.child(
+                                        session.update(cx, |this, cx| {
+                                            this.thread_dropdown(window, cx)
+                                        }),
                                     )
-                                }),
+                                    .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
+                                },
+                            ),
+                        )
+                        .child(
+                            h_flex()
+                                .when_some(active_session.as_ref(), |this, session| {
+                                    let context_menu =
+                                        self.sessions_drop_down_menu(session, window, cx);
+                                    this.child(context_menu).gap_2().child(Divider::vertical())
+                                })
+                                .when(!is_side, |this| this.child(new_session_button())),
                         ),
                 ),
         )
+    }
+
+    fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = self.active_session() {
+            session.update(cx, |session, cx| {
+                session.running_state().update(cx, |running, cx| {
+                    running.activate_pane_in_direction(direction, window, cx);
+                })
+            });
+        }
+    }
+
+    fn activate_item(
+        &mut self,
+        item: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = self.active_session() {
+            session.update(cx, |session, cx| {
+                session.running_state().update(cx, |running, cx| {
+                    running.activate_item(item, window, cx);
+                });
+            });
+        }
     }
 
     fn activate_session(
@@ -713,11 +984,9 @@ impl DebugPanel {
         debug_assert!(self.sessions.contains(&session_item));
         session_item.focus_handle(cx).focus(window);
         session_item.update(cx, |this, cx| {
-            if let Some(running) = this.mode().as_running() {
-                running.update(cx, |this, cx| {
-                    this.go_to_selected_stack_frame(window, cx);
-                });
-            }
+            this.running_state().update(cx, |this, cx| {
+                this.go_to_selected_stack_frame(window, cx);
+            });
         });
         self.active_session = Some(session_item);
         cx.notify();
@@ -726,7 +995,6 @@ impl DebugPanel {
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
 impl EventEmitter<DebugPanelEvent> for DebugPanel {}
-impl EventEmitter<project::Event> for DebugPanel {}
 
 impl Focusable for DebugPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -739,20 +1007,45 @@ impl Panel for DebugPanel {
         "DebugPanel"
     }
 
-    fn position(&self, _window: &Window, _cx: &App) -> DockPosition {
-        DockPosition::Bottom
+    fn position(&self, _window: &Window, cx: &App) -> DockPosition {
+        match DebuggerSettings::get_global(cx).dock {
+            DebugPanelDockPosition::Left => DockPosition::Left,
+            DebugPanelDockPosition::Bottom => DockPosition::Bottom,
+            DebugPanelDockPosition::Right => DockPosition::Right,
+        }
     }
 
-    fn position_is_valid(&self, position: DockPosition) -> bool {
-        position == DockPosition::Bottom
+    fn position_is_valid(&self, _: DockPosition) -> bool {
+        true
     }
 
     fn set_position(
         &mut self,
-        _position: DockPosition,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        position: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
+        if position.axis() != self.position(window, cx).axis() {
+            self.sessions.iter().for_each(|session_item| {
+                session_item.update(cx, |item, cx| {
+                    item.running_state()
+                        .update(cx, |state, _| state.invert_axies())
+                })
+            });
+        }
+
+        settings::update_settings_file::<DebuggerSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left => DebugPanelDockPosition::Left,
+                    DockPosition::Bottom => DebugPanelDockPosition::Bottom,
+                    DockPosition::Right => DebugPanelDockPosition::Right,
+                };
+                settings.dock = dock;
+            },
+        );
     }
 
     fn size(&self, _window: &Window, _: &App) -> Pixels {
@@ -783,22 +1076,164 @@ impl Panel for DebugPanel {
         Box::new(ToggleFocus)
     }
 
+    fn pane(&self) -> Option<Entity<Pane>> {
+        None
+    }
+
     fn activation_priority(&self) -> u32 {
         9
     }
+
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
 }
 
 impl Render for DebugPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_sessions = self.sessions.len() > 0;
+        let this = cx.weak_entity();
         debug_assert_eq!(has_sessions, self.active_session.is_some());
+
+        if self
+            .active_session
+            .as_ref()
+            .map(|session| session.read(cx).running_state())
+            .map(|state| state.read(cx).has_open_context_menu(cx))
+            .unwrap_or(false)
+        {
+            self.context_menu.take();
+        }
 
         v_flex()
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
             .track_focus(&self.focus_handle(cx))
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneLeft, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Left, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneRight, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Right, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneUp, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Up, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &workspace::ActivatePaneDown, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_pane_in_direction(SplitDirection::Down, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusConsole, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Console, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusVariables, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Variables, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusBreakpointList, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::BreakpointList, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusFrames, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Frames, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusModules, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Modules, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusLoadedSources, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::LoadedSources, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &FocusTerminal, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.activate_item(DebuggerPaneItem::Terminal, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .when(self.active_session.is_some(), |this| {
+                this.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        if this
+                            .active_session
+                            .as_ref()
+                            .map(|session| {
+                                let state = session.read(cx).running_state();
+                                state.read(cx).has_pane_at_position(event.position)
+                            })
+                            .unwrap_or(false)
+                        {
+                            this.deploy_context_menu(event.position, window, cx);
+                        }
+                    }),
+                )
+                .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                    deferred(
+                        anchored()
+                            .position(*position)
+                            .anchor(gpui::Corner::TopLeft)
+                            .child(menu.clone()),
+                    )
+                    .with_priority(1)
+                }))
+            })
             .map(|this| {
                 if has_sessions {
                     this.children(self.active_session.clone())
@@ -832,5 +1267,24 @@ impl Render for DebugPanel {
                 }
             })
             .into_any()
+    }
+}
+
+struct DebuggerProvider(Entity<DebugPanel>);
+
+impl workspace::DebuggerProvider for DebuggerProvider {
+    fn start_session(
+        &self,
+        definition: DebugScenario,
+        context: TaskContext,
+        buffer: Option<Entity<Buffer>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.0.update(cx, |_, cx| {
+            cx.defer_in(window, |this, window, cx| {
+                this.start_session(definition, context, buffer, window, cx);
+            })
+        })
     }
 }

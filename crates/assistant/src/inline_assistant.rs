@@ -18,11 +18,11 @@ use editor::{
     },
 };
 use feature_flags::{
-    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
+    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedProFeatureFlag,
 };
 use fs::Fs;
 use futures::{
-    SinkExt, Stream, StreamExt,
+    SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
     join,
@@ -1226,7 +1226,7 @@ impl InlineAssistant {
                 editor.highlight_rows::<InlineAssist>(
                     row_range,
                     cx.theme().status().info_background,
-                    false,
+                    Default::default(),
                     cx,
                 );
             }
@@ -1291,7 +1291,7 @@ impl InlineAssistant {
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
-                        false,
+                        Default::default(),
                         cx,
                     );
                     editor
@@ -1652,7 +1652,7 @@ impl Render for PromptEditor {
 
                         let error_message = SharedString::from(error.to_string());
                         if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                            && cx.has_flag::<ZedPro>()
+                            && cx.has_flag::<ZedProFeatureFlag>()
                         {
                             el.child(
                                 v_flex()
@@ -1759,6 +1759,7 @@ impl PromptEditor {
             language_model_selector: cx.new(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -1814,10 +1815,6 @@ impl PromptEditor {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(
-                Self::placeholder_text(self.codegen.read(cx), window, cx),
-                cx,
-            );
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
@@ -1965,7 +1962,7 @@ impl PromptEditor {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedPro>()
+                if cx.has_flag::<ZedProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
                     && !dismissed_rate_limit_notice()
                 {
@@ -2978,6 +2975,9 @@ impl CodegenAlternative {
         });
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
@@ -3020,7 +3020,7 @@ impl CodegenAlternative {
             }
         }
 
-        let http_client = cx.http_client().clone();
+        let http_client = cx.http_client();
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
@@ -3053,7 +3053,8 @@ impl CodegenAlternative {
                         let mut response_latency = None;
                         let request_start = Instant::now();
                         let diff = async {
-                            let chunks = StripInvalidSpans::new(stream?.stream);
+                            let chunks =
+                                StripInvalidSpans::new(stream?.stream.map_err(|e| e.into()));
                             futures::pin_mut!(chunks);
                             let mut diff = StreamingDiff::new(selected_text.to_string());
                             let mut line_diff = LineDiff::default();

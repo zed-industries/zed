@@ -4,8 +4,8 @@ use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{
-    AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, pattern_slash, prelude::*,
-    px, rems,
+    AnyElement, App, IntoElement, Pixels, RenderOnce, SharedString, Window, div, pattern_slash,
+    prelude::*, px, rems,
 };
 use linkme::distributed_slice;
 use parking_lot::RwLock;
@@ -17,6 +17,9 @@ pub trait Component {
     }
     fn name() -> &'static str {
         std::any::type_name::<Self>()
+    }
+    fn id() -> ComponentId {
+        ComponentId(Self::name())
     }
     /// Returns a name that the component should be sorted by.
     ///
@@ -81,7 +84,7 @@ pub fn register_component<T: Component>() {
     let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
     let mut data = COMPONENT_DATA.write();
     data.components.push(component_data);
-    data.previews.insert(T::name(), T::preview);
+    data.previews.insert(T::id().0, T::preview);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -191,8 +194,17 @@ pub fn components() -> AllComponents {
     all_components
 }
 
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub enum ComponentStatus {
+//     WorkInProgress,
+//     EngineeringReady,
+//     Live,
+//     Deprecated,
+// }
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ComponentScope {
+    Agent,
     Collaboration,
     DataDisplay,
     Editor,
@@ -212,6 +224,7 @@ pub enum ComponentScope {
 impl Display for ComponentScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ComponentScope::Agent => write!(f, "Agent"),
             ComponentScope::Collaboration => write!(f, "Collaboration"),
             ComponentScope::DataDisplay => write!(f, "Data Display"),
             ComponentScope::Editor => write!(f, "Editor"),
@@ -236,29 +249,42 @@ pub struct ComponentExample {
     pub variant_name: SharedString,
     pub description: Option<SharedString>,
     pub element: AnyElement,
+    pub width: Option<Pixels>,
 }
 
 impl RenderOnce for ComponentExample {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
-            .w_full()
+            .pt_2()
+            .map(|this| {
+                if let Some(width) = self.width {
+                    this.w(width)
+                } else {
+                    this.w_full()
+                }
+            })
             .flex()
             .flex_col()
             .gap_3()
             .child(
                 div()
-                    .child(self.variant_name.clone())
-                    .text_size(rems(1.25))
-                    .text_color(cx.theme().colors().text),
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .child(self.variant_name.clone())
+                            .text_size(rems(1.0))
+                            .text_color(cx.theme().colors().text),
+                    )
+                    .when_some(self.description, |this, description| {
+                        this.child(
+                            div()
+                                .text_size(rems(0.875))
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(description.clone()),
+                        )
+                    }),
             )
-            .when_some(self.description, |this, description| {
-                this.child(
-                    div()
-                        .text_size(rems(0.9375))
-                        .text_color(cx.theme().colors().text_muted)
-                        .child(description.clone()),
-                )
-            })
             .child(
                 div()
                     .flex()
@@ -268,11 +294,11 @@ impl RenderOnce for ComponentExample {
                     .justify_center()
                     .p_8()
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(cx.theme().colors().border.opacity(0.5))
                     .bg(pattern_slash(
                         cx.theme().colors().surface_background.opacity(0.5),
-                        24.0,
-                        24.0,
+                        12.0,
+                        12.0,
                     ))
                     .shadow_sm()
                     .child(self.element),
@@ -287,11 +313,17 @@ impl ComponentExample {
             variant_name: variant_name.into(),
             element,
             description: None,
+            width: None,
         }
     }
 
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.width = Some(width);
         self
     }
 }
@@ -301,6 +333,7 @@ impl ComponentExample {
 pub struct ComponentExampleGroup {
     pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample>,
+    pub width: Option<Pixels>,
     pub grow: bool,
     pub vertical: bool,
 }
@@ -311,7 +344,13 @@ impl RenderOnce for ComponentExampleGroup {
             .flex_col()
             .text_sm()
             .text_color(cx.theme().colors().text_muted)
-            .w_full()
+            .map(|this| {
+                if let Some(width) = self.width {
+                    this.w(width)
+                } else {
+                    this.w_full()
+                }
+            })
             .when_some(self.title, |this, title| {
                 this.gap_4().child(
                     div()
@@ -354,6 +393,7 @@ impl ComponentExampleGroup {
         Self {
             title: None,
             examples,
+            width: None,
             grow: false,
             vertical: false,
         }
@@ -362,9 +402,14 @@ impl ComponentExampleGroup {
         Self {
             title: Some(title.into()),
             examples,
+            width: None,
             grow: false,
             vertical: false,
         }
+    }
+    pub fn width(mut self, width: Pixels) -> Self {
+        self.width = Some(width);
+        self
     }
     pub fn grow(mut self) -> Self {
         self.grow = true;
@@ -381,6 +426,10 @@ pub fn single_example(
     example: AnyElement,
 ) -> ComponentExample {
     ComponentExample::new(variant_name, example)
+}
+
+pub fn empty_example(variant_name: impl Into<SharedString>) -> ComponentExample {
+    ComponentExample::new(variant_name, div().w_full().text_center().items_center().text_xs().opacity(0.4).child("This space is intentionally left blank. It indicates a case that should render nothing.").into_any_element())
 }
 
 pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {

@@ -1,10 +1,10 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
-#![deny(missing_docs)]
 
 mod debug_format;
 mod serde_helpers;
 pub mod static_source;
 mod task_template;
+mod vscode_debug_format;
 mod vscode_format;
 
 use collections::{HashMap, HashSet, hash_map};
@@ -16,23 +16,24 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
-    DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
+    AttachRequest, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate,
 };
 pub use task_template::{
-    DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
-    TaskTemplates, TaskType,
+    DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
+    substitute_all_template_variables_in_str, substitute_variables_in_map,
+    substitute_variables_in_str,
 };
+pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
 
 /// Task identifier, unique within the application.
 /// Based on it, task reruns and terminal tabs are managed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 pub struct TaskId(pub String);
 
 /// Contains all information needed by Zed to spawn a new terminal tab for the given task.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct SpawnInTerminal {
     /// Id of the task to use when determining task tab affinity.
     pub id: TaskId,
@@ -71,6 +72,36 @@ pub struct SpawnInTerminal {
     pub show_rerun: bool,
 }
 
+impl SpawnInTerminal {
+    pub fn to_proto(&self) -> proto::SpawnInTerminal {
+        proto::SpawnInTerminal {
+            label: self.label.clone(),
+            command: self.command.clone(),
+            args: self.args.clone(),
+            env: self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            cwd: self
+                .cwd
+                .clone()
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
+        }
+    }
+
+    pub fn from_proto(proto: proto::SpawnInTerminal) -> Self {
+        Self {
+            label: proto.label.clone(),
+            command: proto.command.clone(),
+            args: proto.args.clone(),
+            env: proto.env.into_iter().collect(),
+            cwd: proto.cwd.map(PathBuf::from).clone(),
+            ..Default::default()
+        }
+    }
+}
+
 /// A final form of the [`TaskTemplate`], that got resolved with a particular [`TaskContext`] and now is ready to spawn the actual task.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedTask {
@@ -88,68 +119,13 @@ pub struct ResolvedTask {
     substituted_variables: HashSet<VariableName>,
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
-    pub resolved: Option<SpawnInTerminal>,
+    pub resolved: SpawnInTerminal,
 }
 
 impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
-    }
-
-    /// Get the task type that determines what this task is used for
-    /// And where is it shown in the UI
-    pub fn task_type(&self) -> TaskType {
-        self.original_task.task_type.clone()
-    }
-
-    /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
-        match self.original_task.task_type.clone() {
-            TaskType::Debug(debug_args) if self.resolved.is_some() => {
-                let resolved = self
-                    .resolved
-                    .as_ref()
-                    .expect("We just checked if this was some");
-
-                let args = resolved
-                    .args
-                    .iter()
-                    .cloned()
-                    .map(|arg| {
-                        if arg.starts_with("$") {
-                            arg.strip_prefix("$")
-                                .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
-                                .unwrap_or_else(|| arg)
-                        } else {
-                            arg
-                        }
-                    })
-                    .collect();
-
-                Some(DebugAdapterConfig {
-                    label: resolved.label.clone(),
-                    adapter: debug_args.adapter.clone(),
-                    request: DebugRequestDisposition::UserConfigured(match debug_args.request {
-                        crate::task_template::DebugArgsRequest::Launch => {
-                            DebugRequestType::Launch(LaunchConfig {
-                                program: resolved.command.clone(),
-                                cwd: resolved.cwd.clone(),
-                                args,
-                            })
-                        }
-                        crate::task_template::DebugArgsRequest::Attach(attach_config) => {
-                            DebugRequestType::Attach(attach_config)
-                        }
-                    }),
-                    initialize_args: debug_args.initialize_args,
-                    tcp_connection: debug_args.tcp_connection,
-                    locator: debug_args.locator.clone(),
-                    stop_on_entry: debug_args.stop_on_entry,
-                })
-            }
-            _ => None,
-        }
     }
 
     /// Variables that were substituted during the task template resolution.
@@ -159,10 +135,7 @@ impl ResolvedTask {
 
     /// A human-readable label to display in the UI.
     pub fn display_label(&self) -> &str {
-        self.resolved
-            .as_ref()
-            .map(|resolved| resolved.label.as_str())
-            .unwrap_or_else(|| self.resolved_label.as_str())
+        self.resolved.label.as_str()
     }
 }
 
@@ -295,6 +268,10 @@ impl TaskVariables {
             }
         })
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&VariableName, &String)> {
+        self.0.iter()
+    }
 }
 
 impl FromIterator<(VariableName, String)> for TaskVariables {
@@ -366,6 +343,8 @@ pub struct ShellBuilder {
     args: Vec<String>,
 }
 
+pub static DEFAULT_REMOTE_SHELL: &str = "\"${SHELL:-sh}\"";
+
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(is_local: bool, shell: &Shell) -> Self {
@@ -374,7 +353,7 @@ impl ShellBuilder {
                 if is_local {
                     (Self::system_shell(), Vec::new())
                 } else {
-                    ("\"${SHELL:-sh}\"".to_string(), Vec::new())
+                    (DEFAULT_REMOTE_SHELL.to_string(), Vec::new())
                 }
             }
             Shell::Program(shell) => (shell.clone(), Vec::new()),
@@ -517,5 +496,52 @@ impl ShellBuilder {
             // If no prefix is found, return the input as is
             input
         }
+    }
+}
+
+type VsCodeEnvVariable = String;
+type ZedEnvVariable = String;
+
+struct EnvVariableReplacer {
+    variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
+}
+
+impl EnvVariableReplacer {
+    fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
+        Self { variables }
+    }
+    // Replaces occurrences of VsCode-specific environment variables with Zed equivalents.
+    fn replace(&self, input: &str) -> String {
+        shellexpand::env_with_context_no_errors(&input, |var: &str| {
+            // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
+            let colon_position = var.find(':').unwrap_or(var.len());
+            let (left, right) = var.split_at(colon_position);
+            if left == "env" && !right.is_empty() {
+                let variable_name = &right[1..];
+                return Some(format!("${{{variable_name}}}"));
+            }
+            let (variable_name, default) = (left, right);
+            let append_previous_default = |ret: &mut String| {
+                if !default.is_empty() {
+                    ret.push_str(default);
+                }
+            };
+            if let Some(substitution) = self.variables.get(variable_name) {
+                // Got a VSCode->Zed hit, perform a substitution
+                let mut name = format!("${{{substitution}");
+                append_previous_default(&mut name);
+                name.push('}');
+                return Some(name);
+            }
+            // This is an unknown variable.
+            // We should not error out, as they may come from user environment (e.g. $PATH). That means that the variable substitution might not be perfect.
+            // If there's a default, we need to return the string verbatim as otherwise shellexpand will apply that default for us.
+            if !default.is_empty() {
+                return Some(format!("${{{var}}}"));
+            }
+            // Else we can just return None and that variable will be left as is.
+            None
+        })
+        .into_owned()
     }
 }

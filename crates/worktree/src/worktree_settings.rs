@@ -96,6 +96,31 @@ impl Settings for WorktreeSettings {
             )?,
         })
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        if let Some(inclusions) = vscode
+            .read_value("files.watcherInclude")
+            .and_then(|v| v.as_array())
+            .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
+        {
+            if let Some(old) = current.file_scan_inclusions.as_mut() {
+                old.extend(inclusions)
+            } else {
+                current.file_scan_inclusions = Some(inclusions)
+            }
+        }
+        if let Some(exclusions) = vscode
+            .read_value("files.watcherExclude")
+            .and_then(|v| v.as_array())
+            .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
+        {
+            if let Some(old) = current.file_scan_exclusions.as_mut() {
+                old.extend(exclusions)
+            } else {
+                current.file_scan_exclusions = Some(exclusions)
+            }
+        }
+    }
 }
 
 fn path_matchers(values: &[String], context: &'static str) -> anyhow::Result<PathMatcher> {

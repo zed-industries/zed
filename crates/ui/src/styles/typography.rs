@@ -235,7 +235,7 @@ impl Headline {
 
 impl Component for Headline {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::Typography
     }
 
     fn description() -> Option<&'static str> {

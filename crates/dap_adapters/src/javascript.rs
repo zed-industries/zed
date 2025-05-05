@@ -1,28 +1,52 @@
 use adapters::latest_github_release;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use regex::Regex;
-use std::path::PathBuf;
-use task::{DebugRequestType, DebugTaskDefinition};
+use std::{collections::HashMap, path::PathBuf};
+use task::DebugRequest;
 
 use crate::*;
 
 #[derive(Debug)]
-pub(crate) struct JsDebugAdapter {
-    attach_processes: Regex,
-}
+pub(crate) struct JsDebugAdapter;
 
-impl Default for JsDebugAdapter {
-    fn default() -> Self {
-        Self {
-            attach_processes: Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)")
-                .expect("Regex compilation to succeed"),
-        }
-    }
-}
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
+
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+        let mut args = json!({
+            "type": "pwa-node",
+            "request": match config.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+        });
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequest::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
+            }
+            DebugRequest::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+        StartDebuggingRequestArguments {
+            configuration: args,
+            request: config.request.to_dap(),
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -60,7 +84,7 @@ impl DebugAdapter for JsDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -88,18 +112,22 @@ impl DebugAdapter for JsDebugAdapter {
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                port.to_string().into(),
-                host.to_string().into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                port.to_string(),
+                host.to_string(),
+            ],
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
                 timeout,
             }),
+            request_args: self.request_args(config),
         })
     }
 
@@ -117,40 +145,5 @@ impl DebugAdapter for JsDebugAdapter {
         .await?;
 
         return Ok(());
-    }
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
-        let mut args = json!({
-            "type": "pwa-node",
-            "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
-            },
-        });
-        let map = args.as_object_mut().unwrap();
-        match &config.request {
-            DebugRequestType::Attach(attach) => {
-                map.insert("processId".into(), attach.process_id.into());
-            }
-            DebugRequestType::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
-
-                if !launch.args.is_empty() {
-                    map.insert("args".into(), launch.args.clone().into());
-                }
-
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
-        args
-    }
-
-    fn attach_processes_filter(&self) -> Regex {
-        self.attach_processes.clone()
     }
 }

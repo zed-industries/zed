@@ -1,7 +1,7 @@
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
 use editor::Editor;
-use feature_flags::{Debugger, FeatureFlagViewExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use gpui::{App, EntityInputHandler, actions};
 use new_session_modal::NewSessionModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
@@ -13,9 +13,10 @@ use workspace::{ShutdownDebugAdapters, Workspace};
 pub mod attach_modal;
 pub mod debugger_panel;
 mod new_session_modal;
+mod persistence;
 pub(crate) mod session;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod tests;
 
 actions!(
@@ -34,6 +35,13 @@ actions!(
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
         CreateDebuggingSession,
+        FocusConsole,
+        FocusVariables,
+        FocusBreakpointList,
+        FocusFrames,
+        FocusModules,
+        FocusLoadedSources,
+        FocusTerminal,
     ]
 );
 
@@ -46,7 +54,7 @@ pub fn init(cx: &mut App) {
             return;
         };
 
-        cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
+        cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |workspace, _, _| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     workspace.toggle_panel_focus::<DebugPanel>(window, cx);
@@ -56,7 +64,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.pause_thread(cx))
                         }
@@ -67,7 +75,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.restart_session(cx))
                         }
@@ -78,7 +86,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.step_in(cx))
                         }
@@ -89,7 +97,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.step_over(cx))
                         }
@@ -100,7 +108,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.step_back(cx))
                         }
@@ -111,7 +119,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             cx.defer(move |cx| {
                                 active_item.update(cx, |item, cx| item.stop_thread(cx))
@@ -124,7 +132,7 @@ pub fn init(cx: &mut App) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
-                                .and_then(|session| session.read(cx).mode().as_running().cloned())
+                                .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
                         }
@@ -150,13 +158,32 @@ pub fn init(cx: &mut App) {
                                     debug_panel.read(cx).past_debug_definition.clone(),
                                     weak_panel,
                                     weak_workspace,
+                                    None,
                                     window,
                                     cx,
                                 )
                             });
                         }
                     },
-                );
+                )
+                .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
+                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
+                        let weak_panel = debug_panel.downgrade();
+                        let weak_workspace = cx.weak_entity();
+                        let task_store = workspace.project().read(cx).task_store().clone();
+
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            NewSessionModal::new(
+                                debug_panel.read(cx).past_debug_definition.clone(),
+                                weak_panel,
+                                weak_workspace,
+                                Some(task_store),
+                                window,
+                                cx,
+                            )
+                        });
+                    }
+                });
         })
     })
     .detach();
@@ -191,11 +218,8 @@ pub fn init(cx: &mut App) {
                                 state: debugger::breakpoint_store::BreakpointState::Enabled,
                             };
 
-                            active_session
-                                .update(cx, |session_item, _| {
-                                    session_item.mode().as_running().cloned()
-                                })?
-                                .update(cx, |state, cx| {
+                            active_session.update(cx, |session, cx| {
+                                session.running_state().update(cx, |state, cx| {
                                     if let Some(thread_id) = state.selected_thread_id() {
                                         state.session().update(cx, |session, cx| {
                                             session.run_to_position(
@@ -206,6 +230,7 @@ pub fn init(cx: &mut App) {
                                         })
                                     }
                                 });
+                            });
 
                             Some(())
                         });
@@ -228,17 +253,16 @@ pub fn init(cx: &mut App) {
                                 cx,
                             )?;
 
-                            active_session
-                                .update(cx, |session_item, _| {
-                                    session_item.mode().as_running().cloned()
-                                })?
-                                .update(cx, |state, cx| {
+                            active_session.update(cx, |session, cx| {
+                                session.running_state().update(cx, |state, cx| {
                                     let stack_id = state.selected_stack_frame_id(cx);
 
                                     state.session().update(cx, |session, cx| {
-                                        session.evaluate(text, None, stack_id, None, cx);
-                                    })
+                                        session.evaluate(text, None, stack_id, None, cx).detach();
+                                    });
                                 });
+                            });
+
                             Some(())
                         });
                     },

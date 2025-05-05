@@ -278,6 +278,7 @@ impl IntoElement for StyledText {
 pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
 struct TextLayoutInner {
+    len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
@@ -349,6 +350,7 @@ impl TextLayout {
                 } else {
                     text.clone()
                 };
+                let len = text.len();
 
                 let Some(lines) = window
                     .text_system()
@@ -363,6 +365,7 @@ impl TextLayout {
                 else {
                     element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
+                        len: 0,
                         line_height,
                         wrap_width,
                         size: Some(Size::default()),
@@ -380,6 +383,7 @@ impl TextLayout {
 
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
+                    len,
                     line_height,
                     wrap_width,
                     size: Some(size),
@@ -544,6 +548,11 @@ impl TextLayout {
         self.0.borrow().as_ref().unwrap().line_height
     }
 
+    /// The UTF-8 length of the underlying text.
+    pub fn len(&self) -> usize {
+        self.0.borrow().as_ref().unwrap().len
+    }
+
     /// The text for this layout.
     pub fn text(&self) -> String {
         self.0
@@ -555,6 +564,25 @@ impl TextLayout {
             .map(|s| s.text.to_string())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// The text for this layout (with soft-wraps as newlines)
+    pub fn wrapped_text(&self) -> String {
+        let mut lines = Vec::new();
+        for wrapped in self.0.borrow().as_ref().unwrap().lines.iter() {
+            let mut seen = 0;
+            for boundary in wrapped.layout.wrap_boundaries.iter() {
+                let index = wrapped.layout.unwrapped_layout.runs[boundary.run_ix].glyphs
+                    [boundary.glyph_ix]
+                    .index;
+
+                lines.push(wrapped.text[seen..index].to_string());
+                seen = index;
+            }
+            lines.push(wrapped.text[seen..].to_string());
+        }
+
+        lines.join("\n")
     }
 }
 

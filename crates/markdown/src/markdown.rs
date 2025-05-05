@@ -1,6 +1,9 @@
 pub mod parser;
 mod path_range;
 
+pub use path_range::{LineCol, PathWithRange};
+
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
 use std::mem;
@@ -18,6 +21,7 @@ use gpui::{
     TextStyleRefinement, actions, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
+use parser::CodeBlockMetadata;
 use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
 use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
@@ -30,6 +34,17 @@ use crate::parser::CodeBlockKind;
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
+
+/// Defines custom style refinements for each heading level (H1-H6)
+#[derive(Clone, Default)]
+pub struct HeadingLevelStyles {
+    pub h1: Option<TextStyleRefinement>,
+    pub h2: Option<TextStyleRefinement>,
+    pub h3: Option<TextStyleRefinement>,
+    pub h4: Option<TextStyleRefinement>,
+    pub h5: Option<TextStyleRefinement>,
+    pub h6: Option<TextStyleRefinement>,
+}
 
 #[derive(Clone)]
 pub struct MarkdownStyle {
@@ -45,7 +60,9 @@ pub struct MarkdownStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
+    pub heading_level_styles: Option<HeadingLevelStyles>,
     pub table_overflow_x_scroll: bool,
+    pub height_is_multiple_of_line_height: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -63,7 +80,9 @@ impl Default for MarkdownStyle {
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
             heading: Default::default(),
+            heading_level_styles: None,
             table_overflow_x_scroll: false,
+            height_is_multiple_of_line_height: false,
         }
     }
 }
@@ -90,6 +109,7 @@ struct Options {
 pub enum CodeBlockRenderer {
     Default {
         copy_button: bool,
+        border: bool,
     },
     Custom {
         render: CodeBlockRenderFn,
@@ -99,10 +119,19 @@ pub enum CodeBlockRenderer {
     },
 }
 
-pub type CodeBlockRenderFn =
-    Arc<dyn Fn(&CodeBlockKind, &ParsedMarkdown, Range<usize>, &mut Window, &App) -> Div>;
+pub type CodeBlockRenderFn = Arc<
+    dyn Fn(
+        &CodeBlockKind,
+        &ParsedMarkdown,
+        Range<usize>,
+        CodeBlockMetadata,
+        &mut Window,
+        &App,
+    ) -> Div,
+>;
 
-pub type CodeBlockTransformFn = Arc<dyn Fn(AnyDiv, Range<usize>, &mut Window, &App) -> AnyDiv>;
+pub type CodeBlockTransformFn =
+    Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
 actions!(markdown, [Copy, CopyAsMarkdown]);
 
@@ -165,6 +194,11 @@ impl Markdown {
         self.parse(cx);
     }
 
+    pub fn replace(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.source = source.into();
+        self.parse(cx);
+    }
+
     pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if source == self.source() {
             return;
@@ -180,6 +214,32 @@ impl Markdown {
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
+    }
+
+    pub fn escape(s: &str) -> Cow<str> {
+        let count = s
+            .bytes()
+            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
+            .count();
+        if count > 0 {
+            let mut output = String::with_capacity(s.len() + count);
+            let mut is_newline = false;
+            for c in s.chars() {
+                if is_newline && c == ' ' {
+                    continue;
+                }
+                is_newline = c == '\n';
+                if c == '\n' {
+                    output.push('\n')
+                } else if c.is_ascii_punctuation() {
+                    output.push('\\')
+                }
+                output.push(c)
+            }
+            output.into()
+        } else {
+            s.into()
+        }
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
@@ -339,9 +399,33 @@ impl MarkdownElement {
         Self {
             markdown,
             style,
-            code_block_renderer: CodeBlockRenderer::Default { copy_button: true },
+            code_block_renderer: CodeBlockRenderer::Default {
+                copy_button: true,
+                border: false,
+            },
             on_url_click: None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_text(
+        markdown: Entity<Markdown>,
+        cx: &mut gpui::VisualTestContext,
+        style: impl FnOnce(&Window, &App) -> MarkdownStyle,
+    ) -> String {
+        use gpui::size;
+
+        let (text, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |window, cx| Self::new(markdown, style(window, cx)),
+        );
+        text.text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn code_block_renderer(mut self, variant: CodeBlockRenderer) -> Self {
@@ -473,9 +557,9 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             window.focus(&markdown.focus_handle);
-                            window.prevent_default();
                         }
 
+                        window.prevent_default();
                         cx.notify();
                     }
                 } else if phase.capture() {
@@ -603,30 +687,36 @@ impl Element for MarkdownElement {
             0
         };
 
+        let mut current_code_block_metadata = None;
+
         for (range, event) in parsed_markdown.events.iter() {
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Paragraph => {
                             builder.push_div(
-                                div().mb_2().line_height(rems(1.3)),
+                                div().when(!self.style.height_is_multiple_of_line_height, |el| {
+                                    el.mb_2().line_height(rems(1.3))
+                                }),
                                 range,
                                 markdown_end,
                             );
                         }
                         MarkdownTag::Heading { level, .. } => {
                             let mut heading = div().mb_2();
-                            heading = match level {
-                                pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-                                pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-                                pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-                                pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-                                _ => heading,
-                            };
-                            heading.style().refine(&self.style.heading);
-                            builder.push_text_style(
-                                self.style.heading.text_style().clone().unwrap_or_default(),
+
+                            heading = apply_heading_style(
+                                heading,
+                                *level,
+                                self.style.heading_level_styles.as_ref(),
                             );
+
+                            heading.style().refine(&self.style.heading);
+
+                            let text_style =
+                                self.style.heading.text_style().clone().unwrap_or_default();
+
+                            builder.push_text_style(text_style);
                             builder.push_div(heading, range, markdown_end);
                         }
                         MarkdownTag::BlockQuote => {
@@ -641,7 +731,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        MarkdownTag::CodeBlock(kind) => {
+                        MarkdownTag::CodeBlock { kind, metadata } => {
                             let language = match kind {
                                 CodeBlockKind::Fenced => None,
                                 CodeBlockKind::FencedLang(language) => {
@@ -653,6 +743,8 @@ impl Element for MarkdownElement {
                                     .cloned(),
                                 _ => None,
                             };
+
+                            current_code_block_metadata = Some(metadata.clone());
 
                             let is_indented = matches!(kind, CodeBlockKind::Indented);
 
@@ -677,6 +769,16 @@ impl Element for MarkdownElement {
                                                 code_block.w_full()
                                             }
                                         });
+
+                                    if let CodeBlockRenderer::Default { border: true, .. } =
+                                        &self.code_block_renderer
+                                    {
+                                        code_block = code_block
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border_variant);
+                                    }
+
                                     code_block.style().refine(&self.style.code_block);
                                     if let Some(code_block_text_style) = &self.style.code_block.text
                                     {
@@ -686,8 +788,14 @@ impl Element for MarkdownElement {
                                     builder.push_div(code_block, range, markdown_end);
                                 }
                                 (CodeBlockRenderer::Custom { render, .. }, _) => {
-                                    let parent_container =
-                                        render(kind, &parsed_markdown, range.clone(), window, cx);
+                                    let parent_container = render(
+                                        kind,
+                                        &parsed_markdown,
+                                        range.clone(),
+                                        metadata.clone(),
+                                        window,
+                                        cx,
+                                    );
 
                                     builder.push_div(parent_container, range, markdown_end);
 
@@ -732,11 +840,11 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
-                                    .mb_1()
+                                    .when(!self.style.height_is_multiple_of_line_height, |el| {
+                                        el.mb_1().gap_1().line_height(rems(1.3))
+                                    })
                                     .h_flex()
                                     .items_start()
-                                    .gap_1()
-                                    .line_height(rems(1.3))
                                     .child(bullet),
                                 range,
                                 markdown_end,
@@ -852,23 +960,37 @@ impl Element for MarkdownElement {
                             builder.pop_text_style();
                         }
 
+                        let metadata = current_code_block_metadata.take();
+
                         if let CodeBlockRenderer::Custom {
-                            transform: Some(modify),
+                            transform: Some(transform),
                             ..
                         } = &self.code_block_renderer
                         {
-                            builder.modify_current_div(|el| modify(el, range.clone(), window, cx));
+                            builder.modify_current_div(|el| {
+                                transform(
+                                    el,
+                                    range.clone(),
+                                    metadata.clone().unwrap_or_default(),
+                                    window,
+                                    cx,
+                                )
+                            });
                         }
 
-                        if matches!(
-                            &self.code_block_renderer,
-                            CodeBlockRenderer::Default { copy_button: true }
-                        ) {
+                        if let CodeBlockRenderer::Default {
+                            copy_button: true, ..
+                        } = &self.code_block_renderer
+                        {
                             builder.flush_text();
                             builder.modify_current_div(|el| {
-                                let code =
-                                    without_fences(parsed_markdown.source()[range.clone()].trim())
-                                        .to_string();
+                                let content_range = parser::extract_code_block_content_range(
+                                    parsed_markdown.source()[range.clone()].trim(),
+                                );
+                                let content_range = content_range.start + range.start
+                                    ..content_range.end + range.start;
+
+                                let code = parsed_markdown.source()[content_range].to_string();
                                 let codeblock = render_copy_code_block_button(
                                     range.end,
                                     code,
@@ -917,21 +1039,21 @@ impl Element for MarkdownElement {
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::SubstitutedText(text) => {
-                    builder.push_text(text, range.start);
+                    builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::Rule => {
                     builder.push_div(
@@ -944,8 +1066,8 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.start),
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
+                MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
+                MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
         }
@@ -1009,13 +1131,45 @@ impl Element for MarkdownElement {
     }
 }
 
+fn apply_heading_style(
+    mut heading: Div,
+    level: pulldown_cmark::HeadingLevel,
+    custom_styles: Option<&HeadingLevelStyles>,
+) -> Div {
+    heading = match level {
+        pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
+        pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
+        pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
+        pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
+        pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
+        pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
+    };
+
+    if let Some(styles) = custom_styles {
+        let style_opt = match level {
+            pulldown_cmark::HeadingLevel::H1 => &styles.h1,
+            pulldown_cmark::HeadingLevel::H2 => &styles.h2,
+            pulldown_cmark::HeadingLevel::H3 => &styles.h3,
+            pulldown_cmark::HeadingLevel::H4 => &styles.h4,
+            pulldown_cmark::HeadingLevel::H5 => &styles.h5,
+            pulldown_cmark::HeadingLevel::H6 => &styles.h6,
+        };
+
+        if let Some(style) = style_opt {
+            heading.style().text = Some(style.clone());
+        }
+    }
+
+    heading
+}
+
 fn render_copy_code_block_button(
     id: usize,
     code: String,
     markdown: Entity<Markdown>,
     cx: &App,
 ) -> impl IntoElement {
-    let id = ElementId::NamedInteger("copy-markdown-code".into(), id);
+    let id = ElementId::named_usize("copy-markdown-code", id);
     let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
     IconButton::new(
         id.clone(),
@@ -1241,13 +1395,13 @@ impl MarkdownElementBuilder {
         });
     }
 
-    fn push_text(&mut self, text: &str, source_index: usize) {
+    fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
-            source_index,
+            source_index: source_range.start,
         });
         self.pending_line.text.push_str(text);
-        self.current_source_index = source_index + text.len();
+        self.current_source_index = source_range.end;
 
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
@@ -1324,6 +1478,10 @@ struct RenderedLine {
 
 impl RenderedLine {
     fn rendered_index_for_source_index(&self, source_index: usize) -> usize {
+        if source_index >= self.source_end {
+            return self.layout.len();
+        }
+
         let mapping = match self
             .source_mappings
             .binary_search_by_key(&source_index, |probe| probe.source_index)
@@ -1335,6 +1493,10 @@ impl RenderedLine {
     }
 
     fn source_index_for_rendered_index(&self, rendered_index: usize) -> usize {
+        if rendered_index >= self.layout.len() {
+            return self.source_end;
+        }
+
         let mapping = match self
             .source_mappings
             .binary_search_by_key(&rendered_index, |probe| probe.rendered_index)
@@ -1508,42 +1670,107 @@ impl RenderedText {
     }
 }
 
-/// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
-/// If this block is fenced with backticks, strip them off (and the language name).
-/// We use this when copying code blocks to the clipboard.
-pub fn without_fences(mut markdown: &str) -> &str {
-    if let Some(opening_backticks) = markdown.find("```") {
-        markdown = &markdown[opening_backticks..];
-
-        // Trim off the next newline. This also trims off a language name if it's there.
-        if let Some(newline) = markdown.find('\n') {
-            markdown = &markdown[newline + 1..];
-        }
-    };
-
-    if let Some(closing_backticks) = markdown.rfind("```") {
-        markdown = &markdown[..closing_backticks];
-    };
-
-    markdown
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{TestAppContext, size};
+
+    #[gpui::test]
+    fn test_mappings(cx: &mut TestAppContext) {
+        // Formatting.
+        assert_mappings(
+            &render_markdown("He*l*lo", cx),
+            vec![vec![(0, 0), (1, 1), (2, 3), (3, 5), (4, 6), (5, 7)]],
+        );
+
+        // Multiple lines.
+        assert_mappings(
+            &render_markdown("Hello\n\nWorld", cx),
+            vec![
+                vec![(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)],
+                vec![(0, 7), (1, 8), (2, 9), (3, 10), (4, 11), (5, 12)],
+            ],
+        );
+
+        // Multi-byte characters.
+        assert_mappings(
+            &render_markdown("αβγ\n\nδεζ", cx),
+            vec![
+                vec![(0, 0), (2, 2), (4, 4), (6, 6)],
+                vec![(0, 8), (2, 10), (4, 12), (6, 14)],
+            ],
+        );
+
+        // Smart quotes.
+        assert_mappings(&render_markdown("\"", cx), vec![vec![(0, 0), (3, 1)]]);
+        assert_mappings(
+            &render_markdown("\"hey\"", cx),
+            vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
+        );
+    }
+
+    fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
+        );
+        rendered.text
+    }
 
     #[test]
-    fn test_without_fences() {
-        let input = "```rust\nlet x = 5;\n```";
-        assert_eq!(without_fences(input), "let x = 5;\n");
+    fn test_escape() {
+        assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
+        assert_eq!(
+            Markdown::escape("hello\n    cool world"),
+            "hello\n\ncool world"
+        );
+    }
 
-        let input = "   ```\nno language\n```   ";
-        assert_eq!(without_fences(input), "no language\n");
+    #[track_caller]
+    fn assert_mappings(rendered: &RenderedText, expected: Vec<Vec<(usize, usize)>>) {
+        assert_eq!(rendered.lines.len(), expected.len(), "line count mismatch");
+        for (line_ix, line_mappings) in expected.into_iter().enumerate() {
+            let line = &rendered.lines[line_ix];
 
-        let input = "plain text";
-        assert_eq!(without_fences(input), "plain text");
+            assert!(
+                line.source_mappings.windows(2).all(|mappings| {
+                    mappings[0].source_index < mappings[1].source_index
+                        && mappings[0].rendered_index < mappings[1].rendered_index
+                }),
+                "line {} has duplicate mappings: {:?}",
+                line_ix,
+                line.source_mappings
+            );
 
-        let input = "```python\nprint('hello')\nprint('world')\n```";
-        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
+            for (rendered_ix, source_ix) in line_mappings {
+                assert_eq!(
+                    line.source_index_for_rendered_index(rendered_ix),
+                    source_ix,
+                    "line {}, rendered_ix {}",
+                    line_ix,
+                    rendered_ix
+                );
+
+                assert_eq!(
+                    line.rendered_index_for_source_index(source_ix),
+                    rendered_ix,
+                    "line {}, source_ix {}",
+                    line_ix,
+                    source_ix
+                );
+            }
+        }
     }
 }

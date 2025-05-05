@@ -1,7 +1,3 @@
-mod base_keymap_picker;
-mod base_keymap_setting;
-mod multibuffer_hint;
-
 use client::{TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
@@ -12,6 +8,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
+use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     AppState, Welcome, Workspace, WorkspaceId,
@@ -22,6 +19,11 @@ use workspace::{
 
 pub use base_keymap_setting::BaseKeymap;
 pub use multibuffer_hint::*;
+
+mod base_keymap_picker;
+mod base_keymap_setting;
+mod multibuffer_hint;
+mod welcome_ui;
 
 actions!(welcome, [ResetHints]);
 
@@ -200,7 +202,8 @@ impl Render for WelcomePage {
                                                     zed_actions::OpenSettings,
                                                 ), cx);
                                             })),
-                                    ),
+                                    )
+
                             )
                             .child(
                                 v_flex()
@@ -219,13 +222,11 @@ impl Render for WelcomePage {
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
-                                                .on_click(cx.listener(|_, _, _, cx| {
+                                                .on_click(cx.listener(|this, _, window, cx| {
                                                     telemetry::event!("Welcome CLI Installed");
-                                                    cx
-                                                        .spawn(async move |_, cx| {
-                                                            install_cli::install_cli(&cx).await
-                                                        })
-                                                        .detach_and_log_err(cx);
+                                                    this.workspace.update(cx, |_, cx|{
+                                                        install_cli::install_cli(window, cx);
+                                                    }).log_err();
                                                 })),
                                         )
                                     })
@@ -420,8 +421,8 @@ impl Focusable for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Welcome".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Welcome".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

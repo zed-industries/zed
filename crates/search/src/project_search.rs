@@ -446,7 +446,7 @@ impl Item for ProjectSearchView {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content_text(&self, _: &Window, cx: &App) -> Option<SharedString> {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let last_query: Option<SharedString> = self
             .entity
             .read(cx)
@@ -457,11 +457,10 @@ impl Item for ProjectSearchView {
                 let query_text = util::truncate_and_trailoff(&query, MAX_TAB_TITLE_LEN);
                 query_text.into()
             });
-        Some(
-            last_query
-                .filter(|query| !query.is_empty())
-                .unwrap_or_else(|| "Project Search".into()),
-        )
+
+        last_query
+            .filter(|query| !query.is_empty())
+            .unwrap_or_else(|| "Project Search".into())
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1047,6 +1046,19 @@ impl ProjectSearchView {
                 }
             };
 
+        // If the project contains multiple visible worktrees, we match the
+        // include/exclude patterns against full paths to allow them to be
+        // disambiguated. For single worktree projects we use worktree relative
+        // paths for convenience.
+        let match_full_paths = self
+            .entity
+            .read(cx)
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .count()
+            > 1;
+
         let query = if self.search_options.contains(SearchOptions::REGEX) {
             match SearchQuery::regex(
                 text,
@@ -1057,6 +1069,7 @@ impl ProjectSearchView {
                     .contains(SearchOptions::ONE_MATCH_PER_LINE),
                 included_files,
                 excluded_files,
+                match_full_paths,
                 open_buffers,
             ) {
                 Ok(query) => {
@@ -1084,6 +1097,7 @@ impl ProjectSearchView {
                 self.search_options.contains(SearchOptions::INCLUDE_IGNORED),
                 included_files,
                 excluded_files,
+                match_full_paths,
                 open_buffers,
             ) {
                 Ok(query) => {
@@ -1760,10 +1774,18 @@ impl Render for ProjectSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let input_base_styles = || {
+        enum BaseStyle {
+            SingleInput,
+            MultipleInputs,
+        }
+
+        let input_base_styles = |base_style: BaseStyle| {
             h_flex()
                 .min_w_32()
-                .w(input_width)
+                .map(|div| match base_style {
+                    BaseStyle::SingleInput => div.w(input_width),
+                    BaseStyle::MultipleInputs => div.flex_grow(),
+                })
                 .h_8()
                 .pl_2()
                 .pr_1()
@@ -1773,7 +1795,7 @@ impl Render for ProjectSearchBar {
                 .rounded_lg()
         };
 
-        let query_column = input_base_styles()
+        let query_column = input_base_styles(BaseStyle::SingleInput)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
                 this.previous_history_query(action, window, cx)
@@ -1962,8 +1984,8 @@ impl Render for ProjectSearchBar {
             .child(h_flex().min_w_64().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column =
-                input_base_styles().child(self.render_text_input(&search.replacement_editor, cx));
+            let replace_column = input_base_styles(BaseStyle::SingleInput)
+                .child(self.render_text_input(&search.replacement_editor, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
 
@@ -2032,24 +2054,29 @@ impl Render for ProjectSearchBar {
                 .w_full()
                 .gap_2()
                 .child(
-                    input_base_styles()
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.previous_history_query(action, window, cx)
-                        }))
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.next_history_query(action, window, cx)
-                        }))
-                        .child(self.render_text_input(&search.included_files_editor, cx)),
-                )
-                .child(
-                    input_base_styles()
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.previous_history_query(action, window, cx)
-                        }))
-                        .on_action(cx.listener(|this, action, window, cx| {
-                            this.next_history_query(action, window, cx)
-                        }))
-                        .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                    h_flex()
+                        .gap_2()
+                        .w(input_width)
+                        .child(
+                            input_base_styles(BaseStyle::MultipleInputs)
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.previous_history_query(action, window, cx)
+                                }))
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.next_history_query(action, window, cx)
+                                }))
+                                .child(self.render_text_input(&search.included_files_editor, cx)),
+                        )
+                        .child(
+                            input_base_styles(BaseStyle::MultipleInputs)
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.previous_history_query(action, window, cx)
+                                }))
+                                .on_action(cx.listener(|this, action, window, cx| {
+                                    this.next_history_query(action, window, cx)
+                                }))
+                                .child(self.render_text_input(&search.excluded_files_editor, cx)),
+                        ),
                 )
                 .child(
                     h_flex()

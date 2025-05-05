@@ -25,7 +25,7 @@ use windows::{
 
 use crate::{Args, OpenListener};
 
-pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
+pub fn is_first_instance() -> bool {
     unsafe {
         CreateMutexW(
             None,
@@ -34,9 +34,11 @@ pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
         )
         .expect("Unable to create instance mutex.")
     };
-    let first_instance = unsafe { GetLastError() } != ERROR_ALREADY_EXISTS;
+    unsafe { GetLastError() != ERROR_ALREADY_EXISTS }
+}
 
-    if first_instance {
+pub fn handle_single_instance(opener: OpenListener, args: &Args, is_first_instance: bool) -> bool {
+    if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
         std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
     } else if !args.foreground {
@@ -44,7 +46,7 @@ pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
         send_args_to_instance(args).log_err();
     }
 
-    first_instance
+    is_first_instance
 }
 
 fn with_pipe(f: impl Fn(String)) {
@@ -130,6 +132,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             wait: false,
             open_new_workspace: None,
             env: None,
+            user_data_dir: args.user_data_dir.clone(),
         }
     };
 

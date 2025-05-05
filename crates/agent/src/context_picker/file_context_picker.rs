@@ -11,9 +11,9 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{ListItem, Tooltip, prelude::*};
 use util::ResultExt as _;
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::Workspace;
 
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
@@ -25,16 +25,10 @@ impl FileContextPicker {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(
-            context_picker,
-            workspace,
-            context_store,
-            confirm_behavior,
-        );
+        let delegate = FileContextPickerDelegate::new(context_picker, workspace, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
@@ -57,7 +51,6 @@ pub struct FileContextPickerDelegate {
     context_picker: WeakEntity<ContextPicker>,
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    confirm_behavior: ConfirmBehavior,
     matches: Vec<FileMatch>,
     selected_index: usize,
 }
@@ -67,13 +60,11 @@ impl FileContextPickerDelegate {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
             context_store,
-            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -127,7 +118,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(FileMatch { mat, .. }) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -139,31 +130,19 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let is_directory = mat.is_dir;
 
-        let Some(task) = self
-            .context_store
+        self.context_store
             .update(cx, |context_store, cx| {
                 if is_directory {
-                    context_store.add_directory(project_path, true, cx)
+                    context_store
+                        .add_directory(&project_path, true, cx)
+                        .log_err();
                 } else {
-                    context_store.add_file_from_path(project_path, true, cx)
+                    context_store
+                        .add_file_from_path(project_path.clone(), true, cx)
+                        .detach_and_log_err(cx);
                 }
             })
-            .ok()
-        else {
-            return;
-        };
-
-        let confirm_behavior = self.confirm_behavior;
-        cx.spawn_in(window, async move |this, cx| {
-            match task.await.notify_async_err(cx) {
-                None => anyhow::Ok(()),
-                Some(()) => this.update_in(cx, |this, window, cx| match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-                }),
-            }
-        })
-        .detach_and_log_err(cx);
+            .ok();
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -188,7 +167,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(render_file_context_entry(
-                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    ElementId::named_usize("file-ctx-picker", ix),
                     WorktreeId::from_usize(mat.worktree_id),
                     &mat.path,
                     &mat.path_prefix,
@@ -344,11 +323,11 @@ pub fn render_file_context_entry(
             path: path.clone(),
         };
         if is_directory {
-            context_store.read(cx).includes_directory(&project_path)
-        } else {
             context_store
                 .read(cx)
-                .will_include_file_path(&project_path, cx)
+                .path_included_in_directory(&project_path, cx)
+        } else {
+            context_store.read(cx).file_path_included(&project_path, cx)
         }
     });
 
@@ -376,7 +355,7 @@ pub fn render_file_context_entry(
                 })),
         )
         .when_some(added, |el, added| match added {
-            FileInclusion::Direct(_) => el.child(
+            FileInclusion::Direct => el.child(
                 h_flex()
                     .w_full()
                     .justify_end()
@@ -388,9 +367,8 @@ pub fn render_file_context_entry(
                     )
                     .child(Label::new("Added").size(LabelSize::Small)),
             ),
-            FileInclusion::InDirectory(directory_project_path) => {
-                // TODO: Consider using worktree full_path to include worktree name.
-                let directory_path = directory_project_path.path.to_string_lossy().into_owned();
+            FileInclusion::InDirectory { full_path } => {
+                let directory_full_path = full_path.to_string_lossy().into_owned();
 
                 el.child(
                     h_flex()
@@ -404,7 +382,7 @@ pub fn render_file_context_entry(
                         )
                         .child(Label::new("Included").size(LabelSize::Small)),
                 )
-                .tooltip(Tooltip::text(format!("in {directory_path}")))
+                .tooltip(Tooltip::text(format!("in {directory_full_path}")))
             }
         })
 }

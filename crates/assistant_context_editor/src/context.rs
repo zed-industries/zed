@@ -32,10 +32,10 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
-    fmt::Debug,
+    fmt::{Debug, Write as _},
     iter, mem,
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr as _,
     sync::Arc,
     time::{Duration, Instant},
@@ -46,7 +46,7 @@ use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
-#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
 
 impl ContextId {
@@ -459,6 +459,7 @@ pub enum ContextEvent {
     ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
+    SummaryGenerated,
     StreamedCompletion,
     StartedThoughtProcess(Range<language::Anchor>),
     EndedThoughtProcess(language::Anchor),
@@ -482,7 +483,7 @@ pub enum ContextEvent {
 #[derive(Clone, Default, Debug)]
 pub struct ContextSummary {
     pub text: String,
-    done: bool,
+    pub done: bool,
     timestamp: clock::Lamport,
 }
 
@@ -640,14 +641,14 @@ pub struct AssistantContext {
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
-    pending_summary: Task<Option<()>>,
+    summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
     pending_cache_warming_task: Task<Option<()>>,
-    path: Option<PathBuf>,
+    path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
@@ -741,7 +742,7 @@ impl AssistantContext {
             thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
-            pending_summary: Task::ready(None),
+            summary_task: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
@@ -838,7 +839,7 @@ impl AssistantContext {
 
     pub fn deserialize(
         saved_context: SavedContext,
-        path: PathBuf,
+        path: Arc<Path>,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -951,7 +952,7 @@ impl AssistantContext {
 
     fn flush_ops(&mut self, cx: &mut Context<AssistantContext>) {
         let mut changed_messages = HashSet::default();
-        let mut summary_changed = false;
+        let mut summary_generated = false;
 
         self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
         for op in mem::take(&mut self.pending_ops) {
@@ -993,7 +994,7 @@ impl AssistantContext {
                         .map_or(true, |summary| new_summary.timestamp > summary.timestamp)
                     {
                         self.summary = Some(new_summary);
-                        summary_changed = true;
+                        summary_generated = true;
                     }
                 }
                 ContextOperation::SlashCommandStarted {
@@ -1072,8 +1073,9 @@ impl AssistantContext {
             cx.notify();
         }
 
-        if summary_changed {
+        if summary_generated {
             cx.emit(ContextEvent::SummaryChanged);
+            cx.emit(ContextEvent::SummaryGenerated);
             cx.notify();
         }
     }
@@ -1145,8 +1147,8 @@ impl AssistantContext {
         self.prompt_builder.clone()
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        self.path.as_ref()
     }
 
     pub fn summary(&self) -> Option<&ContextSummary> {
@@ -2369,11 +2371,12 @@ impl AssistantContext {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StatusUpdate { .. } => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking { text: chunk, .. } => {
                                         if thought_process_stack.is_empty() {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);
@@ -2426,8 +2429,8 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(_) => {}
-                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
+                                    LanguageModelCompletionEvent::ToolUse(_) |
+                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
                                 }
                             });
 
@@ -2536,6 +2539,26 @@ impl AssistantContext {
         Some(user_message)
     }
 
+    pub fn to_xml(&self, cx: &App) -> String {
+        let mut output = String::new();
+        let buffer = self.buffer.read(cx);
+        for message in self.messages(cx) {
+            if message.status != MessageStatus::Done {
+                continue;
+            }
+
+            writeln!(&mut output, "<{}>", message.role).unwrap();
+            for chunk in buffer.text_for_range(message.offset_range) {
+                output.push_str(chunk);
+            }
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            writeln!(&mut output, "</{}>", message.role).unwrap();
+        }
+        output
+    }
+
     pub fn to_completion_request(
         &self,
         request_type: RequestType,
@@ -2555,6 +2578,9 @@ impl AssistantContext {
         }
 
         let mut completion_request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
@@ -2609,7 +2635,9 @@ impl AssistantContext {
                     .map(MessageContent::Text),
             );
 
-            completion_request.messages.push(request_message);
+            if !request_message.contents_empty() {
+                completion_request.messages.push(request_message);
+            }
         }
 
         if let RequestType::SuggestEdits = request_type {
@@ -2943,7 +2971,7 @@ impl AssistantContext {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    pub fn summarize(&mut self, replace_old: bool, cx: &mut Context<Self>) {
+    pub fn summarize(&mut self, mut replace_old: bool, cx: &mut Context<Self>) {
         let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
@@ -2963,7 +2991,18 @@ impl AssistantContext {
                 cache: false,
             });
 
-            self.pending_summary = cx.spawn(async move |this, cx| {
+            // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
+            // be displayed.
+            if self.summary.is_none() {
+                self.summary = Some(ContextSummary {
+                    text: "".to_string(),
+                    done: false,
+                    timestamp: clock::Lamport::default(),
+                });
+                replace_old = true;
+            }
+
+            self.summary_task = cx.spawn(async move |this, cx| {
                 async move {
                     let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
@@ -2988,6 +3027,7 @@ impl AssistantContext {
                             };
                             this.push_op(operation, cx);
                             cx.emit(ContextEvent::SummaryChanged);
+                            cx.emit(ContextEvent::SummaryGenerated);
                         })?;
 
                         // Stop if the LLM generated multiple lines.
@@ -3008,6 +3048,7 @@ impl AssistantContext {
                             };
                             this.push_op(operation, cx);
                             cx.emit(ContextEvent::SummaryChanged);
+                            cx.emit(ContextEvent::SummaryGenerated);
                         }
                     })?;
 
@@ -3161,7 +3202,7 @@ impl AssistantContext {
                 fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
                 if let Some(old_path) = old_path {
-                    if new_path != old_path {
+                    if new_path.as_path() != old_path.as_ref() {
                         fs.remove_file(
                             &old_path,
                             RemoveOptions {
@@ -3173,20 +3214,29 @@ impl AssistantContext {
                     }
                 }
 
-                this.update(cx, |this, _| this.path = Some(new_path))?;
+                this.update(cx, |this, _| this.path = Some(new_path.into()))?;
             }
 
             Ok(())
         });
     }
 
-    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
+    pub fn set_custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
         let timestamp = self.next_timestamp();
         let summary = self.summary.get_or_insert(ContextSummary::default());
         summary.timestamp = timestamp;
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
+    }
+
+    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Text Thread");
+
+    pub fn summary_or_default(&self) -> SharedString {
+        self.summary
+            .as_ref()
+            .map(|summary| summary.text.clone().into())
+            .unwrap_or(Self::DEFAULT_SUMMARY)
     }
 }
 
@@ -3560,6 +3610,6 @@ impl SavedContextV0_1_0 {
 #[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub mtime: chrono::DateTime<chrono::Local>,
 }

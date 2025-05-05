@@ -2,14 +2,9 @@ use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
-    Alignment, HeadingLevel, InlineStr, LinkType, MetadataBlockKind, Options, Parser,
+    Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{
-    collections::HashSet,
-    ops::{Deref, Range},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
 
 use crate::path_range::PathWithRange;
 
@@ -35,7 +30,10 @@ pub fn parse_markdown(
     let mut language_paths = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
-    for (pulldown_event, mut range) in Parser::new_ext(text, PARSE_OPTIONS).into_offset_iter() {
+    let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
+        .into_offset_iter()
+        .peekable();
+    while let Some((pulldown_event, mut range)) = parser.next() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
                 pulldown_event
@@ -65,11 +63,33 @@ pub fn parse_markdown(
                         within_metadata = true;
                         MarkdownTag::MetadataBlock(kind)
                     }
+                    pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Indented) => {
+                        MarkdownTag::CodeBlock {
+                            kind: CodeBlockKind::Indented,
+                            metadata: CodeBlockMetadata {
+                                content_range: range.start + 1..range.end + 1,
+                                line_count: 1,
+                            },
+                        }
+                    }
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
                         ref info,
                     )) => {
+                        let content_range = extract_code_block_content_range(&text[range.clone()]);
+                        let content_range =
+                            content_range.start + range.start..content_range.end + range.start;
+
+                        let line_count = text[content_range.clone()]
+                            .bytes()
+                            .filter(|c| *c == b'\n')
+                            .count();
+                        let metadata = CodeBlockMetadata {
+                            content_range,
+                            line_count,
+                        };
+
                         let info = info.trim();
-                        MarkdownTag::CodeBlock(if info.is_empty() {
+                        let kind = if info.is_empty() {
                             CodeBlockKind::Fenced
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
@@ -81,9 +101,68 @@ pub fn parse_markdown(
                             let language = SharedString::from(info.to_string());
                             language_names.insert(language.clone());
                             CodeBlockKind::FencedLang(language)
-                        })
+                        };
+
+                        MarkdownTag::CodeBlock { kind, metadata }
                     }
-                    tag => tag.into(),
+                    pulldown_cmark::Tag::Paragraph => MarkdownTag::Paragraph,
+                    pulldown_cmark::Tag::Heading {
+                        level,
+                        id,
+                        classes,
+                        attrs,
+                    } => {
+                        let id = id.map(|id| SharedString::from(id.into_string()));
+                        let classes = classes
+                            .into_iter()
+                            .map(|c| SharedString::from(c.into_string()))
+                            .collect();
+                        let attrs = attrs
+                            .into_iter()
+                            .map(|(key, value)| {
+                                (
+                                    SharedString::from(key.into_string()),
+                                    value.map(|v| SharedString::from(v.into_string())),
+                                )
+                            })
+                            .collect();
+                        MarkdownTag::Heading {
+                            level,
+                            id,
+                            classes,
+                            attrs,
+                        }
+                    }
+                    pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
+                    pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
+                    pulldown_cmark::Tag::Item => MarkdownTag::Item,
+                    pulldown_cmark::Tag::FootnoteDefinition(label) => {
+                        MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
+                    }
+                    pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
+                    pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
+                    pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
+                    pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
+                    pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
+                    pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
+                    pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
+                    pulldown_cmark::Tag::Image {
+                        link_type,
+                        dest_url,
+                        title,
+                        id,
+                    } => MarkdownTag::Image {
+                        link_type,
+                        dest_url: SharedString::from(dest_url.into_string()),
+                        title: SharedString::from(title.into_string()),
+                        id: SharedString::from(id.into_string()),
+                    },
+                    pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
+                    pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
+                    pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
+                    pulldown_cmark::Tag::DefinitionListDefinition => {
+                        MarkdownTag::DefinitionListDefinition
+                    }
                 };
                 events.push((range, MarkdownEvent::Start(tag)))
             }
@@ -94,47 +173,132 @@ pub fn parse_markdown(
                 events.push((range, MarkdownEvent::End(tag)));
             }
             pulldown_cmark::Event::Text(parsed) => {
-                // `parsed` will share bytes with the input unless a substitution like handling of
-                // HTML entities or smart punctuation has occurred. When these substitutions occur,
-                // `parsed` only consists of the result of a single substitution.
-                if !cow_str_points_inside(&parsed, text) {
-                    events.push((range, MarkdownEvent::SubstitutedText(parsed.into())));
-                } else {
-                    // Automatically detect links in text if not already within a markdown link.
-                    if !within_link {
-                        let mut finder = LinkFinder::new();
-                        finder.kinds(&[linkify::LinkKind::Url]);
-                        let text_range = range.clone();
-                        for link in finder.links(&text[text_range.clone()]) {
-                            let link_range =
-                                text_range.start + link.start()..text_range.start + link.end();
+                fn event_for(
+                    text: &str,
+                    range: Range<usize>,
+                    str: &str,
+                ) -> (Range<usize>, MarkdownEvent) {
+                    if str == &text[range.clone()] {
+                        (range, MarkdownEvent::Text)
+                    } else {
+                        (range, MarkdownEvent::SubstitutedText(str.to_owned()))
+                    }
+                }
+                #[derive(Debug)]
+                struct TextRange<'a> {
+                    source_range: Range<usize>,
+                    merged_range: Range<usize>,
+                    parsed: CowStr<'a>,
+                }
 
-                            if link_range.start > range.start {
-                                events.push((range.start..link_range.start, MarkdownEvent::Text));
-                            }
+                let mut last_len = parsed.len();
+                let mut ranges = vec![TextRange {
+                    source_range: range.clone(),
+                    merged_range: 0..last_len,
+                    parsed,
+                }];
 
-                            events.push((
-                                link_range.clone(),
-                                MarkdownEvent::Start(MarkdownTag::Link {
-                                    link_type: LinkType::Autolink,
-                                    dest_url: SharedString::from(link.as_str().to_string()),
-                                    title: SharedString::default(),
-                                    id: SharedString::default(),
-                                }),
-                            ));
+                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _))) {
+                    let Some((pulldown_cmark::Event::Text(next_event), next_range)) = parser.next()
+                    else {
+                        unreachable!()
+                    };
+                    let next_len = last_len + next_event.len();
+                    ranges.push(TextRange {
+                        source_range: next_range.clone(),
+                        merged_range: last_len..next_len,
+                        parsed: next_event,
+                    });
+                    last_len = next_len;
+                }
 
-                            events.push((link_range.clone(), MarkdownEvent::Text));
-                            events.push((
-                                link_range.clone(),
-                                MarkdownEvent::End(MarkdownTagEnd::Link),
-                            ));
+                let mut merged_text =
+                    String::with_capacity(ranges.last().unwrap().merged_range.end);
+                for range in &ranges {
+                    merged_text.push_str(&range.parsed);
+                }
 
-                            range.start = link_range.end;
+                let mut ranges = ranges.into_iter().peekable();
+
+                if !within_link {
+                    let mut finder = LinkFinder::new();
+                    finder.kinds(&[linkify::LinkKind::Url]);
+
+                    // Find links in the merged text
+                    for link in finder.links(&merged_text) {
+                        let link_start_in_merged = link.start();
+                        let link_end_in_merged = link.end();
+
+                        while ranges
+                            .peek()
+                            .is_some_and(|range| range.merged_range.end <= link_start_in_merged)
+                        {
+                            let range = ranges.next().unwrap();
+                            events.push(event_for(text, range.source_range, &range.parsed));
                         }
+
+                        let Some(range) = ranges.peek_mut() else {
+                            continue;
+                        };
+                        let prefix_len = link_start_in_merged - range.merged_range.start;
+                        if prefix_len > 0 {
+                            let (head, tail) = range.parsed.split_at(prefix_len);
+                            events.push(event_for(
+                                text,
+                                range.source_range.start..range.source_range.start + prefix_len,
+                                &head,
+                            ));
+                            range.parsed = CowStr::Boxed(tail.into());
+                            range.merged_range.start += prefix_len;
+                            range.source_range.start += prefix_len;
+                        }
+
+                        let link_start_in_source = range.source_range.start;
+                        let mut link_end_in_source = range.source_range.end;
+                        let mut link_events = Vec::new();
+
+                        while ranges
+                            .peek()
+                            .is_some_and(|range| range.merged_range.end <= link_end_in_merged)
+                        {
+                            let range = ranges.next().unwrap();
+                            link_end_in_source = range.source_range.end;
+                            link_events.push(event_for(text, range.source_range, &range.parsed));
+                        }
+
+                        if let Some(range) = ranges.peek_mut() {
+                            let prefix_len = link_end_in_merged - range.merged_range.start;
+                            if prefix_len > 0 {
+                                let (head, tail) = range.parsed.split_at(prefix_len);
+                                link_events.push(event_for(
+                                    text,
+                                    range.source_range.start..range.source_range.start + prefix_len,
+                                    head,
+                                ));
+                                range.parsed = CowStr::Boxed(tail.into());
+                                range.merged_range.start += prefix_len;
+                                range.source_range.start += prefix_len;
+                                link_end_in_source = range.source_range.start;
+                            }
+                        }
+                        let link_range = link_start_in_source..link_end_in_source;
+
+                        events.push((
+                            link_range.clone(),
+                            MarkdownEvent::Start(MarkdownTag::Link {
+                                link_type: LinkType::Autolink,
+                                dest_url: SharedString::from(link.as_str().to_string()),
+                                title: SharedString::default(),
+                                id: SharedString::default(),
+                            }),
+                        ));
+                        events.extend(link_events);
+                        events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
                     }
-                    if range.start < range.end {
-                        events.push((range, MarkdownEvent::Text));
-                    }
+                }
+
+                for range in ranges {
+                    events.push(event_for(text, range.source_range, &range.parsed));
                 }
             }
             pulldown_cmark::Event::Code(_) => {
@@ -210,7 +374,7 @@ pub enum MarkdownEvent {
     Text,
     /// Text that differs from the markdown source - typically due to substitution of HTML entities
     /// and smart punctuation.
-    SubstitutedText(CompactStr),
+    SubstitutedText(String),
     /// An inline code node.
     Code,
     /// An HTML node.
@@ -252,7 +416,10 @@ pub enum MarkdownTag {
     BlockQuote,
 
     /// A code block.
-    CodeBlock(CodeBlockKind),
+    CodeBlock {
+        kind: CodeBlockKind,
+        metadata: CodeBlockMetadata,
+    },
 
     /// A HTML block.
     HtmlBlock,
@@ -323,163 +490,26 @@ pub enum CodeBlockKind {
     FencedSrc(PathWithRange),
 }
 
-impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
-    fn from(tag: pulldown_cmark::Tag) -> Self {
-        match tag {
-            pulldown_cmark::Tag::Paragraph => MarkdownTag::Paragraph,
-            pulldown_cmark::Tag::Heading {
-                level,
-                id,
-                classes,
-                attrs,
-            } => {
-                let id = id.map(|id| SharedString::from(id.into_string()));
-                let classes = classes
-                    .into_iter()
-                    .map(|c| SharedString::from(c.into_string()))
-                    .collect();
-                let attrs = attrs
-                    .into_iter()
-                    .map(|(key, value)| {
-                        (
-                            SharedString::from(key.into_string()),
-                            value.map(|v| SharedString::from(v.into_string())),
-                        )
-                    })
-                    .collect();
-                MarkdownTag::Heading {
-                    level,
-                    id,
-                    classes,
-                    attrs,
-                }
-            }
-            pulldown_cmark::Tag::BlockQuote(_kind) => MarkdownTag::BlockQuote,
-            pulldown_cmark::Tag::CodeBlock(kind) => match kind {
-                pulldown_cmark::CodeBlockKind::Indented => {
-                    MarkdownTag::CodeBlock(CodeBlockKind::Indented)
-                }
-                pulldown_cmark::CodeBlockKind::Fenced(info) => {
-                    let info = info.trim();
-                    MarkdownTag::CodeBlock(if info.is_empty() {
-                        CodeBlockKind::Fenced
-                    } else if info.contains('/') {
-                        // Languages should never contain a slash, and PathRanges always should.
-                        // (Models are told to specify them relative to a workspace root.)
-                        CodeBlockKind::FencedSrc(PathWithRange::new(info))
-                    } else {
-                        CodeBlockKind::FencedLang(SharedString::from(info.to_string()))
-                    })
-                }
-            },
-            pulldown_cmark::Tag::List(start_number) => MarkdownTag::List(start_number),
-            pulldown_cmark::Tag::Item => MarkdownTag::Item,
-            pulldown_cmark::Tag::FootnoteDefinition(label) => {
-                MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
-            }
-            pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
-            pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
-            pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
-            pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
-            pulldown_cmark::Tag::Emphasis => MarkdownTag::Emphasis,
-            pulldown_cmark::Tag::Strong => MarkdownTag::Strong,
-            pulldown_cmark::Tag::Strikethrough => MarkdownTag::Strikethrough,
-            pulldown_cmark::Tag::Link {
-                link_type,
-                dest_url,
-                title,
-                id,
-            } => MarkdownTag::Link {
-                link_type,
-                dest_url: SharedString::from(dest_url.into_string()),
-                title: SharedString::from(title.into_string()),
-                id: SharedString::from(id.into_string()),
-            },
-            pulldown_cmark::Tag::Image {
-                link_type,
-                dest_url,
-                title,
-                id,
-            } => MarkdownTag::Image {
-                link_type,
-                dest_url: SharedString::from(dest_url.into_string()),
-                title: SharedString::from(title.into_string()),
-                id: SharedString::from(id.into_string()),
-            },
-            pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
-            pulldown_cmark::Tag::MetadataBlock(kind) => MarkdownTag::MetadataBlock(kind),
-            pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
-            pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
-            pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct CodeBlockMetadata {
+    pub content_range: Range<usize>,
+    pub line_count: usize,
+}
+
+pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
+    let mut range = 0..text.len();
+    if text.starts_with("```") {
+        range.start += 3;
+
+        if let Some(newline_ix) = text[range.clone()].find('\n') {
+            range.start += newline_ix + 1;
         }
     }
-}
 
-/// Represents either an owned or inline string. Motivation for this is to make `SubstitutedText`
-/// more efficient - it fits within a `pulldown_cmark::InlineStr` in all known cases.
-///
-/// Same as `pulldown_cmark::CowStr` but without the `Borrow` case.
-#[derive(Clone)]
-pub enum CompactStr {
-    Boxed(Box<str>),
-    Inlined(InlineStr),
-}
-
-impl std::fmt::Debug for CompactStr {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-        self.deref().fmt(formatter)
+    if !range.is_empty() && text.ends_with("```") {
+        range.end -= 3;
     }
-}
-
-impl Deref for CompactStr {
-    type Target = str;
-
-    fn deref(&self) -> &str {
-        match self {
-            CompactStr::Boxed(b) => b,
-            CompactStr::Inlined(i) => i,
-        }
-    }
-}
-
-impl From<&str> for CompactStr {
-    fn from(s: &str) -> Self {
-        if let Ok(inlined) = s.try_into() {
-            CompactStr::Inlined(inlined)
-        } else {
-            CompactStr::Boxed(s.into())
-        }
-    }
-}
-
-impl From<pulldown_cmark::CowStr<'_>> for CompactStr {
-    fn from(cow_str: pulldown_cmark::CowStr) -> Self {
-        match cow_str {
-            pulldown_cmark::CowStr::Boxed(b) => CompactStr::Boxed(b),
-            pulldown_cmark::CowStr::Borrowed(b) => b.into(),
-            pulldown_cmark::CowStr::Inlined(i) => CompactStr::Inlined(i),
-        }
-    }
-}
-
-impl PartialEq for CompactStr {
-    fn eq(&self, other: &Self) -> bool {
-        self.deref() == other.deref()
-    }
-}
-
-fn cow_str_points_inside(substring: &pulldown_cmark::CowStr, container: &str) -> bool {
-    match substring {
-        pulldown_cmark::CowStr::Boxed(b) => str_points_inside(b, container),
-        pulldown_cmark::CowStr::Borrowed(b) => str_points_inside(b, container),
-        pulldown_cmark::CowStr::Inlined(_) => false,
-    }
-}
-
-fn str_points_inside(substring: &str, container: &str) -> bool {
-    let substring_ptr = substring.as_ptr();
-    let container_ptr = container.as_ptr();
-    unsafe { substring_ptr >= container_ptr && substring_ptr < container_ptr.add(container.len()) }
+    range
 }
 
 #[cfg(test)]
@@ -542,6 +572,33 @@ mod tests {
     }
 
     #[test]
+    fn test_incomplete_link() {
+        assert_eq!(
+            parse_markdown("You can use the [GitHub Search API](https://docs.github.com/en").0,
+            vec![
+                (0..62, Start(Paragraph)),
+                (0..16, Text),
+                (16..17, Text),
+                (17..34, Text),
+                (34..35, Text),
+                (35..36, Text),
+                (
+                    36..62,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://docs.github.com/en".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (36..62, Text),
+                (36..62, End(MarkdownTagEnd::Link)),
+                (0..62, End(MarkdownTagEnd::Paragraph))
+            ],
+        );
+    }
+
+    #[test]
     fn test_smart_punctuation() {
         assert_eq!(
             parse_markdown("-- --- ... \"double quoted\" 'single quoted' ----------"),
@@ -569,5 +626,108 @@ mod tests {
                 HashSet::new()
             )
         )
+    }
+
+    #[test]
+    fn test_code_block_metadata() {
+        assert_eq!(
+            parse_markdown("```rust\nfn main() {\n let a = 1;\n}\n```"),
+            (
+                vec![
+                    (
+                        0..37,
+                        Start(CodeBlock {
+                            kind: CodeBlockKind::FencedLang("rust".into()),
+                            metadata: CodeBlockMetadata {
+                                content_range: 8..34,
+                                line_count: 3
+                            }
+                        })
+                    ),
+                    (8..34, Text),
+                    (0..37, End(MarkdownTagEnd::CodeBlock)),
+                ],
+                HashSet::from(["rust".into()]),
+                HashSet::new()
+            )
+        )
+    }
+
+    #[test]
+    fn test_extract_code_block_content_range() {
+        let input = "```rust\nlet x = 5;\n```";
+        assert_eq!(extract_code_block_content_range(input), 8..19);
+
+        let input = "plain text";
+        assert_eq!(extract_code_block_content_range(input), 0..10);
+
+        let input = "```python\nprint('hello')\nprint('world')\n```";
+        assert_eq!(extract_code_block_content_range(input), 10..40);
+    }
+
+    #[test]
+    fn test_links_split_across_fragments() {
+        // This test verifies that links split across multiple text fragments due to escaping or other issues
+        // are correctly detected and processed
+        // Note: In real usage, pulldown_cmark creates separate text events for the escaped character
+        // We're verifying our parser can handle this correctly
+        assert_eq!(
+            parse_markdown("https:/\\/example.com is equivalent to https://example&#46;com!").0,
+            vec![
+                (0..62, Start(Paragraph)),
+                (
+                    0..20,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://example.com".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (0..7, Text),
+                (8..20, Text),
+                (0..20, End(MarkdownTagEnd::Link)),
+                (20..38, Text),
+                (
+                    38..61,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://example.com".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (38..53, Text),
+                (53..58, SubstitutedText(".".into())),
+                (58..61, Text),
+                (38..61, End(MarkdownTagEnd::Link)),
+                (61..62, Text),
+                (0..62, End(MarkdownTagEnd::Paragraph))
+            ],
+        );
+
+        assert_eq!(
+            parse_markdown("Visit https://example.com/cat\\/é&#8205;☕ for coffee!").0,
+            [
+                (0..55, Start(Paragraph)),
+                (0..6, Text),
+                (
+                    6..43,
+                    Start(Link {
+                        link_type: LinkType::Autolink,
+                        dest_url: "https://example.com/cat/é\u{200d}☕".into(),
+                        title: "".into(),
+                        id: "".into()
+                    })
+                ),
+                (6..29, Text),
+                (30..33, Text),
+                (33..40, SubstitutedText("\u{200d}".into())),
+                (40..43, Text),
+                (6..43, End(MarkdownTagEnd::Link)),
+                (43..55, Text),
+                (0..55, End(MarkdownTagEnd::Paragraph))
+            ]
+        );
     }
 }
