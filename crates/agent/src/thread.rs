@@ -2614,7 +2614,6 @@ mod tests {
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolRegistry;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
     use language_model::fake_provider::FakeLanguageModel;
@@ -3036,7 +3035,6 @@ fn main() {{
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });

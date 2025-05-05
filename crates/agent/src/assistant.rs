@@ -7,6 +7,7 @@ mod buffer_codegen;
 mod context;
 mod context_picker;
 mod context_server_configuration;
+mod context_server_tool;
 mod context_store;
 mod context_strip;
 mod debug;
