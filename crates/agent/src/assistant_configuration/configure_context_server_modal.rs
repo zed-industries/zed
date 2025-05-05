@@ -65,6 +65,8 @@ impl ConfigureContextServerModal {
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
                         editor.set_text(manifest.default_settings.trim(), window, cx);
+                        editor.set_show_gutter(false, cx);
+                        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
                         }
@@ -99,6 +101,7 @@ impl ConfigureContextServerModal {
         };
 
         let configuration = &mut self.context_servers_to_setup[0];
+        configuration.last_error.take();
         if configuration.waiting_for_context_server {
             return;
         }
@@ -264,7 +267,7 @@ impl Render for ConfigureContextServerModal {
 
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .w(rems(42.))
             .key_context("ConfigureContextServerModal")
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.dismiss(cx)))
