@@ -162,6 +162,9 @@ impl AvailableLanguage {
     pub fn hidden(&self) -> bool {
         self.config.hidden
     }
+    pub fn config(&self) -> &LanguageConfig {
+        &self.config
+    }
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]

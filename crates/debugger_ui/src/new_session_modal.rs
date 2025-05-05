@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use collections::{HashMap, HashSet};
 use dap::{DapRegistry, DebugRequest, adapters::DebugTaskDefinition};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -220,13 +221,35 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_adapters = workspace
+                let available_languages = language_registry.language_names();
+                let mut adapter_scoring = HashMap::default();
+                for language in available_languages {
+                    let Some(language) =
+                        language_registry.available_language_for_name(language.as_str())
+                    else {
+                        continue;
+                    };
+
+                    language.config().debuggers.iter().for_each(|adapter| {
+                        adapter_scoring
+                            .entry(adapter.clone())
+                            .or_insert_with(HashSet::default)
+                            .insert(language.name());
+                    });
+                }
+                let mut available_adapters = workspace
                     .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
                     .ok()
                     .unwrap_or_default();
 
-                for adapter in available_adapters {
-                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.0.clone()));
+                available_adapters.sort_by_key(|name| {
+                    adapter_scoring
+                        .get(name.as_ref())
+                        .map_or(0, |languages| languages.len())
+                });
+
+                for adapter in available_adapters.into_iter().rev() {
+                    menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.0));
                 }
                 menu
             }),
