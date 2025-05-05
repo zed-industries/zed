@@ -101,7 +101,7 @@ impl EditAgent {
             .render(&this.templates)?;
             let new_chunks = this.request(previous_messages, prompt, cx).await?;
 
-            let (output, mut inner_events) = this.replace_text_with_chunks(buffer, new_chunks, cx);
+            let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
             while let Some(event) = inner_events.next().await {
                 events_tx.unbounded_send(event).ok();
             }
@@ -110,7 +110,7 @@ impl EditAgent {
         (output, events_rx)
     }
 
-    fn replace_text_with_chunks(
+    fn overwrite_with_chunks(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
@@ -123,9 +123,9 @@ impl EditAgent {
         let this = self.clone();
         let task = cx.spawn(async move |cx| {
             this.action_log
-                .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
+                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
             let output = this
-                .replace_text_with_chunks_internal(buffer, edit_chunks, output_events_tx, cx)
+                .overwrite_with_chunks_internal(buffer, edit_chunks, output_events_tx, cx)
                 .await;
             this.project
                 .update(cx, |project, cx| project.set_agent_location(None, cx))?;
@@ -134,7 +134,7 @@ impl EditAgent {
         (task, output_events_rx)
     }
 
-    async fn replace_text_with_chunks_internal(
+    async fn overwrite_with_chunks_internal(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
@@ -246,9 +246,9 @@ impl EditAgent {
         let this = self.clone();
         let task = cx.spawn(async move |mut cx| {
             this.action_log
-                .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
+                .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
             let output = this
-                .apply_edits_internal(buffer, edit_chunks, output_events_tx, &mut cx)
+                .apply_edit_chunks_internal(buffer, edit_chunks, output_events_tx, &mut cx)
                 .await;
             this.project
                 .update(cx, |project, cx| project.set_agent_location(None, cx))?;
@@ -257,7 +257,7 @@ impl EditAgent {
         (task, output_events_rx)
     }
 
-    async fn apply_edits_internal(
+    async fn apply_edit_chunks_internal(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
@@ -1027,7 +1027,7 @@ mod tests {
             .read_with(cx, |log, _| log.project().clone());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        let (apply, mut events) = agent.replace_text_with_chunks(
+        let (apply, mut events) = agent.overwrite_with_chunks(
             buffer.clone(),
             chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
             &mut cx.to_async(),
