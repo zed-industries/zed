@@ -671,7 +671,6 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
-          "create_file": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
