@@ -89,7 +89,7 @@ impl Default for DebugAccountState {
 }
 
 impl DebugAccountState {
-    pub fn _get_global(cx: &App) -> &DebugAccountState {
+    pub fn get_global(cx: &App) -> &Self {
         &cx.global::<GlobalDebugAccountState>().0
     }
 }

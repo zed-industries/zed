@@ -3,8 +3,6 @@ use std::sync::Arc;
 
 use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
-#[allow(unused, dead_code)]
-use crate::debug::DebugAccount; // used for debugging usage-related UI states
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
