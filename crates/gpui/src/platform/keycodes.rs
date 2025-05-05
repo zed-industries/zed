@@ -370,8 +370,7 @@ impl ScanCode {
     }
 
     /// This function is used to convert the scan code to its key face on US keyboard layout.
-    /// Test only.
-    #[cfg(test)]
+    /// Only used for tests and Linux.
     pub fn to_key(&self) -> &str {
         match self {
             ScanCode::F1 => "f1",

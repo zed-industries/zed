@@ -1,4 +1,6 @@
-use crate::{PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode};
+use crate::{
+    PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key, is_immutable_key,
+};
 
 pub(crate) struct LinuxKeyboardLayout {
     id: String,
@@ -24,12 +26,18 @@ pub(crate) struct LinuxKeyboardMapper;
 
 impl PlatformKeyboardMapper for LinuxKeyboardMapper {
     fn scan_code_to_key(&self, scan_code: ScanCode) -> anyhow::Result<String> {
-        // todo(linuxs)
-        Ok("Unimplemented".to_string())
+        // todo(linux)
+        Ok(scan_code.to_key().to_string())
     }
 
     fn get_shifted_key(&self, key: &str) -> anyhow::Result<String> {
-        // todo(linuxs)
+        if is_immutable_key(key) {
+            return Ok(key.to_string());
+        }
+        if is_alphabetic_key(key) {
+            return Ok(key.to_uppercase());
+        }
+        // todo(linux)
         Ok(key.to_string())
     }
 }
