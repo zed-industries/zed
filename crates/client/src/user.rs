@@ -713,6 +713,10 @@ impl UserStore {
         self.current_plan
     }
 
+    pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
+        self.trial_started_at
+    }
+
     pub fn usage_based_billing_enabled(&self) -> Option<bool> {
         self.is_usage_based_billing_enabled
     }

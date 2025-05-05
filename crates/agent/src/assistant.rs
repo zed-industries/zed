@@ -80,7 +80,8 @@ actions!(
         Reject,
         RejectAll,
         KeepAll,
-        Follow
+        Follow,
+        ResetTrialUpsell,
     ]
 );
 
