@@ -153,6 +153,8 @@ pub struct LanguageSettings {
     pub show_completion_documentation: bool,
     /// Completion settings for this language.
     pub completions: CompletionSettings,
+    /// Prefered debuggers for this language.
+    pub debuggers: Vec<String>,
 }
 
 impl LanguageSettings {
@@ -551,6 +553,10 @@ pub struct LanguageSettingsContent {
     pub show_completion_documentation: Option<bool>,
     /// Controls how completions are processed for this language.
     pub completions: Option<CompletionSettings>,
+    /// Prefered debuggers for this language.
+    ///
+    /// Default: []
+    pub debuggers: Option<Vec<String>>,
 }
 
 /// The behavior of `editor::Rewrap`.

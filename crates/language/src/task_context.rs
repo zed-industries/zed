@@ -48,6 +48,8 @@ pub trait ContextProvider: Send + Sync {
         None
     }
 
-    /// Default debug adapter for a given language.
-    fn debug_adapter(&self) -> Option<String>;
+    /// Default debug adapters for a given language.
+    fn debug_adapters(&self) -> Vec<String> {
+        vec![]
+    }
 }

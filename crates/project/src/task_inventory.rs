@@ -808,8 +808,8 @@ impl ContextProvider for BasicContextProvider {
         Task::ready(Ok(task_variables))
     }
 
-    fn debug_adapter(&self) -> Option<String> {
-        None
+    fn debug_adapters(&self) -> Vec<String> {
+        vec![]
     }
 }
 
@@ -835,8 +835,8 @@ impl ContextProvider for ContextProviderWithTasks {
         Some(self.templates.clone())
     }
 
-    fn debug_adapter(&self) -> Option<String> {
-        None
+    fn debug_adapters(&self) -> Vec<String> {
+        vec![]
     }
 }
 
