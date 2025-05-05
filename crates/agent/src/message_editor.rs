@@ -9,6 +9,7 @@ use crate::ui::{
     preview::{AgentPreview, UsageCallout},
 };
 use buffer_diff::BufferDiff;
+use client::UserStore;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::{
@@ -25,11 +26,12 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
+use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
+use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -56,6 +58,7 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
+    user_store: Entity<UserStore>,
     context_store: Entity<ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
@@ -68,8 +71,6 @@ pub struct MessageEditor {
     editor_is_expanded: bool,
     last_estimated_token_count: Option<usize>,
     update_token_count_task: Option<Task<()>>,
-    plan: Option<zed_llm_client::Plan>,
-    usage: Option<RequestUsage>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -131,6 +132,7 @@ impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
+        user_store: Entity<UserStore>,
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
@@ -193,6 +195,7 @@ impl MessageEditor {
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
+            user_store,
             thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
@@ -209,8 +212,6 @@ impl MessageEditor {
                 .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             last_estimated_token_count: None,
             update_token_count_task: None,
-            plan: None,
-            usage: None,
             _subscriptions: subscriptions,
         }
     }
@@ -1042,18 +1043,21 @@ impl MessageEditor {
             return None;
         }
 
-        let plan = self.plan;
-        let usage = self.usage;
+        let plan = self
+            .user_store
+            .read(cx)
+            .current_plan()
+            .map(|plan| match plan {
+                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+            })
+            .unwrap_or(zed_llm_client::Plan::Free);
+        let usage = self.thread.read(cx).last_usage()?;
 
-        let (plan, usage) = match (&plan, &usage) {
-            (Some(p), Some(u)) => (p, u),
-            _ => return None,
-        };
-
-        // Create a UsageCallout component
         Some(
             div()
-                .child(UsageCallout::new(*plan, *usage))
+                .child(UsageCallout::new(plan, usage))
                 .line_height(line_height),
         )
     }
@@ -1375,16 +1379,18 @@ impl AgentPreview for MessageEditor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        if let Some(workspace_entity) = workspace.upgrade() {
-            let fs = workspace_entity.read(cx).app_state().fs.clone();
-            let weak_project = workspace_entity.read(cx).project().clone().downgrade();
+        if let Some(workspace) = workspace.upgrade() {
+            let fs = workspace.read(cx).app_state().fs.clone();
+            let user_store = workspace.read(cx).app_state().user_store.clone();
+            let weak_project = workspace.read(cx).project().clone().downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
             let thread = active_thread.read(cx).thread().clone();
 
             let default_message_editor = cx.new(|cx| {
                 MessageEditor::new(
                     fs,
-                    workspace,
+                    workspace.downgrade(),
+                    user_store,
                     context_store,
                     None,
                     thread_store,
