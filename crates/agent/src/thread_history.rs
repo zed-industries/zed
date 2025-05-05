@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::Arc;
 
 use assistant_context_editor::SavedContextMetadata;
@@ -23,14 +24,26 @@ pub struct ThreadHistory {
     history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
-    search_query: SharedString,
     search_editor: Entity<Editor>,
     all_entries: Arc<Vec<HistoryEntry>>,
-    matches: Vec<StringMatch>,
-    _subscriptions: Vec<gpui::Subscription>,
-    _search_task: Option<Task<()>>,
+    list_content: ListContent,
     scrollbar_visibility: bool,
     scrollbar_state: ScrollbarState,
+    _subscriptions: Vec<gpui::Subscription>,
+}
+
+#[derive(Default)]
+enum ListContent {
+    #[default]
+    All,
+    Searching {
+        query: SharedString,
+        _task: Task<()>,
+    },
+    Searched {
+        query: SharedString,
+        matches: Vec<StringMatch>,
+    },
 }
 
 impl ThreadHistory {
@@ -50,14 +63,9 @@ impl ThreadHistory {
             cx.subscribe(&search_editor, |this, search_editor, event, cx| {
                 if let EditorEvent::BufferEdited = event {
                     let query = search_editor.read(cx).text(cx);
-                    this.search_query = query.into();
-                    this.update_search(cx);
+                    this.search(query.into(), cx);
                 }
             });
-
-        let entries: Arc<Vec<_>> = history_store
-            .update(cx, |store, cx| store.entries(cx))
-            .into();
 
         let history_store_subscription = cx.observe(&history_store, |this, _, cx| {
             this.update_all_entries(cx);
@@ -71,12 +79,10 @@ impl ThreadHistory {
             history_store,
             scroll_handle,
             selected_index: 0,
-            search_query: SharedString::new_static(""),
-            all_entries: entries,
-            matches: Vec::new(),
+            list_content: ListContent::default(),
+            all_entries: Default::default(),
             search_editor,
             _subscriptions: vec![search_editor_subscription, history_store_subscription],
-            _search_task: None,
             scrollbar_visibility: true,
             scrollbar_state,
         }
@@ -87,88 +93,111 @@ impl ThreadHistory {
             .history_store
             .update(cx, |store, cx| store.entries(cx))
             .into();
-        self.matches.clear();
-        self.update_search(cx);
-    }
 
-    fn update_search(&mut self, cx: &mut Context<Self>) {
-        self._search_task.take();
+        self.set_selected_index(0, cx);
 
-        if self.has_search_query() {
-            self.perform_search(cx);
-        } else {
-            self.matches.clear();
-            self.set_selected_index(0, cx);
-            cx.notify();
+        match &self.list_content {
+            ListContent::All => {}
+            ListContent::Searching { query, .. } | ListContent::Searched { query, .. } => {
+                self.search(query.clone(), cx);
+            }
         }
+        cx.notify();
     }
 
-    fn perform_search(&mut self, cx: &mut Context<Self>) {
-        let query = self.search_query.clone();
+    fn search(&mut self, query: SharedString, cx: &mut Context<Self>) {
         let all_entries = self.all_entries.clone();
 
-        let task = cx.spawn(async move |this, cx| {
+        let fuzzy_search_task = cx.background_spawn({
+            let query = query.clone();
             let executor = cx.background_executor().clone();
+            async move {
+                let mut candidates = Vec::with_capacity(all_entries.len());
 
-            let matches = cx
-                .background_spawn(async move {
-                    let mut candidates = Vec::with_capacity(all_entries.len());
-
-                    for (idx, entry) in all_entries.iter().enumerate() {
-                        match entry {
-                            HistoryEntry::Thread(thread) => {
-                                candidates.push(StringMatchCandidate::new(idx, &thread.summary));
-                            }
-                            HistoryEntry::Context(context) => {
-                                candidates.push(StringMatchCandidate::new(idx, &context.title));
-                            }
+                for (idx, entry) in all_entries.iter().enumerate() {
+                    match entry {
+                        HistoryEntry::Thread(thread) => {
+                            candidates.push(StringMatchCandidate::new(idx, &thread.summary));
+                        }
+                        HistoryEntry::Context(context) => {
+                            candidates.push(StringMatchCandidate::new(idx, &context.title));
                         }
                     }
+                }
 
-                    const MAX_MATCHES: usize = 100;
+                const MAX_MATCHES: usize = 100;
 
-                    fuzzy::match_strings(
-                        &candidates,
-                        &query,
-                        false,
-                        MAX_MATCHES,
-                        &Default::default(),
-                        executor,
-                    )
-                    .await
-                })
-                .await;
-
-            this.update(cx, |this, cx| {
-                this.matches = matches;
-                this.set_selected_index(0, cx);
-                cx.notify();
-            })
-            .log_err();
+                fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    false,
+                    MAX_MATCHES,
+                    &Default::default(),
+                    executor,
+                )
+                .await
+            }
         });
 
-        self._search_task = Some(task);
-    }
+        let task = cx.spawn({
+            let query = query.clone();
+            async move |this, cx| {
+                let matches = fuzzy_search_task.await;
 
-    fn has_search_query(&self) -> bool {
-        !self.search_query.is_empty()
+                this.update(cx, |this, cx| {
+                    let ListContent::Searching {
+                        query: current_query,
+                        _task,
+                    } = &this.list_content
+                    else {
+                        return;
+                    };
+
+                    if &query != current_query {
+                        this.list_content = ListContent::Searched {
+                            query: query.clone(),
+                            matches,
+                        };
+
+                        // todo! move to list content?
+                        this.set_selected_index(0, cx);
+                        cx.notify();
+                    };
+                })
+                .log_err();
+            }
+        });
+
+        self.list_content = ListContent::Searching {
+            query: query.clone(),
+            _task: task,
+        };
+        cx.notify();
     }
 
     fn matched_count(&self) -> usize {
-        if self.has_search_query() {
-            self.matches.len()
-        } else {
-            self.all_entries.len()
+        match &self.list_content {
+            ListContent::All => self.all_entries.len(),
+            ListContent::Searching { .. } => 0,
+            ListContent::Searched { matches, .. } => matches.len(),
+        }
+    }
+
+    fn search_produced_no_matches(&self) -> bool {
+        match &self.list_content {
+            ListContent::All => false,
+            ListContent::Searching { .. } => false,
+            ListContent::Searched { matches, .. } => matches.is_empty(),
         }
     }
 
     fn get_match(&self, ix: usize) -> Option<&HistoryEntry> {
-        if self.has_search_query() {
-            self.matches
+        match &self.list_content {
+            ListContent::All => self.all_entries.get(ix),
+            ListContent::Searching { .. } => None,
+            ListContent::Searched { matches, .. } => matches
                 .get(ix)
-                .and_then(|m| self.all_entries.get(m.candidate_id))
-        } else {
-            self.all_entries.get(ix)
+                .and_then(|m| self.all_entries.get(m.candidate_id)),
         }
     }
 
@@ -311,6 +340,59 @@ impl ThreadHistory {
             cx.notify();
         }
     }
+
+    fn list_items(
+        &mut self,
+        range: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let range_start = range.start;
+
+        match &self.list_content {
+            ListContent::All => self.all_entries[range]
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| self.render_list_item(index + range_start, entry, vec![]))
+                .collect(),
+            ListContent::Searched { matches, .. } => matches[range]
+                .iter()
+                .enumerate()
+                .filter_map(|(index, m)| {
+                    self.all_entries.get(m.candidate_id).map(|entry| {
+                        self.render_list_item(index + range_start, entry, m.positions.clone())
+                    })
+                })
+                .collect(),
+            ListContent::Searching { .. } => {
+                vec![]
+            }
+        }
+    }
+
+    fn render_list_item(
+        &self,
+        index: usize,
+        entry: &HistoryEntry,
+        highlight_positions: Vec<usize>,
+    ) -> Div {
+        h_flex().w_full().pb_1().child(match entry {
+            HistoryEntry::Thread(thread) => PastThread::new(
+                thread.clone(),
+                self.assistant_panel.clone(),
+                self.selected_index == index,
+                highlight_positions,
+            )
+            .into_any_element(),
+            HistoryEntry::Context(context) => PastContext::new(
+                context.clone(),
+                self.assistant_panel.clone(),
+                self.selected_index == index,
+                highlight_positions,
+            )
+            .into_any_element(),
+        })
+    }
 }
 
 impl Focusable for ThreadHistory {
@@ -321,8 +403,6 @@ impl Focusable for ThreadHistory {
 
 impl Render for ThreadHistory {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected_index = self.selected_index;
-
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
@@ -366,7 +446,7 @@ impl Render for ThreadHistory {
                                     .size(LabelSize::Small),
                             ),
                         )
-                } else if self.has_search_query() && self.matches.is_empty() {
+                } else if self.search_produced_no_matches() {
                     view.justify_center().child(
                         h_flex().w_full().justify_center().child(
                             Label::new("No threads match your search.").size(LabelSize::Small),
@@ -379,56 +459,7 @@ impl Render for ThreadHistory {
                                 cx.entity().clone(),
                                 "thread-history",
                                 self.matched_count(),
-                                move |history, range, _window, _cx| {
-                                    let range_start = range.start;
-                                    let assistant_panel = history.assistant_panel.clone();
-
-                                    let render_item = |index: usize,
-                                                       entry: &HistoryEntry,
-                                                       highlight_positions: Vec<usize>|
-                                     -> Div {
-                                        h_flex().w_full().pb_1().child(match entry {
-                                            HistoryEntry::Thread(thread) => PastThread::new(
-                                                thread.clone(),
-                                                assistant_panel.clone(),
-                                                selected_index == index + range_start,
-                                                highlight_positions,
-                                            )
-                                            .into_any_element(),
-                                            HistoryEntry::Context(context) => PastContext::new(
-                                                context.clone(),
-                                                assistant_panel.clone(),
-                                                selected_index == index + range_start,
-                                                highlight_positions,
-                                            )
-                                            .into_any_element(),
-                                        })
-                                    };
-
-                                    if history.has_search_query() {
-                                        history.matches[range]
-                                            .iter()
-                                            .enumerate()
-                                            .filter_map(|(index, m)| {
-                                                history.all_entries.get(m.candidate_id).map(
-                                                    |entry| {
-                                                        render_item(
-                                                            index,
-                                                            entry,
-                                                            m.positions.clone(),
-                                                        )
-                                                    },
-                                                )
-                                            })
-                                            .collect()
-                                    } else {
-                                        history.all_entries[range]
-                                            .iter()
-                                            .enumerate()
-                                            .map(|(index, entry)| render_item(index, entry, vec![]))
-                                            .collect()
-                                    }
-                                },
+                                Self::list_items,
                             )
                             .p_1()
                             .track_scroll(self.scroll_handle.clone())
