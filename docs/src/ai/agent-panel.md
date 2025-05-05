@@ -150,7 +150,7 @@ Every time the LLM performs a weird change or investigates a certain topic in yo
 
 > Note that rating responses will send your data related to that response to Zed's servers.
 > See [AI Improvement](./ai/ai-improvement.md) and [Privacy and Security](/ai/privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
-> ***If you don't want data persisted on Zed's servers, don't rate***. We will not collect data for improving our Agentic offering without you explicitly rating responses.
+> **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
 The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.

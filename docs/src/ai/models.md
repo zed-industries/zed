@@ -2,11 +2,11 @@
 
 Zed’s plans offer hosted versions of major LLM’s, generally with higher rate limits than individual API keys. We’re working hard to expand the models supported by Zed’s subscription offerings, so please check back often.
 
-| Model | Provider | Max Mode | Context Window | Price per Prompt | Price per Request |
-| --- | --- | --- | --- | --- | --- |
-| Claude 3.5 Sonnet | Anthropic | ❌ | 120k | $0.04 | N/A |
-| Claude 3.7 Sonnet | Anthropic | ❌ | 120k | $0.04 | N/A |
-| Claude 3.7 Sonnet | Anthropic | ✅ | 200k | N/A | $0.05 |
+| Model             | Provider  | Max Mode | Context Window | Price per Prompt | Price per Request |
+| ----------------- | --------- | -------- | -------------- | ---------------- | ----------------- |
+| Claude 3.5 Sonnet | Anthropic | ❌       | 120k           | $0.04            | N/A               |
+| Claude 3.7 Sonnet | Anthropic | ❌       | 120k           | $0.04            | N/A               |
+| Claude 3.7 Sonnet | Anthropic | ✅       | 200k           | N/A              | $0.05             |
 
 ## Usage {#usage}
 

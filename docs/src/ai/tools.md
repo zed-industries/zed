@@ -12,7 +12,7 @@ Zed's Agent has access to a variety of tools that allow it to interact with your
 - **`list_directory`**: Lists files and directories in a given path, providing an overview of filesystem contents.
 - **`move_path`**: Moves or renames a file or directory in the project, performing a rename if only the filename differs.
 - **`now`**: Returns the current date and time.
-- **`find_path`**: Quickly finds files by matching glob patterns (like "**/*.js"), returning matching file paths alphabetically.
+- **`find_path`**: Quickly finds files by matching glob patterns (like "\*_/_.js"), returning matching file paths alphabetically.
 - **`read_file`**: Reads the content of a specified file in the project, allowing access to file contents.
 - **`grep`**: Searches file contents across the project using regular expressions, preferred for finding symbols in code without knowing exact file paths.
 - **`terminal`**: Executes shell commands and returns the combined output, creating a new shell process for each invocation.
