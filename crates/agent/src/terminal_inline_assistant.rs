@@ -4,7 +4,7 @@ use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -71,6 +71,7 @@ impl TerminalInlineAssistant {
         project: WeakEntity<Project>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -91,6 +92,7 @@ impl TerminalInlineAssistant {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 window,
                 cx,
             )

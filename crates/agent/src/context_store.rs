@@ -496,6 +496,7 @@ impl ContextStore {
                 | AgentContextHandle::Selection(_)
                 | AgentContextHandle::FetchedUrl(_)
                 | AgentContextHandle::Thread(_)
+                | AgentContextHandle::TextThread(_)
                 | AgentContextHandle::Rules(_)
                 | AgentContextHandle::Image(_) => None,
             })

@@ -3251,6 +3251,7 @@ dependencies = [
  "collections",
  "component",
  "db",
+ "futures 0.3.31",
  "gpui",
  "languages",
  "log",
@@ -3260,6 +3261,7 @@ dependencies = [
  "serde",
  "ui",
  "ui_input",
+ "util",
  "workspace",
  "workspace-hack",
 ]

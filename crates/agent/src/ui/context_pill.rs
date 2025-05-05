@@ -301,6 +301,7 @@ impl AddedContext {
             AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
             AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
+            AgentContextHandle::TextThread(handle) => todo!(),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
             AgentContextHandle::Image(handle) => Some(Self::image(handle)),
         }
@@ -314,6 +315,7 @@ impl AddedContext {
             AgentContext::Selection(context) => Self::attached_selection(context, cx),
             AgentContext::FetchedUrl(context) => Self::fetched_url(context.clone()),
             AgentContext::Thread(context) => Self::attached_thread(context),
+            AgentContext::TextThread(context) => todo!(),
             AgentContext::Rules(context) => Self::attached_rules(context),
             AgentContext::Image(context) => Self::image(context.clone()),
         }

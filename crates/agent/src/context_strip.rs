@@ -18,7 +18,7 @@ use crate::context::{AgentContextHandle, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
     AcceptSuggestedContext, AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
@@ -43,6 +43,7 @@ impl ContextStrip {
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
         window: &mut Window,
@@ -52,6 +53,7 @@ impl ContextStrip {
             ContextPicker::new(
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store,
                 context_store.downgrade(),
                 window,
                 cx,

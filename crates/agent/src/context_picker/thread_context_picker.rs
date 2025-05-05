@@ -10,7 +10,7 @@ use ui::{ListItem, prelude::*};
 use crate::context_picker::ContextPicker;
 use crate::context_store::{self, ContextStore};
 use crate::thread::ThreadId;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 
 pub struct ThreadContextPicker {
     picker: Entity<Picker<ThreadContextPickerDelegate>>,
@@ -19,13 +19,18 @@ pub struct ThreadContextPicker {
 impl ThreadContextPicker {
     pub fn new(
         thread_store: WeakEntity<ThreadStore>,
+        text_thread_context_store: WeakEntity<TextThreadStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate =
-            ThreadContextPickerDelegate::new(thread_store, context_picker, context_store);
+        let delegate = ThreadContextPickerDelegate::new(
+            thread_store,
+            text_thread_context_store,
+            context_picker,
+            context_store,
+        );
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         ThreadContextPicker { picker }
@@ -67,6 +72,7 @@ impl ThreadContextEntry {
 
 pub struct ThreadContextPickerDelegate {
     thread_store: WeakEntity<ThreadStore>,
+    text_thread_store: WeakEntity<TextThreadStore>,
     context_picker: WeakEntity<ContextPicker>,
     context_store: WeakEntity<context_store::ContextStore>,
     matches: Vec<ThreadContextEntry>,
@@ -76,6 +82,7 @@ pub struct ThreadContextPickerDelegate {
 impl ThreadContextPickerDelegate {
     pub fn new(
         thread_store: WeakEntity<ThreadStore>,
+        text_thread_store: WeakEntity<TextThreadStore>,
         context_picker: WeakEntity<ContextPicker>,
         context_store: WeakEntity<context_store::ContextStore>,
     ) -> Self {
@@ -83,6 +90,7 @@ impl ThreadContextPickerDelegate {
             thread_store,
             context_picker,
             context_store,
+            text_thread_store,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -119,11 +127,21 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let Some(thread_store) = self.thread_store.upgrade() else {
+        let Some((thread_store, text_thread_context_store)) = self
+            .thread_store
+            .upgrade()
+            .zip(self.text_thread_store.upgrade())
+        else {
             return Task::ready(());
         };
 
-        let search_task = search_threads(query, Arc::new(AtomicBool::default()), thread_store, cx);
+        let search_task = search_threads(
+            query,
+            Arc::new(AtomicBool::default()),
+            thread_store,
+            text_thread_context_store,
+            cx,
+        );
         cx.spawn_in(window, async move |this, cx| {
             let matches = search_task.await;
             this.update(cx, |this, cx| {
@@ -244,24 +262,41 @@ pub(crate) fn search_threads(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
     thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     cx: &mut App,
 ) -> Task<Vec<ThreadMatch>> {
-    let threads = thread_store
+    let threads = thread_store.read(cx).unordered_threads().map(|thread| {
+        (
+            thread.updated_at.clone(),
+            ThreadContextEntry::Thread {
+                id: thread.id.clone(),
+                title: thread.summary.clone(),
+            },
+        )
+    });
+
+    let text_threads = text_thread_store
         .read(cx)
-        .reverse_chronological_threads()
-        .into_iter()
-        .map(|thread| ThreadContextEntry::Thread {
-            id: thread.id,
-            title: thread.summary,
-        })
-        .collect::<Vec<_>>();
+        .unordered_contexts()
+        .map(|context| {
+            (
+                context.mtime.to_utc(),
+                ThreadContextEntry::Context {
+                    path: context.path.clone(),
+                    title: context.title.clone().into(),
+                },
+            )
+        });
+
+    let mut threads = threads.chain(text_threads).collect::<Vec<_>>();
+    threads.sort_unstable_by_key(|(updated_at, _)| std::cmp::Reverse(*updated_at));
 
     let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
         if query.is_empty() {
             threads
                 .into_iter()
-                .map(|thread| ThreadMatch {
+                .map(|(_, thread)| ThreadMatch {
                     thread,
                     is_recent: false,
                 })
@@ -270,7 +305,7 @@ pub(crate) fn search_threads(
             let candidates = threads
                 .iter()
                 .enumerate()
-                .map(|(id, thread)| StringMatchCandidate::new(id, &thread.title()))
+                .map(|(id, (_, thread))| StringMatchCandidate::new(id, &thread.title()))
                 .collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
                 &candidates,
@@ -285,7 +320,7 @@ pub(crate) fn search_threads(
             matches
                 .into_iter()
                 .map(|mat| ThreadMatch {
-                    thread: threads[mat.candidate_id].clone(),
+                    thread: threads[mat.candidate_id].1.clone(),
                     is_recent: false,
                 })
                 .collect()

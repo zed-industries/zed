@@ -6,7 +6,7 @@ use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
     ThreadFeedback,
 };
-use crate::thread_store::{RulesLoadingError, ThreadStore};
+use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
@@ -56,6 +56,7 @@ pub struct ActiveThread {
     context_store: Entity<ContextStore>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
@@ -750,6 +751,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
         context_store: Entity<ContextStore>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
@@ -772,6 +774,7 @@ impl ActiveThread {
         let mut this = Self {
             language_registry,
             thread_store,
+            text_thread_store,
             context_store,
             thread: thread.clone(),
             workspace,
@@ -849,6 +852,14 @@ impl ActiveThread {
         self.editing_message
             .as_ref()
             .map(|(id, state)| (*id, state.last_estimated_token_count.unwrap_or(0)))
+    }
+
+    pub fn thread_store(&self) -> &Entity<ThreadStore> {
+        &self.thread_store
+    }
+
+    pub fn text_thread_store(&self) -> &Entity<TextThreadStore> {
+        &self.text_thread_store
     }
 
     fn push_message(
@@ -1255,6 +1266,7 @@ impl ActiveThread {
             self.workspace.clone(),
             self.context_store.downgrade(),
             self.thread_store.downgrade(),
+            self.text_thread_store.downgrade(),
             window,
             cx,
         );
@@ -1276,6 +1288,7 @@ impl ActiveThread {
                 self.context_store.clone(),
                 self.workspace.clone(),
                 Some(self.thread_store.downgrade()),
+                Some(self.text_thread_store.downgrade()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 window,
@@ -3438,6 +3451,16 @@ pub(crate) fn open_context(
             }
         }),
 
+        AgentContextHandle::TextThread(text_thread_context) => {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        todo!();
+                    });
+                }
+            })
+        }
+
         AgentContextHandle::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenRulesLibrary {
                 prompt_to_select: Some(rules_context.prompt_id.0),
@@ -3578,15 +3601,22 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
         let thread_store = cx
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
                     cx.new(|_| ToolWorkingSet::default()),
                     None,
-                    Arc::new(PromptBuilder::new(None).unwrap()),
+                    prompt_builder.clone(),
                     cx,
                 )
+            })
+            .await
+            .unwrap();
+        let text_thread_store = cx
+            .update(|_, cx| {
+                TextThreadStore::new(project.clone(), prompt_builder, Default::default(), cx)
             })
             .await
             .unwrap();
@@ -3605,6 +3635,7 @@ mod tests {
                 ActiveThread::new(
                     thread.clone(),
                     thread_store.clone(),
+                    text_thread_store.clone(),
                     context_store.clone(),
                     language_registry.clone(),
                     workspace.downgrade(),

@@ -25,7 +25,7 @@ use workspace::Workspace;
 use crate::Thread;
 use crate::context::{AgentContextHandle, AgentContextKey, ContextCreasesAddon, RULES_ICON};
 use crate::context_store::ContextStore;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 
 use super::fetch_context_picker::fetch_url_content;
 use super::file_context_picker::{FileMatch, search_files};
@@ -72,6 +72,7 @@ fn search(
     recent_entries: Vec<RecentEntry>,
     prompt_store: Option<Entity<PromptStore>>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_context_store: Option<WeakEntity<assistant_context_editor::ContextStore>>,
     workspace: Entity<Workspace>,
     cx: &mut App,
 ) -> Task<Vec<Match>> {
@@ -101,9 +102,18 @@ fn search(
         }
 
         Some(ContextPickerMode::Thread) => {
-            if let Some(thread_store) = thread_store.as_ref().and_then(|t| t.upgrade()) {
-                let search_threads_task =
-                    search_threads(query.clone(), cancellation_flag.clone(), thread_store, cx);
+            if let Some((thread_store, context_store)) = thread_store
+                .as_ref()
+                .and_then(|t| t.upgrade())
+                .zip(text_thread_context_store.as_ref().and_then(|t| t.upgrade()))
+            {
+                let search_threads_task = search_threads(
+                    query.clone(),
+                    cancellation_flag.clone(),
+                    thread_store,
+                    context_store,
+                    cx,
+                );
                 cx.background_spawn(async move {
                     search_threads_task
                         .await
@@ -236,6 +246,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     editor: WeakEntity<Editor>,
     excluded_buffer: Option<WeakEntity<Buffer>>,
 }
@@ -245,6 +256,7 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         editor: WeakEntity<Editor>,
         exclude_buffer: Option<WeakEntity<Buffer>>,
     ) -> Self {
@@ -252,6 +264,7 @@ impl ContextPickerCompletionProvider {
             workspace,
             context_store,
             thread_store,
+            text_thread_store,
             editor,
             excluded_buffer: exclude_buffer,
         }
@@ -738,6 +751,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ..snapshot.anchor_before(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
+        let text_thread_store = self.text_thread_store.clone();
         let editor = self.editor.clone();
         let http_client = workspace.read(cx).client().http_client();
 
@@ -773,6 +787,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             recent_entries,
             prompt_store,
             thread_store.clone(),
+            text_thread_store.clone(),
             workspace.clone(),
             cx,
         );
@@ -1251,6 +1266,7 @@ mod tests {
             editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
+                None,
                 None,
                 editor_entity,
                 last_opened_buffer,

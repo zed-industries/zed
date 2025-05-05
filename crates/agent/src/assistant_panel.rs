@@ -52,7 +52,7 @@ use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
     InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -313,7 +313,7 @@ pub struct AssistantPanel {
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
     _default_model_subscription: Subscription,
-    context_store: Entity<assistant_context_editor::ContextStore>,
+    context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
@@ -419,7 +419,7 @@ impl AssistantPanel {
     fn new(
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
-        context_store: Entity<assistant_context_editor::ContextStore>,
+        context_store: Entity<TextThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -447,6 +447,7 @@ impl AssistantPanel {
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
+                context_store.downgrade(),
                 thread.clone(),
                 window,
                 cx,
@@ -483,6 +484,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 thread_store.clone(),
+                context_store.clone(),
                 message_editor_context_store.clone(),
                 language_registry.clone(),
                 workspace.clone(),
@@ -676,6 +678,10 @@ impl AssistantPanel {
         &self.thread_store
     }
 
+    pub(crate) fn text_thread_store(&self) -> &Entity<TextThreadStore> {
+        &self.context_store
+    }
+
     fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| thread.cancel_last_completion(window, cx));
@@ -727,6 +733,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                self.context_store.clone(),
                 context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
@@ -751,6 +758,7 @@ impl AssistantPanel {
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
+                self.context_store.downgrade(),
                 thread,
                 window,
                 cx,
@@ -936,6 +944,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                self.context_store.clone(),
                 context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
@@ -960,6 +969,7 @@ impl AssistantPanel {
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
+                self.context_store.downgrade(),
                 thread,
                 window,
                 cx,
@@ -2404,12 +2414,14 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             };
             let prompt_store = None;
             let thread_store = None;
+            let text_thread_store = None;
             assistant.assist(
                 &prompt_editor,
                 self.workspace.clone(),
                 project,
                 prompt_store,
                 thread_store,
+                text_thread_store,
                 window,
                 cx,
             )

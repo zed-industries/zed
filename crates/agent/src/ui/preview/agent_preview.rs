@@ -6,16 +6,11 @@ use std::sync::OnceLock;
 use ui::{AnyElement, Component, ComponentScope, Window};
 use workspace::Workspace;
 
-use crate::{ActiveThread, ThreadStore};
+use crate::{ActiveThread, TextThreadStore, ThreadStore};
 
 /// Function type for creating agent component previews
-pub type PreviewFn = fn(
-    WeakEntity<Workspace>,
-    Entity<ActiveThread>,
-    WeakEntity<ThreadStore>,
-    &mut Window,
-    &mut App,
-) -> Option<AnyElement>;
+pub type PreviewFn =
+    fn(WeakEntity<Workspace>, Entity<ActiveThread>, &mut Window, &mut App) -> Option<AnyElement>;
 
 /// Distributed slice for preview registration functions
 #[distributed_slice]
@@ -32,7 +27,6 @@ pub trait AgentPreview: Component + Sized {
     fn agent_preview(
         workspace: WeakEntity<Workspace>,
         active_thread: Entity<ActiveThread>,
-        thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement>;
@@ -75,14 +69,13 @@ pub fn get_agent_preview(
     id: &ComponentId,
     workspace: WeakEntity<Workspace>,
     active_thread: Entity<ActiveThread>,
-    thread_store: WeakEntity<ThreadStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let registry = get_or_init_registry();
     registry
         .get(id)
-        .and_then(|preview_fn| preview_fn(workspace, active_thread, thread_store, window, cx))
+        .and_then(|preview_fn| preview_fn(workspace, active_thread, window, cx))
 }
 
 /// Get all registered agent previews.

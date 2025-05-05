@@ -38,7 +38,7 @@ use crate::AssistantPanel;
 use crate::context::RULES_ICON;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerEntry {
@@ -165,6 +165,7 @@ pub(super) struct ContextPicker {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
+    text_thread_store: Option<WeakEntity<TextThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -173,6 +174,7 @@ impl ContextPicker {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_store: WeakEntity<ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -209,6 +211,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            text_thread_store,
             prompt_store,
             _subscriptions: subscriptions,
         }
@@ -341,10 +344,15 @@ impl ContextPicker {
                     }));
                 }
                 ContextPickerMode::Thread => {
-                    if let Some(thread_store) = self.thread_store.as_ref() {
+                    if let Some((thread_store, text_thread_store)) = self
+                        .thread_store
+                        .as_ref()
+                        .zip(self.text_thread_store.as_ref())
+                    {
                         self.mode = ContextPickerState::Thread(cx.new(|cx| {
                             ThreadContextPicker::new(
                                 thread_store.clone(),
+                                text_thread_store.clone(),
                                 context_picker.clone(),
                                 self.context_store.clone(),
                                 window,

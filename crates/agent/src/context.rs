@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 
+use assistant_context_editor::AssistantContext;
 use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::display_map::CreaseId;
@@ -33,6 +34,7 @@ pub enum ContextKind {
     Selection,
     FetchedUrl,
     Thread,
+    TextThread,
     Rules,
     Image,
 }
@@ -46,6 +48,7 @@ impl ContextKind {
             ContextKind::Selection => IconName::Context,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageBubbles,
+            ContextKind::TextThread => IconName::MessageBubbles,
             ContextKind::Rules => RULES_ICON,
             ContextKind::Image => IconName::Image,
         }
@@ -65,6 +68,7 @@ pub enum AgentContextHandle {
     Selection(SelectionContextHandle),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContextHandle),
+    TextThread(TextThreadContextHandle),
     Rules(RulesContextHandle),
     Image(ImageContext),
 }
@@ -78,6 +82,7 @@ impl AgentContextHandle {
             Self::Selection(context) => context.context_id,
             Self::FetchedUrl(context) => context.context_id,
             Self::Thread(context) => context.context_id,
+            Self::TextThread(context) => context.context_id,
             Self::Rules(context) => context.context_id,
             Self::Image(context) => context.context_id,
         }
@@ -98,6 +103,7 @@ pub enum AgentContext {
     Selection(SelectionContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
+    TextThread(TextThreadContext),
     Rules(RulesContext),
     Image(ImageContext),
 }
@@ -115,6 +121,9 @@ impl AgentContext {
             }
             AgentContext::FetchedUrl(context) => AgentContextHandle::FetchedUrl(context.clone()),
             AgentContext::Thread(context) => AgentContextHandle::Thread(context.handle.clone()),
+            AgentContext::TextThread(context) => {
+                AgentContextHandle::TextThread(context.handle.clone())
+            }
             AgentContext::Rules(context) => AgentContextHandle::Rules(context.handle.clone()),
             AgentContext::Image(context) => AgentContextHandle::Image(context.clone()),
         }
@@ -610,6 +619,53 @@ impl Display for ThreadContext {
 }
 
 #[derive(Debug, Clone)]
+pub struct TextThreadContextHandle {
+    pub context: Entity<AssistantContext>,
+    pub context_id: ContextId,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextThreadContext {
+    pub handle: TextThreadContextHandle,
+    pub title: SharedString,
+    pub text: SharedString,
+}
+
+impl TextThreadContextHandle {
+    pub fn eq_for_key(&self, other: &Self) -> bool {
+        self.context == other.context
+    }
+
+    pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
+        self.context.hash(state)
+    }
+
+    pub fn title(&self, cx: &App) -> SharedString {
+        self.context.read(cx).summary_or_default()
+    }
+
+    fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
+        let title = self.title(cx);
+        let text = self.context.read(cx).to_xml(cx);
+        let context = AgentContext::TextThread(TextThreadContext {
+            title,
+            text: text.into(),
+            handle: self,
+        });
+        Task::ready(Some((context, vec![])))
+    }
+}
+
+impl Display for TextThreadContext {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // TODO: escape title?
+        write!(f, "<text_thread title=\"{}\">\n", self.title)?;
+        write!(f, "{}", self.text.trim())?;
+        write!(f, "\n</text_thread>")
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct RulesContextHandle {
     pub prompt_id: UserPromptId,
     pub context_id: ContextId,
@@ -785,6 +841,7 @@ pub fn load_context(
             AgentContextHandle::Selection(context) => load_tasks.push(context.load(cx)),
             AgentContextHandle::FetchedUrl(context) => load_tasks.push(context.load()),
             AgentContextHandle::Thread(context) => load_tasks.push(context.load(cx)),
+            AgentContextHandle::TextThread(context) => load_tasks.push(context.load(cx)),
             AgentContextHandle::Rules(context) => load_tasks.push(context.load(prompt_store, cx)),
             AgentContextHandle::Image(context) => load_tasks.push(context.load(cx)),
         }
@@ -810,6 +867,7 @@ pub fn load_context(
         let mut selection_context = Vec::new();
         let mut fetched_url_context = Vec::new();
         let mut thread_context = Vec::new();
+        let mut text_thread_context = Vec::new();
         let mut rules_context = Vec::new();
         let mut images = Vec::new();
         for context in &contexts {
@@ -820,6 +878,7 @@ pub fn load_context(
                 AgentContext::Selection(context) => selection_context.push(context),
                 AgentContext::FetchedUrl(context) => fetched_url_context.push(context),
                 AgentContext::Thread(context) => thread_context.push(context),
+                AgentContext::TextThread(context) => text_thread_context.push(context),
                 AgentContext::Rules(context) => rules_context.push(context),
                 AgentContext::Image(context) => images.extend(context.image()),
             }
@@ -901,6 +960,15 @@ pub fn load_context(
                 let _ = write!(text, "{context}");
             }
             text.push_str("</conversation_threads>\n");
+        }
+
+        if !text_thread_context.is_empty() {
+            text.push_str("<text_threads>");
+            for context in text_thread_context {
+                text.push('\n');
+                let _ = writeln!(text, "{context}");
+            }
+            text.push_str("<text_threads>");
         }
 
         if !rules_context.is_empty() {
@@ -1019,6 +1087,11 @@ impl PartialEq for AgentContextKey {
                     return context.eq_for_key(other_context);
                 }
             }
+            AgentContextHandle::TextThread(context) => {
+                if let AgentContextHandle::TextThread(other_context) = &other.0 {
+                    return context.eq_for_key(other_context);
+                }
+            }
         }
         false
     }
@@ -1033,6 +1106,7 @@ impl Hash for AgentContextKey {
             AgentContextHandle::Selection(context) => context.hash_for_key(state),
             AgentContextHandle::FetchedUrl(context) => context.hash_for_key(state),
             AgentContextHandle::Thread(context) => context.hash_for_key(state),
+            AgentContextHandle::TextThread(context) => context.hash_for_key(state),
             AgentContextHandle::Rules(context) => context.hash_for_key(state),
             AgentContextHandle::Image(context) => context.hash_for_key(state),
         }
