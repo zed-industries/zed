@@ -1798,49 +1798,50 @@ impl AssistantPanel {
                                 div()
                                     .absolute()
                                     .top_0()
-                                    .right_0()
+                                    .right(px(-1.0))
                                     .w(px(441.))
                                     .h(px(167.))
                                     .child(
-                                    Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(167.)).color(ui::Color::Custom(cx.theme().colors().border_variant))
+                                    Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(167.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1)))
                                 )
                             )
                             .child(
                                 div()
                                     .absolute()
-                                    .top(-px(55.0))
-                                    .right(px(-16.0))
-                                    .size(px(180.))
-                                    .opacity(0.5)
+                                    .top(px(-8.0))
+                                    .right_0()
+                                    .w(px(400.))
+                                    .h(px(92.))
                                     .child(
-                                    Vector::new(VectorName::AiGrid, rems_from_px(180.), rems_from_px(154.))
+                                    Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32)))
                                 )
                             )
+                            // .child(
+                            //     div()
+                            //         .absolute()
+                            //         .top_0()
+                            //         .right(px(360.))
+                            //         .size(px(401.))
+                            //         .overflow_hidden()
+                            //         .bg(cx.theme().colors().panel_background)
+                            // )
                             .child(
                                 div()
                                     .absolute()
                                     .top_0()
-                                    .right(px(400.))
-                                    .size(px(401.))
-                                    .overflow_hidden()
-                                    .bg(cx.theme().colors().panel_background)
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right(px(-1.0))
-                                    .size(px(400.))
+                                    .right_0()
+                                    .w(px(660.))
+                                    .h(px(401.))
                                     .overflow_hidden()
                                     .bg(linear_gradient(
-                                        45.,
+                                        75.,
                                         linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
-                                        linear_color_stop(cx.theme().colors().panel_background, 0.0),
+                                        linear_color_stop(cx.theme().colors().panel_background, 0.45),
                                     ))
                             )
                             .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
                             .child(Label::new("Try Zed Pro for free for 14 days - no credit card required.").size(LabelSize::Small))
-                            .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted).size(LabelSize::XSmall))
+                            .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted))
                             .child(
                                 h_flex()
                                     .w_full()
