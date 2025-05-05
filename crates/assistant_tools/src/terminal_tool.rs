@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use futures::{FutureExt as _, future::Shared};
 use gpui::{AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, WeakEntity, Window};
 use language::LineEnding;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
@@ -33,11 +34,37 @@ pub struct TerminalToolInput {
     cd: String,
 }
 
-pub struct TerminalTool;
+pub struct TerminalTool {
+    determine_shell: Shared<Task<String>>,
+}
+
+impl TerminalTool {
+    pub const NAME: &str = "terminal";
+
+    pub(crate) fn new(cx: &mut App) -> Self {
+        let determine_shell = cx.background_spawn(async move {
+            if cfg!(windows) {
+                return get_system_shell();
+            }
+
+            if which::which("bash").is_ok() {
+                log::info!("agent selected bash for terminal tool");
+                "bash".into()
+            } else {
+                let shell = get_system_shell();
+                log::info!("agent selected {shell} for terminal tool");
+                shell
+            }
+        });
+        Self {
+            determine_shell: determine_shell.shared(),
+        }
+    }
+}
 
 impl Tool for TerminalTool {
     fn name(&self) -> String {
-        "terminal".to_string()
+        Self::NAME.to_string()
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
@@ -96,17 +123,37 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
         };
-        let command = get_system_shell();
-        let args = vec!["-c".into(), input.command.clone()];
+        let program = self.determine_shell.clone();
+        let command = format!("({}) </dev/null", input.command);
+        let args = vec!["-c".into(), command.clone()];
         let cwd = working_dir.clone();
+        let env = match &working_dir {
+            Some(dir) => project.update(cx, |project, cx| {
+                project.directory_environment(dir.as_path().into(), cx)
+            }),
+            None => Task::ready(None).shared(),
+        };
+
+        let env = cx.spawn(async move |_| {
+            let mut env = env.await.unwrap_or_default();
+            if cfg!(unix) {
+                env.insert("PAGER".into(), "cat".into());
+            }
+            env
+        });
 
         let Some(window) = window else {
             // Headless setup, a test or eval. Our terminal subsystem requires a workspace,
             // so bypass it and provide a convincing imitation using a pty.
             let task = cx.background_spawn(async move {
+                let env = env.await;
                 let pty_system = native_pty_system();
-                let mut cmd = CommandBuilder::new(command);
+                let program = program.await;
+                let mut cmd = CommandBuilder::new(program);
                 cmd.args(args);
+                for (k, v) in env {
+                    cmd.env(k, v);
+                }
                 if let Some(cwd) = cwd {
                     cmd.cwd(cwd);
                 }
@@ -139,17 +186,28 @@ impl Tool for TerminalTool {
             };
         };
 
-        let terminal = project.update(cx, |project, cx| {
-            project.create_terminal(
-                TerminalKind::Task(task::SpawnInTerminal {
-                    command,
-                    args,
-                    cwd,
-                    ..Default::default()
-                }),
-                window,
-                cx,
-            )
+        let terminal = cx.spawn({
+            let project = project.downgrade();
+            async move |cx| {
+                let program = program.await;
+                let env = env.await;
+                let terminal = project
+                    .update(cx, |project, cx| {
+                        project.create_terminal(
+                            TerminalKind::Task(task::SpawnInTerminal {
+                                command: program,
+                                args,
+                                cwd,
+                                env,
+                                ..Default::default()
+                            }),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await;
+                terminal
+            }
         });
 
         let card = cx.new(|cx| {
@@ -549,14 +607,10 @@ mod tests {
 
     use super::*;
 
-    #[gpui::test]
-    async fn test_working_directory(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-        if cfg!(windows) {
-            return;
-        }
-
+    fn init_test(executor: &BackgroundExecutor, cx: &mut TestAppContext) {
         zlog::init();
         zlog::init_output_stdout();
+
         executor.allow_parking();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -568,6 +622,56 @@ mod tests {
             TerminalSettings::register(cx);
             EditorSettings::register(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_interactive_command(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        if cfg!(windows) {
+            return;
+        }
+
+        init_test(&executor, cx);
+
+        let fs = Arc::new(RealFs::new(None, executor));
+        let tree = TempTree::new(json!({
+            "project": {},
+        }));
+        let project: Entity<Project> =
+            Project::test(fs, [tree.path().join("project").as_path()], cx).await;
+        let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+
+        let input = TerminalToolInput {
+            command: "cat".to_owned(),
+            cd: tree
+                .path()
+                .join("project")
+                .as_path()
+                .to_string_lossy()
+                .to_string(),
+        };
+        let result = cx.update(|cx| {
+            TerminalTool::run(
+                Arc::new(TerminalTool::new(cx)),
+                serde_json::to_value(input).unwrap(),
+                &[],
+                project.clone(),
+                action_log.clone(),
+                None,
+                cx,
+            )
+        });
+
+        let output = result.output.await.log_err();
+        assert_eq!(output, Some("Command executed successfully.".into()));
+    }
+
+    #[gpui::test]
+    async fn test_working_directory(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        if cfg!(windows) {
+            return;
+        }
+
+        init_test(&executor, cx);
 
         let fs = Arc::new(RealFs::new(None, executor));
         let tree = TempTree::new(json!({
@@ -580,7 +684,7 @@ mod tests {
 
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
-                Arc::new(TerminalTool),
+                Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
                 &[],
                 project.clone(),
