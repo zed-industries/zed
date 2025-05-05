@@ -1085,8 +1085,13 @@ impl KeymapSerializer {
     }
 
     fn append_line(&mut self, content: &str) -> &mut Self {
-        self.result
-            .push_str(&self.indent_cache[self.current_indent]);
+        // We should not have more than 5 levels of indentation in theory, but just in case we do,
+        if let Some(indent) = self.indent_cache.get(self.current_indent) {
+            self.result.push_str(indent);
+        } else {
+            self.indent_cache.push("  ".repeat(self.current_indent));
+            self.result.push_str(self.indent_cache.last().unwrap());
+        }
         self.result.push_str(content);
         #[cfg(target_os = "windows")]
         self.result.push_str("\r\n");
@@ -1095,98 +1100,49 @@ impl KeymapSerializer {
         self
     }
 
-    fn append_custom_content(&mut self, f: impl FnOnce(&mut String, &mut usize)) -> &mut Self {
-        self.result
-            .push_str(&self.indent_cache[self.current_indent]);
-        f(&mut self.result, &mut self.current_indent);
-        self
-    }
-
     fn append_line_with_indent(&mut self, content: &str, indent_action: IndentAction) -> &mut Self {
         match indent_action {
             IndentAction::Increase => {
-                self.result
-                    .push_str(&self.indent_cache[self.current_indent]);
+                self.append_line(content);
                 self.current_indent += 1;
             }
             IndentAction::Decrease => {
                 self.current_indent -= 1;
-                self.result
-                    .push_str(&self.indent_cache[self.current_indent]);
+                self.append_line(content);
             }
         }
         self
     }
 }
 
-fn push_str_with_indent(result: &mut String, indent_level: usize, content: &str) {
-    for _ in 0..indent_level {
-        result.push(' ');
-        result.push(' ');
-    }
-    result.push_str(content);
-    #[cfg(target_os = "windows")]
-    result.push_str("\r\n");
-    #[cfg(not(target_os = "windows"))]
-    result.push('\n');
-}
-
-fn serialize_skipped_actions(result: &mut String, skipped: Vec<(String, String)>) {
-    for (action, reason) in skipped {
-        push_str_with_indent(result, 0, "// Skipped shortcut:");
-        for line in action.lines() {
-            push_str_with_indent(result, 0, &format!("// {}", line));
-        }
-        push_str_with_indent(result, 0, &format!("// Skipped reason: {}", reason));
-        push_str_with_indent(result, 0, "//");
-    }
-}
-
 fn serialize_actions(
-    result: &mut String,
+    serializer: &mut KeymapSerializer,
     context: Option<String>,
     actions: &[ZedBindingContent],
-    mut indent_level: usize,
     has_more: bool,
 ) {
-    push_str_with_indent(result, indent_level, "{");
-    indent_level += 1;
+    serializer.append_line_with_indent("{", IndentAction::Increase);
     if let Some(ref context) = context {
-        push_str_with_indent(
-            result,
-            indent_level,
-            &format!(r#""{}": "{}","#, "context", context),
-        );
+        serializer.append_line(&format!(r#""context": "{}","#, context));
     }
-    push_str_with_indent(result, indent_level, r#""bindings": {"#);
-    indent_level += 1;
+    serializer.append_line_with_indent(r#""bindings": {"#, IndentAction::Increase);
     for (action_idx, action) in actions.iter().enumerate() {
         let is_last_action = action_idx == actions.len() - 1;
 
         for comment in action.comments.lines() {
-            push_str_with_indent(result, indent_level, &format!("// {}", comment));
+            serializer.append_line(&format!("// {}", comment));
         }
         if is_last_action {
-            push_str_with_indent(
-                result,
-                indent_level,
-                &format!(r#""{}": "{}""#, action.binding, action.action),
-            );
+            serializer.append_line(&format!(r#""{}": "{}""#, action.binding, action.action));
         } else {
-            push_str_with_indent(
-                result,
-                indent_level,
-                &format!(r#""{}": "{}","#, action.binding, action.action),
-            );
+            serializer.append_line(&format!(r#""{}": "{}","#, action.binding, action.action));
         }
     }
-    indent_level -= 1;
-    push_str_with_indent(result, indent_level, "}");
-    indent_level -= 1;
+    serializer.append_line_with_indent("}", IndentAction::Decrease);
     if has_more {
-        push_str_with_indent(result, indent_level, "},");
+        serializer.append_line_with_indent("},", IndentAction::Decrease);
     } else {
-        push_str_with_indent(result, indent_level, "}");
+        serializer.append_line_with_indent("}", IndentAction::Decrease);
     }
 }
 
@@ -1195,53 +1151,29 @@ fn serialize_all(
     other_bindings: HashMap<String, Vec<ZedBindingContent>>,
     skipped: Vec<(String, String)>,
 ) -> String {
-    let mut result = String::new();
-    let mut indent_level = 0;
-    push_str_with_indent(&mut result, indent_level, "// Zed keymap");
-    push_str_with_indent(&mut result, indent_level, "//");
-    push_str_with_indent(
-        &mut result,
-        indent_level,
-        "// For information on binding keys, see the Zed",
-    );
-    push_str_with_indent(
-        &mut result,
-        indent_level,
-        "// documentation: https://zed.dev/docs/key-bindings",
-    );
-    push_str_with_indent(&mut result, indent_level, "//");
-    push_str_with_indent(
-        &mut result,
-        indent_level,
-        "// To see the default key bindings run `zed: open default keymap`",
-    );
-    push_str_with_indent(&mut result, indent_level, "// from the command palette.");
-    push_str_with_indent(&mut result, indent_level, "//");
-    push_str_with_indent(
-        &mut result,
-        indent_level,
-        "// NOTE: This file is auto-generated by Zed.",
-    );
-    push_str_with_indent(&mut result, indent_level, "//");
+    let mut serializer = KeymapSerializer::new();
     if !skipped.is_empty() {
-        push_str_with_indent(
-            &mut result,
-            indent_level,
-            "// The following bindings are skipped:",
-        );
-        push_str_with_indent(&mut result, indent_level, "//");
-        serialize_skipped_actions(&mut result, skipped);
+        serializer
+            .append_line("// The following bindings are skipped:")
+            .append_line("//");
+        for (action, reason) in skipped {
+            serializer.append_line("// Skipped shortcut:");
+            for line in action.lines() {
+                serializer.append_line(&format!("// {}", line));
+            }
+            serializer
+                .append_line(&format!("// Skipped reason: {}", reason))
+                .append_line("//");
+        }
     }
 
-    push_str_with_indent(&mut result, indent_level, "[");
-    indent_level += 1;
+    serializer.append_line_with_indent("[", IndentAction::Increase);
 
     if !normal_bindings.is_empty() {
         serialize_actions(
-            &mut result,
+            &mut serializer,
             None,
             &normal_bindings,
-            indent_level,
             !other_bindings.is_empty(),
         );
     }
@@ -1249,12 +1181,11 @@ fn serialize_all(
         let last_idx = other_bindings.len() - 1;
         for (idx, (context, actions)) in other_bindings.into_iter().enumerate() {
             let has_more = idx != last_idx;
-            serialize_actions(&mut result, Some(context), &actions, indent_level, has_more);
+            serialize_actions(&mut serializer, Some(context), &actions, has_more);
         }
     }
-    indent_level -= 1;
-    push_str_with_indent(&mut result, indent_level, "]");
-    result
+    serializer.append_line_with_indent("]", IndentAction::Decrease);
+    serializer.result
 }
 
 #[cfg(test)]
