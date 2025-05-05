@@ -172,7 +172,7 @@ Every change we make to Zed's system prompt and tool set, needs to be backed by 
 Every time the LLM performs a weird change or investigate a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
 
 The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
-In case of a thumbs down, a new textare will show up where you can add more specifics about what happened.
+In case of a thumbs down, a new textarea will show up where you can add more specifics about what happened.
 You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.
 
 > Note that rating threads does send your data to Zed's servers.
