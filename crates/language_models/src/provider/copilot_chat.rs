@@ -189,7 +189,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn supports_tools(&self) -> bool {
         match self.model {
-            CopilotChatModel::Claude3_5Sonnet
+            CopilotChatModel::Gpt4o
+            | CopilotChatModel::Gpt4_1
+            | CopilotChatModel::O4Mini
+            | CopilotChatModel::Claude3_5Sonnet
             | CopilotChatModel::Claude3_7Sonnet
             | CopilotChatModel::Claude3_7SonnetThinking => true,
             _ => false,

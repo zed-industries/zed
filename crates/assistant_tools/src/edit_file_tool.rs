@@ -5,22 +5,26 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MultiBuffer, PathKey};
+use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
 use gpui::{
-    AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId, Task, WeakEntity,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
+    Task, TextStyle, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
     language_settings::SoftWrap,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
@@ -162,6 +166,19 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
+            // Set the agent's location to the top of the file
+            project
+                .update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::MIN,
+                        }),
+                        cx,
+                    );
+                })
+                .ok();
+
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
             if input.old_string.is_empty() {
@@ -222,8 +239,8 @@ impl Tool for EditFileTool {
             };
 
             let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
-
+                action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+                let base_version = diff.base_version.clone();
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, cx);
@@ -231,6 +248,21 @@ impl Tool for EditFileTool {
                     buffer.snapshot()
                 });
                 action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+
+                // Set the agent's location to the position of the first edit
+                if let Some(first_edit) = snapshot.edits_since::<usize>(&base_version).next() {
+                    let position = snapshot.anchor_before(first_edit.new.start);
+                    project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position,
+                            }),
+                            cx,
+                        );
+                    })
+                }
+
                 snapshot
             })?;
 
@@ -282,7 +314,7 @@ pub struct EditFileToolCard {
 }
 
 impl EditFileToolCard {
-    fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
+    pub fn new(path: PathBuf, project: Entity<Project>, window: &mut Window, cx: &mut App) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::without_headers(Capability::ReadOnly));
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(
@@ -302,6 +334,7 @@ impl EditFileToolCard {
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_scrollbars(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_read_only(true);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -323,7 +356,11 @@ impl EditFileToolCard {
         }
     }
 
-    fn set_diff(
+    pub fn has_diff(&self) -> bool {
+        self.total_lines.is_some()
+    }
+
+    pub fn set_diff(
         &mut self,
         path: Arc<Path>,
         old_text: String,
@@ -343,14 +380,14 @@ impl EditFileToolCard {
                         .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
-                    let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+                    multibuffer.clear(cx);
+                    multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
                         diff_hunk_ranges,
                         editor::DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     );
-                    debug_assert!(is_newly_added);
                     multibuffer.add_diff(buffer_diff, cx);
                     let end = multibuffer.len(cx);
                     Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
@@ -462,54 +499,77 @@ impl ToolCard for EditFileToolCard {
             .rounded_t_md()
             .when(!failed, |header| header.bg(codeblock_header_bg))
             .child(path_label_button)
-            .map(|container| {
-                if failed {
-                    container.child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Close)
-                                    .size(IconSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .child(
-                                Disclosure::new(
-                                    ("edit-file-error-disclosure", self.editor_unique_id),
-                                    self.error_expanded,
-                                )
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown)
-                                .on_click(cx.listener(
-                                    move |this, _event, _window, _cx| {
-                                        this.error_expanded = !this.error_expanded;
-                                    },
-                                )),
-                            ),
-                    )
-                } else {
-                    container.child(
-                        Disclosure::new(
-                            ("edit-file-disclosure", self.editor_unique_id),
-                            self.preview_expanded,
+            .when(failed, |header| {
+                header.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
                         )
-                        .opened_icon(IconName::ChevronUp)
-                        .closed_icon(IconName::ChevronDown)
-                        .on_click(cx.listener(
-                            move |this, _event, _window, _cx| {
-                                this.preview_expanded = !this.preview_expanded;
-                            },
-                        )),
+                        .child(
+                            Disclosure::new(
+                                ("edit-file-error-disclosure", self.editor_unique_id),
+                                self.error_expanded,
+                            )
+                            .opened_icon(IconName::ChevronUp)
+                            .closed_icon(IconName::ChevronDown)
+                            .on_click(cx.listener(
+                                move |this, _event, _window, _cx| {
+                                    this.error_expanded = !this.error_expanded;
+                                },
+                            )),
+                        ),
+                )
+            })
+            .when(!failed && self.has_diff(), |header| {
+                header.child(
+                    Disclosure::new(
+                        ("edit-file-disclosure", self.editor_unique_id),
+                        self.preview_expanded,
                     )
-                }
+                    .opened_icon(IconName::ChevronUp)
+                    .closed_icon(IconName::ChevronDown)
+                    .on_click(cx.listener(
+                        move |this, _event, _window, _cx| {
+                            this.preview_expanded = !this.preview_expanded;
+                        },
+                    )),
+                )
             });
 
         let (editor, editor_line_height) = self.editor.update(cx, |editor, cx| {
+            let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
             let line_height = editor
                 .style()
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
                 .unwrap_or_default();
 
-            let element = editor.render(window, cx);
+            let settings = ThemeSettings::get_global(cx);
+            let element = EditorElement::new(
+                &cx.entity(),
+                EditorStyle {
+                    background: cx.theme().colors().editor_background,
+                    horizontal_padding: rems(0.25).to_pixels(window.rem_size()),
+                    local_player: cx.theme().players().local(),
+                    text: TextStyle {
+                        color: cx.theme().colors().editor_foreground,
+                        font_family: settings.buffer_font.family.clone(),
+                        font_features: settings.buffer_font.features.clone(),
+                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                        font_size: ui_font_size.into(),
+                        font_weight: settings.buffer_font.weight,
+                        line_height: relative(settings.buffer_line_height.value()),
+                        ..Default::default()
+                    },
+                    scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+                    syntax: cx.theme().syntax().clone(),
+                    status: cx.theme().status().clone(),
+                    ..Default::default()
+                },
+            );
+
             (element.into_any_element(), line_height)
         });
 
@@ -536,6 +596,50 @@ impl ToolCard for EditFileToolCard {
 
         const DEFAULT_COLLAPSED_LINES: u32 = 10;
         let is_collapsible = self.total_lines.unwrap_or(0) > DEFAULT_COLLAPSED_LINES;
+
+        let waiting_for_diff = {
+            let styles = [
+                ("w_4_5", (0.1, 0.85), 2000),
+                ("w_1_4", (0.2, 0.75), 2200),
+                ("w_2_4", (0.15, 0.64), 1900),
+                ("w_3_5", (0.25, 0.72), 2300),
+                ("w_2_5", (0.3, 0.56), 1800),
+            ];
+
+            let mut container = v_flex()
+                .p_3()
+                .gap_1p5()
+                .border_t_1()
+                .border_color(border_color)
+                .bg(cx.theme().colors().editor_background);
+
+            for (width_method, pulse_range, duration_ms) in styles.iter() {
+                let (min_opacity, max_opacity) = *pulse_range;
+                let placeholder = match *width_method {
+                    "w_4_5" => div().w_3_4(),
+                    "w_1_4" => div().w_1_4(),
+                    "w_2_4" => div().w_2_4(),
+                    "w_3_5" => div().w_3_5(),
+                    "w_2_5" => div().w_2_5(),
+                    _ => div().w_1_2(),
+                }
+                .id("loading_div")
+                .h_2()
+                .rounded_full()
+                .bg(cx.theme().colors().element_active)
+                .with_animation(
+                    "loading_pulsate",
+                    Animation::new(Duration::from_millis(*duration_ms))
+                        .repeat()
+                        .with_easing(pulsating_between(min_opacity, max_opacity)),
+                    |label, delta| label.opacity(delta),
+                );
+
+                container = container.child(placeholder);
+            }
+
+            container
+        };
 
         v_flex()
             .mb_2()
@@ -572,53 +676,57 @@ impl ToolCard for EditFileToolCard {
                         ),
                 )
             })
-            .when(!failed && self.preview_expanded, |card| {
-                card.child(
-                    v_flex()
-                        .relative()
-                        .map(|editor_container| {
-                            if self.full_height_expanded {
-                                editor_container.h_full()
-                            } else {
+            .when(!self.has_diff() && !failed, |card| {
+                card.child(waiting_for_diff)
+            })
+            .when(
+                !failed && self.preview_expanded && self.has_diff(),
+                |card| {
+                    card.child(
+                        v_flex()
+                            .relative()
+                            .h_full()
+                            .when(!self.full_height_expanded, |editor_container| {
                                 editor_container
-                                    .h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
-                            }
-                        })
-                        .overflow_hidden()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(div().pl_1().child(editor))
-                        .when(
-                            !self.full_height_expanded && is_collapsible,
-                            |editor_container| editor_container.child(gradient_overlay),
-                        ),
-                )
-                .when(is_collapsible, |editor_container| {
-                    editor_container.child(
-                        h_flex()
-                            .id(("expand-button", self.editor_unique_id))
-                            .flex_none()
-                            .cursor_pointer()
-                            .h_5()
-                            .justify_center()
-                            .rounded_b_md()
+                                    .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
+                            })
+                            .overflow_hidden()
                             .border_t_1()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
-                            .child(
-                                Icon::new(full_height_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .tooltip(Tooltip::text(full_height_tooltip_label))
-                            .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                this.full_height_expanded = !this.full_height_expanded;
-                            })),
+                            .child(editor)
+                            .when(
+                                !self.full_height_expanded && is_collapsible,
+                                |editor_container| editor_container.child(gradient_overlay),
+                            ),
                     )
-                })
-            })
+                    .when(is_collapsible, |editor_container| {
+                        editor_container.child(
+                            h_flex()
+                                .id(("expand-button", self.editor_unique_id))
+                                .flex_none()
+                                .cursor_pointer()
+                                .h_5()
+                                .justify_center()
+                                .border_t_1()
+                                .border_color(border_color)
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|style| {
+                                    style.bg(cx.theme().colors().element_hover.opacity(0.1))
+                                })
+                                .child(
+                                    Icon::new(full_height_icon)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .tooltip(Tooltip::text(full_height_tooltip_label))
+                                .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                    this.full_height_expanded = !this.full_height_expanded;
+                                })),
+                        )
+                    })
+                },
+            )
     }
 }
 
@@ -681,9 +789,16 @@ async fn build_buffer_diff(
         })?
         .await;
 
+    let secondary_diff = cx.new(|cx| {
+        let mut diff = BufferDiff::new(&buffer, cx);
+        diff.set_snapshot(diff_snapshot.clone(), &buffer, cx);
+        diff
+    })?;
+
     cx.new(|cx| {
         let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
+        diff.set_snapshot(diff_snapshot, &buffer, cx);
+        diff.set_secondary_diff(secondary_diff);
         diff
     })
 }

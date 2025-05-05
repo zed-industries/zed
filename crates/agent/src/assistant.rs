@@ -6,8 +6,11 @@ mod assistant_panel;
 mod buffer_codegen;
 mod context;
 mod context_picker;
+mod context_server_configuration;
+mod context_server_tool;
 mod context_store;
 mod context_strip;
+mod debug;
 mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -30,6 +33,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{App, actions, impl_actions};
+use language::LanguageRegistry;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -43,7 +47,9 @@ pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
-pub use agent_diff::{AgentDiff, AgentDiffToolbar};
+pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
+pub use context_store::ContextStore;
+pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
     agent,
@@ -60,7 +66,6 @@ actions!(
         AddContextServer,
         RemoveSelectedThread,
         Chat,
-        ChatMode,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
         FocusUp,
@@ -74,7 +79,8 @@ actions!(
         Keep,
         Reject,
         RejectAll,
-        KeepAll
+        KeepAll,
+        Follow
     ]
 );
 
@@ -107,11 +113,13 @@ pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
+    language_registry: Arc<LanguageRegistry>,
     cx: &mut App,
 ) {
     AssistantSettings::register(cx);
     thread_store::init(cx);
     assistant_panel::init(cx);
+    context_server_configuration::init(language_registry, cx);
 
     inline_assistant::init(
         fs.clone(),

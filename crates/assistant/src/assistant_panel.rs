@@ -1192,21 +1192,19 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_server::Restart,
+        _action: &project::context_server_store::Restart,
         _: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return;
-        };
-
-        assistant_panel.update(cx, |assistant_panel, cx| {
-            assistant_panel
-                .context_store
-                .update(cx, |context_store, cx| {
-                    context_store.restart_context_servers(cx);
-                });
-        });
+        workspace
+            .project()
+            .read(cx)
+            .context_server_store()
+            .update(cx, |store, cx| {
+                for server in store.running_servers() {
+                    store.restart_server(&server.id(), cx).log_err();
+                }
+            });
     }
 }
 

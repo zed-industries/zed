@@ -16,6 +16,8 @@ use super::Tooltip;
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
+    /// title, link_label, link_url
+    HeaderWithLink(SharedString, SharedString, SharedString), // This could be folded into header
     Label(SharedString),
     Entry(ContextMenuEntry),
     CustomEntry {
@@ -52,6 +54,7 @@ pub struct ContextMenuEntry {
     end_slot_icon: Option<IconName>,
     end_slot_title: Option<SharedString>,
     end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
+    show_end_slot_on_hover: bool,
 }
 
 impl ContextMenuEntry {
@@ -70,6 +73,7 @@ impl ContextMenuEntry {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }
     }
 
@@ -330,6 +334,20 @@ impl ContextMenu {
         self
     }
 
+    pub fn header_with_link(
+        mut self,
+        title: impl Into<SharedString>,
+        link_label: impl Into<SharedString>,
+        link_url: impl Into<SharedString>,
+    ) -> Self {
+        self.items.push(ContextMenuItem::HeaderWithLink(
+            title.into(),
+            link_label.into(),
+            link_url.into(),
+        ));
+        self
+    }
+
     pub fn separator(mut self) -> Self {
         self.items.push(ContextMenuItem::Separator);
         self
@@ -365,6 +383,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -392,6 +411,35 @@ impl ContextMenu {
             end_slot_icon: Some(end_slot_icon),
             end_slot_title: Some(end_slot_title),
             end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: false,
+        }));
+        self
+    }
+
+    pub fn entry_with_end_slot_on_hover(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: None,
+            icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: true,
         }));
         self
     }
@@ -418,6 +466,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -472,6 +521,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -500,6 +550,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -519,6 +570,7 @@ impl ContextMenu {
             end_slot_icon: None,
             end_slot_title: None,
             end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -752,6 +804,25 @@ impl ContextMenu {
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
                 .inset(true)
                 .into_any_element(),
+            ContextMenuItem::HeaderWithLink(header, label, url) => {
+                let url = url.clone();
+                let link_id = ElementId::Name(format!("link-{}", url).into());
+                ListSubHeader::new(header.clone())
+                    .inset(true)
+                    .end_slot(
+                        Button::new(link_id, label.clone())
+                            .color(Color::Muted)
+                            .label_size(LabelSize::Small)
+                            .size(ButtonSize::None)
+                            .style(ButtonStyle::Transparent)
+                            .on_click(move |_, _, cx| {
+                                let url = url.clone();
+                                cx.open_url(&url);
+                            })
+                            .into_any_element(),
+                    )
+                    .into_any_element()
+            }
             ContextMenuItem::Label(label) => ListItem::new(ix)
                 .inset(true)
                 .disabled(true)
@@ -822,6 +893,7 @@ impl ContextMenu {
             end_slot_icon,
             end_slot_title,
             end_slot_handler,
+            show_end_slot_on_hover,
         } = entry;
         let this = cx.weak_entity();
 
@@ -884,6 +956,7 @@ impl ContextMenu {
             )
             .child(
                 ListItem::new(ix)
+                    .group_name("label_container")
                     .inset(true)
                     .disabled(*disabled)
                     .toggle_state(Some(ix) == self.selected_index)
@@ -942,8 +1015,8 @@ impl ContextMenu {
                             .zip(end_slot_title.as_ref())
                             .zip(end_slot_handler.as_ref()),
                         |el, (((icon, action), title), handler)| {
-                            el.end_slot(
-                                IconButton::new("end-slot-icon", *icon)
+                            el.end_slot({
+                                let icon_button = IconButton::new("end-slot-icon", *icon)
                                     .shape(IconButtonShape::Square)
                                     .tooltip({
                                         let action_context = self.action_context.clone();
@@ -981,8 +1054,17 @@ impl ContextMenu {
                                             })
                                             .ok();
                                         }
-                                    }),
-                            )
+                                    });
+
+                                if *show_end_slot_on_hover {
+                                    div()
+                                        .visible_on_hover("label_container")
+                                        .child(icon_button)
+                                        .into_any_element()
+                                } else {
+                                    icon_button.into_any_element()
+                                }
+                            })
                         },
                     )
                     .on_click({
@@ -1010,6 +1092,7 @@ impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
         match self {
             ContextMenuItem::Header(_)
+            | ContextMenuItem::HeaderWithLink(_, _, _)
             | ContextMenuItem::Separator
             | ContextMenuItem::Label { .. } => false,
             ContextMenuItem::Entry(ContextMenuEntry { disabled, .. }) => !disabled,

@@ -3,6 +3,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use db::kvp::KEY_VALUE_STORE;
+use serde::{Deserialize, Serialize};
+
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AssistantContext, AssistantPanelDelegate, ConfigurationError, ContextEditor, ContextEvent,
@@ -22,36 +25,46 @@ use gpui::{
     Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
+use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip, prelude::*,
+    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
+    prelude::*,
 };
-use util::ResultExt as _;
-use workspace::Workspace;
+use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
+use workspace::{CollaboratorId, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
+use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
+use crate::agent_diff::AgentDiff;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::ui::UsageBanner;
 use crate::{
-    AddContextServer, AgentDiff, DeleteRecentlyOpenThread, ExpandMessageEditor, InlineAssistant,
-    NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
+    InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
+
+const AGENT_PANEL_KEY: &str = "agent_panel";
+
+#[derive(Serialize, Deserialize)]
+struct SerializedAssistantPanel {
+    width: Option<Pixels>,
+}
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -93,8 +106,11 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
-                        AgentDiff::deploy_in_workspace(thread, workspace, window, cx);
+                        AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
+                })
+                .register_action(|workspace, _: &Follow, window, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
@@ -136,6 +152,7 @@ enum ActiveView {
     PromptEditor {
         context_editor: Entity<ContextEditor>,
         title_editor: Entity<Editor>,
+        buffer_search_bar: Entity<BufferSearchBar>,
         _subscriptions: Vec<gpui::Subscription>,
     },
     History,
@@ -201,6 +218,7 @@ impl ActiveView {
 
     pub fn prompt_editor(
         context_editor: Entity<ContextEditor>,
+        language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
@@ -269,9 +287,16 @@ impl ActiveView {
             }),
         ];
 
+        let buffer_search_bar =
+            cx.new(|cx| BufferSearchBar::new(Some(language_registry), window, cx));
+        buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+            buffer_search_bar.set_active_pane_item(Some(&context_editor), window, cx)
+        });
+
         Self::PromptEditor {
             context_editor,
             title_editor: editor,
+            buffer_search_bar,
             _subscriptions: subscriptions,
         }
     }
@@ -302,9 +327,22 @@ pub struct AssistantPanel {
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    pending_serialization: Option<Task<Result<()>>>,
 }
 
 impl AssistantPanel {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
+        let width = self.width;
+        self.pending_serialization = Some(cx.background_spawn(async move {
+            KEY_VALUE_STORE
+                .write_kvp(
+                    AGENT_PANEL_KEY.into(),
+                    serde_json::to_string(&SerializedAssistantPanel { width })?,
+                )
+                .await?;
+            anyhow::Ok(())
+        }));
+    }
     pub fn load(
         workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
@@ -343,8 +381,19 @@ impl AssistantPanel {
                 })?
                 .await?;
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                cx.new(|cx| {
+            let serialized_panel = if let Some(panel) = cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(AGENT_PANEL_KEY) })
+                .await
+                .log_err()
+                .flatten()
+            {
+                Some(serde_json::from_str::<SerializedAssistantPanel>(&panel)?)
+            } else {
+                None
+            };
+
+            let panel = workspace.update_in(cx, |workspace, window, cx| {
+                let panel = cx.new(|cx| {
                     Self::new(
                         workspace,
                         thread_store,
@@ -353,8 +402,17 @@ impl AssistantPanel {
                         window,
                         cx,
                     )
-                })
-            })
+                });
+                if let Some(serialized_panel) = serialized_panel {
+                    panel.update(cx, |panel, cx| {
+                        panel.width = serialized_panel.width.map(|w| w.round());
+                        cx.notify();
+                    });
+                }
+                panel
+            })?;
+
+            Ok(panel)
         })
     }
 
@@ -385,6 +443,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -431,6 +490,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+        AgentDiff::set_active_thread(&workspace, &thread, window, cx);
 
         let active_thread_subscription =
             cx.subscribe(&active_thread, |_, _, event, cx| match &event {
@@ -458,7 +518,8 @@ impl AssistantPanel {
 
                         for entry in recently_opened.iter() {
                             let summary = entry.summary(cx);
-                            menu = menu.entry_with_end_slot(
+
+                            menu = menu.entry_with_end_slot_on_hover(
                                 summary,
                                 None,
                                 {
@@ -585,6 +646,7 @@ impl AssistantPanel {
             assistant_navigation_menu: None,
             width: None,
             height: None,
+            pending_serialization: None,
         }
     }
 
@@ -672,6 +734,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
 
         let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
@@ -684,6 +747,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -731,7 +795,12 @@ impl AssistantPanel {
         });
 
         self.set_active_view(
-            ActiveView::prompt_editor(context_editor.clone(), window, cx),
+            ActiveView::prompt_editor(
+                context_editor.clone(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
             window,
             cx,
         );
@@ -807,7 +876,12 @@ impl AssistantPanel {
                 });
 
                 this.set_active_view(
-                    ActiveView::prompt_editor(editor.clone(), window, cx),
+                    ActiveView::prompt_editor(
+                        editor.clone(),
+                        this.language_registry.clone(),
+                        window,
+                        cx,
+                    ),
                     window,
                     cx,
                 );
@@ -869,6 +943,7 @@ impl AssistantPanel {
                 cx,
             )
         });
+        AgentDiff::set_active_thread(&self.workspace, &thread, window, cx);
 
         let active_thread_subscription =
             cx.subscribe(&self.thread, |_, _, event, cx| match &event {
@@ -881,6 +956,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -944,20 +1020,20 @@ impl AssistantPanel {
         let thread = self.thread.read(cx).thread().clone();
         self.workspace
             .update(cx, |workspace, cx| {
-                AgentDiff::deploy_in_workspace(thread, workspace, window, cx)
+                AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx)
             })
             .log_err();
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let context_server_manager = self.thread_store.read(cx).context_server_manager();
+        let context_server_store = self.project.read(cx).context_server_store();
         let tools = self.thread_store.read(cx).tools();
         let fs = self.fs.clone();
 
         self.set_active_view(ActiveView::Configuration, window, cx);
         self.configuration =
             Some(cx.new(|cx| {
-                AssistantConfiguration::new(fs, context_server_manager, tools, window, cx)
+                AssistantConfiguration::new(fs, context_server_store, tools, window, cx)
             }));
 
         if let Some(configuration) = self.configuration.as_ref() {
@@ -1208,6 +1284,7 @@ impl Panel for AssistantPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
+        self.serialize(cx);
         cx.notify();
     }
 
@@ -1311,9 +1388,30 @@ impl AssistantPanel {
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
+        let user_store = self.user_store.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
+        let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
+            maybe!({
+                let amount = user_store.model_request_usage_amount()?;
+                let limit = user_store.model_request_usage_limit()?.variant?;
+
+                Some(RequestUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        });
+
+        let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty,
@@ -1399,30 +1497,74 @@ impl AssistantPanel {
             .anchor(Corner::TopRight)
             .with_handle(self.assistant_dropdown_menu_handle.clone())
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                    menu.when(!is_empty, |menu| {
-                        menu.action(
-                            "Start New From Summary",
-                            Box::new(NewThread {
-                                from_thread_id: Some(thread_id.clone()),
+                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                    menu = menu
+                        .action("New Thread", NewThread::default().boxed_clone())
+                        .action("New Text Thread", NewTextThread.boxed_clone())
+                        .when(!is_empty, |menu| {
+                            menu.action(
+                                "New From Summary",
+                                Box::new(NewThread {
+                                    from_thread_id: Some(thread_id.clone()),
+                                }),
+                            )
+                        })
+                        .separator();
+
+                    menu = menu
+                        .header("MCP Servers")
+                        .action(
+                            "View Server Extensions",
+                            Box::new(zed_actions::Extensions {
+                                category_filter: Some(
+                                    zed_actions::ExtensionCategoryFilter::ContextServers,
+                                ),
                             }),
                         )
-                        .separator()
-                    })
-                    .action("New Text Thread", NewTextThread.boxed_clone())
-                    .action("Rules Library", Box::new(OpenRulesLibrary::default()))
-                    .action("Settings", Box::new(OpenConfiguration))
-                    .separator()
-                    .header("MCPs")
-                    .action(
-                        "View Server Extensions",
-                        Box::new(zed_actions::Extensions {
-                            category_filter: Some(
-                                zed_actions::ExtensionCategoryFilter::ContextServers,
-                            ),
-                        }),
-                    )
-                    .action("Add Custom Server", Box::new(AddContextServer))
+                        .action("Add Custom Server…", Box::new(AddContextServer))
+                        .separator();
+
+                    if let Some(usage) = last_usage {
+                        menu = menu
+                            .header_with_link("Prompt Usage", "Manage", account_url.clone())
+                            .custom_entry(
+                                move |_window, cx| {
+                                    let used_percentage = match usage.limit {
+                                        UsageLimit::Limited(limit) => {
+                                            Some((usage.amount as f32 / limit as f32) * 100.)
+                                        }
+                                        UsageLimit::Unlimited => None,
+                                    };
+
+                                    h_flex()
+                                        .flex_1()
+                                        .gap_1p5()
+                                        .children(used_percentage.map(|percent| {
+                                            ProgressBar::new("usage", percent, 100., cx)
+                                        }))
+                                        .child(
+                                            Label::new(match usage.limit {
+                                                UsageLimit::Limited(limit) => {
+                                                    format!("{} / {limit}", usage.amount)
+                                                }
+                                                UsageLimit::Unlimited => {
+                                                    format!("{} / ∞", usage.amount)
+                                                }
+                                            })
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        )
+                                        .into_any_element()
+                                },
+                                move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                            )
+                            .separator()
+                    }
+
+                    menu = menu
+                        .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                        .action("Settings", Box::new(OpenConfiguration));
+                    menu
                 }))
             });
 
@@ -1840,7 +1982,7 @@ impl AssistantPanel {
                                     .child(
                                         Banner::new()
                                             .severity(ui::Severity::Warning)
-                                            .children(
+                                            .child(
                                                 Label::new(
                                                     "Configure at least one LLM provider to start using the panel.",
                                                 )
@@ -1873,7 +2015,7 @@ impl AssistantPanel {
                                     .child(
                                         Banner::new()
                                             .severity(ui::Severity::Warning)
-                                            .children(
+                                            .child(
                                                 h_flex()
                                                     .w_full()
                                                     .children(
@@ -1891,20 +2033,39 @@ impl AssistantPanel {
             })
     }
 
-    fn render_usage_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let plan = self
-            .user_store
+    fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let tool_use_limit_reached = self
+            .thread
             .read(cx)
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            })
-            .unwrap_or(zed_llm_client::Plan::Free);
-        let usage = self.thread.read(cx).last_usage()?;
+            .thread()
+            .read(cx)
+            .tool_use_limit_reached();
+        if !tool_use_limit_reached {
+            return None;
+        }
 
-        Some(UsageBanner::new(plan, usage).into_any_element())
+        let model = self
+            .thread
+            .read(cx)
+            .thread()
+            .read(cx)
+            .configured_model()?
+            .model;
+
+        let max_mode_upsell = if model.supports_max_mode() {
+            " Enable max mode for unlimited tool use."
+        } else {
+            ""
+        };
+
+        Some(
+            Banner::new()
+                .severity(ui::Severity::Info)
+                .child(h_flex().child(Label::new(format!(
+                    "Consecutive tool use limit reached.{max_mode_upsell}"
+                ))))
+                .into_any_element(),
+        )
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2188,12 +2349,46 @@ impl Render for AssistantPanel {
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_usage_banner(cx))
+                    .children(self.render_tool_use_limit_reached(cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor { context_editor, .. } => {
-                    parent.child(context_editor.clone())
+                ActiveView::PromptEditor {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => {
+                    let mut registrar = DivRegistrar::new(
+                        |this, _, _cx| match &this.active_view {
+                            ActiveView::PromptEditor {
+                                buffer_search_bar, ..
+                            } => Some(buffer_search_bar.clone()),
+                            _ => None,
+                        },
+                        cx,
+                    );
+                    BufferSearchBar::register(&mut registrar);
+                    parent.child(
+                        registrar
+                            .into_div()
+                            .size_full()
+                            .map(|parent| {
+                                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                                    if buffer_search_bar.is_dismissed() {
+                                        return parent;
+                                    }
+                                    parent.child(
+                                        div()
+                                            .p(DynamicSpacing::Base08.rems(cx))
+                                            .border_b_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .bg(cx.theme().colors().editor_background)
+                                            .child(buffer_search_bar.render(window, cx)),
+                                    )
+                                })
+                            })
+                            .child(context_editor.clone()),
+                    )
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })

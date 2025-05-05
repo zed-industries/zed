@@ -5291,7 +5291,7 @@ impl ProjectItem for TestProjectItemView {
 
     fn for_project_item(
         _: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         project_item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,
