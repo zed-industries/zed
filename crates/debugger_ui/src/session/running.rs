@@ -733,6 +733,7 @@ impl RunningState {
                         weak_workspace,
                         None,
                         weak_project,
+                        false,
                         window,
                         cx,
                     )
