@@ -444,11 +444,13 @@ async fn test_handle_start_debugging_request(
                 .read(cx)
                 .session(cx);
             let parent_session = active_session.read(cx).parent_session().unwrap();
+            let mut original_binary = parent_session.read(cx).binary().clone();
+            original_binary.request_args = StartDebuggingRequestArguments {
+                request: StartDebuggingRequestArgumentsRequest::Launch,
+                configuration: fake_config.clone(),
+            };
 
-            assert_eq!(
-                active_session.read(cx).definition(),
-                parent_session.read(cx).definition()
-            );
+            assert_eq!(active_session.read(cx).binary(), &original_binary);
         })
         .unwrap();
 
@@ -1662,6 +1664,33 @@ async fn test_active_debug_line_setting(executor: BackgroundExecutor, cx: &mut T
         handled_second_stacktrace.load(Ordering::SeqCst),
         "Second stacktrace request handler was not called"
     );
+
+    client
+        .fake_event(dap::messages::Events::Continued(dap::ContinuedEvent {
+            thread_id: 0,
+            all_threads_continued: Some(true),
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    second_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
+
+    main_editor.update(cx, |editor, _| {
+        let active_debug_lines: Vec<_> = editor.highlighted_rows::<ActiveDebugLine>().collect();
+
+        assert!(
+            active_debug_lines.is_empty(),
+            "There shouldn't be any active debug lines"
+        );
+    });
 
     // Clean up
     let shutdown_session = project.update(cx, |project, cx| {

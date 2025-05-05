@@ -83,15 +83,6 @@ pub enum DebugArgsRequest {
     Attach(AttachRequest),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// The type of task modal to spawn
-pub enum TaskModal {
-    /// Show regular tasks
-    ScriptModal,
-    /// Show debug tasks
-    DebugModal,
-}
-
 /// What to do with the terminal pane and tab, after the command was started.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -302,7 +293,29 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn substitute_all_template_variables_in_str<A: AsRef<str>>(
+pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) -> Option<String> {
+    let mut variable_names = HashMap::default();
+    let mut substituted_variables = HashSet::default();
+    let task_variables = context
+        .task_variables
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let key_string = key.to_string();
+            if !variable_names.contains_key(&key_string) {
+                variable_names.insert(key_string.clone(), key.clone());
+            }
+            (key_string, value.as_str())
+        })
+        .collect::<HashMap<_, _>>();
+    substitute_all_template_variables_in_str(
+        template_str,
+        &task_variables,
+        &variable_names,
+        &mut substituted_variables,
+    )
+}
+pub fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
@@ -358,6 +371,31 @@ fn substitute_all_template_variables_in_vec(
     Some(expanded)
 }
 
+pub fn substitute_variables_in_map(
+    keys_and_values: &HashMap<String, String>,
+    context: &TaskContext,
+) -> Option<HashMap<String, String>> {
+    let mut variable_names = HashMap::default();
+    let mut substituted_variables = HashSet::default();
+    let task_variables = context
+        .task_variables
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let key_string = key.to_string();
+            if !variable_names.contains_key(&key_string) {
+                variable_names.insert(key_string.clone(), key.clone());
+            }
+            (key_string, value.as_str())
+        })
+        .collect::<HashMap<_, _>>();
+    substitute_all_template_variables_in_map(
+        keys_and_values,
+        &task_variables,
+        &variable_names,
+        &mut substituted_variables,
+    )
+}
 fn substitute_all_template_variables_in_map(
     keys_and_values: &HashMap<String, String>,
     task_variables: &HashMap<String, &str>,

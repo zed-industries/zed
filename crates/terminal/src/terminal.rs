@@ -46,7 +46,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{ResultExt, paths::home_dir, truncate_and_trailoff};
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -601,6 +601,8 @@ pub struct TerminalContent {
     pub cursor_char: char,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_word: Option<HoveredWord>,
+    pub scrolled_to_top: bool,
+    pub scrolled_to_bottom: bool,
 }
 
 #[derive(Clone)]
@@ -625,6 +627,8 @@ impl Default for TerminalContent {
             cursor_char: Default::default(),
             terminal_bounds: Default::default(),
             last_hovered_word: None,
+            scrolled_to_top: false,
+            scrolled_to_bottom: false,
         }
     }
 }
@@ -1208,6 +1212,14 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
+    pub fn scrolled_to_top(&self) -> bool {
+        self.last_content.scrolled_to_top
+    }
+
+    pub fn scrolled_to_bottom(&self) -> bool {
+        self.last_content.scrolled_to_bottom
+    }
+
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
         if self.last_content.terminal_bounds != new_bounds {
@@ -1405,6 +1417,8 @@ impl Terminal {
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
             last_hovered_word: last_content.last_hovered_word.clone(),
+            scrolled_to_top: content.display_offset == term.history_size(),
+            scrolled_to_bottom: content.display_offset == 0,
         }
     }
 
@@ -1851,8 +1865,7 @@ impl Terminal {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx
-                    .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
+                return cx.spawn(async move |_| completion_receiver.recv().await.ok().flatten());
             } else if let Ok(status) = task.completion_rx.try_recv() {
                 return Task::ready(status);
             }

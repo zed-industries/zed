@@ -148,23 +148,6 @@ impl Console {
             expression
         });
 
-        self.add_messages(
-            [OutputEvent {
-                category: None,
-                output: format!("> {expression}"),
-                group: None,
-                variables_reference: None,
-                source: None,
-                line: None,
-                column: None,
-                data: None,
-                location_reference: None,
-            }]
-            .iter(),
-            window,
-            cx,
-        );
-
         self.session.update(cx, |session, cx| {
             session
                 .evaluate(

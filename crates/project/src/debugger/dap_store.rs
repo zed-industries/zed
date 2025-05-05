@@ -50,7 +50,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal};
-use util::ResultExt as _;
+use util::{ResultExt as _, merge_json_value_into};
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -393,7 +393,8 @@ impl DapStore {
 
     pub fn new_session(
         &mut self,
-        template: DebugTaskDefinition,
+        label: SharedString,
+        adapter: DebugAdapterName,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
@@ -409,7 +410,8 @@ impl DapStore {
             self.breakpoint_store.clone(),
             session_id,
             parent_session,
-            template.clone(),
+            label,
+            adapter,
             cx,
         );
 
@@ -435,6 +437,7 @@ impl DapStore {
     pub fn boot_session(
         &self,
         session: Entity<Session>,
+        definition: DebugTaskDefinition,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
@@ -442,21 +445,23 @@ impl DapStore {
         };
 
         let dap_store = cx.weak_entity();
-        let breakpoint_store = self.breakpoint_store.clone();
-        let definition = session.read(cx).definition();
 
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
-                let binary = this
+                let mut binary = this
                     .update(cx, |this, cx| {
                         this.get_debug_adapter_binary(definition.clone(), cx)
                     })?
                     .await?;
 
+                if let Some(args) = definition.initialize_args {
+                    merge_json_value_into(args, &mut binary.request_args.configuration);
+                }
+
                 session
                     .update(cx, |session, cx| {
-                        session.boot(binary, worktree, breakpoint_store, dap_store, cx)
+                        session.boot(binary, worktree, dap_store, cx)
                     })?
                     .await
             }

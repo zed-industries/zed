@@ -14,6 +14,7 @@ use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
+use crate::context::AgentContextHandle;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 
@@ -143,7 +144,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
 
         let selected_index = self.selected_index;
         cx.spawn(async move |this, cx| {
-            let included = add_symbol_task.await?;
+            let (_, included) = add_symbol_task.await?;
             this.update(cx, |this, _| {
                 if let Some(mat) = this.delegate.matches.get_mut(selected_index) {
                     mat.is_included = included;
@@ -187,7 +188,7 @@ pub(crate) fn add_symbol(
     workspace: Entity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
-) -> Task<Result<bool>> {
+) -> Task<Result<(Option<AgentContextHandle>, bool)>> {
     let project = workspace.read(cx).project().clone();
     let open_buffer_task = project.update(cx, |project, cx| {
         project.open_buffer(symbol.path.clone(), cx)

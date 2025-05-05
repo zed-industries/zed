@@ -88,7 +88,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TcpArguments {
     pub host: Ipv4Addr,
     pub port: u16,
@@ -127,7 +127,7 @@ impl TcpArguments {
 )]
 pub struct DebugTaskDefinition {
     pub label: SharedString,
-    pub adapter: SharedString,
+    pub adapter: DebugAdapterName,
     pub request: DebugRequest,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
@@ -153,7 +153,7 @@ impl DebugTaskDefinition {
     pub fn to_scenario(&self) -> DebugScenario {
         DebugScenario {
             label: self.label.clone(),
-            adapter: self.adapter.clone(),
+            adapter: self.adapter.clone().into(),
             build: None,
             request: Some(self.request.clone()),
             stop_on_entry: self.stop_on_entry,
@@ -207,7 +207,7 @@ impl DebugTaskDefinition {
                 .map(TcpArgumentsTemplate::from_proto)
                 .transpose()?,
             stop_on_entry: proto.stop_on_entry,
-            adapter: proto.adapter.into(),
+            adapter: DebugAdapterName(proto.adapter.into()),
             request: match request {
                 proto::debug_task_definition::Request::DebugAttachRequest(config) => {
                     DebugRequest::Attach(AttachRequest {
@@ -229,7 +229,7 @@ impl DebugTaskDefinition {
 }
 
 /// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DebugAdapterBinary {
     pub command: String,
     pub arguments: Vec<String>,
@@ -444,10 +444,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         log::info!("Getting latest version of debug adapter {}", self.name());
         delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
         if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-            log::info!(
-                "Installiing latest version of debug adapter {}",
-                self.name()
-            );
+            log::info!("Installing latest version of debug adapter {}", self.name());
             delegate.update_status(self.name(), DapStatus::Downloading);
             match self.install_binary(version, delegate).await {
                 Ok(_) => {

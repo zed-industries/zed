@@ -1,5 +1,6 @@
-use context_server::{ContextServerSettings, ServerCommand, ServerConfig};
+use context_server::ContextServerCommand;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, prelude::*};
+use project::project_settings::{ContextServerConfiguration, ProjectSettings};
 use serde_json::json;
 use settings::update_settings_file;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
@@ -77,11 +78,11 @@ impl AddContextServerModal {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
-                update_settings_file::<ContextServerSettings>(fs.clone(), cx, |settings, _| {
+                update_settings_file::<ProjectSettings>(fs.clone(), cx, |settings, _| {
                     settings.context_servers.insert(
                         name.into(),
-                        ServerConfig {
-                            command: Some(ServerCommand {
+                        ContextServerConfiguration {
+                            command: Some(ContextServerCommand {
                                 path,
                                 args,
                                 env: None,
