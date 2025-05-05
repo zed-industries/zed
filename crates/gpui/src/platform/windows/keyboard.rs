@@ -70,14 +70,14 @@ impl PlatformKeyboardMapper for WindowsKeyboardMapper {
         Ok(key)
     }
 
-    fn get_shifted_key(&self, key: &str) -> Result<String> {
+    fn get_shifted_key(&self, key: &str) -> Result<Option<String>> {
         if is_immutable_key(key) {
-            return Ok(key.to_string());
+            return Ok(None);
         }
         if is_alphabetic_key(key) {
-            return Ok(key.to_uppercase());
+            return Ok(Some(key.to_uppercase()));
         }
-        get_shifted_character(key)
+        Ok(Some(get_shifted_character(key)?))
     }
 }
 

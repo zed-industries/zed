@@ -4,6 +4,7 @@ use std::{
     error::Error,
     fmt::{Display, Write},
 };
+use util::ResultExt;
 
 use super::{PlatformKeyboardMapper, ScanCode, is_alphabetic_key};
 
@@ -229,7 +230,11 @@ impl Keystroke {
     /// For example, `ctrl-shift-[` becomes `ctrl-{`, `ctrl-shift-=` becomes `ctrl-+`.
     pub fn into_gpui_style(mut self, keyboard_mapper: &dyn PlatformKeyboardMapper) -> Keystroke {
         if self.modifiers.shift && !is_alphabetic_key(&self.key) && self.key.len() == 1 {
-            if let Ok(shifted_key) = keyboard_mapper.get_shifted_key(&self.key) {
+            if let Some(shifted_key) = keyboard_mapper
+                .get_shifted_key(&self.key)
+                .log_err()
+                .flatten()
+            {
                 self.modifiers.shift = false;
                 self.key = shifted_key;
             }

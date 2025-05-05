@@ -15,7 +15,7 @@ pub trait PlatformKeyboardMapper {
     /// TODO:
     fn scan_code_to_key(&self, scan_code: ScanCode) -> Result<String>;
     /// TODO:
-    fn get_shifted_key(&self, key: &str) -> Result<String>;
+    fn get_shifted_key(&self, key: &str) -> Result<Option<String>>;
 }
 
 /// TODO:
@@ -33,7 +33,7 @@ impl PlatformKeyboardMapper for TestKeyboardMapper {
         self.mapper.scan_code_to_key(scan_code)
     }
 
-    fn get_shifted_key(&self, key: &str) -> Result<String> {
+    fn get_shifted_key(&self, key: &str) -> Result<Option<String>> {
         self.mapper.get_shifted_key(key)
     }
 }
@@ -60,8 +60,8 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
         anyhow::bail!("EmptyKeyboardMapper does not support scan codes")
     }
 
-    fn get_shifted_key(&self, key: &str) -> Result<String> {
-        Ok(key.to_uppercase())
+    fn get_shifted_key(&self, _key: &str) -> Result<Option<String>> {
+        anyhow::bail!("EmptyKeyboardMapper does not support shifted keys")
     }
 }
 
@@ -166,7 +166,7 @@ mod tests {
         for ch in 'a'..='z' {
             let key = ch.to_string();
             let shifted_key = key.to_uppercase();
-            assert_eq!(mapper.get_shifted_key(&key).unwrap(), shifted_key);
+            assert_eq!(mapper.get_shifted_key(&key).unwrap().unwrap(), shifted_key);
         }
 
         let shift_pairs = [
@@ -193,7 +193,12 @@ mod tests {
             ("/", "?"),
         ];
         for (key, shifted_key) in shift_pairs {
-            assert_eq!(mapper.get_shifted_key(key).unwrap(), shifted_key);
+            assert_eq!(mapper.get_shifted_key(key).unwrap().unwrap(), shifted_key);
+        }
+
+        let immutable_keys = ["backspace", "space", "tab", "enter", "f1"];
+        for key in immutable_keys {
+            assert_eq!(mapper.get_shifted_key(key).unwrap(), None);
         }
     }
 
