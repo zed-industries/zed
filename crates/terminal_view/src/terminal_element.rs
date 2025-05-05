@@ -653,10 +653,14 @@ impl Element for TerminalElement {
                 let font_weight = terminal_settings.font_weight.unwrap_or_default();
 
                 let line_height = terminal_settings.line_height.value();
-                let font_size = terminal_settings.font_size;
 
-                let font_size =
-                    font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
+                let font_size = if self.embedded {
+                    window.text_style().font_size.to_pixels(window.rem_size())
+                } else {
+                    terminal_settings
+                        .font_size
+                        .map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx))
+                };
 
                 let theme = cx.theme().clone();
 

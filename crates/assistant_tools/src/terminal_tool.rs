@@ -527,6 +527,7 @@ impl ToolCard for TerminalToolCard {
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
+                        .text_ui_sm(cx)
                         .child(terminal.clone()),
                 )
             })
