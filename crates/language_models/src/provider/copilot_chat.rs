@@ -436,6 +436,7 @@ impl CopilotChatLanguageModel {
             }
         }
 
+        let mut tool_called = false;
         let mut messages: Vec<ChatMessage> = Vec::new();
         for message in request_messages {
             let text_content = {
@@ -476,6 +477,7 @@ impl CopilotChatLanguageModel {
                     let mut tool_calls = Vec::new();
                     for content in &message.content {
                         if let MessageContent::ToolUse(tool_use) = content {
+                            tool_called = true;
                             tool_calls.push(ToolCall {
                                 id: tool_use.id.to_string(),
                                 content: copilot::copilot_chat::ToolCallContent::Function {
@@ -503,7 +505,7 @@ impl CopilotChatLanguageModel {
             }
         }
 
-        let tools = request
+        let mut tools = request
             .tools
             .iter()
             .map(|tool| Tool::Function {
@@ -513,7 +515,21 @@ impl CopilotChatLanguageModel {
                     parameters: tool.input_schema.clone(),
                 },
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        // The API will return a Bad Request (with no error message) when tools
+        // were used previously in the conversation but no tools are provided as
+        // part of this request. Inserting a dummy tool seems to circumvent this
+        // error.
+        if tool_called && tools.is_empty() {
+            tools.push(Tool::Function {
+                function: copilot::copilot_chat::Function {
+                    name: "noop".to_string(),
+                    description: "No operation".to_string(),
+                    parameters: serde_json::json!({}),
+                },
+            });
+        }
 
         Ok(CopilotChatRequest {
             intent: true,
