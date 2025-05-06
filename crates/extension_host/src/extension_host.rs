@@ -1141,11 +1141,6 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        let languages_to_add = new_index
-            .languages
-            .iter_mut()
-            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
-            .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut icon_themes_to_add = Vec::new();
@@ -1187,47 +1182,7 @@ impl ExtensionStore {
 
         self.proxy.register_grammars(grammars_to_add);
 
-        for (_, language) in languages_to_add {
-            let mut language_path = self.installed_dir.clone();
-            language_path.extend([
-                Path::new(language.extension.as_ref()),
-                language.path.as_path(),
-            ]);
-            let Some(config) = std::fs::read_to_string(language_path.join("config.toml")).ok()
-            else {
-                log::error!("Could not load config.toml in {:?}", language_path);
-                continue;
-            };
-            let Some(config) = ::toml::from_str::<LanguageConfig>(&config).ok() else {
-                log::error!(
-                    "Could not parse language config.toml in {:?}",
-                    language_path
-                );
-                continue;
-            };
-            language.config = config.clone();
-            self.proxy.register_language(
-                language.config.clone(),
-                Arc::new(move || {
-                    let queries = load_plugin_queries(&language_path);
-                    let context_provider =
-                        std::fs::read_to_string(language_path.join("tasks.json"))
-                            .ok()
-                            .and_then(|contents| {
-                                let definitions =
-                                    serde_json_lenient::from_str(&contents).log_err()?;
-                                Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
-                            });
-
-                    Ok(LoadedLanguage {
-                        config: config.clone(),
-                        queries,
-                        context_provider,
-                        toolchain_provider: None,
-                    })
-                }),
-            );
-        }
+        let installed_dir = self.installed_dir.clone();
 
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
@@ -1238,11 +1193,59 @@ impl ExtensionStore {
             .filter_map(|name| new_index.extensions.get(name).cloned())
             .collect::<Vec<_>>();
 
-        self.extension_index = new_index;
-        cx.notify();
-        cx.emit(Event::ExtensionsUpdated);
-
         cx.spawn(async move |this, cx| {
+            let languages_to_add = new_index
+                .languages
+                .iter_mut()
+                .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+                .collect::<Vec<_>>();
+            for (_, language) in languages_to_add {
+                let mut language_path = installed_dir.clone();
+                language_path.extend([
+                    Path::new(language.extension.as_ref()),
+                    language.path.as_path(),
+                ]);
+                let Some(config) = fs.load(&language_path.join("config.toml")).await.ok() else {
+                    log::error!("Could not load config.toml in {:?}", language_path);
+                    continue;
+                };
+                let Some(config) = ::toml::from_str::<LanguageConfig>(&config).ok() else {
+                    log::error!(
+                        "Could not parse language config.toml in {:?}",
+                        language_path
+                    );
+                    continue;
+                };
+                language.config = config.clone();
+                proxy.register_language(
+                    language.config.clone(),
+                    Arc::new(move || {
+                        let queries = load_plugin_queries(&language_path);
+                        let context_provider =
+                            std::fs::read_to_string(language_path.join("tasks.json"))
+                                .ok()
+                                .and_then(|contents| {
+                                    let definitions =
+                                        serde_json_lenient::from_str(&contents).log_err()?;
+                                    Some(Arc::new(ContextProviderWithTasks::new(definitions))
+                                        as Arc<_>)
+                                });
+
+                        Ok(LoadedLanguage {
+                            config: config.clone(),
+                            queries,
+                            context_provider,
+                            toolchain_provider: None,
+                        })
+                    }),
+                );
+            }
+            this.update(cx, |this, cx| {
+                this.extension_index = new_index;
+                cx.notify();
+                cx.emit(Event::ExtensionsUpdated);
+            })
+            .ok();
             cx.background_spawn({
                 let fs = fs.clone();
                 async move {
