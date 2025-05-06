@@ -1,20 +1,16 @@
 //! socks proxy
 use anyhow::{Result, anyhow};
-use futures::io::{AsyncRead, AsyncWrite};
-use http_client::Uri;
-use tokio_socks::{
-    io::Compat,
-    tcp::{Socks4Stream, Socks5Stream},
-};
+use http_client::Url;
+use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
 pub(crate) async fn connect_socks_proxy_stream(
-    proxy: Option<&Uri>,
+    proxy: Option<&Url>,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
     let stream = match parse_socks_proxy(proxy) {
         Some((socks_proxy, SocksVersion::V4)) => {
             let stream = Socks4Stream::connect_with_socket(
-                Compat::new(smol::net::TcpStream::connect(socks_proxy).await?),
+                tokio::net::TcpStream::connect(socks_proxy).await?,
                 rpc_host,
             )
             .await
@@ -23,20 +19,22 @@ pub(crate) async fn connect_socks_proxy_stream(
         }
         Some((socks_proxy, SocksVersion::V5)) => Box::new(
             Socks5Stream::connect_with_socket(
-                Compat::new(smol::net::TcpStream::connect(socks_proxy).await?),
+                tokio::net::TcpStream::connect(socks_proxy).await?,
                 rpc_host,
             )
             .await
             .map_err(|err| anyhow!("error connecting to socks {}", err))?,
         ) as Box<dyn AsyncReadWrite>,
-        None => Box::new(smol::net::TcpStream::connect(rpc_host).await?) as Box<dyn AsyncReadWrite>,
+        None => {
+            Box::new(tokio::net::TcpStream::connect(rpc_host).await?) as Box<dyn AsyncReadWrite>
+        }
     };
     Ok(stream)
 }
 
-fn parse_socks_proxy(proxy: Option<&Uri>) -> Option<((String, u16), SocksVersion)> {
-    let proxy_uri = proxy?;
-    let scheme = proxy_uri.scheme_str()?;
+fn parse_socks_proxy(proxy: Option<&Url>) -> Option<((String, u16), SocksVersion)> {
+    let proxy_url = proxy?;
+    let scheme = proxy_url.scheme();
     let socks_version = if scheme.starts_with("socks4") {
         // socks4
         SocksVersion::V4
@@ -46,7 +44,7 @@ fn parse_socks_proxy(proxy: Option<&Uri>) -> Option<((String, u16), SocksVersion
     } else {
         return None;
     };
-    if let (Some(host), Some(port)) = (proxy_uri.host(), proxy_uri.port_u16()) {
+    if let Some((host, port)) = proxy_url.host().zip(proxy_url.port_or_known_default()) {
         Some(((host.to_string(), port), socks_version))
     } else {
         None
@@ -60,5 +58,11 @@ enum SocksVersion {
     V5,
 }
 
-pub(crate) trait AsyncReadWrite: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncReadWrite for T {}
+pub(crate) trait AsyncReadWrite:
+    tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static
+{
+}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> AsyncReadWrite
+    for T
+{
+}

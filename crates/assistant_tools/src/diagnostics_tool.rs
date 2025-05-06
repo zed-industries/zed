@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
@@ -46,7 +46,7 @@ impl Tool for DiagnosticsTool {
         "diagnostics".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
     }
 
@@ -58,7 +58,7 @@ impl Tool for DiagnosticsTool {
         IconName::XCircle
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<DiagnosticsToolInput>(format)
     }
 
@@ -66,11 +66,11 @@ impl Tool for DiagnosticsTool {
         if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
             .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
+                Some(path) if !path.is_empty() => Some(path),
                 _ => None,
             })
         {
-            format!("Check diagnostics for {path}")
+            format!("Check diagnostics for {}", MarkdownInlineCode(&path))
         } else {
             "Check project diagnostics".to_string()
         }
@@ -82,15 +82,17 @@ impl Tool for DiagnosticsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
             .ok()
             .and_then(|input| input.path)
         {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)))
+                        .into();
                 };
 
                 let buffer =
@@ -125,6 +127,7 @@ impl Tool for DiagnosticsTool {
                         Ok(output)
                     }
                 })
+                .into()
             }
             _ => {
                 let project = project.read(cx);
@@ -155,9 +158,10 @@ impl Tool for DiagnosticsTool {
                 });
 
                 if has_diagnostics {
-                    Task::ready(Ok(output))
+                    Task::ready(Ok(output)).into()
                 } else {
                     Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                        .into()
                 }
             }
         }

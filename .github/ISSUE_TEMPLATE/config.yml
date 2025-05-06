@@ -4,9 +4,6 @@ contact_links:
   - name: Feature Request
     url: https://github.com/zed-industries/zed/discussions/new/choose
     about: To request a feature, open a new Discussion in one of the appropriate Discussion categories
-  - name: Zed Discussion Forum
-    url: https://github.com/zed-industries/zed/discussions
-    about: A community discussion forum
-  - name: "Zed Discord: #Support Channel"
+  - name: "Zed Discord"
     url: https://zed.dev/community-links
     about: Real-time discussion and user support

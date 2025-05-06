@@ -1,15 +1,15 @@
 use super::{
-    BoolExt,
+    BoolExt, MacKeyboardLayout,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer, screen_capture,
+    is_macos_version_at_least, renderer, screen_capture,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
-    PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task, WindowAppearance,
-    WindowParams, hash,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
+    SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -22,8 +22,8 @@ use cocoa::{
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
-        NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSOperatingSystemVersion,
+        NSProcessInfo, NSRange, NSString, NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -353,8 +353,7 @@ impl MacPlatform {
                                     ns_string(key_to_native(&keystroke.key).as_ref()),
                                 )
                                 .autorelease();
-                            if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0)
-                            {
+                            if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
                                 let _: () = msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
                             }
                             item.setKeyEquivalentModifierMask_(mask);
@@ -402,16 +401,16 @@ impl MacPlatform {
         }
     }
 
-    fn os_version() -> Result<SemanticVersion> {
-        unsafe {
+    fn os_version() -> SemanticVersion {
+        let version = unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            Ok(SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            ))
-        }
+            process_info.operatingSystemVersion()
+        };
+        SemanticVersion::new(
+            version.majorVersion as usize,
+            version.minorVersion as usize,
+            version.patchVersion as usize,
+        )
     }
 }
 
@@ -553,7 +552,8 @@ impl Platform for MacPlatform {
     }
 
     fn is_screen_capture_supported(&self) -> bool {
-        true
+        let min_version = NSOperatingSystemVersion::new(12, 3, 0);
+        is_macos_version_at_least(min_version)
     }
 
     fn screen_capture_sources(
@@ -608,7 +608,7 @@ impl Platform for MacPlatform {
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
-        if Self::os_version().ok() < Some(SemanticVersion::new(12, 0, 0)) {
+        if Self::os_version() < SemanticVersion::new(12, 0, 0) {
             return Task::ready(Err(anyhow!(
                 "macOS 12.0 or later is required to register URL schemes"
             )));
@@ -735,9 +735,7 @@ impl Platform for MacPlatform {
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
                                     if chunks.len() == 3 && chunks[1].starts_with(chunks[2]) {
-                                        if Self::os_version()
-                                            .is_ok_and(|v| v >= SemanticVersion::new(15, 0, 0))
-                                        {
+                                        if Self::os_version() >= SemanticVersion::new(15, 0, 0) {
                                             let new_filename = OsStr::from_bytes(
                                                 &filename.as_bytes()
                                                     [..chunks[0].len() + 1 + chunks[1].len()],
@@ -827,20 +825,8 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn keyboard_layout(&self) -> String {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let input_source_id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let input_source_id: *const std::os::raw::c_char =
-                msg_send![input_source_id, UTF8String];
-            let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
-
-            input_source_id.to_string()
-        }
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(MacKeyboardLayout::new())
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -1503,6 +1489,7 @@ unsafe extern "C" {
     pub(super) fn LMGetKbdType() -> u16;
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
+    pub(super) static kTISPropertyLocalizedName: CFStringRef;
 }
 
 mod security {

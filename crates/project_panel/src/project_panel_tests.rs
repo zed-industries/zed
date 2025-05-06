@@ -766,6 +766,50 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "      .dockerignore",
         ]
     );
+
+    // Test empty filename and filename with only whitespace
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          [EDITOR: '']  <== selected",
+            "          a-different-filename.tar.gz",
+            "    > C",
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("   ", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.cancel(&menu::Cancel, window, cx)
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          a-different-filename.tar.gz  <== selected",
+            "    > C",
+            "      .dockerignore",
+        ]
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -2026,6 +2070,20 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
+
+    let (scan1_complete, scan2_complete) = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx);
+        let worktree1 = worktrees.next().unwrap();
+        let worktree2 = worktrees.next().unwrap();
+        (
+            worktree1.read(cx).as_local().unwrap().scan_complete(),
+            worktree2.read(cx).as_local().unwrap().scan_complete(),
+        )
+    });
+    scan1_complete.await;
+    scan2_complete.await;
+    cx.run_until_parked();
+
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
@@ -2692,6 +2750,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         shift: true,
         ..Default::default()
     };
+    cx.run_until_parked();
     cx.simulate_modifiers_change(modifiers_with_shift);
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
@@ -4889,6 +4948,71 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+        ],
+        "Initial state with nothing selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("hello_from_no_selections", window, cx)
+            });
+            panel.confirm_edit(window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+            separator!("      hello_from_no_selections  <== selected  <== marked"),
+        ],
+        "A new file is created under the root directory"
+    );
+}
+
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
     let path = path.as_ref();
     panel.update(cx, |panel, cx| {
@@ -5167,7 +5291,7 @@ impl ProjectItem for TestProjectItemView {
 
     fn for_project_item(
         _: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         project_item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -5184,6 +5308,10 @@ impl ProjectItem for TestProjectItemView {
 
 impl Item for TestProjectItemView {
     type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Test".into()
+    }
 }
 
 impl EventEmitter<()> for TestProjectItemView {}

@@ -67,6 +67,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // The default font size for text in the agent panel
+  "agent_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -80,6 +82,8 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -165,7 +169,23 @@
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
   // Determines when the mouse cursor should be hidden in an editor or input box.
+  //
+  // 1. Never hide the mouse cursor:
+  //    "never"
+  // 2. Hide only when typing:
+  //    "on_typing"
+  // 3. Hide on both typing and cursor movement:
+  //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines how snippets are sorted relative to other completion items.
+  //
+  // 1. Place snippets at the top of the completion list:
+  //    "top"
+  // 2. Place snippets normally without any preference:
+  //    "inline"
+  // 3. Place snippets at the bottom of the completion list:
+  //    "bottom"
+  "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -179,8 +199,6 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
-  // The debounce delay before querying highlights based on the selected text.
-  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
@@ -210,7 +228,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 3,
+  "expand_excerpt_lines": 5,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -284,8 +302,10 @@
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
-    // Whether to show the Selections menu in the editor toolbar
-    "selections_menu": true
+    // Whether to show the Selections menu in the editor toolbar.
+    "selections_menu": true,
+    // Whether to show agent review buttons in the editor toolbar.
+    "agent_review": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -586,6 +606,12 @@
     // Default: main
     "fallback_branch_name": "main",
 
+    // Whether to sort entries in the panel by path
+    // or by status (the default).
+    //
+    // Default: false
+    "sort_by_path": false,
+
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -606,77 +632,88 @@
     // Default width of the notification panel.
     "default_width": 380
   },
-  "assistant": {
+  "agent": {
     // Version of this setting.
     "version": "2",
-    // Whether the assistant is enabled.
+    // Whether the agent is enabled.
     "enabled": true,
-    // Whether to show the assistant panel button in the status bar.
+    // Whether to show the agent panel button in the status bar.
     "button": true,
-    // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
+    // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Default width when the assistant is docked to the left or right.
+    // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
-    // Default height when the assistant is docked to the bottom.
+    // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new chats.
+    // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
-    // The model to use when applying edits from the assistant.
+    // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
+    // When enabled, the agent will stream edits.
+    "stream_edits": false,
+    // When enabled, agent edits will be displayed in single-file editors for review
+    "single_file_review": true,
     "default_profile": "write",
     "profiles": {
+      "write": {
+        "name": "Write",
+        "enable_all_context_servers": true,
+        "tools": {
+          "copy_path": true,
+          "create_directory": true,
+          "create_file": true,
+          "delete_path": true,
+          "diagnostics": true,
+          "edit_file": true,
+          "fetch": true,
+          "list_directory": true,
+          "move_path": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "grep": true,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true
+        }
+      },
       "ask": {
         "name": "Ask",
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "contents": true,
           "diagnostics": true,
           "fetch": true,
-          "list_directory": false,
+          "list_directory": true,
           "now": true,
-          "path_search": true,
+          "find_path": true,
           "read_file": true,
-          "regex_search": true,
-          "thinking": true
+          "open": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true
         }
       },
-      "write": {
-        "name": "Write",
-        "enable_all_context_servers": true,
-        "tools": {
-          "bash": true,
-          "batch_tool": true,
-          "code_symbols": true,
-          "copy_path": false,
-          "create_file": true,
-          "delete_path": false,
-          "diagnostics": true,
-          "find_replace_file": true,
-          "fetch": true,
-          "list_directory": false,
-          "move_path": false,
-          "now": true,
-          "path_search": true,
-          "read_file": true,
-          "regex_search": true,
-          "symbol_info": true,
-          "thinking": true
-        }
+      "minimal": {
+        "name": "Minimal",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
-    // Where to show notifications when an agent has either completed
+    // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
     // "primary_screen" - Show the notification only on your primary screen (default)
@@ -801,7 +838,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -884,6 +934,11 @@
       // The minimum severity of the diagnostics to show inline.
       // Shows all diagnostics when not specified.
       "max_severity": null
+    },
+    "cargo": {
+      // When enabled, Zed disables rust-analyzer's check on save and starts to query
+      // Cargo diagnostics separately.
+      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
@@ -963,9 +1018,9 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
-    // Whether edit predictions are enabled in the assistant panel.
+    // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_assistant": true
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1136,7 +1191,8 @@
   "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
-    "variables": {}
+    "variables": {},
+    "enabled": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1456,6 +1512,8 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
+    //     // A special flag for rust-analyzer integration, to use server-provided tasks
+    //     enable_lsp_tasks": true,
     //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {
@@ -1481,7 +1539,12 @@
     "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
-    "custom_digraphs": {}
+    "custom_digraphs": {},
+    // Cursor shape for the each mode.
+    // Specify the mode as the key and the shape as the value.
+    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // The shape can be one of the following: "block", "bar", "underline", "hollow".
+    "cursor_shape": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
@@ -1551,8 +1614,7 @@
   //   }
   // ]
   "ssh_connections": [],
-
-  // Configures context servers for use in the Assistant.
+  // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
     "stepping_granularity": "line",

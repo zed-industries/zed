@@ -150,7 +150,7 @@ pub mod command_palette {
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [GiveFeedback]);
+    actions!(feedback, [FileBugReport, GiveFeedback]);
 }
 
 pub mod theme_selector {
@@ -190,16 +190,31 @@ pub mod agent {
 }
 
 pub mod assistant {
-    use gpui::{action_with_deprecated_aliases, actions, impl_actions};
+    use gpui::{
+        action_with_deprecated_aliases, actions, impl_action_with_deprecated_aliases, impl_actions,
+    };
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use uuid::Uuid;
 
-    actions!(assistant, [ToggleFocus, ShowConfiguration]);
+    action_with_deprecated_aliases!(agent, ToggleFocus, ["assistant::ToggleFocus"]);
 
-    action_with_deprecated_aliases!(
-        assistant,
-        OpenPromptLibrary,
-        ["assistant::DeployPromptLibrary"]
+    actions!(assistant, [ShowConfiguration]);
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct OpenRulesLibrary {
+        #[serde(skip)]
+        pub prompt_to_select: Option<Uuid>,
+    }
+
+    impl_action_with_deprecated_aliases!(
+        agent,
+        OpenRulesLibrary,
+        [
+            "assistant::OpenRulesLibrary",
+            "assistant::DeployPromptLibrary"
+        ]
     );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]

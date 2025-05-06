@@ -1,18 +1,17 @@
 use crate::{
     debugger_panel::DebugPanel,
     session::running::stack_frame_list::StackFrameEntry,
-    tests::{active_debug_session_panel, init_test, init_test_workspace},
+    tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
 use dap::{
     StackFrame,
-    requests::{StackTrace, Threads},
+    requests::{Scopes, StackTrace, Threads},
 };
 use editor::{Editor, ToPoint as _};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
 use std::sync::Arc;
-use task::LaunchConfig;
 use unindent::Unindent as _;
 use util::path;
 
@@ -51,29 +50,18 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
 
     let stack_frames = vec![
         StackFrame {
@@ -122,19 +110,17 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
         },
     ];
 
-    client
-        .on_request::<StackTrace, _>({
-            let stack_frames = Arc::new(stack_frames.clone());
-            move |_, args| {
-                assert_eq!(1, args.thread_id);
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
 
-                Ok(dap::StackTraceResponse {
-                    stack_frames: (*stack_frames).clone(),
-                    total_frames: None,
-                })
-            }
-        })
-        .await;
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -152,57 +138,40 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
 
     // trigger to load threads
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state
-                    .session()
-                    .update(cx, |session, cx| session.threads(cx));
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
     });
 
     cx.run_until_parked();
 
     // select first thread
-    active_debug_session_panel(workspace, cx).update_in(cx, |session, _, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state.select_current_thread(
-                    &running_state
-                        .session()
-                        .update(cx, |session, cx| session.threads(cx)),
-                    cx,
-                );
-            });
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
     });
 
     cx.run_until_parked();
 
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
         let stack_frame_list = session
-            .mode()
-            .as_running()
-            .unwrap()
+            .running_state()
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
-            assert_eq!(Some(1), stack_frame_list.current_stack_frame_id());
+            assert_eq!(Some(1), stack_frame_list.selected_stack_frame_id());
             assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
         });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -241,29 +210,19 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     });
 
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
+
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
     let stack_frames = vec![
         StackFrame {
@@ -312,19 +271,17 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         },
     ];
 
-    client
-        .on_request::<StackTrace, _>({
-            let stack_frames = Arc::new(stack_frames.clone());
-            move |_, args| {
-                assert_eq!(1, args.thread_id);
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
 
-                Ok(dap::StackTraceResponse {
-                    stack_frames: (*stack_frames).clone(),
-                    total_frames: None,
-                })
-            }
-        })
-        .await;
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -342,33 +299,26 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
 
     // trigger threads to load
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state
-                    .session()
-                    .update(cx, |session, cx| session.threads(cx));
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
     });
 
     cx.run_until_parked();
 
     // select first thread
-    active_debug_session_panel(workspace, cx).update_in(cx, |session, _, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state.select_current_thread(
-                    &running_state
-                        .session()
-                        .update(cx, |session, cx| session.threads(cx)),
-                    cx,
-                );
-            });
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
     });
 
     cx.run_until_parked();
@@ -394,7 +344,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                     let snapshot = editor.snapshot(window, cx);
 
                     editor
-                        .highlighted_rows::<editor::DebugCurrentRowHighlight>()
+                        .highlighted_rows::<editor::ActiveDebugLine>()
                         .map(|(range, _)| {
                             let start = range.start.to_point(&snapshot.buffer_snapshot);
                             let end = range.end.to_point(&snapshot.buffer_snapshot);
@@ -410,14 +360,12 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
-                .update(cx, |this, cx| this.active_session(cx))
+                .update(cx, |this, _| this.active_session())
                 .unwrap();
 
             active_debug_panel_item
                 .read(cx)
-                .mode()
-                .as_running()
-                .unwrap()
+                .running_state()
                 .read(cx)
                 .stack_frame_list()
                 .clone()
@@ -425,7 +373,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         .unwrap();
 
     stack_frame_list.update(cx, |stack_frame_list, cx| {
-        assert_eq!(Some(1), stack_frame_list.current_stack_frame_id());
+        assert_eq!(Some(1), stack_frame_list.selected_stack_frame_id());
         assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
     });
 
@@ -440,7 +388,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     cx.run_until_parked();
 
     stack_frame_list.update(cx, |stack_frame_list, cx| {
-        assert_eq!(Some(2), stack_frame_list.current_stack_frame_id());
+        assert_eq!(Some(2), stack_frame_list.selected_stack_frame_id());
         assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
     });
 
@@ -464,7 +412,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                 let snapshot = editor.snapshot(window, cx);
 
                 editor
-                    .highlighted_rows::<editor::DebugCurrentRowHighlight>()
+                    .highlighted_rows::<editor::ActiveDebugLine>()
                     .map(|(range, _)| {
                         let start = range.start.to_point(&snapshot.buffer_snapshot);
                         let end = range.end.to_point(&snapshot.buffer_snapshot);
@@ -474,14 +422,6 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             })
         );
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -517,28 +457,19 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.fake_debug_session(
-            dap::DebugRequestType::Launch(LaunchConfig::default()),
-            None,
-            false,
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
-            })
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
         })
-        .await;
+    });
+
+    client.on_request::<Scopes, _>(move |_, _| Ok(dap::ScopesResponse { scopes: vec![] }));
 
     let stack_frames = vec![
         StackFrame {
@@ -697,19 +628,17 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
         },
     ];
 
-    client
-        .on_request::<StackTrace, _>({
-            let stack_frames = Arc::new(stack_frames.clone());
-            move |_, args| {
-                assert_eq!(1, args.thread_id);
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
 
-                Ok(dap::StackTraceResponse {
-                    stack_frames: (*stack_frames).clone(),
-                    total_frames: None,
-                })
-            }
-        })
-        .await;
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
@@ -727,33 +656,26 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
 
     // trigger threads to load
     active_debug_session_panel(workspace, cx).update(cx, |session, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state
-                    .session()
-                    .update(cx, |session, cx| session.threads(cx));
-            });
+        session.running_state().update(cx, |running_state, cx| {
+            running_state
+                .session()
+                .update(cx, |session, cx| session.threads(cx));
+        });
     });
 
     cx.run_until_parked();
 
     // select first thread
-    active_debug_session_panel(workspace, cx).update_in(cx, |session, _, cx| {
-        session
-            .mode()
-            .as_running()
-            .unwrap()
-            .update(cx, |running_state, cx| {
-                running_state.select_current_thread(
-                    &running_state
-                        .session()
-                        .update(cx, |session, cx| session.threads(cx)),
-                    cx,
-                );
-            });
+    active_debug_session_panel(workspace, cx).update_in(cx, |session, window, cx| {
+        session.running_state().update(cx, |running_state, cx| {
+            running_state.select_current_thread(
+                &running_state
+                    .session()
+                    .update(cx, |session, cx| session.threads(cx)),
+                window,
+                cx,
+            );
+        });
     });
 
     cx.run_until_parked();
@@ -761,9 +683,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     // trigger stack frames to loaded
     active_debug_session_panel(workspace, cx).update(cx, |debug_panel_item, cx| {
         let stack_frame_list = debug_panel_item
-            .mode()
-            .as_running()
-            .unwrap()
+            .running_state()
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
@@ -775,9 +695,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
 
     active_debug_session_panel(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
         let stack_frame_list = debug_panel_item
-            .mode()
-            .as_running()
-            .unwrap()
+            .running_state()
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
@@ -841,12 +759,4 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
             );
         });
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

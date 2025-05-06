@@ -1,5 +1,7 @@
 # Zed on Linux
 
+## Standard Installation
+
 For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
 
 ```sh
@@ -81,6 +83,38 @@ sed -i "s|Icon=zed|Icon=$HOME/.local/zed.app/share/icons/hicolor/512x512/apps/ze
 sed -i "s|Exec=zed|Exec=$HOME/.local/zed.app/libexec/zed-editor|g" ~/.local/share/applications/dev.zed.Zed.desktop
 ```
 
+## Uninstalling Zed
+
+### Standard Uninstall
+
+If Zed was installed using the default installation script, it can be uninstalled by supplying the `--uninstall` flag to the `zed` shell command
+
+```sh
+zed --uninstall
+```
+
+If there are no errors, the shell will then prompt you whether you'd like to keep your preferences or delete them. After making a choice, you should see a message that Zed was successfully uninstalled.
+
+In the case that the `zed` shell command was not found in your PATH, you can try one of the following commands
+
+```sh
+$HOME/.local/bin/zed --uninstall
+```
+
+or
+
+```sh
+$HOME/.local/zed.app/bin.zed --uninstall
+```
+
+The first case might fail if a symlink was not properly established between `$HOME/.local/bin/zed` and `$HOME/.local/zed.app/bin.zed`. But the second case should work as long as Zed was installed to its default location.
+
+If Zed was installed to a different location, you must invoke the `zed` binary stored in that installation directory and pass the `--uninstall` flag to it in the same format as the previous commands.
+
+### Package Manager
+
+If Zed was installed using a package manager, please consult the documentation for that package manager on how to uninstall a package.
+
 ## Troubleshooting
 
 Linux works on a large variety of systems configured in many different ways. We primarily test Zed on a vanilla Ubuntu setup, as it is the most common distribution our users use, that said we do expect it to work on a wide variety of machines.
@@ -154,3 +188,33 @@ If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 - You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.
+
+### No sound or wrong output device
+
+If you're not hearing any sound in Zed or the audio is routed to the wrong device, it could be due to a mismatch between audio systems. Zed relies on ALSA, while your system may be using PipeWire or PulseAudio. To resolve this, you need to configure ALSA to route audio through PipeWire/PulseAudio.
+
+If your system uses PipeWire:
+
+1. **Install the PipeWire ALSA plugin**
+
+   On Debian-based systems, run:
+
+   ```bash
+   sudo apt install pipewire-alsa
+   ```
+
+2. **Configure ALSA to use PipeWire**
+
+   Add the following configuration to your ALSA settings file. You can use either `~/.asoundrc` (user-level) or `/etc/asound.conf` (system-wide):
+
+   ```bash
+   pcm.!default {
+       type pipewire
+   }
+
+   ctl.!default {
+       type pipewire
+   }
+   ```
+
+3. **Restart your system**

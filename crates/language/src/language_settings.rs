@@ -2,7 +2,7 @@
 
 use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
-use collections::{HashMap, HashSet};
+use collections::{FxHashMap, HashMap, HashSet};
 use core::slice;
 use ec4rs::{
     Properties as EditorconfigProperties,
@@ -63,7 +63,7 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
+    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
 }
 
 /// The settings for a particular language.
@@ -242,7 +242,7 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
-    pub enabled_in_assistant: bool,
+    pub enabled_in_text_threads: bool,
 }
 
 impl EditPredictionSettings {
@@ -370,7 +370,7 @@ fn default_words_completion_mode() -> WordsCompletionMode {
 }
 
 fn default_lsp_insert_mode() -> LspInsertMode {
-    LspInsertMode::Insert
+    LspInsertMode::ReplaceSuffix
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {
@@ -584,7 +584,7 @@ pub struct EditPredictionSettingsContent {
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     #[serde(default = "default_true")]
-    pub enabled_in_assistant: bool,
+    pub enabled_in_text_threads: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -971,6 +971,11 @@ pub struct InlayHintSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
+    /// Global switch to toggle inline values on and off.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_value_hints: bool,
     /// Whether type hints should be shown.
     ///
     /// Default: true
@@ -1029,7 +1034,10 @@ fn scroll_debounce_ms() -> u64 {
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
+    #[serde(default)]
     pub variables: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 impl InlayHintSettings {
@@ -1208,19 +1216,19 @@ impl settings::Settings for AllLanguageSettings {
             })
             .unwrap_or_default();
 
-        let mut edit_predictions_enabled_in_assistant = default_value
+        let mut enabled_in_text_threads = default_value
             .edit_predictions
             .as_ref()
-            .map(|settings| settings.enabled_in_assistant)
+            .map(|settings| settings.enabled_in_text_threads)
             .unwrap_or(true);
 
-        let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
 
-        for (language, suffixes) in &default_value.file_types {
+        for (language, patterns) in &default_value.file_types {
             let mut builder = GlobSetBuilder::new();
 
-            for suffix in suffixes {
-                builder.add(Glob::new(suffix)?);
+            for pattern in patterns {
+                builder.add(Glob::new(pattern)?);
             }
 
             file_types.insert(language.clone(), builder.build()?);
@@ -1237,7 +1245,7 @@ impl settings::Settings for AllLanguageSettings {
 
             if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
                 edit_predictions_mode = edit_predictions.mode;
-                edit_predictions_enabled_in_assistant = edit_predictions.enabled_in_assistant;
+                enabled_in_text_threads = edit_predictions.enabled_in_text_threads;
 
                 if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
@@ -1277,20 +1285,20 @@ impl settings::Settings for AllLanguageSettings {
                 );
             }
 
-            for (language, suffixes) in &user_settings.file_types {
+            for (language, patterns) in &user_settings.file_types {
                 let mut builder = GlobSetBuilder::new();
 
                 let default_value = default_value.file_types.get(&language.clone());
 
                 // Merge the default value with the user's value.
-                if let Some(suffixes) = default_value {
-                    for suffix in suffixes {
-                        builder.add(Glob::new(suffix)?);
+                if let Some(patterns) = default_value {
+                    for pattern in patterns {
+                        builder.add(Glob::new(pattern)?);
                     }
                 }
 
-                for suffix in suffixes {
-                    builder.add(Glob::new(suffix)?);
+                for pattern in patterns {
+                    builder.add(Glob::new(pattern)?);
                 }
 
                 file_types.insert(language.clone(), builder.build()?);
@@ -1315,7 +1323,7 @@ impl settings::Settings for AllLanguageSettings {
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
-                enabled_in_assistant: edit_predictions_enabled_in_assistant,
+                enabled_in_text_threads,
             },
             defaults,
             languages,
@@ -1366,6 +1374,120 @@ impl settings::Settings for AllLanguageSettings {
         );
 
         root_schema
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        let d = &mut current.defaults;
+        if let Some(size) = vscode
+            .read_value("editor.tabSize")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| NonZeroU32::new(n as u32))
+        {
+            d.tab_size = Some(size);
+        }
+        if let Some(v) = vscode.read_bool("editor.insertSpaces") {
+            d.hard_tabs = Some(!v);
+        }
+
+        vscode.enum_setting("editor.wordWrap", &mut d.soft_wrap, |s| match s {
+            "on" => Some(SoftWrap::EditorWidth),
+            "wordWrapColumn" => Some(SoftWrap::PreferLine),
+            "bounded" => Some(SoftWrap::Bounded),
+            "off" => Some(SoftWrap::None),
+            _ => None,
+        });
+        vscode.u32_setting("editor.wordWrapColumn", &mut d.preferred_line_length);
+
+        if let Some(arr) = vscode
+            .read_value("editor.rulers")
+            .and_then(|v| v.as_array())
+            .map(|v| v.iter().map(|n| n.as_u64().map(|n| n as usize)).collect())
+        {
+            d.wrap_guides = arr;
+        }
+        if let Some(b) = vscode.read_bool("editor.guides.indentation") {
+            if let Some(guide_settings) = d.indent_guides.as_mut() {
+                guide_settings.enabled = b;
+            } else {
+                d.indent_guides = Some(IndentGuideSettings {
+                    enabled: b,
+                    ..Default::default()
+                });
+            }
+        }
+
+        if let Some(b) = vscode.read_bool("editor.guides.formatOnSave") {
+            d.format_on_save = Some(if b {
+                FormatOnSave::On
+            } else {
+                FormatOnSave::Off
+            });
+        }
+        vscode.bool_setting(
+            "editor.trimAutoWhitespace",
+            &mut d.remove_trailing_whitespace_on_save,
+        );
+        vscode.bool_setting(
+            "files.insertFinalNewline",
+            &mut d.ensure_final_newline_on_save,
+        );
+        vscode.bool_setting("editor.inlineSuggest.enabled", &mut d.show_edit_predictions);
+        vscode.enum_setting("editor.renderWhitespace", &mut d.show_whitespaces, |s| {
+            Some(match s {
+                "boundary" | "trailing" => ShowWhitespaceSetting::Boundary,
+                "selection" => ShowWhitespaceSetting::Selection,
+                "all" => ShowWhitespaceSetting::All,
+                _ => ShowWhitespaceSetting::None,
+            })
+        });
+        vscode.enum_setting(
+            "editor.autoSurround",
+            &mut d.use_auto_surround,
+            |s| match s {
+                "languageDefined" | "quotes" | "brackets" => Some(true),
+                "never" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.bool_setting("editor.formatOnType", &mut d.use_on_type_format);
+        vscode.bool_setting("editor.linkedEditing", &mut d.linked_edits);
+        vscode.bool_setting("editor.formatOnPaste", &mut d.auto_indent_on_paste);
+        vscode.bool_setting(
+            "editor.suggestOnTriggerCharacters",
+            &mut d.show_completions_on_input,
+        );
+        if let Some(b) = vscode.read_bool("editor.suggest.showWords") {
+            let mode = if b {
+                WordsCompletionMode::Enabled
+            } else {
+                WordsCompletionMode::Disabled
+            };
+            if let Some(completion_settings) = d.completions.as_mut() {
+                completion_settings.words = mode;
+            } else {
+                d.completions = Some(CompletionSettings {
+                    words: mode,
+                    lsp: true,
+                    lsp_fetch_timeout_ms: 0,
+                    lsp_insert_mode: LspInsertMode::ReplaceSuffix,
+                });
+            }
+        }
+        // TODO: pull ^ out into helper and reuse for per-language settings
+
+        // vscodes file association map is inverted from ours, so we flip the mapping before merging
+        let mut associations: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        if let Some(map) = vscode
+            .read_value("files.associations")
+            .and_then(|v| v.as_object())
+        {
+            for (k, v) in map {
+                let Some(v) = v.as_str() else { continue };
+                associations.entry(v.into()).or_default().push(k.clone());
+            }
+        }
+        // TODO: do we want to merge imported globs per filetype? for now we'll just replace
+        current.file_types.extend(associations);
     }
 }
 

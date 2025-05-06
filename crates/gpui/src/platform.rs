@@ -1,7 +1,5 @@
-// todo(windows): remove
-#![cfg_attr(windows, allow(dead_code))]
-
 mod app_menu;
+mod keyboard;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -37,9 +35,10 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, point,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
+    point, px, size,
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
@@ -65,6 +64,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use keyboard::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -78,7 +78,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::TestScreenCaptureSource;
+pub use test::{TestDispatcher, TestScreenCaptureSource};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -203,10 +203,17 @@ pub(crate) trait Platform: 'static {
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}
+    fn update_jump_list(
+        &self,
+        _menus: Vec<MenuItem>,
+        _entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        Vec::new()
+    }
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> String;
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -273,6 +280,12 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u32);
+
+impl From<DisplayId> for u32 {
+    fn from(id: DisplayId) -> Self {
+        id.0
+    }
+}
 
 impl Debug for DisplayId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -519,40 +532,105 @@ impl PlatformTextSystem for NoopTextSystem {
         Vec::new()
     }
 
-    fn font_id(&self, descriptor: &Font) -> Result<FontId> {
-        Err(anyhow!("No font found for {:?}", descriptor))
+    fn font_id(&self, _descriptor: &Font) -> Result<FontId> {
+        return Ok(FontId(1));
     }
 
     fn font_metrics(&self, _font_id: FontId) -> FontMetrics {
-        unimplemented!()
+        FontMetrics {
+            units_per_em: 1000,
+            ascent: 1025.0,
+            descent: -275.0,
+            line_gap: 0.0,
+            underline_position: -95.0,
+            underline_thickness: 60.0,
+            cap_height: 698.0,
+            x_height: 516.0,
+            bounding_box: Bounds {
+                origin: Point {
+                    x: -260.0,
+                    y: -245.0,
+                },
+                size: Size {
+                    width: 1501.0,
+                    height: 1364.0,
+                },
+            },
+        }
     }
 
-    fn typographic_bounds(&self, font_id: FontId, _glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        Err(anyhow!("No font found for {:?}", font_id))
+    fn typographic_bounds(&self, _font_id: FontId, _glyph_id: GlyphId) -> Result<Bounds<f32>> {
+        Ok(Bounds {
+            origin: Point { x: 54.0, y: 0.0 },
+            size: size(392.0, 528.0),
+        })
     }
 
-    fn advance(&self, font_id: FontId, _glyph_id: GlyphId) -> Result<Size<f32>> {
-        Err(anyhow!("No font found for {:?}", font_id))
+    fn advance(&self, _font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
+        Ok(size(600.0 * glyph_id.0 as f32, 0.0))
     }
 
-    fn glyph_for_char(&self, _font_id: FontId, _ch: char) -> Option<GlyphId> {
-        None
+    fn glyph_for_char(&self, _font_id: FontId, ch: char) -> Option<GlyphId> {
+        Some(GlyphId(ch.len_utf16() as u32))
     }
 
-    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        Err(anyhow!("No font found for {:?}", params))
+    fn glyph_raster_bounds(&self, _params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+        Ok(Default::default())
     }
 
     fn rasterize_glyph(
         &self,
-        params: &RenderGlyphParams,
-        _raster_bounds: Bounds<DevicePixels>,
+        _params: &RenderGlyphParams,
+        raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        Err(anyhow!("No font found for {:?}", params))
+        Ok((raster_bounds.size, Vec::new()))
     }
 
-    fn layout_line(&self, _text: &str, _font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
-        unimplemented!()
+    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
+        let mut position = px(0.);
+        let metrics = self.font_metrics(FontId(0));
+        let em_width = font_size
+            * self
+                .advance(FontId(0), self.glyph_for_char(FontId(0), 'm').unwrap())
+                .unwrap()
+                .width
+            / metrics.units_per_em as f32;
+        let mut glyphs = SmallVec::default();
+        for (ix, c) in text.char_indices() {
+            if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
+                glyphs.push(ShapedGlyph {
+                    id: glyph,
+                    position: point(position, px(0.)),
+                    index: ix,
+                    is_emoji: glyph.0 == 2,
+                });
+                if glyph.0 == 2 {
+                    position += em_width * 2.0;
+                } else {
+                    position += em_width;
+                }
+            } else {
+                position += em_width
+            }
+        }
+        let mut runs = Vec::default();
+        if glyphs.len() > 0 {
+            runs.push(ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            });
+        } else {
+            position = px(0.);
+        }
+
+        LineLayout {
+            font_size,
+            width: position,
+            ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
+            descent: font_size * (metrics.descent / metrics.units_per_em as f32),
+            runs,
+            len: text.len(),
+        }
     }
 }
 
@@ -723,6 +801,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
@@ -730,7 +809,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -773,6 +855,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
@@ -990,7 +1073,10 @@ pub(crate) struct WindowParams {
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
-    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
+        allow(dead_code)
+    )]
     pub focus: bool,
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1400,6 +1486,21 @@ pub enum ImageFormat {
     Tiff,
 }
 
+impl ImageFormat {
+    /// Returns the mime type for the ImageFormat
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "image/png",
+            ImageFormat::Jpeg => "image/jpeg",
+            ImageFormat::Webp => "image/webp",
+            ImageFormat::Gif => "image/gif",
+            ImageFormat::Svg => "image/svg+xml",
+            ImageFormat::Bmp => "image/bmp",
+            ImageFormat::Tiff => "image/tiff",
+        }
+    }
+}
+
 /// An image, with a format and certain bytes
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Image {
@@ -1418,6 +1519,15 @@ impl Hash for Image {
 }
 
 impl Image {
+    /// An empty image containing no data
+    pub fn empty() -> Self {
+        Self {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+            id: 0,
+        }
+    }
+
     /// Get this image's ID
     pub fn id(&self) -> u64 {
         self.id
@@ -1430,8 +1540,24 @@ impl Image {
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(window, cx)
+            .use_data(None, window, cx)
             .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `get_asset` API to make this image renderable
+    pub fn get_render_image(
+        self: Arc<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<RenderImage>> {
+        ImageSource::Image(self)
+            .get_data(None, window, cx)
+            .and_then(|result| result.ok())
+    }
+
+    /// Use the GPUI `remove_asset` API to drop this image, if possible.
+    pub fn remove_asset(self: Arc<Self>, cx: &mut App) {
+        ImageSource::Image(self).remove_asset(cx);
     }
 
     /// Convert the clipboard image to an `ImageData` object.

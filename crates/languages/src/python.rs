@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
-use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
+use parking_lot::Mutex;
 use std::str::FromStr;
-use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -37,32 +37,6 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
-
-pub(crate) struct PyprojectTomlManifestProvider;
-
-impl ManifestProvider for PyprojectTomlManifestProvider {
-    fn name(&self) -> ManifestName {
-        SharedString::new_static("pyproject.toml").into()
-    }
-
-    fn search(
-        &self,
-        ManifestQuery {
-            path,
-            depth,
-            delegate,
-        }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
-        for path in path.ancestors().take(depth) {
-            let p = path.join("pyproject.toml");
-            if delegate.exists(&p, Some(false)) {
-                return Some(path.into());
-            }
-        }
-
-        None
-    }
-}
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -327,9 +301,6 @@ impl LspAdapter for PythonLspAdapter {
             user_settings
         })
     }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
 }
 
 async fn get_cached_server_binary(
@@ -502,6 +473,10 @@ impl ContextProvider for PythonContextProvider {
         });
 
         Some(TaskTemplates(tasks))
+    }
+
+    fn debug_adapter(&self) -> Option<String> {
+        Some("Debugpy".into())
     }
 }
 
@@ -696,7 +671,6 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains = reporter
             .environments
             .lock()
-            .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
@@ -848,7 +822,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     }
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        if self.global_search_locations.lock().unwrap().is_empty() {
+        if self.global_search_locations.lock().is_empty() {
             let mut paths =
                 std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
@@ -865,12 +839,9 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
                 .filter(|p| p.exists())
                 .collect::<Vec<PathBuf>>();
 
-            self.global_search_locations
-                .lock()
-                .unwrap()
-                .append(&mut paths);
+            self.global_search_locations.lock().append(&mut paths);
         }
-        self.global_search_locations.lock().unwrap().clone()
+        self.global_search_locations.lock().clone()
     }
 }
 
@@ -991,6 +962,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1001,6 +973,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1011,6 +984,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1171,9 +1145,6 @@ impl LspAdapter for PyLspAdapter {
 
             user_settings
         })
-    }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
     }
 }
 
