@@ -43,19 +43,19 @@ pub(crate) async fn connect_socks_proxy_stream(
         SocksVersion::V4(None) => {
             let socks = Socks4Stream::connect_with_socket(stream, rpc_host)
                 .await
-                .map_err(|err| anyhow!("error connecting to socks {}", err))?;
+                .context("error connecting to socks")?;
             Box::new(socks)
         }
         SocksVersion::V4(Some(Socks4Identification { user_id })) => {
             let socks = Socks4Stream::connect_with_userid_and_socket(stream, rpc_host, user_id)
                 .await
-                .map_err(|err| anyhow!("error connecting to socks {}", err))?;
+                .context("error connecting to socks")?;
             Box::new(socks)
         }
         SocksVersion::V5(None) => {
             let socks = Socks5Stream::connect_with_socket(stream, rpc_host)
                 .await
-                .map_err(|err| anyhow!("error connecting to socks {}", err))?;
+                .context("error connecting to socks")?;
             Box::new(socks)
         }
         SocksVersion::V5(Some(Socks5Authorization { username, password })) => {
@@ -63,7 +63,7 @@ pub(crate) async fn connect_socks_proxy_stream(
                 stream, rpc_host, username, password,
             )
             .await
-            .map_err(|err| anyhow!("error connecting to socks {}", err))?;
+            .context("error connecting to socks")?;
             Box::new(socks)
         }
     };
