@@ -1,6 +1,9 @@
 # Text Threads
 
-Text threads in the agent panel functions similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
+<!-- todo! overview was resurrected content and might need cleanup / reorganized  -->
+## Overview {#overview}
+
+Text threads in the [Agent Panel](./agent-panel.md) function similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
 
 However, the text threads differ with the inclusion of message blocks. These blocks serve as containers for text that correspond to different roles within the context. These roles include:
 

@@ -34,4 +34,4 @@ For best results, it’s recommended you take a purpose-based approach to Agent 
 
 ## Tool Calls {#tool-calls}
 
-Models can use [tools](./tools.md) to interface with your code. In [Max Mode](#max-mode), models can use an unlimited number of tools per prompt, with each tool call counting as a prompt for metering purposes. For non-Max Mode models, you'll need to interact with the model every 25 tool calls to continue, at which point a new prompt will be counted against your plan limit.
+Models can use [tools](./tools.md) to interface with your code, search the web, and perform other useful functions. In [Max Mode](#max-mode), models can use an unlimited number of tools per prompt, with each tool call counting as a prompt for metering purposes. For non-Max Mode models, you'll need to interact with the model every 25 tool calls to continue, at which point a new prompt will be counted against your plan limit.

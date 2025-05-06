@@ -8,9 +8,11 @@ Zed offers various features that integrate LLMs smoothly into the editor.
 
 - [Configuration](./configuration.md): Configure the Agent, and set up different language model providers like Anthropic, OpenAI, Ollama, Google AI, and more.
 
-- [Subscription](./subscription.md): Information about AI subscriptions and other billing related information.
+- [Custom API Keys](./custom-api-keys.md): How to use your own API keys with the AI features.
 
-- [Privacy and Security](./privacy-and-security.md): Understanding how Zed handles privacy and security with AI features.
+- [Subscription](./subscription.md): Information about Zed's subscriptions and other billing related information.
+
+- [Privacy and Security](./privacy-and-security.md): Understand how Zed handles privacy and security with AI features.
 
 ## Agentic Editing
 
@@ -26,8 +28,10 @@ Zed offers various features that integrate LLMs smoothly into the editor.
 
 ## Edit Prediction
 
-- [Edit Prediction](./edit-prediction.md): Learn about Zed's edit prediction feature that helps autocomplete your code.
+- [Edit Prediction](./edit-prediction.md): Learn about Zed's Edit Prediction feature that helps autocomplete your code.
 
-## Text Threads
+## Text Thread Interface
+
+<!-- todo! better name for this section -->
 
 - [Text Threads](./text-threads.md): Learn about an alternative text-based interface for interacting with language models.
