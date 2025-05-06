@@ -334,7 +334,7 @@ impl Render for ConfigureContextServerModal {
                     .section(match &setup.configuration {
                         Configuration::NotAvailable => Section::new().child(
                             Label::new(
-                                "No configuration options available for this context server.",
+                                "No configuration options available for this context server. Visit the Repository for any further instructions.",
                             )
                             .color(Color::Muted),
                         ),
@@ -428,8 +428,10 @@ impl Render for ConfigureContextServerModal {
                             .when_some(setup.repository_url.clone(), |this, repository_url| {
                                 this.start_slot(
                                     h_flex().w_full().child(
-                                        IconButton::new("open-repository", IconName::Github)
-                                            .icon_size(IconSize::Small)
+                                        Button::new("open-repository", "Open Repository")
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_color(Color::Muted)
+                                            .icon_size(IconSize::XSmall)
                                             .tooltip({
                                                 let repository_url = repository_url.clone();
                                                 move |window, cx| {
@@ -462,7 +464,7 @@ impl Render for ConfigureContextServerModal {
                                     )
                                     .into_any_element(),
                                 Configuration::Required(state) => h_flex()
-                                    .gap_1()
+                                    .gap_2()
                                     .child(
                                         Button::new("cancel", "Cancel")
                                             .key_binding(
