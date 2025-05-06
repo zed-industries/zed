@@ -3237,6 +3237,7 @@ dependencies = [
  "gpui",
  "linkme",
  "parking_lot",
+ "strum 0.27.1",
  "theme",
  "workspace-hack",
 ]
