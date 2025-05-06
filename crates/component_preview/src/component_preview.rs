@@ -5,8 +5,9 @@
 mod persistence;
 mod preview_support;
 
-use std::iter::Iterator;
 use std::sync::Arc;
+
+use std::iter::Iterator;
 
 use agent::{ActiveThread, TextThreadStore, ThreadStore};
 use client::UserStore;
@@ -164,7 +165,8 @@ impl ComponentPreview {
         })
         .detach();
 
-        let sorted_components = components().sorted_components();
+        let component_registry = Arc::new(components());
+        let sorted_components = component_registry.sorted_components();
         let selected_index = selected_index.into().unwrap_or(0);
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
         let filter_editor =
@@ -197,7 +199,7 @@ impl ComponentPreview {
             workspace,
             project,
             active_page,
-            component_map: components().component_map(),
+            component_map: component_registry.component_map(),
             components: sorted_components,
             component_list,
             cursor_index: selected_index,
