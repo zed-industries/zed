@@ -3,8 +3,10 @@ use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use anyhow::Result;
 use async_trait::async_trait;
 use dap::adapters::{DebugTaskDefinition, InlineValueProvider, latest_github_release};
+use futures::StreamExt;
 use gpui::AsyncApp;
 use task::DebugRequest;
+use util::fs::remove_matching;
 
 use crate::*;
 
@@ -118,21 +120,30 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
         if command.is_none() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-            let version = self.fetch_latest_adapter_version(delegate).await?;
-            adapters::download_adapter_from_github(
-                self.name(),
-                version.clone(),
-                adapters::DownloadedFileType::Vsix,
-                delegate,
-            )
-            .await?;
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
             let version_path =
-                adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
-
+                if let Ok(version) = self.fetch_latest_adapter_version(delegate).await {
+                    adapters::download_adapter_from_github(
+                        self.name(),
+                        version.clone(),
+                        adapters::DownloadedFileType::Vsix,
+                        delegate,
+                    )
+                    .await?;
+                    let version_path =
+                        adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
+                    remove_matching(&adapter_path, |entry| entry != version_path).await;
+                    version_path
+                } else {
+                    let mut paths = delegate.fs().read_dir(&adapter_path).await?;
+                    paths
+                        .next()
+                        .await
+                        .ok_or_else(|| anyhow!("No adapter found"))??
+                };
             let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir.join("codelldb");
-            let path = path
+            let path = adapter_dir
+                .join("codelldb")
                 .to_str()
                 .map(ToOwned::to_owned)
                 .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
