@@ -1150,52 +1150,27 @@ impl InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
-        log::debug!(
-            "TerminalInputHandler::bounds_for_range called with range: {:?}",
-            range_utf16
-        );
+        let (term_bounds, _cursor_point, _display_offset) =
+            match self.terminal_view.read(cx).get_layout_info_for_ime(cx) {
+                Some(data) => data,
+                None => {
+                    log::error!("bounds_for_range: failed to get IME layout info");
+                    return None;
+                }
+            };
 
-        // --- Get layout info from TerminalView ---
-        let layout_info = self.terminal_view.read(cx).get_layout_info_for_ime(cx); // Pass cx if needed by helper
-
-        if let Some((term_bounds, _cursor_point, _display_offset)) = layout_info {
-            // --- Calculate bounds based on info from TerminalView ---
-            // Need element bounds origin, get it from window? Or store it?
-            // Let's try getting element bounds via window/focus handle if possible,
-            // otherwise, fall back to cursor_bounds for now.
-            // Getting element bounds here is tricky. Let's use cursor_bounds as fallback.
-
-            // TODO: Get element_bounds.origin more reliably here.
-            // For now, use cursor_bounds if available, otherwise calculate approximately.
-
-            if let Some(cursor_bounds) = self.cursor_bounds {
-                // Simple fallback: return cursor bounds + offset based on range?
-                // This isn't very accurate.
-                let cell_width = term_bounds.cell_width;
-                let offset_x = cell_width * range_utf16.start as f32;
-                let mut bounds = cursor_bounds;
-                bounds.origin.x += offset_x; // Approximate IME window position
-                log::debug!(
-                    "bounds_for_range returning approximated bounds based on cursor: {:?}",
-                    bounds
-                );
-                return Some(bounds);
-            } else {
-                // Fallback calculation if cursor_bounds is None (less accurate)
-                log::warn!(
-                    "bounds_for_range: cursor_bounds is None, calculating approximate bounds"
-                );
-                let _line_height = term_bounds.line_height;
-                let _cell_width = term_bounds.cell_width;
-                // We don't have element_bounds.origin here easily.
-                // Return None or a very rough estimate. Let's return None for now.
+        let mut bounds = match self.cursor_bounds {
+            Some(b) => b,
+            None => {
+                log::warn!("bounds_for_range: cursor_bounds is None");
                 return None;
             }
-            // --- End bounds calculation ---
-        } else {
-            log::error!("Failed to get layout info from TerminalView for bounds_for_range");
-            None
-        }
+        };
+
+        let offset_x = term_bounds.cell_width * range_utf16.start as f32;
+        bounds.origin.x += offset_x;
+
+        Some(bounds)
     }
 
     fn apple_press_and_hold_enabled(&mut self) -> bool {
