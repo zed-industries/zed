@@ -331,6 +331,60 @@ fn format_timestamp_naive_time(timestamp_local: OffsetDateTime, is_12_hour_time:
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+fn format_timestamp_naive_date(
+    timestamp_local: OffsetDateTime,
+    reference_local: OffsetDateTime,
+    is_12_hour_time: bool,
+) -> String {
+    let reference_local_date = reference_local.date();
+    let timestamp_local_date = timestamp_local.date();
+
+    if timestamp_local_date == reference_local_date {
+        "Today".to_string()
+    } else if reference_local_date.previous_day() == Some(timestamp_local_date) {
+        "Yesterday".to_string()
+    } else {
+        match is_12_hour_time {
+            true => format!(
+                "{:02}/{:02}/{}",
+                timestamp_local_date.month() as u32,
+                timestamp_local_date.day(),
+                timestamp_local_date.year()
+            ),
+            false => format!(
+                "{:02}/{:02}/{}",
+                timestamp_local_date.day(),
+                timestamp_local_date.month() as u32,
+                timestamp_local_date.year()
+            ),
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn format_timestamp_naive_date_medium(
+    timestamp_local: OffsetDateTime,
+    is_12_hour_time: bool,
+) -> String {
+    let timestamp_local_date = timestamp_local.date();
+
+    match is_12_hour_time {
+        true => format!(
+            "{:02}/{:02}/{}",
+            timestamp_local_date.month() as u32,
+            timestamp_local_date.day(),
+            timestamp_local_date.year()
+        ),
+        false => format!(
+            "{:02}/{:02}/{}",
+            timestamp_local_date.day(),
+            timestamp_local_date.month() as u32,
+            timestamp_local_date.year()
+        ),
+    }
+}
+
 pub fn format_timestamp_naive(
     timestamp_local: OffsetDateTime,
     reference_local: OffsetDateTime,
