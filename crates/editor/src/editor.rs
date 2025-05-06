@@ -2952,7 +2952,9 @@ impl Editor {
             _ => {}
         }
 
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        let auto_scroll = EditorSettings::get_global(cx).autoscroll_on_clicks;
+
+        self.change_selections(auto_scroll.then(Autoscroll::fit), window, cx, |s| {
             s.set_pending(pending_selection, pending_mode)
         });
     }
