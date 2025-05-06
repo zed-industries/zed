@@ -42,82 +42,6 @@ pub fn format_local_timestamp(
     }
 }
 
-/// Formats the date component of a timestamp
-pub fn format_date(
-    timestamp: OffsetDateTime,
-    reference: OffsetDateTime,
-    enhanced_formatting: bool,
-) -> String {
-    format_absolute_date(timestamp, reference, enhanced_formatting)
-}
-
-/// Formats the time component of a timestamp
-pub fn format_time(timestamp: OffsetDateTime) -> String {
-    format_absolute_time(timestamp)
-}
-
-/// Formats the date component of a timestamp in medium style
-pub fn format_date_medium(
-    timestamp: OffsetDateTime,
-    reference: OffsetDateTime,
-    enhanced_formatting: bool,
-) -> String {
-    format_absolute_date_medium(timestamp, reference, enhanced_formatting)
-}
-
-fn format_absolute_date(
-    timestamp: OffsetDateTime,
-    reference: OffsetDateTime,
-    #[allow(unused_variables)] enhanced_date_formatting: bool,
-) -> String {
-    #[cfg(target_os = "macos")]
-    {
-        if !enhanced_date_formatting {
-            return macos::format_date(&timestamp);
-        }
-
-        let timestamp_date = timestamp.date();
-        let reference_date = reference.date();
-        if timestamp_date == reference_date {
-            "Today".to_string()
-        } else if reference_date.previous_day() == Some(timestamp_date) {
-            "Yesterday".to_string()
-        } else {
-            macos::format_date(&timestamp)
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
-        let current_locale = CURRENT_LOCALE
-            .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
-        format_timestamp_naive_date(
-            timestamp,
-            reference,
-            is_12_hour_time_by_locale(current_locale.as_str()),
-        )
-    }
-}
-
-fn format_absolute_time(timestamp: OffsetDateTime) -> String {
-    #[cfg(target_os = "macos")]
-    {
-        macos::format_time(&timestamp)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
-        let current_locale = CURRENT_LOCALE
-            .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
-        format_timestamp_naive_time(
-            timestamp,
-            is_12_hour_time_by_locale(current_locale.as_str()),
-        )
-    }
-}
-
 fn format_absolute_timestamp(
     timestamp: OffsetDateTime,
     reference: OffsetDateTime,
@@ -128,22 +52,22 @@ fn format_absolute_timestamp(
         if !enhanced_date_formatting {
             return format!(
                 "{} {}",
-                format_absolute_date(timestamp, reference, enhanced_date_formatting),
-                format_absolute_time(timestamp)
+                macos::format_date(&timestamp),
+                macos::format_time(&timestamp)
             );
         }
 
         let timestamp_date = timestamp.date();
         let reference_date = reference.date();
         if timestamp_date == reference_date {
-            format!("Today at {}", format_absolute_time(timestamp))
+            format!("Today at {}", macos::format_time(&timestamp))
         } else if reference_date.previous_day() == Some(timestamp_date) {
-            format!("Yesterday at {}", format_absolute_time(timestamp))
+            format!("Yesterday at {}", macos::format_time(&timestamp))
         } else {
             format!(
                 "{} {}",
-                format_absolute_date(timestamp, reference, enhanced_date_formatting),
-                format_absolute_time(timestamp)
+                macos::format_date(&timestamp),
+                macos::format_time(&timestamp)
             )
         }
     }
@@ -155,62 +79,13 @@ fn format_absolute_timestamp(
     }
 }
 
-fn format_absolute_date_medium(
-    timestamp: OffsetDateTime,
-    reference: OffsetDateTime,
-    enhanced_formatting: bool,
-) -> String {
-    #[cfg(target_os = "macos")]
-    {
-        if !enhanced_formatting {
-            return macos::format_date_medium(&timestamp);
-        }
-
-        let timestamp_date = timestamp.date();
-        let reference_date = reference.date();
-        if timestamp_date == reference_date {
-            "Today".to_string()
-        } else if reference_date.previous_day() == Some(timestamp_date) {
-            "Yesterday".to_string()
-        } else {
-            macos::format_date_medium(&timestamp)
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
-        let current_locale = CURRENT_LOCALE
-            .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
-        if !enhanced_formatting {
-            return format_timestamp_naive_date_medium(
-                timestamp,
-                is_12_hour_time_by_locale(current_locale.as_str()),
-            );
-        }
-
-        let timestamp_date = timestamp.date();
-        let reference_date = reference.date();
-        if timestamp_date == reference_date {
-            "Today".to_string()
-        } else if reference_date.previous_day() == Some(timestamp_date) {
-            "Yesterday".to_string()
-        } else {
-            format_timestamp_naive_date_medium(
-                timestamp,
-                is_12_hour_time_by_locale(current_locale.as_str()),
-            )
-        }
-    }
-}
-
 fn format_absolute_timestamp_medium(
     timestamp: OffsetDateTime,
-    reference: OffsetDateTime,
+    #[allow(unused_variables)] reference: OffsetDateTime,
 ) -> String {
     #[cfg(target_os = "macos")]
     {
-        format_absolute_date_medium(timestamp, reference, false)
+        macos::format_date_medium(&timestamp)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -303,9 +178,15 @@ fn calculate_month_difference(timestamp: OffsetDateTime, reference: OffsetDateTi
 /// Note:
 /// This function does not respect the user's date and time preferences.
 /// This should only be used as a fallback mechanism when the OS time formatting fails.
-fn format_timestamp_naive_time(timestamp_local: OffsetDateTime, is_12_hour_time: bool) -> String {
+pub fn format_timestamp_naive(
+    timestamp_local: OffsetDateTime,
+    reference_local: OffsetDateTime,
+    is_12_hour_time: bool,
+) -> String {
     let timestamp_local_hour = timestamp_local.hour();
     let timestamp_local_minute = timestamp_local.minute();
+    let reference_local_date = reference_local.date();
+    let timestamp_local_date = timestamp_local.date();
 
     let (hour, meridiem) = if is_12_hour_time {
         let meridiem = if timestamp_local_hour >= 12 {
@@ -325,103 +206,38 @@ fn format_timestamp_naive_time(timestamp_local: OffsetDateTime, is_12_hour_time:
         (timestamp_local_hour, None)
     };
 
-    match meridiem {
+    let formatted_time = match meridiem {
         Some(meridiem) => format!("{}:{:02} {}", hour, timestamp_local_minute, meridiem),
         None => format!("{:02}:{:02}", hour, timestamp_local_minute),
-    }
-}
+    };
 
-#[cfg(not(target_os = "macos"))]
-fn format_timestamp_naive_date(
-    timestamp_local: OffsetDateTime,
-    reference_local: OffsetDateTime,
-    is_12_hour_time: bool,
-) -> String {
-    let reference_local_date = reference_local.date();
-    let timestamp_local_date = timestamp_local.date();
-
-    if timestamp_local_date == reference_local_date {
-        "Today".to_string()
-    } else if reference_local_date.previous_day() == Some(timestamp_local_date) {
-        "Yesterday".to_string()
-    } else {
-        match is_12_hour_time {
-            true => format!(
-                "{:02}/{:02}/{}",
-                timestamp_local_date.month() as u32,
-                timestamp_local_date.day(),
-                timestamp_local_date.year()
-            ),
-            false => format!(
-                "{:02}/{:02}/{}",
-                timestamp_local_date.day(),
-                timestamp_local_date.month() as u32,
-                timestamp_local_date.year()
-            ),
-        }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn format_timestamp_naive_date_medium(
-    timestamp_local: OffsetDateTime,
-    is_12_hour_time: bool,
-) -> String {
-    let timestamp_local_date = timestamp_local.date();
-
-    match is_12_hour_time {
-        true => format!(
+    let formatted_date = match meridiem {
+        Some(_) => format!(
             "{:02}/{:02}/{}",
             timestamp_local_date.month() as u32,
             timestamp_local_date.day(),
             timestamp_local_date.year()
         ),
-        false => format!(
+        None => format!(
             "{:02}/{:02}/{}",
             timestamp_local_date.day(),
             timestamp_local_date.month() as u32,
             timestamp_local_date.year()
         ),
-    }
-}
-
-pub fn format_timestamp_naive(
-    timestamp_local: OffsetDateTime,
-    reference_local: OffsetDateTime,
-    is_12_hour_time: bool,
-) -> String {
-    let formatted_time = format_timestamp_naive_time(timestamp_local, is_12_hour_time);
-    let reference_local_date = reference_local.date();
-    let timestamp_local_date = timestamp_local.date();
+    };
 
     if timestamp_local_date == reference_local_date {
         format!("Today at {}", formatted_time)
     } else if reference_local_date.previous_day() == Some(timestamp_local_date) {
         format!("Yesterday at {}", formatted_time)
     } else {
-        let formatted_date = match is_12_hour_time {
-            true => format!(
-                "{:02}/{:02}/{}",
-                timestamp_local_date.month() as u32,
-                timestamp_local_date.day(),
-                timestamp_local_date.year()
-            ),
-            false => format!(
-                "{:02}/{:02}/{}",
-                timestamp_local_date.day(),
-                timestamp_local_date.month() as u32,
-                timestamp_local_date.year()
-            ),
-        };
         format!("{} {}", formatted_date, formatted_time)
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-static CURRENT_LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-#[cfg(not(target_os = "macos"))]
 fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTime) -> String {
+    static CURRENT_LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let current_locale = CURRENT_LOCALE
         .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
 
@@ -429,8 +245,8 @@ fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTim
     format_timestamp_naive(timestamp, reference, is_12_hour_time)
 }
 
-/// Returns `true` if the locale is recognized as a 12-hour time locale.
 #[cfg(not(target_os = "macos"))]
+/// Returns `true` if the locale is recognized as a 12-hour time locale.
 fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [
         "es-MX", "es-CO", "es-SV", "es-NI",
@@ -527,131 +343,6 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_format_date() {
-        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
-
-        // Test with same date (today)
-        let timestamp_today = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-        assert_eq!(format_date(timestamp_today, reference, true), "Today");
-
-        // Test with previous day (yesterday)
-        let timestamp_yesterday = create_offset_datetime(1990, 4, 11, 9, 30, 0);
-        assert_eq!(
-            format_date(timestamp_yesterday, reference, true),
-            "Yesterday"
-        );
-
-        // Test with other date
-        let timestamp_other = create_offset_datetime(1990, 4, 10, 9, 30, 0);
-        let result = format_date(timestamp_other, reference, true);
-        assert!(!result.is_empty());
-        assert_ne!(result, "Today");
-        assert_ne!(result, "Yesterday");
-    }
-
-    #[test]
-    fn test_format_time() {
-        let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-
-        // We can't assert the exact output as it depends on the platform and locale
-        // But we can at least confirm it doesn't panic and returns a non-empty string
-        let result = format_time(timestamp);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_format_date_medium() {
-        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
-        let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-
-        // Test with enhanced formatting (today)
-        let result_enhanced = format_date_medium(timestamp, reference, true);
-        assert_eq!(result_enhanced, "Today");
-
-        // Test with standard formatting
-        let result_standard = format_date_medium(timestamp, reference, false);
-        assert!(!result_standard.is_empty());
-
-        // Test yesterday with enhanced formatting
-        let timestamp_yesterday = create_offset_datetime(1990, 4, 11, 9, 30, 0);
-        let result_yesterday = format_date_medium(timestamp_yesterday, reference, true);
-        assert_eq!(result_yesterday, "Yesterday");
-
-        // Test other date with enhanced formatting
-        let timestamp_other = create_offset_datetime(1990, 4, 10, 9, 30, 0);
-        let result_other = format_date_medium(timestamp_other, reference, true);
-        assert!(!result_other.is_empty());
-        assert_ne!(result_other, "Today");
-        assert_ne!(result_other, "Yesterday");
-    }
-
-    #[test]
-    fn test_format_absolute_time() {
-        let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-
-        // We can't assert the exact output as it depends on the platform and locale
-        // But we can at least confirm it doesn't panic and returns a non-empty string
-        let result = format_absolute_time(timestamp);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_format_absolute_date() {
-        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
-
-        // Test with same date (today)
-        let timestamp_today = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-        assert_eq!(
-            format_absolute_date(timestamp_today, reference, true),
-            "Today"
-        );
-
-        // Test with previous day (yesterday)
-        let timestamp_yesterday = create_offset_datetime(1990, 4, 11, 9, 30, 0);
-        assert_eq!(
-            format_absolute_date(timestamp_yesterday, reference, true),
-            "Yesterday"
-        );
-
-        // Test with other date
-        let timestamp_other = create_offset_datetime(1990, 4, 10, 9, 30, 0);
-        let result = format_absolute_date(timestamp_other, reference, true);
-        assert!(!result.is_empty());
-        assert_ne!(result, "Today");
-        assert_ne!(result, "Yesterday");
-    }
-
-    #[test]
-    fn test_format_absolute_date_medium() {
-        let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
-        let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-
-        // Test with enhanced formatting (today)
-        let result_enhanced = format_absolute_date_medium(timestamp, reference, true);
-        assert_eq!(result_enhanced, "Today");
-
-        // Test with standard formatting
-        let result_standard = format_absolute_date_medium(timestamp, reference, false);
-        assert!(!result_standard.is_empty());
-
-        // Test yesterday with enhanced formatting
-        let timestamp_yesterday = create_offset_datetime(1990, 4, 11, 9, 30, 0);
-        let result_yesterday = format_absolute_date_medium(timestamp_yesterday, reference, true);
-        assert_eq!(result_yesterday, "Yesterday");
-    }
-
-    #[test]
-    fn test_format_timestamp_naive_time() {
-        let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-        assert_eq!(format_timestamp_naive_time(timestamp, true), "9:30 AM");
-        assert_eq!(format_timestamp_naive_time(timestamp, false), "09:30");
-
-        let timestamp_pm = create_offset_datetime(1990, 4, 12, 15, 45, 0);
-        assert_eq!(format_timestamp_naive_time(timestamp_pm, true), "3:45 PM");
-        assert_eq!(format_timestamp_naive_time(timestamp_pm, false), "15:45");
-    }
 
     #[test]
     fn test_format_24_hour_time() {
