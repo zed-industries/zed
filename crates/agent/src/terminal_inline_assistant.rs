@@ -72,13 +72,18 @@ impl TerminalInlineAssistant {
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
-        let prompt_buffer =
-            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
+        let prompt_buffer = cx.new(|cx| {
+            MultiBuffer::singleton(
+                cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx)),
+                cx,
+            )
+        });
         let context_store = cx.new(|_cx| ContextStore::new(project, thread_store.clone()));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
