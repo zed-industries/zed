@@ -468,12 +468,13 @@ impl MessageEditor {
         }
 
         let active_completion_mode = thread.completion_mode();
+        let max_turned_on = active_completion_mode == CompletionMode::Max;
 
         Some(
             IconButton::new("max-mode", IconName::ZedMaxMode)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .toggle_state(active_completion_mode == CompletionMode::Max)
+                .toggle_state(max_turned_on)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_completion_mode(match active_completion_mode {
@@ -482,7 +483,7 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(|_, cx| cx.new(MaxModeTooltip::new).into())
+                .tooltip(|_, cx| cx.new(MaxModeTooltip::new().selected(max_turned_on)).into())
                 .into_any_element(),
         )
     }
