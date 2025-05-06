@@ -303,7 +303,8 @@ impl DapStore {
         match &self.mode {
             DapStoreMode::Local(_) => {
                 // Pre-resolve args with existing environment.
-                let locator = DapRegistry::global(cx).locators().get(locator_name);
+                let locators = DapRegistry::global(cx).locators();
+                let locator = locators.get(locator_name);
 
                 if let Some(locator) = locator.cloned() {
                     cx.background_spawn(async move {
