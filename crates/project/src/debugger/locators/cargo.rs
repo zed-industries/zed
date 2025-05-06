@@ -7,7 +7,7 @@ use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use task::{BuildTaskDefinition, DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct CargoLocator;
 
@@ -91,10 +91,19 @@ impl DapLocator for CargoLocator {
                 "Couldn't get cwd from debug config which is needed for locators"
             ));
         };
-
-        let mut child = Command::new("cargo")
-            .args(&build_config.args)
-            .arg("--message-format=json")
+        let builder = ShellBuilder::new(true, &build_config.shell).non_interactive();
+        let (program, args) = builder.build(
+            "cargo".into(),
+            &build_config
+                .args
+                .iter()
+                .cloned()
+                .take_while(|arg| arg != "--")
+                .chain(Some("--message-format=json".to_owned()))
+                .collect(),
+        );
+        let mut child = Command::new(program)
+            .args(args)
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)
             .stdout(Stdio::piped())
