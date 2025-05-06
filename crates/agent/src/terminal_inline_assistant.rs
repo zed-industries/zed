@@ -269,7 +269,7 @@ impl TerminalInlineAssistant {
 
         let ConfiguredModel { model, .. } = LanguageModelRegistry::read_global(cx)
             .inline_assistant_model()
-            .context("No inline asisstant model")?;
+            .context("No inline assistant model")?;
 
         let temperature = AssistantSettings::temperature_for_model(&model, cx);
 
