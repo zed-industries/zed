@@ -957,7 +957,7 @@ impl EditAgentTest {
 
                 cx.spawn(async move |cx| {
                     let agent_model =
-                        Self::load_model("google", "gemini-2.5-pro-preview-03-25", cx).await;
+                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
                     let judge_model =
                         Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
                     (agent_model.unwrap(), judge_model.unwrap())
