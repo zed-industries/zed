@@ -2972,7 +2972,6 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.selections.newest_anchor().clone();
         let position = display_map.clip_point(position, Bias::Left);
 
         let start;
@@ -3047,8 +3046,6 @@ impl Editor {
             } else {
                 if !add {
                     s.clear_disjoint();
-                } else if click_count > 1 {
-                    s.delete(newest_selection.id)
                 }
 
                 s.set_pending_anchor_range(start..end, mode);
