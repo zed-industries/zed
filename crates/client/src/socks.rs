@@ -1,5 +1,5 @@
 //! socks proxy
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use http_client::Url;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
@@ -37,7 +37,7 @@ pub(crate) async fn connect_socks_proxy_stream(
     // Connect to proxy and wrap protocol later
     let stream = tokio::net::TcpStream::connect(socks_proxy)
         .await
-        .map_err(|e| anyhow!("Failed to connect to proxy: {e}"))?;
+        .with_context(|| "Failed to connect to proxy: {proxy}")?;
 
     let socks: Box<dyn AsyncReadWrite> = match version {
         SocksVersion::V4(None) => {
