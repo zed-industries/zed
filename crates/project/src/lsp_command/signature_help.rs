@@ -191,6 +191,7 @@ fn proto_to_lsp_documentation(documentation: proto::Documentation) -> Option<lsp
 #[cfg(test)]
 mod tests {
     use gpui::{FontWeight, HighlightStyle};
+    use lsp::{Documentation, MarkupContent, MarkupKind};
 
     use crate::lsp_command::signature_help::SignatureHelp;
 
@@ -206,7 +207,9 @@ mod tests {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![lsp::SignatureInformation {
                 label: "fn test(foo: u8, bar: &str)".to_string(),
-                documentation: None,
+                documentation: Some(Documentation::String(
+                    "This is a test documentation".to_string(),
+                )),
                 parameters: Some(vec![
                     lsp::ParameterInformation {
                         label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
@@ -235,6 +238,10 @@ mod tests {
                 vec![(8..15, current_parameter())]
             )
         );
+        assert_eq!(
+            signature.documentation,
+            Some("This is a test documentation".to_string())
+        )
     }
 
     #[test]
@@ -242,7 +249,10 @@ mod tests {
         let signature_help = lsp::SignatureHelp {
             signatures: vec![lsp::SignatureInformation {
                 label: "fn test(foo: u8, bar: &str)".to_string(),
-                documentation: None,
+                documentation: Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: "This is a test documentation".to_string(),
+                })),
                 parameters: Some(vec![
                     lsp::ParameterInformation {
                         label: lsp::ParameterLabel::Simple("foo: u8".to_string()),
@@ -271,6 +281,10 @@ mod tests {
                 vec![(17..26, current_parameter())]
             )
         );
+        assert_eq!(
+            signature.documentation,
+            Some("This is a test documentation".to_string())
+        )
     }
 
     #[test]
