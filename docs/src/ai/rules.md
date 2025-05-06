@@ -15,7 +15,7 @@ Here are some tips for creating effective rules:
 
 ## `.rules` files
 
-Zed supports including `.rules` files at the top-level of your repository. Here, you can include project-level instructions you'd like to have included in all of your interactions with the agent panel.
+Zed supports including `.rules` files at the top level of your repository. Here, you can include project-level instructions you'd like to have included in all of your interactions with the agent panel.
 
 ## Rules Library {#rules-library}
 
