@@ -608,6 +608,7 @@ dependencies = [
  "paths",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "settings",
  "workspace-hack",
