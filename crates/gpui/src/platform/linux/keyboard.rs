@@ -1,11 +1,17 @@
+#[cfg(any(feature = "wayland", feature = "x11"))]
 use collections::HashMap;
+#[cfg(any(feature = "wayland", feature = "x11"))]
 use x11rb::{protocol::xkb::ConnectionExt, xcb_ffi::XCBConnection};
+#[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{
     Keycode,
     x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION},
 };
 
-use crate::{PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_alphabetic_key};
+use crate::{PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode};
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use crate::is_alphabetic_key;
 
 pub(crate) struct LinuxKeyboardLayout {
     id: String,
@@ -27,12 +33,14 @@ impl LinuxKeyboardLayout {
     }
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) struct LinuxKeyboardMapper {
     code_to_key: HashMap<Keycode, String>,
     key_to_code: HashMap<String, Keycode>,
     code_to_shifted_key: HashMap<Keycode, String>,
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
 impl PlatformKeyboardMapper for LinuxKeyboardMapper {
     fn scan_code_to_key(&self, gpui_scan_code: ScanCode) -> anyhow::Result<String> {
         if let Some(key) = gpui_scan_code.try_to_key() {
@@ -74,6 +82,7 @@ impl PlatformKeyboardMapper for LinuxKeyboardMapper {
     }
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
 impl LinuxKeyboardMapper {
     pub(crate) fn new() -> Self {
         let (xcb_connection, _) = XCBConnection::connect(None).unwrap();
@@ -123,6 +132,7 @@ impl LinuxKeyboardMapper {
 }
 
 // All typeable scan codes for the standard US keyboard layout, ANSI104
+#[cfg(any(feature = "wayland", feature = "x11"))]
 const TYPEABLE_CODES: &[u32] = &[
     0x0026, // a
     0x0038, // b
@@ -173,6 +183,7 @@ const TYPEABLE_CODES: &[u32] = &[
     0x003d, // / Slash
 ];
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
 fn get_scan_code(scan_code: ScanCode) -> Option<u32> {
     // https://github.com/microsoft/node-native-keymap/blob/main/deps/chromium/dom_code_data.inc
     Some(match scan_code {
@@ -263,4 +274,25 @@ fn get_scan_code(scan_code: ScanCode) -> Option<u32> {
         ScanCode::Delete => 0x0077,
         ScanCode::Insert => 0x0076,
     })
+}
+
+#[cfg(not(any(feature = "wayland", feature = "x11")))]
+pub(crate) struct LinuxKeyboardMapper;
+
+#[cfg(not(any(feature = "wayland", feature = "x11")))]
+impl PlatformKeyboardMapper for LinuxKeyboardMapper {
+    fn scan_code_to_key(&self, _scan_code: ScanCode) -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("LinuxKeyboardMapper not supported"))
+    }
+
+    fn get_shifted_key(&self, _key: &str) -> anyhow::Result<Option<String>> {
+        Err(anyhow::anyhow!("LinuxKeyboardMapper not supported"))
+    }
+}
+
+#[cfg(not(any(feature = "wayland", feature = "x11")))]
+impl LinuxKeyboardMapper {
+    pub(crate) fn new() -> Self {
+        Self
+    }
 }
