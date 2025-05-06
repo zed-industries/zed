@@ -98,17 +98,17 @@ pub(crate) fn is_alphabetic_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_os = "linux"))]
+    // #[cfg(not(target_os = "linux"))]
     use strum::IntoEnumIterator;
 
-    #[cfg(not(target_os = "linux"))]
+    // #[cfg(not(target_os = "linux"))]
     use crate::ScanCode;
 
-    #[cfg(not(target_os = "linux"))]
+    // #[cfg(not(target_os = "linux"))]
     use super::{PlatformKeyboardMapper, TestKeyboardMapper};
 
     #[test]
-    #[cfg(not(target_os = "linux"))]
+    // #[cfg(not(target_os = "linux"))]
     fn test_get_shifted_key() {
         let mapper = TestKeyboardMapper::new();
 
