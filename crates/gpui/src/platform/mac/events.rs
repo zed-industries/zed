@@ -2,7 +2,7 @@ use crate::{
     CMD_MOD, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NO_MOD, NavigationDirection,
     OPTION_MOD, Pixels, PlatformInput, SHIFT_MOD, ScrollDelta, ScrollWheelEvent, TouchPhase,
-    chars_for_modified_key, platform::mac::NSStringExt, point, px,
+    always_use_command_layout, chars_for_modified_key, platform::mac::NSStringExt, point, px,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
@@ -444,12 +444,4 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             key_char,
         }
     }
-}
-
-fn always_use_command_layout() -> bool {
-    if chars_for_modified_key(0, NO_MOD).is_ascii() {
-        return false;
-    }
-
-    chars_for_modified_key(0, CMD_MOD).is_ascii()
 }

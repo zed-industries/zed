@@ -70,16 +70,12 @@ impl MacKeyboardMapper {
         let mut key_to_code = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
 
+        let always_use_cmd_layout = always_use_command_layout();
         for &scan_code in TYPEABLE_CODES.iter() {
-            let key = chars_for_modified_key(scan_code, NO_MOD);
-            if !key.is_empty() {
-                code_to_key.insert(scan_code, key.clone());
-                key_to_code.insert(key, scan_code);
-            }
-            let shifted_key = chars_for_modified_key(scan_code, SHIFT_MOD);
-            if !shifted_key.is_empty() {
-                code_to_shifted_key.insert(scan_code, shifted_key);
-            }
+            let (key, shifted_key) = generate_key_pairs(scan_code, always_use_cmd_layout);
+            code_to_key.insert(scan_code, key.clone());
+            key_to_code.insert(key, scan_code);
+            code_to_shifted_key.insert(scan_code, shifted_key);
         }
 
         Self {
@@ -198,6 +194,38 @@ pub(crate) fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String 
         let _: () = msg_send![keyboard, release];
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+pub(crate) fn always_use_command_layout() -> bool {
+    if chars_for_modified_key(0, NO_MOD).is_ascii() {
+        return false;
+    }
+
+    chars_for_modified_key(0, CMD_MOD).is_ascii()
+}
+
+fn generate_key_pairs(scan_code: u16, always_use_cmd_layout: bool) -> (String, String) {
+    let mut chars_ignoring_modifiers = chars_for_modified_key(scan_code, NO_MOD);
+    let mut chars_with_shift = chars_for_modified_key(scan_code, SHIFT_MOD);
+
+    // Handle Dvorak+QWERTY / Russian / Armenian
+    if always_use_cmd_layout {
+        let chars_with_cmd = chars_for_modified_key(scan_code, CMD_MOD);
+        let chars_with_both = chars_for_modified_key(scan_code, CMD_MOD | SHIFT_MOD);
+
+        // We don't do this in the case that the shifted command key generates
+        // the same character as the unshifted command key (Norwegian, e.g.)
+        if chars_with_both != chars_with_cmd {
+            chars_with_shift = chars_with_both;
+
+        // Handle edge-case where cmd-shift-s reports cmd-s instead of
+        // cmd-shift-s (Ukrainian, etc.)
+        } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
+            chars_with_shift = chars_with_cmd.to_ascii_uppercase();
+        }
+        chars_ignoring_modifiers = chars_with_cmd;
+    }
+    (chars_ignoring_modifiers, chars_with_shift)
 }
 
 // All typeable scan codes for the standard US keyboard layout, ANSI104
