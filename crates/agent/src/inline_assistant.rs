@@ -335,23 +335,46 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Get the current selection before checking for existing assists
+        let (snapshot, newest_selection) = editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all::<Point>(cx);
+            let newest = selections.iter().max_by_key(|sel| sel.id).cloned();
+            (editor.snapshot(window, cx), newest)
+        });
+
         // Check if this editor already has active assistants
-        if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
-            if !editor_assists.assist_ids.is_empty() {
-                // Focus the first assist in the editor rather than creating a new one
-                if let Some(&assist_id) = editor_assists.assist_ids.first() {
-                    self.focus_assist(assist_id, window, cx);
-                    return;
+        if let Some(newest_selection) = newest_selection {
+            if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+                if !editor_assists.assist_ids.is_empty() {
+                    // Check for an assist at the current cursor position
+                    for &assist_id in &editor_assists.assist_ids {
+                        let assist = &self.assists[&assist_id];
+                        // Convert cursor position to anchor for comparison
+                        let cursor_anchor = snapshot
+                            .buffer_snapshot
+                            .anchor_before(newest_selection.start);
+
+                        // Check if cursor position is within this assist's range
+                        if assist
+                            .range
+                            .start
+                            .cmp(&cursor_anchor, &snapshot.buffer_snapshot)
+                            .is_le()
+                            && assist
+                                .range
+                                .end
+                                .cmp(&cursor_anchor, &snapshot.buffer_snapshot)
+                                .is_ge()
+                        {
+                            self.focus_assist(assist_id, window, cx);
+                            return;
+                        }
+                    }
                 }
             }
         }
 
-        let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
-            (
-                editor.snapshot(window, cx),
-                editor.selections.all::<Point>(cx),
-            )
-        });
+        let initial_selections = editor.update(cx, |editor, cx| editor.selections.all::<Point>(cx));
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
