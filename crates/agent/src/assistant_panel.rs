@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
+use markdown::Markdown;
 use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
@@ -22,10 +23,11 @@ use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop, linear_gradient,
+    prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
 use language_model_selector::ToggleModelSelector;
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -33,16 +35,18 @@ use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, update_settings_file};
+use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::{
-    Banner, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, ProgressBar, Tab, Tooltip,
-    prelude::*,
+    Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
+    ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{CollaboratorId, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{ActiveThread, ActiveThreadEvent};
@@ -54,9 +58,10 @@ use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
-    AddContextServer, AgentDiffPane, DeleteRecentlyOpenThread, ExpandMessageEditor, Follow,
-    InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
+    Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    OpenHistory, ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker,
+    ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -137,6 +142,9 @@ pub fn init(cx: &mut App) {
                             panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
                     }
+                })
+                .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
+                    set_trial_upsell_dismissed(false, cx);
                 });
         },
     )
@@ -313,8 +321,9 @@ pub struct AssistantPanel {
     message_editor: Entity<MessageEditor>,
     _active_thread_subscriptions: Vec<Subscription>,
     _default_model_subscription: Subscription,
-    context_store: Entity<assistant_context_editor::ContextStore>,
+    context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    inline_assist_context_store: Entity<crate::context_store::ContextStore>,
     configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
@@ -328,6 +337,8 @@ pub struct AssistantPanel {
     width: Option<Pixels>,
     height: Option<Pixels>,
     pending_serialization: Option<Task<Result<()>>>,
+    hide_trial_upsell: bool,
+    _trial_markdown: Entity<Markdown>,
 }
 
 impl AssistantPanel {
@@ -419,7 +430,7 @@ impl AssistantPanel {
     fn new(
         workspace: &Workspace,
         thread_store: Entity<ThreadStore>,
-        context_store: Entity<assistant_context_editor::ContextStore>,
+        context_store: Entity<TextThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -438,6 +449,12 @@ impl AssistantPanel {
                 Some(thread_store.downgrade()),
             )
         });
+        let inline_assist_context_store = cx.new(|_cx| {
+            crate::context_store::ContextStore::new(
+                project.downgrade(),
+                Some(thread_store.downgrade()),
+            )
+        });
 
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
@@ -447,7 +464,9 @@ impl AssistantPanel {
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
+                context_store.downgrade(),
                 thread.clone(),
+                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -483,6 +502,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 thread_store.clone(),
+                context_store.clone(),
                 message_editor_context_store.clone(),
                 language_registry.clone(),
                 workspace.clone(),
@@ -614,6 +634,15 @@ impl AssistantPanel {
             },
         );
 
+        let trial_markdown = cx.new(|cx| {
+            Markdown::new(
+                include_str!("trial_markdown.md").into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        });
+
         Self {
             active_view,
             workspace,
@@ -638,6 +667,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
+            inline_assist_context_store,
             previous_view: None,
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
@@ -647,6 +677,8 @@ impl AssistantPanel {
             width: None,
             height: None,
             pending_serialization: None,
+            hide_trial_upsell: false,
+            _trial_markdown: trial_markdown,
         }
     }
 
@@ -672,8 +704,18 @@ impl AssistantPanel {
         &self.prompt_store
     }
 
+    pub(crate) fn inline_assist_context_store(
+        &self,
+    ) -> &Entity<crate::context_store::ContextStore> {
+        &self.inline_assist_context_store
+    }
+
     pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
+    }
+
+    pub(crate) fn text_thread_store(&self) -> &Entity<TextThreadStore> {
+        &self.context_store
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -727,6 +769,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                self.context_store.clone(),
                 context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
@@ -751,7 +794,9 @@ impl AssistantPanel {
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
+                self.context_store.downgrade(),
                 thread,
+                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -854,42 +899,39 @@ impl AssistantPanel {
         let context = self
             .context_store
             .update(cx, |store, cx| store.open_local_context(path, cx));
-        let fs = self.fs.clone();
-        let project = self.project.clone();
-        let workspace = self.workspace.clone();
-
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
-
         cx.spawn_in(window, async move |this, cx| {
             let context = context.await?;
             this.update_in(cx, |this, window, cx| {
-                let editor = cx.new(|cx| {
-                    ContextEditor::for_context(
-                        context,
-                        fs,
-                        workspace,
-                        project,
-                        lsp_adapter_delegate,
-                        window,
-                        cx,
-                    )
-                });
-
-                this.set_active_view(
-                    ActiveView::prompt_editor(
-                        editor.clone(),
-                        this.language_registry.clone(),
-                        window,
-                        cx,
-                    ),
-                    window,
-                    cx,
-                );
-
-                anyhow::Ok(())
-            })??;
-            Ok(())
+                this.open_prompt_editor(context, window, cx);
+            })
         })
+    }
+
+    pub(crate) fn open_prompt_editor(
+        &mut self,
+        context: Entity<AssistantContext>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project.clone(), cx)
+            .log_err()
+            .flatten();
+        let editor = cx.new(|cx| {
+            ContextEditor::for_context(
+                context,
+                self.fs.clone(),
+                self.workspace.clone(),
+                self.project.clone(),
+                lsp_adapter_delegate,
+                window,
+                cx,
+            )
+        });
+        self.set_active_view(
+            ActiveView::prompt_editor(editor.clone(), self.language_registry.clone(), window, cx),
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn open_thread_by_id(
@@ -936,6 +978,7 @@ impl AssistantPanel {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
+                self.context_store.clone(),
                 context_store.clone(),
                 self.language_registry.clone(),
                 self.workspace.clone(),
@@ -960,7 +1003,9 @@ impl AssistantPanel {
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
+                self.context_store.downgrade(),
                 thread,
+                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1011,6 +1056,54 @@ impl AssistantPanel {
         self.assistant_dropdown_menu_handle.toggle(window, cx);
     }
 
+    pub fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(1.0), cx);
+    }
+
+    pub fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(-1.0), cx);
+    }
+
+    fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, cx| {
+                let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                let _ = settings
+                    .agent_font_size
+                    .insert(theme::clamp_font_size(agent_font_size).0);
+            });
+        } else {
+            theme::adjust_agent_font_size(cx, |size| {
+                *size += delta;
+            });
+        }
+    }
+
+    pub fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
+                settings.agent_font_size = None;
+            });
+        } else {
+            theme::reset_agent_font_size(cx);
+        }
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -1026,14 +1119,14 @@ impl AssistantPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let context_server_manager = self.thread_store.read(cx).context_server_manager();
+        let context_server_store = self.project.read(cx).context_server_store();
         let tools = self.thread_store.read(cx).tools();
         let fs = self.fs.clone();
 
         self.set_active_view(ActiveView::Configuration, window, cx);
         self.configuration =
             Some(cx.new(|cx| {
-                AssistantConfiguration::new(fs, context_server_manager, tools, window, cx)
+                AssistantConfiguration::new(fs, context_server_store, tools, window, cx)
             }));
 
         if let Some(configuration) = self.configuration.as_ref() {
@@ -1067,7 +1160,9 @@ impl AssistantPanel {
             .app_state()
             .languages
             .language_for_name("Markdown");
-        let thread = self.active_thread(cx);
+        let Some(thread) = self.active_thread() else {
+            return;
+        };
         cx.spawn_in(window, async move |_this, cx| {
             let markdown_language = markdown_language_task.await?;
 
@@ -1133,8 +1228,11 @@ impl AssistantPanel {
         }
     }
 
-    pub(crate) fn active_thread(&self, cx: &App) -> Entity<Thread> {
-        self.thread.read(cx).thread().clone()
+    pub(crate) fn active_thread(&self) -> Option<Entity<Thread>> {
+        match &self.active_view {
+            ActiveView::Thread { thread, .. } => thread.upgrade(),
+            _ => None,
+        }
     }
 
     pub(crate) fn delete_thread(
@@ -1235,6 +1333,14 @@ impl Focusable for AssistantPanel {
     }
 }
 
+fn agent_panel_dock_position(cx: &App) -> DockPosition {
+    match AssistantSettings::get_global(cx).dock {
+        AssistantDockPosition::Left => DockPosition::Left,
+        AssistantDockPosition::Bottom => DockPosition::Bottom,
+        AssistantDockPosition::Right => DockPosition::Right,
+    }
+}
+
 impl EventEmitter<PanelEvent> for AssistantPanel {}
 
 impl Panel for AssistantPanel {
@@ -1243,18 +1349,18 @@ impl Panel for AssistantPanel {
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
-        match AssistantSettings::get_global(cx).dock {
-            AssistantDockPosition::Left => DockPosition::Left,
-            AssistantDockPosition::Bottom => DockPosition::Bottom,
-            AssistantDockPosition::Right => DockPosition::Right,
-        }
+        agent_panel_dock_position(cx)
     }
 
-    fn position_is_valid(&self, _: DockPosition) -> bool {
-        true
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        position != DockPosition::Bottom
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
+        self.message_editor.update(cx, |message_editor, cx| {
+            message_editor.set_dock_position(position, cx);
+        });
+
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
             cx,
@@ -1388,10 +1494,29 @@ impl AssistantPanel {
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_thread = self.thread.read(cx);
+        let user_store = self.user_store.read(cx);
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
-        let last_usage = active_thread.thread().read(cx).last_usage();
+        let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
+            maybe!({
+                let amount = user_store.model_request_usage_amount()?;
+                let limit = user_store.model_request_usage_limit()?.variant?;
+
+                Some(RequestUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        });
+
         let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
@@ -1712,6 +1837,166 @@ impl AssistantPanel {
             }
             _ => None,
         }
+    }
+
+    fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if self.hide_trial_upsell || dismissed_trial_upsell() {
+            return false;
+        }
+
+        let plan = self.user_store.read(cx).current_plan();
+        if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
+            return false;
+        }
+
+        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
+        if has_previous_trial {
+            return false;
+        }
+
+        true
+    }
+
+    fn render_trial_upsell(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        if !self.should_render_upsell(cx) {
+            return None;
+        }
+
+        let checkbox = CheckboxWithLabel::new(
+            "dont-show-again",
+            Label::new("Don't show again").color(Color::Muted),
+            ToggleState::Unselected,
+            move |toggle_state, _window, cx| {
+                let toggle_state_bool = toggle_state.selected();
+
+                set_trial_upsell_dismissed(toggle_state_bool, cx);
+            },
+        );
+
+        Some(
+            div().p_2().child(
+                v_flex()
+                    .w_full()
+                    .elevation_2(cx)
+                    .rounded(px(8.))
+                    .bg(cx.theme().colors().background.alpha(0.5))
+                    .p(px(3.))
+
+                    .child(
+                        div()
+                            .gap_2()
+                            .flex()
+                            .flex_col()
+                            .size_full()
+                            .border_1()
+                            .rounded(px(5.))
+                            .border_color(cx.theme().colors().text.alpha(0.1))
+                            .overflow_hidden()
+                            .relative()
+                            .bg(cx.theme().colors().panel_background)
+                            .px_4()
+                            .py_3()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .right(px(-1.0))
+                                    .w(px(441.))
+                                    .h(px(167.))
+                                    .child(
+                                    Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(167.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1)))
+                                )
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(-8.0))
+                                    .right_0()
+                                    .w(px(400.))
+                                    .h(px(92.))
+                                    .child(
+                                    Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32)))
+                                )
+                            )
+                            // .child(
+                            //     div()
+                            //         .absolute()
+                            //         .top_0()
+                            //         .right(px(360.))
+                            //         .size(px(401.))
+                            //         .overflow_hidden()
+                            //         .bg(cx.theme().colors().panel_background)
+                            // )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .right_0()
+                                    .w(px(660.))
+                                    .h(px(401.))
+                                    .overflow_hidden()
+                                    .bg(linear_gradient(
+                                        75.,
+                                        linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
+                                        linear_color_stop(cx.theme().colors().panel_background, 0.45),
+                                    ))
+                            )
+                            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+                            .child(Label::new("Try Zed Pro for free for 14 days - no credit card required.").size(LabelSize::Small))
+                            .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .px_neg_1()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(h_flex().items_center().gap_1().child(checkbox))
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("dismiss-button", "Not Now")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .color(Color::Muted)
+                                                    .on_click({
+                                                        let assistant_panel = cx.entity();
+                                                        move |_, _, cx| {
+                                                            assistant_panel.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    let hidden =
+                                                                        this.hide_trial_upsell;
+                                                                    println!("hidden: {}", hidden);
+                                                                    this.hide_trial_upsell = true;
+                                                                    let new_hidden =
+                                                                        this.hide_trial_upsell;
+                                                                    println!(
+                                                                        "new_hidden: {}",
+                                                                        new_hidden
+                                                                    );
+
+                                                                    cx.notify();
+                                                                },
+                                                            );
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                Button::new("cta-button", "Start Trial")
+                                                    .style(ButtonStyle::Transparent)
+                                                    .on_click(|_, _, cx| {
+                                                        cx.open_url(&zed_urls::account_url(cx))
+                                                    }),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            ),
+        )
     }
 
     fn render_active_thread_or_empty_state(
@@ -2326,7 +2611,11 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_navigation_menu))
             .on_action(cx.listener(Self::toggle_options_menu))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
+            .children(self.render_trial_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
@@ -2404,12 +2693,16 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             };
             let prompt_store = None;
             let thread_store = None;
+            let text_thread_store = None;
+            let context_store = cx.new(|_| ContextStore::new(project.clone(), None));
             assistant.assist(
                 &prompt_editor,
                 self.workspace.clone(),
+                context_store,
                 project,
                 prompt_store,
                 thread_store,
+                text_thread_store,
                 window,
                 cx,
             )
@@ -2524,4 +2817,27 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             });
         });
     }
+}
+
+const DISMISSED_TRIAL_UPSELL_KEY: &str = "dismissed-trial-upsell";
+
+fn dismissed_trial_upsell() -> bool {
+    db::kvp::KEY_VALUE_STORE
+        .read_kvp(DISMISSED_TRIAL_UPSELL_KEY)
+        .log_err()
+        .map_or(false, |s| s.is_some())
+}
+
+fn set_trial_upsell_dismissed(is_dismissed: bool, cx: &mut App) {
+    db::write_and_log(cx, move || async move {
+        if is_dismissed {
+            db::kvp::KEY_VALUE_STORE
+                .write_kvp(DISMISSED_TRIAL_UPSELL_KEY.into(), "1".into())
+                .await
+        } else {
+            db::kvp::KEY_VALUE_STORE
+                .delete_kvp(DISMISSED_TRIAL_UPSELL_KEY.into())
+                .await
+        }
+    })
 }

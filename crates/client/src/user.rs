@@ -102,6 +102,10 @@ pub struct UserStore {
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
     trial_started_at: Option<DateTime<Utc>>,
+    model_request_usage_amount: Option<u32>,
+    model_request_usage_limit: Option<proto::UsageLimit>,
+    edit_predictions_usage_amount: Option<u32>,
+    edit_predictions_usage_limit: Option<proto::UsageLimit>,
     is_usage_based_billing_enabled: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
@@ -163,6 +167,10 @@ impl UserStore {
             current_user: current_user_rx,
             current_plan: None,
             trial_started_at: None,
+            model_request_usage_amount: None,
+            model_request_usage_limit: None,
+            edit_predictions_usage_amount: None,
+            edit_predictions_usage_limit: None,
             is_usage_based_billing_enabled: None,
             accepted_tos_at: None,
             contacts: Default::default(),
@@ -330,6 +338,14 @@ impl UserStore {
                 .trial_started_at
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+
+            if let Some(usage) = message.payload.usage {
+                this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
+                this.model_request_usage_limit = usage.model_requests_usage_limit;
+                this.edit_predictions_usage_amount = Some(usage.edit_predictions_usage_amount);
+                this.edit_predictions_usage_limit = usage.edit_predictions_usage_limit;
+            }
+
             cx.notify();
         })?;
         Ok(())
@@ -695,6 +711,30 @@ impl UserStore {
 
     pub fn current_plan(&self) -> Option<proto::Plan> {
         self.current_plan
+    }
+
+    pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
+        self.trial_started_at
+    }
+
+    pub fn usage_based_billing_enabled(&self) -> Option<bool> {
+        self.is_usage_based_billing_enabled
+    }
+
+    pub fn model_request_usage_amount(&self) -> Option<u32> {
+        self.model_request_usage_amount
+    }
+
+    pub fn model_request_usage_limit(&self) -> Option<proto::UsageLimit> {
+        self.model_request_usage_limit.clone()
+    }
+
+    pub fn edit_predictions_usage_amount(&self) -> Option<u32> {
+        self.edit_predictions_usage_amount
+    }
+
+    pub fn edit_predictions_usage_limit(&self) -> Option<proto::UsageLimit> {
+        self.edit_predictions_usage_limit.clone()
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
