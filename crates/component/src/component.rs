@@ -34,11 +34,12 @@ pub fn register_component<T: Component>() {
     let id = T::id();
     let metadata = ComponentMetadata {
         id: id.clone(),
-        name: SharedString::new_static(T::name()),
-        sort_name: SharedString::new_static(T::sort_name()),
-        scope: T::scope(),
         description: T::description().map(Into::into),
+        name: SharedString::new_static(T::name()),
         preview: Some(T::preview),
+        scope: T::scope(),
+        sort_name: SharedString::new_static(T::sort_name()),
+        status: T::status(),
     };
 
     let mut data = COMPONENT_DATA.write();
@@ -100,11 +101,12 @@ pub struct ComponentId(pub &'static str);
 #[derive(Clone)]
 pub struct ComponentMetadata {
     id: ComponentId,
-    name: SharedString,
-    sort_name: SharedString,
-    scope: ComponentScope,
     description: Option<SharedString>,
+    name: SharedString,
     preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
+    scope: ComponentScope,
+    sort_name: SharedString,
+    status: ComponentStatus,
 }
 
 impl ComponentMetadata {
@@ -112,8 +114,20 @@ impl ComponentMetadata {
         self.id.clone()
     }
 
+    pub fn description(&self) -> Option<SharedString> {
+        self.description.clone()
+    }
+
     pub fn name(&self) -> SharedString {
         self.name.clone()
+    }
+
+    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
+        self.preview
+    }
+
+    pub fn scope(&self) -> ComponentScope {
+        self.scope.clone()
     }
 
     pub fn sort_name(&self) -> SharedString {
@@ -130,16 +144,8 @@ impl ComponentMetadata {
             .into()
     }
 
-    pub fn scope(&self) -> ComponentScope {
-        self.scope.clone()
-    }
-
-    pub fn description(&self) -> Option<SharedString> {
-        self.description.clone()
-    }
-
-    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
-        self.preview
+    pub fn status(&self) -> ComponentStatus {
+        self.status.clone()
     }
 }
 
@@ -167,6 +173,17 @@ pub trait Component {
     /// their previews are displayed and organized.
     fn scope() -> ComponentScope {
         ComponentScope::None
+    }
+    /// The ready status of this component.
+    ///
+    /// Use this to mark when components are:
+    /// - `WorkInProgress`: Still being designed or are partially implemented.
+    /// - `EngineeringReady`: Ready to be implemented.
+    /// - `Deprecated`: No longer recommended for use.
+    ///
+    /// Defaults to [`Live`](ComponentStatus::Live).
+    fn status() -> ComponentStatus {
+        ComponentStatus::Live
     }
     /// The name of the component.
     ///
@@ -234,13 +251,40 @@ pub trait Component {
     }
 }
 
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub enum ComponentStatus {
-//     WorkInProgress,
-//     EngineeringReady,
-//     Live,
-//     Deprecated,
-// }
+/// The ready status of this component.
+///
+/// Use this to mark when components are:
+/// - `WorkInProgress`: Still being designed or are partially implemented.
+/// - `EngineeringReady`: Ready to be implemented.
+/// - `Deprecated`: No longer recommended for use.
+///
+/// Defaults to [`Live`](ComponentStatus::Live).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Display, EnumString)]
+pub enum ComponentStatus {
+    #[strum(serialize = "Work In Progress")]
+    WorkInProgress,
+    #[strum(serialize = "Ready To Build")]
+    EngineeringReady,
+    Live,
+    Deprecated,
+}
+
+impl ComponentStatus {
+    pub fn description(&self) -> &str {
+        match self {
+            ComponentStatus::WorkInProgress => {
+                "These components are still being designed or refined. They shouldn't be used in the app yet."
+            }
+            ComponentStatus::EngineeringReady => {
+                "These components are design complete or partially implemented, and are ready for an engineer to complete their implementation."
+            }
+            ComponentStatus::Live => "These components are ready for use in the app.",
+            ComponentStatus::Deprecated => {
+                "These components are no longer recommended for use in the app, and may be removed in a future release."
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Display, EnumString)]
 pub enum ComponentScope {
