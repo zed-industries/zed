@@ -364,17 +364,12 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 }
 
-struct LmStudioStreamMapper {
-    current_role: Option<String>,
-    content_buffer: String,
-}
+// This will be more useful when we implement tool calling. Currently keeping it empty.
+struct LmStudioStreamMapper {}
 
 impl LmStudioStreamMapper {
     fn new() -> Self {
-        Self {
-            current_role: None,
-            content_buffer: String::new(),
-        }
+        Self {}
     }
 
     fn process_fragment(&self, fragment: lmstudio::ChatResponse) -> Result<Option<String>> {
