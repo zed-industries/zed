@@ -4962,7 +4962,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(format!("'{}'", search_state.query))),
+                        .child(Label::new(search_state.query.to_string())),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))

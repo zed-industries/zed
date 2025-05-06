@@ -3,7 +3,9 @@ pub mod running;
 use std::sync::OnceLock;
 
 use dap::client::SessionId;
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
+use gpui::{
+    App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+};
 use project::Project;
 use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
@@ -15,8 +17,7 @@ use workspace::{
     item::{self, Item},
 };
 
-use crate::debugger_panel::DebugPanel;
-use crate::persistence::SerializedPaneLayout;
+use crate::{debugger_panel::DebugPanel, persistence::SerializedLayout};
 
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
@@ -40,7 +41,8 @@ impl DebugSession {
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         _debug_panel: WeakEntity<DebugPanel>,
-        serialized_pane_layout: Option<SerializedPaneLayout>,
+        serialized_layout: Option<SerializedLayout>,
+        dock_axis: Axis,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -49,7 +51,8 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
-                serialized_pane_layout,
+                serialized_layout,
+                dock_axis,
                 window,
                 cx,
             )
