@@ -327,6 +327,7 @@ static SELECT_SCENARIO_LABEL: SharedString = SharedString::new_static("Select Pr
 #[derive(Clone)]
 enum NewSessionMode {
     Launch(Entity<Picker<DebugScenarioDelegate>>),
+    Custom(Entity<LaunchMode>),
     Attach(Entity<AttachMode>),
 }
 
@@ -334,6 +335,7 @@ impl NewSessionMode {
     fn debug_task(&self, cx: &App) -> Option<DebugRequest> {
         match self {
             NewSessionMode::Attach(entity) => Some(entity.read(cx).debug_task().into()),
+            NewSessionMode::Custom(entity) => Some(entity.read(cx).debug_task(cx).into()),
             NewSessionMode::Launch(_) => None,
         }
     }
@@ -409,9 +411,9 @@ impl NewSessionMode {
 impl std::fmt::Display for NewSessionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
-            NewSessionMode::Launch(_) => "launch".to_owned(),
-            NewSessionMode::Attach(_) => "attach".to_owned(),
-            NewSessionMode::Launch(_) => "scenario picker".to_owned(),
+            NewSessionMode::Launch(_) => "Launch".to_owned(),
+            NewSessionMode::Attach(_) => "Attach".to_owned(),
+            NewSessionMode::Custom(_) => "Custom".to_owned(),
         };
 
         write!(f, "{}", mode)
@@ -423,6 +425,7 @@ impl Focusable for NewSessionMode {
         match &self {
             NewSessionMode::Attach(entity) => entity.read(cx).attach_picker.focus_handle(cx),
             NewSessionMode::Launch(entity) => entity.read(cx).focus_handle(cx),
+            NewSessionMode::Custom(entity) => entity.read(cx).program.focus_handle(cx),
         }
     }
 }
@@ -431,6 +434,9 @@ impl RenderOnce for NewSessionMode {
     fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
         match self {
             NewSessionMode::Attach(entity) => entity.update(cx, |this, cx| {
+                this.clone().render(window, cx).into_any_element()
+            }),
+            NewSessionMode::Custom(entity) => entity.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
             NewSessionMode::Launch(entity) => v_flex()
@@ -515,6 +521,9 @@ impl Render for NewSessionModal {
                             window,
                             cx,
                         ),
+                        _ => {
+                            return;
+                        }
                     };
 
                     this.mode.focus_handle(cx).focus(window);
@@ -540,6 +549,9 @@ impl Render for NewSessionModal {
                         window,
                         cx,
                     ),
+                    _ => {
+                        return;
+                    }
                 };
 
                 this.mode.focus_handle(cx).focus(window);
@@ -615,11 +627,13 @@ impl Render for NewSessionModal {
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
                     .w_full()
-                    .child(
-                        div().when(matches!(self.mode, NewSessionMode::Attach(_)), |this| {
-                            this.child(self.adapter_drop_down_menu(window, cx))
-                        }),
-                    )
+                    .child(match self.mode {
+                        NewSessionMode::Attach(_) => {
+                            div().child(self.adapter_drop_down_menu(window, cx))
+                        }
+                        NewSessionMode::Launch(_) => div(), // todo!(Custom button toggle)
+                        NewSessionMode::Custom(_) => div(), // todo!(Back to launch mode button)
+                    })
                     .child(
                         h_flex()
                             .justify_end()
@@ -655,6 +669,10 @@ impl Render for NewSessionModal {
                                         NewSessionMode::Launch(_) => !self.mode.has_match(cx),
                                         NewSessionMode::Attach(_) => {
                                             self.debugger.is_none() || !self.mode.has_match(cx)
+                                        }
+                                        NewSessionMode::Custom(ref custom) => {
+                                            self.debugger.is_none()
+                                                || custom.read(cx).program.read(cx).is_empty(cx)
                                         }
                                     }),
                             ),
