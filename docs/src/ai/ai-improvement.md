@@ -1,5 +1,6 @@
 # Zed AI Improvement
 
+<!-- todo - complete agent panel data collection -->
 ## Agent Panel
 
 When using the Zed Assistant, Zed does not persistently store user content or use user content for training of its models.
