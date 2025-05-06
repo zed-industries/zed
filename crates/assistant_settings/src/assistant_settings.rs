@@ -5,10 +5,10 @@ use std::sync::Arc;
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use anyhow::{Result, bail};
+use collections::IndexMap;
 use deepseek::Model as DeepseekModel;
 use feature_flags::{AgentStreamEditsFeatureFlag, Assistant2FeatureFlag, FeatureFlagAppExt};
-use gpui::{App, Pixels};
-use indexmap::IndexMap;
+use gpui::{App, Pixels, SharedString};
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
@@ -17,6 +17,10 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
 pub use crate::agent_profile::*;
+
+pub fn init(cx: &mut App) {
+    AssistantSettings::register(cx);
+}
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -89,10 +93,20 @@ pub struct AssistantSettings {
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
     pub single_file_review: bool,
+    pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
 }
 
 impl AssistantSettings {
+    pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
+        let settings = Self::get_global(cx);
+        settings
+            .model_parameters
+            .iter()
+            .rfind(|setting| setting.matches(model))
+            .and_then(|m| m.temperature)
+    }
+
     pub fn stream_edits(&self, cx: &App) -> bool {
         cx.has_flag::<AgentStreamEditsFeatureFlag>() || self.stream_edits
     }
@@ -106,15 +120,47 @@ impl AssistantSettings {
     }
 
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
-        self.inline_assistant_model = Some(LanguageModelSelection { provider, model });
+        self.inline_assistant_model = Some(LanguageModelSelection {
+            provider: provider.into(),
+            model,
+        });
     }
 
     pub fn set_commit_message_model(&mut self, provider: String, model: String) {
-        self.commit_message_model = Some(LanguageModelSelection { provider, model });
+        self.commit_message_model = Some(LanguageModelSelection {
+            provider: provider.into(),
+            model,
+        });
     }
 
     pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
-        self.thread_summary_model = Some(LanguageModelSelection { provider, model });
+        self.thread_summary_model = Some(LanguageModelSelection {
+            provider: provider.into(),
+            model,
+        });
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct LanguageModelParameters {
+    pub provider: Option<LanguageModelProviderSetting>,
+    pub model: Option<SharedString>,
+    pub temperature: Option<f32>,
+}
+
+impl LanguageModelParameters {
+    pub fn matches(&self, model: &Arc<dyn LanguageModel>) -> bool {
+        if let Some(provider) = &self.provider {
+            if provider.0 != model.provider_id().0 {
+                return false;
+            }
+        }
+        if let Some(setting_model) = &self.model {
+            if *setting_model != model.id().0 {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -181,37 +227,37 @@ impl AssistantSettingsContent {
                         .and_then(|provider| match provider {
                             AssistantProviderContentV1::ZedDotDev { default_model } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: "zed.dev".to_string(),
+                                    provider: "zed.dev".into(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::OpenAi { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: "openai".to_string(),
+                                    provider: "openai".into(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::Anthropic { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: "anthropic".to_string(),
+                                    provider: "anthropic".into(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::Ollama { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: "ollama".to_string(),
+                                    provider: "ollama".into(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::LmStudio { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: "lmstudio".to_string(),
+                                    provider: "lmstudio".into(),
                                     model: model.id().to_string(),
                                 })
                             }
                             AssistantProviderContentV1::DeepSeek { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: "deepseek".to_string(),
+                                    provider: "deepseek".into(),
                                     model: model.id().to_string(),
                                 })
                             }
@@ -227,6 +273,7 @@ impl AssistantSettingsContent {
                     notify_when_agent_waiting: None,
                     stream_edits: None,
                     single_file_review: None,
+                    model_parameters: Vec::new(),
                     preferred_completion_mode: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
@@ -238,7 +285,7 @@ impl AssistantSettingsContent {
                 default_width: settings.default_width,
                 default_height: settings.default_height,
                 default_model: Some(LanguageModelSelection {
-                    provider: "openai".to_string(),
+                    provider: "openai".into(),
                     model: settings
                         .default_open_ai_model
                         .clone()
@@ -257,6 +304,7 @@ impl AssistantSettingsContent {
                 notify_when_agent_waiting: None,
                 stream_edits: None,
                 single_file_review: None,
+                model_parameters: Vec::new(),
                 preferred_completion_mode: None,
             },
             None => AssistantSettingsContentV2::default(),
@@ -370,7 +418,10 @@ impl AssistantSettingsContent {
                     }
                 }
                 VersionedAssistantSettingsContent::V2(ref mut settings) => {
-                    settings.default_model = Some(LanguageModelSelection { provider, model });
+                    settings.default_model = Some(LanguageModelSelection {
+                        provider: provider.into(),
+                        model,
+                    });
                 }
             },
             Some(AssistantSettingsContentInner::Legacy(settings)) => {
@@ -381,7 +432,10 @@ impl AssistantSettingsContent {
             None => {
                 self.inner = Some(AssistantSettingsContentInner::for_v2(
                     AssistantSettingsContentV2 {
-                        default_model: Some(LanguageModelSelection { provider, model }),
+                        default_model: Some(LanguageModelSelection {
+                            provider: provider.into(),
+                            model,
+                        }),
                         ..Default::default()
                     },
                 ));
@@ -391,7 +445,10 @@ impl AssistantSettingsContent {
 
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
         self.v2_setting(|setting| {
-            setting.inline_assistant_model = Some(LanguageModelSelection { provider, model });
+            setting.inline_assistant_model = Some(LanguageModelSelection {
+                provider: provider.into(),
+                model,
+            });
             Ok(())
         })
         .ok();
@@ -399,7 +456,10 @@ impl AssistantSettingsContent {
 
     pub fn set_commit_message_model(&mut self, provider: String, model: String) {
         self.v2_setting(|setting| {
-            setting.commit_message_model = Some(LanguageModelSelection { provider, model });
+            setting.commit_message_model = Some(LanguageModelSelection {
+                provider: provider.into(),
+                model,
+            });
             Ok(())
         })
         .ok();
@@ -427,7 +487,10 @@ impl AssistantSettingsContent {
 
     pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
         self.v2_setting(|setting| {
-            setting.thread_summary_model = Some(LanguageModelSelection { provider, model });
+            setting.thread_summary_model = Some(LanguageModelSelection {
+                provider: provider.into(),
+                model,
+            });
             Ok(())
         })
         .ok();
@@ -523,6 +586,7 @@ impl Default for VersionedAssistantSettingsContent {
             notify_when_agent_waiting: None,
             stream_edits: None,
             single_file_review: None,
+            model_parameters: Vec::new(),
             preferred_completion_mode: None,
         })
     }
@@ -587,6 +651,15 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     single_file_review: Option<bool>,
+    /// Additional parameters for language model requests. When making a request
+    /// to a model, parameters will be taken from the last entry in this list
+    /// that matches the model's provider and name. In each entry, both provider
+    /// and model are optional, so that you can specify parameters for either
+    /// one.
+    ///
+    /// Default: []
+    #[serde(default)]
+    model_parameters: Vec<LanguageModelParameters>,
 
     /// What completion mode to enable for new threads
     ///
@@ -613,33 +686,53 @@ impl From<CompletionMode> for zed_llm_client::CompletionMode {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct LanguageModelSelection {
-    #[schemars(schema_with = "providers_schema")]
-    pub provider: String,
+    pub provider: LanguageModelProviderSetting,
     pub model: String,
 }
 
-fn providers_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-    schemars::schema::SchemaObject {
-        enum_values: Some(vec![
-            "anthropic".into(),
-            "bedrock".into(),
-            "google".into(),
-            "lmstudio".into(),
-            "ollama".into(),
-            "openai".into(),
-            "zed.dev".into(),
-            "copilot_chat".into(),
-            "deepseek".into(),
-        ]),
-        ..Default::default()
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LanguageModelProviderSetting(pub String);
+
+impl JsonSchema for LanguageModelProviderSetting {
+    fn schema_name() -> String {
+        "LanguageModelProviderSetting".into()
     }
-    .into()
+
+    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        schemars::schema::SchemaObject {
+            enum_values: Some(vec![
+                "anthropic".into(),
+                "bedrock".into(),
+                "google".into(),
+                "lmstudio".into(),
+                "ollama".into(),
+                "openai".into(),
+                "zed.dev".into(),
+                "copilot_chat".into(),
+                "deepseek".into(),
+            ]),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
+impl From<String> for LanguageModelProviderSetting {
+    fn from(provider: String) -> Self {
+        Self(provider)
+    }
+}
+
+impl From<&str> for LanguageModelProviderSetting {
+    fn from(provider: &str) -> Self {
+        Self(provider.to_string())
+    }
 }
 
 impl Default for LanguageModelSelection {
     fn default() -> Self {
         Self {
-            provider: "openai".to_string(),
+            provider: LanguageModelProviderSetting("openai".to_string()),
             model: "gpt-4".to_string(),
         }
     }
@@ -781,6 +874,10 @@ impl Settings for AssistantSettings {
                 value.preferred_completion_mode,
             );
 
+            settings
+                .model_parameters
+                .extend_from_slice(&value.model_parameters);
+
             if let Some(profiles) = value.profiles {
                 settings
                     .profiles
@@ -913,6 +1010,7 @@ mod tests {
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,
+                                model_parameters: Vec::new(),
                                 preferred_completion_mode: None,
                             },
                         )),
@@ -976,7 +1074,7 @@ mod tests {
                         AssistantSettingsContentV2 {
                             enabled: Some(false),
                             default_model: Some(LanguageModelSelection {
-                                provider: "xai".to_owned(),
+                                provider: "xai".to_owned().into(),
                                 model: "grok".to_owned(),
                             }),
                             ..Default::default()

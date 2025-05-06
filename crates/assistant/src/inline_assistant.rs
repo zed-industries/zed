@@ -2484,7 +2484,7 @@ impl InlineAssist {
                     .read(cx)
                     .active_context(cx)?
                     .read(cx)
-                    .to_completion_request(RequestType::Chat, cx),
+                    .to_completion_request(None, RequestType::Chat, cx),
             )
         } else {
             None
@@ -2870,7 +2870,8 @@ impl CodegenAlternative {
         if let Some(ConfiguredModel { model, .. }) =
             LanguageModelRegistry::read_global(cx).inline_assistant_model()
         {
-            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
+            let request =
+                self.build_request(&model, user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
                     let total_count = model.count_tokens(request.clone(), cx);
@@ -2915,7 +2916,8 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
+                let request =
+                    self.build_request(&model, user_prompt, assistant_panel_context, cx)?;
                 self.request = Some(request.clone());
 
                 cx.spawn(async move |_, cx| model.stream_completion_text(request, &cx).await)
@@ -2927,6 +2929,7 @@ impl CodegenAlternative {
 
     fn build_request(
         &self,
+        model: &Arc<dyn LanguageModel>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
@@ -2981,7 +2984,7 @@ impl CodegenAlternative {
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: None,
+            temperature: AssistantSettings::temperature_for_model(&model, cx),
         })
     }
 

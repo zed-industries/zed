@@ -3,6 +3,7 @@ mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
 use anyhow::{Context as _, Result, anyhow};
+use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -1273,10 +1274,10 @@ impl AssistantContext {
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut Context<Self>) {
         // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
         // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
-        let request = self.to_completion_request(RequestType::Chat, cx);
         let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
+        let request = self.to_completion_request(Some(&model.model), RequestType::Chat, cx);
         let debounce = self.token_count.is_some();
         self.pending_token_count = cx.spawn(async move |this, cx| {
             async move {
@@ -1422,7 +1423,7 @@ impl AssistantContext {
         }
 
         let request = {
-            let mut req = self.to_completion_request(RequestType::Chat, cx);
+            let mut req = self.to_completion_request(Some(&model), RequestType::Chat, cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -2321,7 +2322,7 @@ impl AssistantContext {
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let request = self.to_completion_request(request_type, cx);
+        let request = self.to_completion_request(Some(&model), request_type, cx);
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2561,6 +2562,7 @@ impl AssistantContext {
 
     pub fn to_completion_request(
         &self,
+        model: Option<&Arc<dyn LanguageModel>>,
         request_type: RequestType,
         cx: &App,
     ) -> LanguageModelRequest {
@@ -2584,7 +2586,8 @@ impl AssistantContext {
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: None,
+            temperature: model
+                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {
@@ -2981,7 +2984,7 @@ impl AssistantContext {
                 return;
             }
 
-            let mut request = self.to_completion_request(RequestType::Chat, cx);
+            let mut request = self.to_completion_request(Some(&model.model), RequestType::Chat, cx);
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![

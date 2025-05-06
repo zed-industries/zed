@@ -3058,14 +3058,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-## Assistant Panel
+## Agent
 
-- Description: Customize assistant panel
-- Setting: `assistant`
+- Description: Customize agent behavior
+- Setting: `agent`
 - Default:
 
 ```json
-"assistant": {
+"agent": {
   "version": "2",
   "enabled": true,
   "button": true,

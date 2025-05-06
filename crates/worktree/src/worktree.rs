@@ -3871,7 +3871,7 @@ impl BackgroundScanner {
             Some(ancestor_dot_git)
         });
 
-        log::info!("containing git repository: {containing_git_repository:?}");
+        log::trace!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {

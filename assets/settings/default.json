@@ -605,13 +605,11 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-
     // Whether to sort entries in the panel by path
     // or by status (the default).
     //
     // Default: false
     "sort_by_path": false,
-
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -661,6 +659,28 @@
       // The model to use.
       "model": "claude-3-7-sonnet-latest"
     },
+    // Additional parameters for language model requests. When making a request to a model, parameters will be taken
+    // from the last entry in this list that matches the model's provider and name. In each entry, both provider
+    // and model are optional, so that you can specify parameters for either one.
+    "model_parameters": [
+      // To set parameters for all requests to OpenAI models:
+      // {
+      //   "provider": "openai",
+      //   "temperature": 0.5
+      // }
+      //
+      // To set parameters for all requests in general:
+      // {
+      //   "temperature": 0
+      // }
+      //
+      // To set parameters for a specific provider and model:
+      // {
+      //   "provider": "zed.dev",
+      //   "model": "claude-3-7-sonnet-latest",
+      //   "temperature": 1.0
+      // }
+    ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
