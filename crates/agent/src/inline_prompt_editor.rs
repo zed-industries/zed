@@ -85,7 +85,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             }
             PromptEditorMode::Terminal { .. } => {
                 // Give the equivalent of the same left-padding that we're using on the right
-                (Pixels::from(40.0), rems(6.).to_pixels(window.rem_size()))
+                (Pixels::from(40.0), Pixels::from(24.))
             }
         };
 
