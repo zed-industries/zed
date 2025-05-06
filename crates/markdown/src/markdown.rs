@@ -1044,7 +1044,7 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
-                    if html.trim_start().starts_with("<!--") {
+                    if html.starts_with("<!--") {
                         builder.html_comment = true;
                     }
                     if html.trim_end().ends_with("-->") {

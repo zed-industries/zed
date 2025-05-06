@@ -522,6 +522,28 @@ mod tests {
     }
 
     #[test]
+    fn test_html_comments() {
+        assert_eq!(
+            parse_markdown("  <!--\nrdoc-file=string.c\n-->\nReturns"),
+            (
+                vec![
+                    (2..30, Start(HtmlBlock)),
+                    (2..2, SubstitutedText("  ".into())),
+                    (2..7, Html),
+                    (7..26, Html),
+                    (26..30, Html),
+                    (2..30, End(MarkdownTagEnd::HtmlBlock)),
+                    (30..37, Start(Paragraph)),
+                    (30..37, Text),
+                    (30..37, End(MarkdownTagEnd::Paragraph))
+                ],
+                HashSet::new(),
+                HashSet::new()
+            )
+        )
+    }
+
+    #[test]
     fn test_plain_urls_and_escaped_text() {
         assert_eq!(
             parse_markdown("&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text"),
