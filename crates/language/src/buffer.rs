@@ -3012,6 +3012,9 @@ impl BufferSnapshot {
                     if range.start == row_start {
                         indent_from_prev_row = true;
                     }
+                    if range.end > prev_row_start && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row.saturating_sub(1));
+                    }
                 } else {
                     if range.start.row >= row {
                         break;
@@ -3019,9 +3022,9 @@ impl BufferSnapshot {
                     if range.start.row == prev_row && range.end > row_start {
                         indent_from_prev_row = true;
                     }
-                }
-                if range.end > prev_row_start && range.end <= row_start {
-                    outdent_to_row = outdent_to_row.min(range.start.row);
+                    if range.end > prev_row_start && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row);
+                    }
                 }
             }
 
@@ -3029,17 +3032,8 @@ impl BufferSnapshot {
                 .iter()
                 .any(|e| e.start.row < row && e.end > row_start);
 
-            let suggestion = if outdent_to_row == prev_row && significant_indentation {
-                Some(IndentSuggestion {
-                    basis_row: outdent_to_row.saturating_sub(1),
-                    delta: if indent_from_prev_row {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Equal
-                    },
-                    within_error: within_error && !from_regex,
-                })
-            } else if outdent_to_row == prev_row || (outdent_from_prev_row && indent_from_prev_row)
+            let suggestion = if !significant_indentation
+                && (outdent_to_row == prev_row || (outdent_from_prev_row && indent_from_prev_row))
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
@@ -3054,11 +3048,7 @@ impl BufferSnapshot {
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
-                    basis_row: if significant_indentation {
-                        outdent_to_row.saturating_sub(1)
-                    } else {
-                        outdent_to_row
-                    },
+                    basis_row: outdent_to_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
                 })
