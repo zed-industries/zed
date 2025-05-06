@@ -688,7 +688,7 @@ pub struct LegacyAssistantSettingsContent {
 }
 
 impl Settings for AssistantSettings {
-    const KEY: Option<&'static str> = Some("assistant");
+    const KEY: Option<&'static str> = Some("agent");
 
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
