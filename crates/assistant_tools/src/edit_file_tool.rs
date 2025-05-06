@@ -610,7 +610,7 @@ impl ToolCard for EditFileToolCard {
 
             let mut container = v_flex()
                 .p_3()
-                .gap_1p5()
+                .gap_1()
                 .border_t_1()
                 .rounded_md()
                 .border_color(border_color)
@@ -627,7 +627,7 @@ impl ToolCard for EditFileToolCard {
                     _ => div().w_1_2(),
                 }
                 .id("loading_div")
-                .h_2()
+                .h_1()
                 .rounded_full()
                 .bg(cx.theme().colors().element_active)
                 .with_animation(
