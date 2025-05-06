@@ -52,7 +52,8 @@ use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    DetachAndPromptErr, Notifications, simple_message_notification::MessageNotification,
+    DetachAndPromptErr, Notifications, dismiss_app_notification,
+    simple_message_notification::MessageNotification,
 };
 pub use pane::*;
 pub use pane_group::*;
@@ -5307,6 +5308,7 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::cancel))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5476,6 +5478,15 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
+    }
+
+    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+            return;
+        }
+
+        cx.propagate();
     }
 }
 

@@ -18157,6 +18157,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "node_runtime",
  "parking_lot",
  "postage",
