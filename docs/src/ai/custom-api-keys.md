@@ -1,5 +1,7 @@
 # Configuring Custom API Keys
 
+<!-- todo! I think some of the content in this page is duplicated from configuration.md -->
+
 While Zed offers hosted versions of models through our various plans, we're always happy to support users wanting to supply their own API keys for LLM providers.
 
 - Supported LLM Providers

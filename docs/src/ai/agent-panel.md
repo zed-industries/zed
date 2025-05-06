@@ -3,7 +3,8 @@
 The Agent Panel provides you with a way to interact with LLMs.
 You can use it for various tasks, such as generating code, asking questions about your code base, and general inquiries such as emails and documentation.
 
-To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](./getting-started#command-palette) or click the ✨ (sparkles) icon in the status bar.
+<!-- todo! command palette link is broken -->
+To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](./getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
 If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md#providers).
 
