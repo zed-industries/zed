@@ -97,9 +97,10 @@ impl HistoryStore {
                 let contents = cx
                     .background_spawn(async move { std::fs::read_to_string(path) })
                     .await
-                    .context("reading persisted agent panel navigation history")?;
+                    .ok()?;
                 let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(&contents)
-                    .context("deserializing persisted agent panel navigation history")?
+                    .context("deserializing persisted agent panel navigation history")
+                    .log_err()?
                     .into_iter()
                     .take(MAX_RECENTLY_OPENED_ENTRIES)
                     .map(|serialized| match serialized {
@@ -134,10 +135,10 @@ impl HistoryStore {
                 })
                 .ok();
 
-                anyhow::Ok(())
+                Some(())
             }
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         Self {
             thread_store,
