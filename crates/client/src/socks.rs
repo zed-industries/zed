@@ -37,7 +37,7 @@ pub(crate) async fn connect_socks_proxy_stream(
     // Connect to proxy and wrap protocol later
     let stream = tokio::net::TcpStream::connect(socks_proxy)
         .await
-        .with_context(|| "Failed to connect to proxy: {proxy}")?;
+        .context("Failed to connect to socks proxy")?;
 
     let socks: Box<dyn AsyncReadWrite> = match version {
         SocksVersion::V4(None) => {
