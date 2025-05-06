@@ -315,7 +315,12 @@ impl AssistantSettingsContent {
                                 _ => None,
                             };
                             settings.provider = Some(AssistantProviderContentV1::Ollama {
-                                default_model: Some(ollama::Model::new(&model, None, None)),
+                                default_model: Some(ollama::Model::new(
+                                    &model,
+                                    None,
+                                    None,
+                                    language_model.supports_tools(),
+                                )),
                                 api_url,
                             });
                         }
@@ -688,7 +693,7 @@ pub struct LegacyAssistantSettingsContent {
 }
 
 impl Settings for AssistantSettings {
-    const KEY: Option<&'static str> = Some("assistant");
+    const KEY: Option<&'static str> = Some("agent");
 
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
@@ -889,12 +894,12 @@ mod tests {
 
         #[derive(Debug, Deserialize)]
         struct AssistantSettingsTest {
-            assistant: AssistantSettingsContent,
+            agent: AssistantSettingsContent,
         }
 
         let assistant_settings: AssistantSettingsTest =
             serde_json_lenient::from_str(&raw_settings_value).unwrap();
 
-        assert!(!assistant_settings.assistant.is_version_outdated());
+        assert!(!assistant_settings.agent.is_version_outdated());
     }
 }

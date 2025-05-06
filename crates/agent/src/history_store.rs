@@ -163,7 +163,10 @@ impl HistoryStore {
             history_entries.push(HistoryEntry::Thread(thread));
         }
 
-        for context in self.context_store.update(cx, |this, _cx| this.contexts()) {
+        for context in self
+            .context_store
+            .update(cx, |this, _cx| this.reverse_chronological_contexts())
+        {
             history_entries.push(HistoryEntry::Context(context));
         }
 

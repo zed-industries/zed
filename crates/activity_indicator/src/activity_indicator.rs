@@ -84,19 +84,6 @@ impl ActivityIndicator {
             })
             .detach();
 
-            let mut status_events = languages.dap_server_binary_statuses();
-            cx.spawn(async move |this, cx| {
-                while let Some((name, status)) = status_events.next().await {
-                    this.update(cx, |this, cx| {
-                        this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus { name, status });
-                        cx.notify();
-                    })?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
             cx.subscribe(
                 &project.read(cx).lsp_store(),
                 |_, _, event, cx| match event {

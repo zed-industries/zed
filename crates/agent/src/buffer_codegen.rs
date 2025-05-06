@@ -772,7 +772,7 @@ impl CodegenAlternative {
         cx: &mut Context<CodegenAlternative>,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
-            // Avoid grouping assistant edits with user edits.
+            // Avoid grouping agent edits with user edits.
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
             buffer.edit(edits, None, cx);
@@ -781,7 +781,7 @@ impl CodegenAlternative {
 
         if let Some(transaction) = transaction {
             if let Some(first_transaction) = self.transformation_transaction_id {
-                // Group all assistant edits into the first transaction.
+                // Group all agent edits into the first transaction.
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.merge_transactions(transaction, first_transaction, cx)
                 });
@@ -1095,9 +1095,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_model::LanguageModelRegistry::test);
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1167,8 +1165,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1237,9 +1234,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = concat!(
             "fn main() {\n",
@@ -1305,9 +1300,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             func main() {
@@ -1367,9 +1360,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_inactive_codegen_alternative(cx: &mut TestAppContext) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1471,6 +1462,13 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(LanguageModelRegistry::test);
+        cx.set_global(cx.update(SettingsStore::test));
+        cx.update(Project::init_settings);
+        cx.update(language_settings::init);
     }
 
     fn simulate_response_stream(

@@ -1960,6 +1960,9 @@ impl CodeLabel {
                 Kind::ENUM => grammar
                     .highlight_id_for_name("enum")
                     .or_else(|| grammar.highlight_id_for_name("type")),
+                Kind::ENUM_MEMBER => grammar
+                    .highlight_id_for_name("variant")
+                    .or_else(|| grammar.highlight_id_for_name("property")),
                 Kind::FIELD => grammar.highlight_id_for_name("property"),
                 Kind::FUNCTION => grammar.highlight_id_for_name("function"),
                 Kind::INTERFACE => grammar.highlight_id_for_name("type"),
