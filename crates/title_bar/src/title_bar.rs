@@ -208,7 +208,10 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
-                    .child(self.banner.clone())
+                    .when(
+                        TitleBarSettings::get_global(cx).show_onboarding_banner,
+                        |title_bar| title_bar.child(self.banner.clone()),
+                    )
                     .child(
                         h_flex()
                             .gap_1()
@@ -723,7 +726,7 @@ impl TitleBar {
                             h_flex()
                                 .gap_0p5()
                                 .children(
-                                    workspace::WorkspaceSettings::get_global(cx)
+                                    TitleBarSettings::get_global(cx)
                                         .show_user_picture
                                         .then(|| Avatar::new(user.avatar_uri.clone())),
                                 )
