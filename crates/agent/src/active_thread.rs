@@ -2082,7 +2082,7 @@ impl ActiveThread {
                 v_flex()
                     .w_full()
                     .map(|parent| {
-                        if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                        if let Some(checkpoint) = checkpoint.filter(|_| !is_generating) {
                             let mut is_pending = false;
                             let mut error = None;
                             if let Some(last_restore_checkpoint) =
