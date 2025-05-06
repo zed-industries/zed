@@ -24,14 +24,9 @@ enum SocksVersion<'a> {
 }
 
 pub(crate) async fn connect_socks_proxy_stream(
-    proxy: Option<&Url>,
+    proxy: &Url,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
-    // Connect directly when there is no proxy
-    let Some(proxy) = proxy else {
-        return Ok(Box::new(tokio::net::TcpStream::connect(rpc_host).await?));
-    };
-
     let Some((socks_proxy, version)) = parse_socks_proxy(proxy) else {
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
@@ -173,7 +168,7 @@ mod tests {
         // Should fail connecting because http is not a valid Socks proxy scheme
         let proxy = Url::parse("http://localhost:2313").unwrap();
 
-        let result = connect_socks_proxy_stream(Some(&proxy), ("test", 1080)).await;
+        let result = connect_socks_proxy_stream(&proxy, ("test", 1080)).await;
         match result {
             Err(e) => assert_eq!(e.to_string(), "Parsing proxy url failed"),
             Ok(_) => panic!("Connecting on bad proxy should fail"),
