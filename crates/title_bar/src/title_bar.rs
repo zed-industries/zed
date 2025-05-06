@@ -2,6 +2,7 @@ mod application_menu;
 mod collab;
 mod onboarding_banner;
 mod platforms;
+mod title_bar_settings;
 mod window_controls;
 
 #[cfg(feature = "stories")]
@@ -31,6 +32,7 @@ use settings::Settings as _;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
+use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
@@ -53,6 +55,8 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
 pub fn init(cx: &mut App) {
+    TitleBarSettings::register(cx);
+
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -549,7 +553,16 @@ impl TitleBar {
                     let _ = workspace.update(cx, |_this, cx| {
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
-                }),
+                })
+                .when(
+                    TitleBarSettings::get_global(cx).show_branch_icon,
+                    |branch_button| {
+                        branch_button
+                            .icon(IconName::GitBranch)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Muted)
+                    },
+                ),
         )
     }
 
