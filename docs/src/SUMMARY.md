@@ -43,6 +43,7 @@
 
 - [Overview](./ai/ai.md)
 - [Agent Panel](./ai/agent-panel.md)
+  - [Tools](./ai/tools.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Text Threads](./ai/text-threads.md)
@@ -55,7 +56,7 @@
 - [Configuration](./ai/configuration.md)
   - [Custom API Keys](./ai/custom-api-keys.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
-  - [Model Improvement](./ai/model-improvement.md)
+  - [AI Improvement](./ai/ai-improvement.md)
 
 # Extensions
 
