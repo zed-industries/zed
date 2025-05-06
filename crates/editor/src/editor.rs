@@ -131,6 +131,7 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
+    git_store::{GitStoreEvent, RepositoryEvent},
     project_settings::DiagnosticSeverity,
 };
 
@@ -1685,6 +1686,31 @@ impl Editor {
                         _ => {}
                     },
                 ));
+                let git_store = project.read(cx).git_store().clone();
+                let project = project.clone();
+                project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
+                    match event {
+                        GitStoreEvent::RepositoryUpdated(
+                            _,
+                            RepositoryEvent::Updated {
+                                new_instance: true, ..
+                            },
+                            _,
+                        ) => {
+                            this.load_diff_task = Some(
+                                update_uncommitted_diff_for_buffer(
+                                    cx.entity(),
+                                    &project,
+                                    this.buffer.read(cx).all_buffers(),
+                                    this.buffer.clone(),
+                                    cx,
+                                )
+                                .shared(),
+                            );
+                        }
+                        _ => {}
+                    }
+                }));
             }
         }
 
