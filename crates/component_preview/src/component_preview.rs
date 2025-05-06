@@ -105,26 +105,24 @@ enum PreviewPage {
 }
 
 struct ComponentPreview {
-    workspace_id: Option<WorkspaceId>,
-    focus_handle: FocusHandle,
-    _view_scroll_handle: ScrollHandle,
-    nav_scroll_handle: UniformListScrollHandle,
-    component_map: HashMap<ComponentId, ComponentMetadata>,
     active_page: PreviewPage,
-    components: Vec<ComponentMetadata>,
+    active_thread: Option<Entity<ActiveThread>>,
     component_list: ListState,
+    component_map: HashMap<ComponentId, ComponentMetadata>,
+    components: Vec<ComponentMetadata>,
     cursor_index: usize,
-    language_registry: Arc<LanguageRegistry>,
-    workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
-    user_store: Entity<UserStore>,
     filter_editor: Entity<SingleLineInput>,
     filter_text: String,
-
-    // preview support
-    thread_store: Option<Entity<ThreadStore>>,
+    focus_handle: FocusHandle,
+    language_registry: Arc<LanguageRegistry>,
+    nav_scroll_handle: UniformListScrollHandle,
+    project: Entity<Project>,
     text_thread_store: Option<Entity<TextThreadStore>>,
-    active_thread: Option<Entity<ActiveThread>>,
+    thread_store: Option<Entity<ThreadStore>>,
+    user_store: Entity<UserStore>,
+    workspace: WeakEntity<Workspace>,
+    workspace_id: Option<WorkspaceId>,
+    _view_scroll_handle: ScrollHandle,
 }
 
 impl ComponentPreview {
@@ -190,24 +188,24 @@ impl ComponentPreview {
         );
 
         let mut component_preview = Self {
-            workspace_id: None,
-            focus_handle: cx.focus_handle(),
-            _view_scroll_handle: ScrollHandle::new(),
-            nav_scroll_handle: UniformListScrollHandle::new(),
-            language_registry,
-            user_store,
-            workspace,
-            project,
             active_page,
+            active_thread: None,
+            component_list,
             component_map: component_registry.component_map(),
             components: sorted_components,
-            component_list,
             cursor_index: selected_index,
             filter_editor,
             filter_text: String::new(),
-            thread_store: None,
+            focus_handle: cx.focus_handle(),
+            language_registry,
+            nav_scroll_handle: UniformListScrollHandle::new(),
+            project,
             text_thread_store: None,
-            active_thread: None,
+            thread_store: None,
+            user_store,
+            workspace,
+            workspace_id: None,
+            _view_scroll_handle: ScrollHandle::new(),
         };
 
         if component_preview.cursor_index > 0 {
@@ -414,6 +412,88 @@ impl ComponentPreview {
         entries
     }
 
+    fn update_component_list(&mut self, cx: &mut Context<Self>) {
+        let entries = self.scope_ordered_entries();
+        let new_len = entries.len();
+        let weak_entity = cx.entity().downgrade();
+
+        if new_len > 0 {
+            self.nav_scroll_handle
+                .scroll_to_item(0, ScrollStrategy::Top);
+        }
+
+        let filtered_components = self.filtered_components();
+
+        if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents) {
+            if let PreviewPage::Component(ref component_id) = self.active_page {
+                let component_still_visible = filtered_components
+                    .iter()
+                    .any(|component| component.id() == *component_id);
+
+                if !component_still_visible {
+                    if !filtered_components.is_empty() {
+                        let first_component = &filtered_components[0];
+                        self.set_active_page(PreviewPage::Component(first_component.id()), cx);
+                    } else {
+                        self.set_active_page(PreviewPage::AllComponents, cx);
+                    }
+                }
+            }
+        }
+
+        self.component_list = ListState::new(
+            filtered_components.len(),
+            gpui::ListAlignment::Top,
+            px(1500.0),
+            {
+                let components = filtered_components.clone();
+                let this = cx.entity().downgrade();
+                move |ix, window: &mut Window, cx: &mut App| {
+                    if ix >= components.len() {
+                        return div().w_full().h_0().into_any_element();
+                    }
+
+                    this.update(cx, |this, cx| {
+                        let component = &components[ix];
+                        this.render_preview(component, window, cx)
+                            .into_any_element()
+                    })
+                    .unwrap()
+                }
+            },
+        );
+
+        let new_list = ListState::new(
+            new_len,
+            gpui::ListAlignment::Top,
+            px(1500.0),
+            move |ix, window, cx| {
+                if ix >= entries.len() {
+                    return div().w_full().h_0().into_any_element();
+                }
+
+                let entry = &entries[ix];
+
+                weak_entity
+                    .update(cx, |this, cx| match entry {
+                        PreviewEntry::Component(component, _) => this
+                            .render_preview(component, window, cx)
+                            .into_any_element(),
+                        PreviewEntry::SectionHeader(shared_string) => this
+                            .render_scope_header(ix, shared_string.clone(), window, cx)
+                            .into_any_element(),
+                        PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
+                        PreviewEntry::ActiveThread => div().w_full().h_0().into_any_element(),
+                        PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
+                    })
+                    .unwrap()
+            },
+        );
+
+        self.component_list = new_list;
+        cx.emit(ItemEvent::UpdateTab);
+    }
+
     fn render_sidebar_entry(
         &self,
         ix: usize,
@@ -495,88 +575,6 @@ impl ComponentPreview {
                 )
                 .into_any_element(),
         }
-    }
-
-    fn update_component_list(&mut self, cx: &mut Context<Self>) {
-        let entries = self.scope_ordered_entries();
-        let new_len = entries.len();
-        let weak_entity = cx.entity().downgrade();
-
-        if new_len > 0 {
-            self.nav_scroll_handle
-                .scroll_to_item(0, ScrollStrategy::Top);
-        }
-
-        let filtered_components = self.filtered_components();
-
-        if !self.filter_text.is_empty() && !matches!(self.active_page, PreviewPage::AllComponents) {
-            if let PreviewPage::Component(ref component_id) = self.active_page {
-                let component_still_visible = filtered_components
-                    .iter()
-                    .any(|component| component.id() == *component_id);
-
-                if !component_still_visible {
-                    if !filtered_components.is_empty() {
-                        let first_component = &filtered_components[0];
-                        self.set_active_page(PreviewPage::Component(first_component.id()), cx);
-                    } else {
-                        self.set_active_page(PreviewPage::AllComponents, cx);
-                    }
-                }
-            }
-        }
-
-        self.component_list = ListState::new(
-            filtered_components.len(),
-            gpui::ListAlignment::Top,
-            px(1500.0),
-            {
-                let components = filtered_components.clone();
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    if ix >= components.len() {
-                        return div().w_full().h_0().into_any_element();
-                    }
-
-                    this.update(cx, |this, cx| {
-                        let component = &components[ix];
-                        this.render_preview(component, window, cx)
-                            .into_any_element()
-                    })
-                    .unwrap()
-                }
-            },
-        );
-
-        let new_list = ListState::new(
-            new_len,
-            gpui::ListAlignment::Top,
-            px(1500.0),
-            move |ix, window, cx| {
-                if ix >= entries.len() {
-                    return div().w_full().h_0().into_any_element();
-                }
-
-                let entry = &entries[ix];
-
-                weak_entity
-                    .update(cx, |this, cx| match entry {
-                        PreviewEntry::Component(component, _) => this
-                            .render_preview(component, window, cx)
-                            .into_any_element(),
-                        PreviewEntry::SectionHeader(shared_string) => this
-                            .render_scope_header(ix, shared_string.clone(), window, cx)
-                            .into_any_element(),
-                        PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::ActiveThread => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
-                    })
-                    .unwrap()
-            },
-        );
-
-        self.component_list = new_list;
-        cx.emit(ItemEvent::UpdateTab);
     }
 
     fn render_scope_header(
@@ -697,7 +695,7 @@ impl ComponentPreview {
         if let Some(component) = component {
             v_flex()
                 .id("render-component-page")
-                .size_full()
+                .flex_1()
                 .child(ComponentPreviewPage::new(
                     component.clone(),
                     self.workspace.clone(),
