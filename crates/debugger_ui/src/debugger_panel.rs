@@ -22,8 +22,8 @@ use gpui::{
 };
 
 use language::Buffer;
-use project::Fs;
 use project::debugger::session::{Session, SessionStateEvent};
+use project::{Fs, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -208,6 +208,7 @@ impl DebugPanel {
         scenario: DebugScenario,
         task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -233,6 +234,7 @@ impl DebugPanel {
                                 scenario,
                                 task_context,
                                 active_buffer,
+                                worktree_id,
                                 window,
                                 cx,
                             )
@@ -1283,7 +1285,7 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     ) {
         self.0.update(cx, |_, cx| {
             cx.defer_in(window, |this, window, cx| {
-                this.start_session(definition, context, buffer, window, cx);
+                this.start_session(definition, context, buffer, None, window, cx);
             })
         })
     }
