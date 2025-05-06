@@ -337,6 +337,28 @@ impl InlineAssistant {
         }
     }
 
+    fn is_cursor_within_range(
+        range: &Range<Anchor>,
+        cursor_point: Point,
+        buffer_snapshot: &MultiBufferSnapshot,
+    ) -> bool {
+        // Check if cursor position is exactly within the range
+        let cursor_anchor = buffer_snapshot.anchor_before(cursor_point);
+        range.start.cmp(&cursor_anchor, buffer_snapshot).is_le()
+            && range.end.cmp(&cursor_anchor, buffer_snapshot).is_ge()
+    }
+
+    fn is_cursor_on_same_line_as_range(
+        range: &Range<Anchor>,
+        cursor_point: Point,
+        buffer_snapshot: &MultiBufferSnapshot,
+    ) -> bool {
+        // Check if cursor is on the same line as any part of the range
+        let assist_start_point = range.start.to_point(buffer_snapshot);
+        let assist_end_point = range.end.to_point(buffer_snapshot);
+        cursor_point.row >= assist_start_point.row && cursor_point.row <= assist_end_point.row
+    }
+
     pub fn assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -358,24 +380,24 @@ impl InlineAssistant {
         });
 
         // Check if this editor already has active assistants
-        if let Some(newest_selection) = newest_selection {
+        if let Some(newest_selection) = &newest_selection {
             if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
                 if !editor_assists.assist_ids.is_empty() {
                     // Check for an assist at the current cursor position
                     for &assist_id in &editor_assists.assist_ids {
                         let assist = &self.assists[&assist_id];
-
-                        // Convert cursor and assist ranges to points for comparison
                         let cursor_point = newest_selection.start;
-                        let assist_start_point = assist.range.start.to_point(&snapshot.buffer_snapshot);
-                        let assist_end_point = assist.range.end.to_point(&snapshot.buffer_snapshot);
 
-                        // Check if cursor position is within this assist's range OR on the same line
-                        if (assist.range.start.cmp(&snapshot.buffer_snapshot.anchor_before(cursor_point), &snapshot.buffer_snapshot).is_le() &&
-                            assist.range.end.cmp(&snapshot.buffer_snapshot.anchor_before(cursor_point), &snapshot.buffer_snapshot).is_ge()) ||
-                           // Check if cursor is on the same line as any part of the assist's range
-                           (cursor_point.row >= assist_start_point.row && cursor_point.row <= assist_end_point.row)
-                        {
+                        // Use the helper functions to check if cursor is within range or on the same line
+                        if Self::is_cursor_within_range(
+                            &assist.range,
+                            cursor_point,
+                            &snapshot.buffer_snapshot,
+                        ) || Self::is_cursor_on_same_line_as_range(
+                            &assist.range,
+                            cursor_point,
+                            &snapshot.buffer_snapshot,
+                        ) {
                             self.focus_assist(assist_id, window, cx);
                             return;
                         }
@@ -1230,7 +1252,8 @@ impl InlineAssistant {
                 if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
                     editor.set_scroll_position(
                         point(0., scroll_target_bottom - height_in_lines),
-                        window, cx,
+                        window,
+                        cx,
                     );
                 } else {
                     editor.set_scroll_position(point(0., scroll_target_top), window, cx);
