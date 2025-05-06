@@ -5776,34 +5776,36 @@ impl Editor {
                     .into_iter()
                     .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
                 let mut match_ranges = Vec::new();
+                let Ok(regex) = project::search::SearchQuery::text(
+                    query_text.clone(),
+                    false,
+                    false,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    false,
+                    None,
+                ) else {
+                    return Vec::default();
+                };
                 for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
                     match_ranges.extend(
-                        project::search::SearchQuery::text(
-                            query_text.clone(),
-                            false,
-                            false,
-                            false,
-                            Default::default(),
-                            Default::default(),
-                            false,
-                            None,
-                        )
-                        .unwrap()
-                        .search(&buffer_snapshot, Some(search_range.clone()))
-                        .await
-                        .into_iter()
-                        .filter_map(|match_range| {
-                            let match_start = buffer_snapshot
-                                .anchor_after(search_range.start + match_range.start);
-                            let match_end =
-                                buffer_snapshot.anchor_before(search_range.start + match_range.end);
-                            let match_anchor_range = Anchor::range_in_buffer(
-                                excerpt_id,
-                                buffer_snapshot.remote_id(),
-                                match_start..match_end,
-                            );
-                            (match_anchor_range != query_range).then_some(match_anchor_range)
-                        }),
+                        regex
+                            .search(&buffer_snapshot, Some(search_range.clone()))
+                            .await
+                            .into_iter()
+                            .filter_map(|match_range| {
+                                let match_start = buffer_snapshot
+                                    .anchor_after(search_range.start + match_range.start);
+                                let match_end = buffer_snapshot
+                                    .anchor_before(search_range.start + match_range.end);
+                                let match_anchor_range = Anchor::range_in_buffer(
+                                    excerpt_id,
+                                    buffer_snapshot.remote_id(),
+                                    match_start..match_end,
+                                );
+                                (match_anchor_range != query_range).then_some(match_anchor_range)
+                            }),
                     );
                 }
                 match_ranges
