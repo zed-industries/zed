@@ -5,7 +5,6 @@ You’ll also find usage meters in-product when you’re nearing the limit for y
 
 ## Available Plans {#plans}
 
-<!-- todo! page is dead -->
 For costs and more information on pricing, visit [Zed’s pricing page](https://zed.dev/pricing).
 
 Please note that if you’re interested in just using Zed as the world’s fastest editor, with no AI or subscription features, you can always do so for free, without [authentication](../accounts.md).
