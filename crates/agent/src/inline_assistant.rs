@@ -227,7 +227,7 @@ impl InlineAssistant {
 
     pub fn inline_assist(
         workspace: &mut Workspace,
-        _action: &zed_actions::assistant::InlineAssist,
+        action: &zed_actions::assistant::InlineAssist,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -273,6 +273,7 @@ impl InlineAssistant {
                             prompt_store,
                             thread_store,
                             text_thread_store,
+                            action.prompt.clone(),
                             window,
                             cx,
                         )
@@ -287,6 +288,7 @@ impl InlineAssistant {
                             prompt_store,
                             thread_store,
                             text_thread_store,
+                            action.prompt.clone(),
                             window,
                             cx,
                         )
@@ -344,6 +346,7 @@ impl InlineAssistant {
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         text_thread_store: Option<WeakEntity<TextThreadStore>>,
+        initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -442,8 +445,12 @@ impl InlineAssistant {
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
-        let prompt_buffer =
-            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
+        let prompt_buffer = cx.new(|cx| {
+            MultiBuffer::singleton(
+                cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx)),
+                cx,
+            )
+        });
 
         let mut assists = Vec::new();
         let mut assist_to_focus = None;
