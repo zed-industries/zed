@@ -187,6 +187,16 @@ pub trait Tool: 'static + Send + Sync {
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult;
+
+    fn card(
+        self: Arc<Self>,
+        _content: Arc<str>,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        None
+    }
 }
 
 impl Debug for dyn Tool {

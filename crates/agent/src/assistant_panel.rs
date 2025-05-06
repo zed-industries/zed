@@ -487,6 +487,7 @@ impl AssistantPanel {
                 thread_store.clone(),
                 context_store.clone(),
                 [RecentEntry::Thread(thread_id, thread.clone())],
+                window,
                 cx,
             )
         });
@@ -741,9 +742,9 @@ impl AssistantPanel {
         });
 
         if let Some(other_thread_id) = action.from_thread_id.clone() {
-            let other_thread_task = self
-                .thread_store
-                .update(cx, |this, cx| this.open_thread(&other_thread_id, cx));
+            let other_thread_task = self.thread_store.update(cx, |this, cx| {
+                this.open_thread(&other_thread_id, window, cx)
+            });
 
             cx.spawn({
                 let context_store = context_store.clone();
@@ -944,7 +945,7 @@ impl AssistantPanel {
     ) -> Task<Result<()>> {
         let open_thread_task = self
             .thread_store
-            .update(cx, |this, cx| this.open_thread(thread_id, cx));
+            .update(cx, |this, cx| this.open_thread(thread_id, window, cx));
         cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
             this.update_in(cx, |this, window, cx| {

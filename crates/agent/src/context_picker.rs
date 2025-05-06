@@ -425,9 +425,9 @@ impl ContextPicker {
                         render_thread_context_entry(&view_thread, context_store.clone(), cx)
                             .into_any()
                     },
-                    move |_window, cx| {
+                    move |window, cx| {
                         context_picker.update(cx, |this, cx| {
-                            this.add_recent_thread(thread.clone(), cx)
+                            this.add_recent_thread(thread.clone(), window, cx)
                                 .detach_and_log_err(cx);
                         })
                     },
@@ -459,6 +459,7 @@ impl ContextPicker {
     fn add_recent_thread(
         &self,
         entry: ThreadContextEntry,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
@@ -476,7 +477,7 @@ impl ContextPicker {
                 };
 
                 let open_thread_task =
-                    thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
+                    thread_store.update(cx, |this, cx| this.open_thread(&id, window, cx));
                 cx.spawn(async move |this, cx| {
                     let thread = open_thread_task.await?;
                     context_store.update(cx, |context_store, cx| {

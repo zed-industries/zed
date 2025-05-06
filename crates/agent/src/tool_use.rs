@@ -10,7 +10,8 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRequestMessage, LanguageModelToolResult,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
-use ui::IconName;
+use project::Project;
+use ui::{IconName, Window};
 use util::truncate_lines_to_byte_limit;
 
 use crate::thread::{MessageId, PromptId, ThreadId};
@@ -54,6 +55,9 @@ impl ToolUseState {
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self {
         let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
@@ -93,12 +97,23 @@ impl ToolUseState {
                             this.tool_results.insert(
                                 tool_use_id.clone(),
                                 LanguageModelToolResult {
-                                    tool_use_id,
+                                    tool_use_id: tool_use_id.clone(),
                                     tool_name: tool_use.clone(),
                                     is_error: tool_result.is_error,
                                     content: tool_result.content.clone(),
                                 },
                             );
+
+                            if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
+                                if let Some(card) = tool.card(
+                                    tool_result.content.clone(),
+                                    project.clone(),
+                                    window,
+                                    cx,
+                                ) {
+                                    this.tool_result_cards.insert(tool_use_id, card);
+                                }
+                            }
                         }
                     }
                 }
