@@ -1044,7 +1044,7 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
-                    if html.starts_with("<!--") {
+                    if html.trim_start().starts_with("<!--") {
                         builder.html_comment = true;
                     }
                     if html.trim_end().ends_with("-->") {
@@ -1712,6 +1712,23 @@ mod tests {
         assert_mappings(
             &render_markdown("\"hey\"", cx),
             vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
+        );
+
+        // HTML Comments are ignored
+        assert_mappings(
+            &render_markdown(
+                "<!--\nrdoc-file=string.c\n- str.intern   -> symbol\n- str.to_sym   -> symbol\n-->\nReturns",
+                cx,
+            ),
+            vec![vec![
+                (0, 78),
+                (1, 79),
+                (2, 80),
+                (3, 81),
+                (4, 82),
+                (5, 83),
+                (6, 84),
+            ]],
         );
     }
 
