@@ -34,9 +34,22 @@ pub(crate) struct LinuxKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for LinuxKeyboardMapper {
-    fn scan_code_to_key(&self, scan_code: ScanCode) -> anyhow::Result<String> {
-        // todo(linux)
-        Ok(scan_code.to_key().to_string())
+    fn scan_code_to_key(&self, gpui_scan_code: ScanCode) -> anyhow::Result<String> {
+        if let Some(key) = gpui_scan_code.try_to_key() {
+            return Ok(key);
+        }
+        let Some(scan_code) = get_scan_code(gpui_scan_code) else {
+            return Err(anyhow::anyhow!("Scan code not found: {:?}", gpui_scan_code));
+        };
+        if let Some(key) = self.code_to_key.get(&Keycode::new(scan_code)) {
+            Ok(key.clone())
+        } else {
+            Err(anyhow::anyhow!(
+                "Key not found for input scan code: {:?}, scan code: {}",
+                gpui_scan_code,
+                scan_code
+            ))
+        }
     }
 
     fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
@@ -159,3 +172,95 @@ const TYPEABLE_CODES: &[u32] = &[
     0x003c, // . Period
     0x003d, // / Slash
 ];
+
+fn get_scan_code(scan_code: ScanCode) -> Option<u32> {
+    // https://github.com/microsoft/node-native-keymap/blob/main/deps/chromium/dom_code_data.inc
+    Some(match scan_code {
+        ScanCode::F1 => 0x0043,
+        ScanCode::F2 => 0x0044,
+        ScanCode::F3 => 0x0045,
+        ScanCode::F4 => 0x0046,
+        ScanCode::F5 => 0x0047,
+        ScanCode::F6 => 0x0048,
+        ScanCode::F7 => 0x0049,
+        ScanCode::F8 => 0x004a,
+        ScanCode::F9 => 0x004b,
+        ScanCode::F10 => 0x004c,
+        ScanCode::F11 => 0x005f,
+        ScanCode::F12 => 0x0060,
+        ScanCode::F13 => 0x00bf,
+        ScanCode::F14 => 0x00c0,
+        ScanCode::F15 => 0x00c1,
+        ScanCode::F16 => 0x00c2,
+        ScanCode::F17 => 0x00c3,
+        ScanCode::F18 => 0x00c4,
+        ScanCode::F19 => 0x00c5,
+        ScanCode::F20 => 0x00c6,
+        ScanCode::F21 => 0x00c7,
+        ScanCode::F22 => 0x00c8,
+        ScanCode::F23 => 0x00c9,
+        ScanCode::F24 => 0x00ca,
+        ScanCode::A => 0x0026,
+        ScanCode::B => 0x0038,
+        ScanCode::C => 0x0036,
+        ScanCode::D => 0x0028,
+        ScanCode::E => 0x001a,
+        ScanCode::F => 0x0029,
+        ScanCode::G => 0x002a,
+        ScanCode::H => 0x002b,
+        ScanCode::I => 0x001f,
+        ScanCode::J => 0x002c,
+        ScanCode::K => 0x002d,
+        ScanCode::L => 0x002e,
+        ScanCode::M => 0x003a,
+        ScanCode::N => 0x0039,
+        ScanCode::O => 0x0020,
+        ScanCode::P => 0x0021,
+        ScanCode::Q => 0x0018,
+        ScanCode::R => 0x001b,
+        ScanCode::S => 0x0027,
+        ScanCode::T => 0x001c,
+        ScanCode::U => 0x001e,
+        ScanCode::V => 0x0037,
+        ScanCode::W => 0x0019,
+        ScanCode::X => 0x0035,
+        ScanCode::Y => 0x001d,
+        ScanCode::Z => 0x0034,
+        ScanCode::Digit0 => 0x0013,
+        ScanCode::Digit1 => 0x000a,
+        ScanCode::Digit2 => 0x000b,
+        ScanCode::Digit3 => 0x000c,
+        ScanCode::Digit4 => 0x000d,
+        ScanCode::Digit5 => 0x000e,
+        ScanCode::Digit6 => 0x000f,
+        ScanCode::Digit7 => 0x0010,
+        ScanCode::Digit8 => 0x0011,
+        ScanCode::Digit9 => 0x0012,
+        ScanCode::Backquote => 0x0031,
+        ScanCode::Minus => 0x0014,
+        ScanCode::Equal => 0x0015,
+        ScanCode::BracketLeft => 0x0022,
+        ScanCode::BracketRight => 0x0023,
+        ScanCode::Backslash => 0x0033,
+        ScanCode::Semicolon => 0x002f,
+        ScanCode::Quote => 0x0030,
+        ScanCode::Comma => 0x003b,
+        ScanCode::Period => 0x003c,
+        ScanCode::Slash => 0x003d,
+        ScanCode::Left => 0x0071,
+        ScanCode::Up => 0x006f,
+        ScanCode::Right => 0x0072,
+        ScanCode::Down => 0x0074,
+        ScanCode::PageUp => 0x0070,
+        ScanCode::PageDown => 0x0075,
+        ScanCode::End => 0x0073,
+        ScanCode::Home => 0x006e,
+        ScanCode::Tab => 0x0017,
+        ScanCode::Enter => 0x0024,
+        ScanCode::Escape => 0x0009,
+        ScanCode::Space => 0x0041,
+        ScanCode::Backspace => 0x0016,
+        ScanCode::Delete => 0x0077,
+        ScanCode::Insert => 0x0076,
+    })
+}
