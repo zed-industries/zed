@@ -21,7 +21,7 @@ pub trait DapLocator: Send + Sync {
 #[derive(Default)]
 struct DapRegistryState {
     adapters: BTreeMap<DebugAdapterName, Arc<dyn DebugAdapter>>,
-    locators: FxHashMap<String, Arc<dyn DapLocator>>,
+    locators: FxHashMap<SharedString, Arc<dyn DapLocator>>,
 }
 
 #[derive(Clone, Default)]
@@ -50,15 +50,15 @@ impl DapRegistry {
         );
     }
 
-    pub fn add_locator(&self, name: String, locator: Arc<dyn DapLocator>) {
-        let _previous_value = self.0.write().locators.insert(name, locator);
+    pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
+        let _previous_value = self.0.write().locators.insert(locator.name(), locator);
         debug_assert!(
             _previous_value.is_none(),
             "Attempted to insert a new debug locator when one is already registered"
         );
     }
 
-    pub fn locators(&self) -> FxHashMap<String, Arc<dyn DapLocator>> {
+    pub fn locators(&self) -> FxHashMap<SharedString, Arc<dyn DapLocator>> {
         self.0.read().locators.clone()
     }
 

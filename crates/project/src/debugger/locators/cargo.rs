@@ -123,7 +123,6 @@ impl DapLocator for CargoLocator {
         if executables.is_empty() {
             return Err(anyhow!("Couldn't get executable in cargo locator"));
         };
-
         let is_test = build_config.args.first().map_or(false, |arg| arg == "test");
 
         let mut test_name = None;
