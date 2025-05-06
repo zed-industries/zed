@@ -7,6 +7,10 @@
 //! and example groups, as well as the distributed slice mechanism for
 //! registering components.
 
+mod component_layout;
+
+pub use component_layout::*;
+
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
@@ -15,10 +19,6 @@ use collections::HashMap;
 use gpui::{AnyElement, App, SharedString, Window};
 use linkme::distributed_slice;
 use parking_lot::RwLock;
-
-mod component_layout;
-
-pub use component_layout::*;
 
 /// Implement this trait to define a UI component. This will allow you to
 /// derive `RegisterComponent` on it, in tutn allowing you to preview the
@@ -118,23 +118,13 @@ pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
     LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
 
 pub struct ComponentRegistry {
-    components: Vec<(
-        ComponentScope,
-        // name
-        &'static str,
-        // sort name
-        &'static str,
-        // description
-        Option<&'static str>,
-    )>,
-    previews: HashMap<&'static str, fn(&mut Window, &mut App) -> Option<AnyElement>>,
+    components: HashMap<ComponentId, ComponentMetadata>,
 }
 
 impl ComponentRegistry {
     fn new() -> Self {
         ComponentRegistry {
-            components: Vec::new(),
-            previews: HashMap::default(),
+            components: HashMap::default(),
         }
     }
 }
@@ -147,10 +137,18 @@ pub fn init() {
 }
 
 pub fn register_component<T: Component>() {
-    let component_data = (T::scope(), T::name(), T::sort_name(), T::description());
+    let id = T::id();
+    let metadata = ComponentMetadata {
+        id: id.clone(),
+        name: SharedString::new_static(T::name()),
+        sort_name: SharedString::new_static(T::sort_name()),
+        scope: T::scope(),
+        description: T::description().map(Into::into),
+        preview: Some(T::preview),
+    };
+
     let mut data = COMPONENT_DATA.write();
-    data.components.push(component_data);
-    data.previews.insert(T::id().0, T::preview);
+    data.components.insert(id, metadata);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -239,25 +237,7 @@ impl DerefMut for AllComponents {
 
 pub fn components() -> AllComponents {
     let data = COMPONENT_DATA.read();
-    let mut all_components = AllComponents::new();
-    for (scope, name, sort_name, description) in &data.components {
-        let preview = data.previews.get(name).cloned();
-        let component_name = SharedString::new_static(name);
-        let sort_name = SharedString::new_static(sort_name);
-        let id = ComponentId(name);
-        all_components.insert(
-            id.clone(),
-            ComponentMetadata {
-                id,
-                name: component_name,
-                sort_name,
-                scope: scope.clone(),
-                description: description.map(Into::into),
-                preview,
-            },
-        );
-    }
-    all_components
+    AllComponents(data.components.clone())
 }
 
 // #[derive(Debug, Clone, PartialEq, Eq, Hash)]
