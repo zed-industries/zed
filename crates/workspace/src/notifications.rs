@@ -29,7 +29,7 @@ impl std::ops::DerefMut for Notifications {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone, Hash)]
 pub enum NotificationId {
     Unique(TypeId),
     Composite(TypeId, ElementId),
@@ -54,7 +54,12 @@ impl NotificationId {
     }
 }
 
-pub trait Notification: EventEmitter<DismissEvent> + Focusable + Render {}
+pub trait Notification:
+    EventEmitter<DismissEvent> + EventEmitter<SuppressEvent> + Focusable + Render
+{
+}
+
+pub struct SuppressEvent;
 
 impl Workspace {
     #[cfg(any(test, feature = "test-support"))]
@@ -81,6 +86,13 @@ impl Workspace {
                 }
             })
             .detach();
+            cx.subscribe(&notification, {
+                let id = id.clone();
+                move |workspace: &mut Workspace, _, _: &SuppressEvent, cx| {
+                    workspace.suppress_notification(&id, cx);
+                }
+            })
+            .detach();
             notification.into()
         });
     }
@@ -96,6 +108,9 @@ impl Workspace {
         cx: &mut Context<Self>,
         build_notification: impl FnOnce(&mut Context<Self>) -> AnyView,
     ) {
+        if self.suppressed_notifications.contains(id) {
+            return;
+        }
         self.dismiss_notification(id, cx);
         self.notifications
             .push((id.clone(), build_notification(cx)));
@@ -170,6 +185,11 @@ impl Workspace {
     pub fn clear_all_notifications(&mut self, cx: &mut Context<Self>) {
         self.notifications.clear();
         cx.notify();
+    }
+
+    pub fn suppress_notification(&mut self, id: &NotificationId, cx: &mut Context<Self>) {
+        self.dismiss_notification(id, cx);
+        self.suppressed_notifications.insert(id.clone());
     }
 
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
@@ -305,6 +325,7 @@ impl Render for LanguageServerPrompt {
 }
 
 impl EventEmitter<DismissEvent> for LanguageServerPrompt {}
+impl EventEmitter<SuppressEvent> for LanguageServerPrompt {}
 
 fn workspace_error_notification_id() -> NotificationId {
     struct WorkspaceErrorNotification;
@@ -401,6 +422,7 @@ impl Focusable for ErrorMessagePrompt {
 }
 
 impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
+impl EventEmitter<SuppressEvent> for ErrorMessagePrompt {}
 
 impl Notification for ErrorMessagePrompt {}
 
@@ -413,7 +435,7 @@ pub mod simple_message_notification {
     };
     use ui::prelude::*;
 
-    use super::Notification;
+    use super::{Notification, SuppressEvent};
 
     pub struct MessageNotification {
         focus_handle: FocusHandle,
@@ -429,6 +451,7 @@ pub mod simple_message_notification {
         more_info_message: Option<SharedString>,
         more_info_url: Option<Arc<str>>,
         show_close_button: bool,
+        show_suppress_button: bool,
         title: Option<SharedString>,
     }
 
@@ -439,6 +462,7 @@ pub mod simple_message_notification {
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
+    impl EventEmitter<SuppressEvent> for MessageNotification {}
 
     impl Notification for MessageNotification {}
 
@@ -470,6 +494,7 @@ pub mod simple_message_notification {
                 more_info_message: None,
                 more_info_url: None,
                 show_close_button: true,
+                show_suppress_button: true,
                 title: None,
                 focus_handle: cx.focus_handle(),
             }
@@ -559,12 +584,21 @@ pub mod simple_message_notification {
             self
         }
 
+        pub fn suppress(&mut self, cx: &mut Context<Self>) {
+            cx.emit(SuppressEvent);
+        }
+
         pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
         }
 
         pub fn show_close_button(mut self, show: bool) -> Self {
             self.show_close_button = show;
+            self
+        }
+
+        pub fn show_suppress_buggon(mut self, show: bool) -> Self {
+            self.show_suppress_button = show;
             self
         }
 
@@ -597,6 +631,12 @@ pub mod simple_message_notification {
                                 })
                                 .child(div().max_w_96().child((self.build_content)(window, cx))),
                         )
+                        .when(self.show_suppress_button, |this| {
+                            this.child(
+                                IconButton::new("suppress", IconName::Delete)
+                                    .on_click(cx.listener(|this, _, _, cx| this.suppress(cx))),
+                            )
+                        })
                         .when(self.show_close_button, |this| {
                             this.child(
                                 IconButton::new("close", IconName::Close)

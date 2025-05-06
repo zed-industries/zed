@@ -22,7 +22,9 @@ use ui::{
     Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
+use workspace::notifications::{
+    Notification as WorkspaceNotification, NotificationId, SuppressEvent,
+};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -831,3 +833,4 @@ impl Render for NotificationToast {
 }
 
 impl EventEmitter<DismissEvent> for NotificationToast {}
+impl EventEmitter<SuppressEvent> for NotificationToast {}
