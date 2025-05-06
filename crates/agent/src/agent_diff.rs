@@ -26,7 +26,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
