@@ -25,6 +25,7 @@ use workspace::{ModalView, Workspace};
 
 pub(crate) struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
+    focus_handle: FocusHandle,
     context_servers_to_setup: Vec<ContextServerSetup>,
     context_server_store: Entity<ContextServerStore>,
 }
@@ -56,7 +57,7 @@ impl ConfigureContextServerModal {
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let context_servers_to_setup = configurations
             .map(|config| match config {
@@ -116,6 +117,7 @@ impl ConfigureContextServerModal {
 
         Self {
             workspace,
+            focus_handle: cx.focus_handle(),
             context_servers_to_setup,
             context_server_store,
         }
@@ -314,7 +316,7 @@ fn wait_for_context_server(
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(setup) = self.context_servers_to_setup.first() else {
-            return div().child("No context servers to setup");
+            return div().into_any_element();
         };
 
         let focus_handle = self.focus_handle(cx);
@@ -323,6 +325,7 @@ impl Render for ConfigureContextServerModal {
             .elevation_3(cx)
             .w(rems(42.))
             .key_context("ConfigureContextServerModal")
+            .track_focus(&focus_handle)
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.dismiss(cx)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
@@ -499,7 +502,7 @@ impl Render for ConfigureContextServerModal {
                                     .into_any_element(),
                             }),
                     ),
-            )
+            ).into_any_element()
     }
 }
 
@@ -538,13 +541,13 @@ impl Focusable for ConfigureContextServerModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if let Some(current) = self.context_servers_to_setup.first() {
             match &current.configuration {
-                Configuration::NotAvailable => cx.focus_handle(),
+                Configuration::NotAvailable => self.focus_handle.clone(),
                 Configuration::Required(configuration) => {
                     configuration.settings_editor.read(cx).focus_handle(cx)
                 }
             }
         } else {
-            cx.focus_handle()
+            self.focus_handle.clone()
         }
     }
 }

@@ -122,16 +122,18 @@ fn show_configure_mcp_modal(
         let jsonc_language = jsonc_language.await.ok();
 
         this.update_in(cx, |this, window, cx| {
-            let modal = ConfigureContextServerModal::new(
-                configurations.into_iter(),
-                context_server_store,
-                jsonc_language,
-                language_registry,
-                cx.entity().downgrade(),
-                window,
-                cx,
-            );
-            this.toggle_modal(window, cx, |_, _| modal);
+            let workspace = cx.entity().downgrade();
+            this.toggle_modal(window, cx, |window, cx| {
+                ConfigureContextServerModal::new(
+                    configurations.into_iter(),
+                    context_server_store,
+                    jsonc_language,
+                    language_registry,
+                    workspace,
+                    window,
+                    cx,
+                )
+            });
         })
     })
     .detach();
