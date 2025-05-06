@@ -70,7 +70,6 @@ impl CloudModel {
                     LanguageModelAvailability::RequiresPlan(Plan::Free)
                 }
                 anthropic::Model::Claude3Opus
-                | anthropic::Model::Claude3Sonnet
                 | anthropic::Model::Claude3Haiku
                 | anthropic::Model::Claude3_5Haiku
                 | anthropic::Model::Custom { .. } => {
@@ -78,8 +77,7 @@ impl CloudModel {
                 }
             },
             Self::OpenAi(model) => match model {
-                open_ai::Model::ThreePointFiveTurbo
-                | open_ai::Model::Four
+                open_ai::Model::Four
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
