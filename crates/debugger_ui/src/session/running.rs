@@ -761,6 +761,7 @@ impl RunningState {
                     anyhow::bail!("Build failed");
                 }
 
+                dbg!("Running locator");
                 dap_store
                     .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
                     .await?
