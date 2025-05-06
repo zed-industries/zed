@@ -52,7 +52,6 @@
   - [Billing](./ai/billing.md)
   - [Models](./ai/models.md)
 - [Configuration](./ai/configuration.md)
-  - [Custom API Keys](./ai/custom-api-keys.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 

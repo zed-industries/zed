@@ -67,7 +67,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models
 
-After you've configured your LLM providers—either via [a custom API key](/ai/custom-api-keys.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb assistant::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](/ai/configuration.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb assistant::ToggleModelSelector} keybinding.
 
 ## Using Tools
 

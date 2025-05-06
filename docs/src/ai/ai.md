@@ -6,8 +6,6 @@
 
 - [Configuration](./configuration.md): Configure the Agent, and set up different language model providers like Anthropic, OpenAI, Ollama, Google AI, and more.
 
-- [Custom API Keys](./custom-api-keys.md): How to use your own API keys with the AI features.
-
 - [Subscription](./subscription.md): Information about AI subscriptions and other billing related information.
 
 - [Privacy and Security](./privacy-and-security.md): Understanding how Zed handles privacy and security with AI features.

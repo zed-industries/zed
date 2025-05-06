@@ -1,4 +1,4 @@
-# Configuring the Assistant
+# Configuring the Agent Panel
 
 Here's a bird's-eye view of all the configuration options available in Zed's Assistant:
 
