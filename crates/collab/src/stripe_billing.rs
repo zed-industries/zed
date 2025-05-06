@@ -260,7 +260,7 @@ impl StripeBilling {
         const BILLING_THRESHOLD_IN_CENTS: i64 = 20 * 100;
 
         let price_per_unit = price.unit_amount.unwrap_or_default();
-        let units_for_billing_threshold = BILLING_THRESHOLD_IN_CENTS / price_per_unit;
+        let _units_for_billing_threshold = BILLING_THRESHOLD_IN_CENTS / price_per_unit;
 
         stripe::Subscription::update(
             &self.client,
@@ -268,9 +268,6 @@ impl StripeBilling {
             stripe::UpdateSubscription {
                 items: Some(vec![stripe::UpdateSubscriptionItems {
                     price: Some(price.id.to_string()),
-                    billing_thresholds: Some(stripe::SubscriptionItemBillingThresholds {
-                        usage_gte: Some(units_for_billing_threshold),
-                    }),
                     ..Default::default()
                 }]),
                 trial_settings: Some(stripe::UpdateSubscriptionTrialSettings {
