@@ -4,13 +4,33 @@
 
 ## Agent Panel
 
-When using the Zed Assistant, Zed does not persistently store user content or use user content for training of its models.
+### Opt-In
 
-When using upstream services through Zed AI, we require similar assurances from our service providers. For example, usage of Anthropic Claude 3.5 via Zed AI in the Assistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
+When using the Zed Agent Panel, whether through Zed's hosted AI service or via connecting a non-Zed AI service via API key, Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed. Each share is opt-in, and sharing once will not cause future content or data to be shared again.
+
+> Note that rating responses will send your data related to that response to Zed's servers.
+> **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
+
+When using upstream services through Zed AI, we require assurances from our service providers that your user content won't be used for training models. For example, usage of Anthropic Claude 3.5 via Zed AI in the Assistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
 
 > "Anthropic may not train models on Customer Content from paid Services."
 
-When you directly connect the Zed Assistant with a non Zed AI service (e.g. via API key) Zed does not have access to your user content. Users should reference their agreement with the service provider to understand what terms and conditions apply.
+When you directly connect the Zed Assistant with a non Zed AI service (e.g. via API key) Zed does not have control over how your data is used by that service provider. You should reference your agreement with each service provider to understand what terms and conditions apply.
+
+### Data we collect
+
+For prompts you have explicitly shared with us, Zed may store copies of those prompts and other data about the specific use of the Agent Panel.
+
+This data includes:
+
+- The prompt given to the Agent
+- Any commentary you include
+- Product telemetry about the agentic thread
+- Metadata about your Zed installation
+
+### Data Handling
+
+Collected data is stored in Snowflake, a private database where we track other metrics. We periodically review this data to improve our overall agentic approach and refine the product via our system prompt, tool use, etc. We ensure any included data is anonymized and contains no sensitive information (access tokens, user IDs, email addresses, etc).
 
 ## Edit Predictions
 
