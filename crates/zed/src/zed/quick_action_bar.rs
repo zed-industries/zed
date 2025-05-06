@@ -433,7 +433,6 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .p(DynamicSpacing::Base08.rems(cx))
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
