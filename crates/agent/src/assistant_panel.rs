@@ -1462,6 +1462,7 @@ impl AssistantPanel {
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
+        let editor_empty = self.message_editor.read(cx).is_editor_fully_empty(cx);
         let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;
@@ -1484,7 +1485,7 @@ impl AssistantPanel {
         let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
-            ActiveView::Thread { .. } => !is_empty,
+            ActiveView::Thread { .. } => !is_empty || !editor_empty,
             ActiveView::PromptEditor { .. } => true,
             _ => false,
         };

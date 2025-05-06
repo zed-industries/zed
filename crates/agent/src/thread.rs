@@ -267,7 +267,7 @@ impl DetailedSummaryState {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
