@@ -2663,7 +2663,7 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use assistant_settings::{AssistantSettings, LanguageModelSetting};
+    use assistant_settings::{AssistantSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -3087,30 +3087,85 @@ fn main() {{
         let (_workspace, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
 
-        let mut providers = HashMap::default();
-        let mut models = HashMap::default();
-        models.insert(
-            model.id(),
-            LanguageModelSetting {
-                provider: model.provider_id().0.clone(),
-                model: model.id().0.clone(),
-                temperature: Some(0.66),
-            },
-        );
-        providers.insert(model.provider_id(), models);
-
+        // Both model and provider
         cx.update(|cx| {
             AssistantSettings::override_global(
                 AssistantSettings {
-                    models: providers,
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: Some(model.provider_id().0.to_string().into()),
+                        model: Some(model.id().0.clone()),
+                        temperature: Some(0.66),
+                    }],
                     ..AssistantSettings::get_global(cx).clone()
                 },
                 cx,
             );
         });
 
-        let request = thread.update(cx, |thread, cx| thread.to_completion_request(model, cx));
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
         assert_eq!(request.temperature, Some(0.66));
+
+        // Only model
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: None,
+                        model: Some(model.id().0.clone()),
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, Some(0.66));
+
+        // Only provider
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: Some(model.provider_id().0.to_string().into()),
+                        model: None,
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, Some(0.66));
+
+        // Same model name, different provider
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: Some("anthropic".into()),
+                        model: Some(model.id().0.clone()),
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, None);
     }
 
     fn init_test_settings(cx: &mut TestAppContext) {
