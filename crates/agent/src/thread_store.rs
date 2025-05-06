@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -651,6 +651,8 @@ pub struct SerializedThread {
     pub exceeded_window_error: Option<ExceededWindowError>,
     #[serde(default)]
     pub model: Option<SerializedLanguageModel>,
+    #[serde(default)]
+    pub completion_mode: Option<CompletionMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -794,6 +796,7 @@ impl LegacySerializedThread {
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
             model: None,
+            completion_mode: None,
         }
     }
 }
