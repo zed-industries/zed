@@ -5,7 +5,7 @@ For invoice-based billing, a Business plan is required. Contact sales@zed.dev fo
 
 ## Settings {#settings}
 
-You can access billing settings at [zed.dev/account](zed.dev/account).
+You can access billing settings at [zed.dev/account](https://zed.dev/account).
 Clicking the button under Account Settings will navigate you to Stripe’s secure portal, where you can update all billing-related settings and configuration.
 
 ## Billing Cycles {#billing-cycles}
@@ -16,7 +16,7 @@ We’ll also bill in-month for additional prompts used beyond your plan’s prom
 
 ## Invoice History {#invoice-history}
 
-You can access your invoice history by navigating to [zed.dev/account](zed.dev/account) and clicking [button].
+You can access your invoice history by navigating to [zed.dev/account](https://zed.dev/account) and clicking [button].
 
 From Stripe’s secure portal, you can download all current and historical invoices.
 

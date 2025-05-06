@@ -5,8 +5,7 @@ You can use it for various tasks, such as generating code, asking questions abou
 
 To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](./getting-started#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you'll need to set up at least one LLM provider.
-Check [the Configuration page](./configuration.md) for more details about how to do it.
+If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md#providers).
 
 ## Overview
 
@@ -149,7 +148,7 @@ Every change we make to Zed's system prompt and tool set, needs to be backed by 
 Every time the LLM performs a weird change or investigates a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
-> See [AI Improvement](./ai/ai-improvement.md) and [Privacy and Security](/ai/privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
+> See [AI Improvement](./ai-improvement.md) and [Privacy and Security](/ai/privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
 > **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
 The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
