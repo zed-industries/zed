@@ -1417,7 +1417,10 @@ impl ActiveThread {
                         messages: vec![request_message],
                         tools: vec![],
                         stop: vec![],
-                        temperature: None,
+                        temperature: AssistantSettings::temperature_for_model(
+                            &configured_model.model,
+                            cx,
+                        ),
                     };
 
                     Some(configured_model.model.count_tokens(request, cx))
