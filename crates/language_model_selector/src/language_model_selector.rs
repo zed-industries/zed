@@ -15,9 +15,12 @@ use proto::Plan;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 action_with_deprecated_aliases!(
-    assistant,
+    agent,
     ToggleModelSelector,
-    ["assistant2::ToggleModelSelector"]
+    [
+        "assistant::ToggleModelSelector",
+        "assistant2::ToggleModelSelector"
+    ]
 );
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";

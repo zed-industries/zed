@@ -258,7 +258,7 @@ impl ContextEditor {
 
             let show_edit_predictions = all_language_settings(None, cx)
                 .edit_predictions
-                .enabled_in_assistant;
+                .enabled_in_text_threads;
 
             editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
 
@@ -333,7 +333,7 @@ impl ContextEditor {
         self.editor.update(cx, |editor, cx| {
             let show_edit_predictions = all_language_settings(None, cx)
                 .edit_predictions
-                .enabled_in_assistant;
+                .enabled_in_text_threads;
 
             editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
         });
@@ -1406,7 +1406,7 @@ impl ContextEditor {
                                 None,
                             ),
                             Role::Assistant => {
-                                let base_label = Label::new("Assistant").color(Color::Info);
+                                let base_label = Label::new("Agent").color(Color::Info);
                                 let mut spinner = None;
                                 let mut note = None;
                                 let animated_label = if llm_loading {
@@ -1468,7 +1468,7 @@ impl ContextEditor {
                                         Tooltip::with_meta(
                                             "Toggle message role",
                                             None,
-                                            "Available roles: You (User), Assistant, System",
+                                            "Available roles: You (User), Agent, System",
                                             window,
                                             cx,
                                         )
