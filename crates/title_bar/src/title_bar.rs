@@ -309,11 +309,11 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Git Onboarding",
-                IconName::GitBranchSmall,
-                "Git Support",
+                "Agentic Onboarding",
+                IconName::ZedAssistant,
+                "Agentic Editing",
                 None,
-                zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
+                zed_actions::agent::OpenOnboardingModal.boxed_clone(),
                 cx,
             )
         });
