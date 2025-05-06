@@ -468,6 +468,7 @@ impl MessageEditor {
         }
 
         let active_completion_mode = thread.completion_mode();
+        let max_mode_enabled = active_completion_mode == CompletionMode::Max;
 
         Some(
             Button::new("max-mode", "Max Mode")
@@ -477,7 +478,7 @@ impl MessageEditor {
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .icon_position(IconPosition::Start)
-                .toggle_state(active_completion_mode == CompletionMode::Max)
+                .toggle_state(max_mode_enabled)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_completion_mode(match active_completion_mode {
@@ -486,7 +487,10 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(|_, cx| cx.new(MaxModeTooltip::new).into())
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| MaxModeTooltip::new().selected(max_mode_enabled))
+                        .into()
+                })
                 .into_any_element(),
         )
     }
