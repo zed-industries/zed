@@ -27,7 +27,9 @@ use gpui::{
     linear_gradient, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
+use language_model::{
+    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+};
 use language_model_selector::ToggleModelSelector;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -1803,6 +1805,19 @@ impl AssistantPanel {
 
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
         if self.hide_trial_upsell || dismissed_trial_upsell() {
+            return false;
+        }
+
+        let is_using_zed_provider = self
+            .thread
+            .read(cx)
+            .thread()
+            .read(cx)
+            .configured_model()
+            .map_or(false, |model| {
+                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+            });
+        if !is_using_zed_provider {
             return false;
         }
 
