@@ -37,7 +37,6 @@ settings.workspace = true
 smol.workspace = true
 telemetry.workspace = true
 theme.workspace = true
-theme_selector.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true

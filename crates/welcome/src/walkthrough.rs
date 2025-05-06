@@ -10,7 +10,6 @@ use regex::Regex;
 use settings::Settings;
 use settings::SettingsStore;
 use std::collections::BTreeMap;
-use std::convert::identity;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -22,7 +21,7 @@ use time_format::TimestampFormat;
 use ui::CheckboxWithLabel;
 use ui::prelude::*;
 use vim_mode_setting::VimModeSetting;
-use workspace::CloseIntent;
+use workspace::OpenOptions;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::{Item, ItemEvent},
@@ -258,26 +257,26 @@ impl Walkthrough {
                     "crashes",
                     Label::new("Send Crash Reports"),
                     true.into(),
-                    |_, _, _| todo!(),
+                    |_, _, _| {}, // TODO
                 ),
                 CheckboxWithLabel::new(
                     "telemetry",
                     Label::new("Send Telemetry"),
                     true.into(),
-                    |_, _, _| todo!(),
+                    |_, _, _| {}, // TODO
                 ),
                 // "---", // TODO: line break?
                 CheckboxWithLabel::new(
                     "predictions",
                     Label::new("Help Improve Edit Predictions"),
                     false.into(),
-                    |_, _, _| todo!(),
+                    |_, _, _| {}, // TODO
                 ),
                 CheckboxWithLabel::new(
                     "agent",
                     Label::new("Rate Agentic Edits"),
                     false.into(),
-                    |_, _, _| todo!(),
+                    |_, _, _| {}, // TODO
                 ),
                 // TODO: add note about how zed never shares your code/data by default
             ])
@@ -431,7 +430,7 @@ impl Walkthrough {
                                     theme_preview_tile("Gruvbox Dark", &fs, window, cx),
                                 ]
                                 .into_iter()
-                                .filter_map(identity),
+                                .flatten(),
                             )
                         }
                     })
@@ -445,7 +444,7 @@ impl Walkthrough {
                                     theme_preview_tile("Gruvbox Light", &fs, window, cx),
                                 ]
                                 .into_iter()
-                                .filter_map(identity),
+                                .flatten(),
                             )
                         }
                     })
@@ -471,7 +470,7 @@ impl Walkthrough {
                                     ),
                                 ]
                                 .into_iter()
-                                .filter_map(identity),
+                                .flatten(),
                             )
                         }
                     }),
@@ -514,7 +513,7 @@ impl Walkthrough {
         &self,
         tab_selection: &Entity<usize>,
         _window: &mut Window,
-        cx: &mut Context<Walkthrough>,
+        _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         static HOME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(&format!("^{}", paths::home_dir().to_string_lossy())).unwrap()
@@ -522,44 +521,37 @@ impl Walkthrough {
         if !self.recent_projects.is_empty() {
             let mut tabs = TransparentTabs::new(tab_selection.clone());
             for (name, projects) in &self.recent_projects {
-                let projects = projects.clone(); // TODO: is this needed?
                 let workspace = self.workspace.clone();
-                tabs = tabs.tab(name.to_owned(), move |window, cx| {
-                    v_flex().children(projects.iter().enumerate().map(|(i, path)| {
+                let projects = projects.clone();
+                tabs = tabs.tab(name.to_owned(), move |_window, _cx| {
+                    let workspace = workspace.clone();
+                    v_flex().children(projects.iter().enumerate().map(move |(i, path)| {
+                        let workspace = workspace.clone();
                         Button::new(i, HOME_REGEX.replace(path, "~").to_string()).on_click({
-                            let workspace = workspace.clone();
                             let dir = PathBuf::from(path.clone());
                             move |_, window, cx| {
                                 let dir = dir.clone();
-                                dbg!("spawning", &dir);
-                                dbg!(workspace.update(cx, |_workspace, cx| {
-                                    cx.spawn_in(window, async move |workspace, cx| {
-                                        let continue_replacing = workspace
-                                            .update_in(cx, |workspace, window, cx| {
-                                                workspace.prepare_to_close(
-                                                    CloseIntent::ReplaceWindow,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })?
-                                            .await?;
-                                        if continue_replacing {
+                                workspace
+                                    .update(cx, |_workspace, cx| {
+                                        cx.spawn_in(window, async move |workspace, cx| {
                                             workspace
                                                 .update_in(cx, |workspace, window, cx| {
-                                                    workspace.open_workspace_for_paths(
-                                                        true,
+                                                    workspace.open_paths(
                                                         vec![dir],
+                                                        OpenOptions {
+                                                            open_new_workspace: Some(true),
+                                                            focus: Some(true),
+                                                            ..Default::default()
+                                                        },
+                                                        None,
                                                         window,
                                                         cx,
                                                     )
-                                                })?
-                                                .await
-                                        } else {
-                                            Ok(())
-                                        }
+                                                })
+                                                .ok();
+                                        })
                                     })
-                                }))
-                                .ok();
+                                    .ok();
                             }
                         })
                     }))
@@ -727,7 +719,7 @@ impl SerializableItem for Walkthrough {
             alive_items,
             workspace_id,
             "walkthroughs",
-            &*WALKTHROUGH_DB,
+            &WALKTHROUGH_DB,
             cx,
         )
     }

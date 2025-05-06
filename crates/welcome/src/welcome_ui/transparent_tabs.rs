@@ -46,7 +46,8 @@ impl RenderOnce for TransparentTabs {
             .child(
                 h_flex()
                     .children(self.tabs.into_iter().enumerate().map(|(i, t)| {
-                        Button::new(i, t.tab_title)
+                        // using index was causing clashes with the content from that tab, should probably do something more robust here
+                        Button::new(i + 100, t.tab_title)
                             .toggle_state(i == selected)
                             // .when(i==selected,
                             // this.bg(cx.theme().colors().element_selected))

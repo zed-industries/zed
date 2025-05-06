@@ -95,7 +95,7 @@ pub async fn get_neovim_projects(fs: Arc<dyn Fs>) -> Option<Vec<String>> {
     let paths = String::from_utf8_lossy(&output)
         .lines()
         .take(MAX_OLDFILES)
-        .filter_map(|s| s.split(": ").last().map(|s| PathBuf::from(s)))
+        .filter_map(|s| s.split(": ").last().map(PathBuf::from))
         .collect::<Vec<PathBuf>>();
     let projects = projects_for_paths(&paths, fs.as_ref()).await;
     Some(recent_files(projects, fs.as_ref()).await)

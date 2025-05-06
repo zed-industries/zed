@@ -23,7 +23,7 @@ impl ThemePreviewTile {
         }
     }
 
-    pub fn selected(mut self, selected: bool) -> Self {
+    pub fn _selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }

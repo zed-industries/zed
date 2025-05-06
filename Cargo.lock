@@ -17112,7 +17112,6 @@ dependencies = [
  "smol",
  "telemetry",
  "theme",
- "theme_selector",
  "time",
  "time_format",
  "ui",
