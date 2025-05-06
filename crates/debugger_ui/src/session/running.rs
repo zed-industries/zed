@@ -38,8 +38,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    DebugScenario, LaunchRequest, TaskContext, substitute_variables_in_map,
-    substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, LaunchRequest, ShellBuilder, SpawnInTerminal, TaskContext,
+    substitute_variables_in_map, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -696,6 +696,7 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
+        let is_local = project.read(cx).is_local();
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
@@ -706,27 +707,68 @@ impl RunningState {
                 tcp_connection,
                 stop_on_entry,
             } = scenario;
-            let request = if let Some(request) = request {
-                request
-            } else if let Some(build) = build {
-                let Some(task) = task_store.update(cx, |this, cx| {
-                    this.task_inventory().and_then(|inventory| {
-                        inventory
-                            .read(cx)
-                            .task_template_by_label(buffer, worktree_id, &build, cx)
-                    })
-                })?
-                else {
-                    anyhow::bail!("Couldn't find task template for {:?}", build)
+            let build_output = if let Some(build) = build {
+                let (task, locator_name) = match build {
+                    BuildTaskDefinition::Template {
+                        task_template,
+                        locator_name,
+                    } => (task_template, locator_name),
+                    BuildTaskDefinition::ByName(ref label) => {
+                        let Some(task) = task_store.update(cx, |this, cx| {
+                            this.task_inventory().and_then(|inventory| {
+                                inventory.read(cx).task_template_by_label(
+                                    buffer,
+                                    worktree_id,
+                                    &label,
+                                    cx,
+                                )
+                            })
+                        })?
+                        else {
+                            anyhow::bail!("Couldn't find task template for {:?}", build)
+                        };
+                        (task, None)
+                    }
                 };
+                let locator_name = if let Some(locator_name) = locator_name {
+                    debug_assert!(request.is_none());
+                    Some(locator_name)
+                } else if request.is_none() {
+                    dap_store
+                        .update(cx, |this, cx| {
+                            this.debug_scenario_for_build_task(task.clone(), adapter.clone(), cx)
+                                .and_then(|scenario| match scenario.build {
+                                    Some(BuildTaskDefinition::Template {
+                                        locator_name, ..
+                                    }) => locator_name,
+                                    _ => None,
+                                })
+                        })
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+
                 let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
+                let builder = ShellBuilder::new(is_local, &task.resolved.shell);
+                let command_label = builder.command_label(&task.resolved.command_label);
+                let (command, args) =
+                    builder.build(task.resolved.command.clone(), &task.resolved.args);
+
+                let task_with_shell = SpawnInTerminal {
+                    command_label,
+                    command,
+                    args,
+                    ..task.resolved.clone()
+                };
                 let terminal = project
                     .update_in(cx, |project, window, cx| {
                         project.create_terminal(
-                            TerminalKind::Task(task.resolved.clone()),
+                            TerminalKind::Task(task_with_shell.clone()),
                             window.window_handle(),
                             cx,
                         )
@@ -761,9 +803,19 @@ impl RunningState {
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
-
+                Some((task.resolved.clone(), locator_name))
+            } else {
+                None
+            };
+            let request = if let Some(request) = request {
+                request
+            } else if let Some((task, locator_name)) = build_output {
+                let locator_name = locator_name
+                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
                 dap_store
-                    .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
+                    .update(cx, |this, cx| {
+                        this.run_debug_locator(&locator_name, task, cx)
+                    })?
                     .await?
             } else {
                 return Err(anyhow!("No request or build provided"));

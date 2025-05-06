@@ -27,7 +27,9 @@ use gpui::{
     linear_gradient, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
+use language_model::{
+    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+};
 use language_model_selector::ToggleModelSelector;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -1460,6 +1462,7 @@ impl AssistantPanel {
         let thread = active_thread.thread().read(cx);
         let thread_id = thread.id().clone();
         let is_empty = active_thread.is_empty();
+        let editor_empty = self.message_editor.read(cx).is_editor_fully_empty(cx);
         let last_usage = active_thread.thread().read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;
@@ -1482,7 +1485,7 @@ impl AssistantPanel {
         let account_url = zed_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
-            ActiveView::Thread { .. } => !is_empty,
+            ActiveView::Thread { .. } => !is_empty || !editor_empty,
             ActiveView::PromptEditor { .. } => true,
             _ => false,
         };
@@ -1802,7 +1805,24 @@ impl AssistantPanel {
     }
 
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if !matches!(self.active_view, ActiveView::Thread { .. }) {
+            return false;
+        }
+
         if self.hide_trial_upsell || dismissed_trial_upsell() {
+            return false;
+        }
+
+        let is_using_zed_provider = self
+            .thread
+            .read(cx)
+            .thread()
+            .read(cx)
+            .configured_model()
+            .map_or(false, |model| {
+                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+            });
+        if !is_using_zed_provider {
             return false;
         }
 

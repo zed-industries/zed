@@ -94,6 +94,7 @@ pub struct AssistantSettings {
     pub stream_edits: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
+    pub preferred_completion_mode: CompletionMode,
 }
 
 impl AssistantSettings {
@@ -273,6 +274,7 @@ impl AssistantSettingsContent {
                     stream_edits: None,
                     single_file_review: None,
                     model_parameters: Vec::new(),
+                    preferred_completion_mode: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -303,6 +305,7 @@ impl AssistantSettingsContent {
                 stream_edits: None,
                 single_file_review: None,
                 model_parameters: Vec::new(),
+                preferred_completion_mode: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -584,6 +587,7 @@ impl Default for VersionedAssistantSettingsContent {
             stream_edits: None,
             single_file_review: None,
             model_parameters: Vec::new(),
+            preferred_completion_mode: None,
         })
     }
 }
@@ -656,6 +660,28 @@ pub struct AssistantSettingsContentV2 {
     /// Default: []
     #[serde(default)]
     model_parameters: Vec<LanguageModelParameters>,
+
+    /// What completion mode to enable for new threads
+    ///
+    /// Default: normal
+    preferred_completion_mode: Option<CompletionMode>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMode {
+    #[default]
+    Normal,
+    Max,
+}
+
+impl From<CompletionMode> for zed_llm_client::CompletionMode {
+    fn from(value: CompletionMode) -> Self {
+        match value {
+            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
+            CompletionMode::Max => zed_llm_client::CompletionMode::Max,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -843,6 +869,10 @@ impl Settings for AssistantSettings {
             merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
+            merge(
+                &mut settings.preferred_completion_mode,
+                value.preferred_completion_mode,
+            );
 
             settings
                 .model_parameters
@@ -981,6 +1011,7 @@ mod tests {
                                 stream_edits: None,
                                 single_file_review: None,
                                 model_parameters: Vec::new(),
+                                preferred_completion_mode: None,
                             },
                         )),
                     }

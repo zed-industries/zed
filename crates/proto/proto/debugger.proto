@@ -580,6 +580,7 @@ message DebugAdapterBinary {
 message RunDebugLocators {
     uint64 project_id = 1;
     SpawnInTerminal build_command = 2;
+    string locator = 3;
 }
 
 message DebugRequest {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, Global, ReadGlobal, SharedString, Task};
-use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
+use language::{BinaryStatus, LanguageConfig, LanguageName, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -224,10 +224,7 @@ impl ExtensionGrammarProxy for ExtensionHostProxy {
 pub trait ExtensionLanguageProxy: Send + Sync + 'static {
     fn register_language(
         &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        hidden: bool,
+        config: LanguageConfig,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     );
 
@@ -241,17 +238,14 @@ pub trait ExtensionLanguageProxy: Send + Sync + 'static {
 impl ExtensionLanguageProxy for ExtensionHostProxy {
     fn register_language(
         &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
-        hidden: bool,
+        language: LanguageConfig,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
     ) {
         let Some(proxy) = self.language_proxy.read().clone() else {
             return;
         };
 
-        proxy.register_language(language, grammar, matcher, hidden, load)
+        proxy.register_language(language, load)
     }
 
     fn remove_languages(

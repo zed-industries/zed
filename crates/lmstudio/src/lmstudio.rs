@@ -221,6 +221,14 @@ pub enum CompatibilityType {
     Mlx,
 }
 
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ResponseMessageDelta {
+    pub role: Option<Role>,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
+}
+
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,

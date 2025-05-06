@@ -15,3 +15,4 @@ brackets = [
     { start = "/*", end = " */", close = true, newline = false, not_in = ["string", "comment"] },
 ]
 collapsed_placeholder = " /* ... */ "
+debuggers = ["CodeLLDB", "GDB"]

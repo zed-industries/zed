@@ -309,8 +309,12 @@
   },
   // Titlebar related settings
   "title_bar": {
-    // Whether to show the branch icon beside branch switcher in the title bar.
-    "show_branch_icon": false
+    // Whether to show the branch icon beside branch switcher in the titlebar.
+    "show_branch_icon": false,
+    // Whether to show onboarding banners in the titlebar.
+    "show_onboarding_banner": true,
+    // Whether to show user picture in the titlebar.
+    "show_user_picture": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -640,6 +644,8 @@
     "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -928,6 +934,8 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // What debuggers are preferred by default for all languages.
+  "debuggers": [],
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
@@ -1624,8 +1632,6 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
-  // Whether to show user picture in titlebar.
-  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.

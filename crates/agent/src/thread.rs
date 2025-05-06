@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, CompletionMode};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -37,7 +37,7 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::{CompletionMode, CompletionRequestStatus};
+use zed_llm_client::CompletionRequestStatus;
 
 use crate::ThreadStore;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
@@ -267,7 +267,7 @@ impl DetailedSummaryState {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
@@ -312,14 +312,6 @@ pub enum TokenUsageRatio {
     Exceeded,
 }
 
-fn default_completion_mode(cx: &App) -> CompletionMode {
-    if cx.is_staff() {
-        CompletionMode::Max
-    } else {
-        CompletionMode::Normal
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum QueueState {
     Sending,
@@ -336,7 +328,7 @@ pub struct Thread {
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
-    completion_mode: CompletionMode,
+    completion_mode: assistant_settings::CompletionMode,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -395,7 +387,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: default_completion_mode(cx),
+            completion_mode: AssistantSettings::get_global(cx).preferred_completion_mode,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -464,6 +456,10 @@ impl Thread {
                 .or_else(|| registry.default_model())
         });
 
+        let completion_mode = serialized
+            .completion_mode
+            .unwrap_or_else(|| AssistantSettings::get_global(cx).preferred_completion_mode);
+
         Self {
             id,
             updated_at: serialized.updated_at,
@@ -472,7 +468,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: default_completion_mode(cx),
+            completion_mode,
             messages: serialized
                 .messages
                 .into_iter()
@@ -1095,6 +1091,7 @@ impl Thread {
                         provider: model.provider.id().0.to_string(),
                         model: model.model.id().0.to_string(),
                     }),
+                completion_mode: Some(this.completion_mode),
             })
         })
     }
@@ -1246,9 +1243,9 @@ impl Thread {
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
-            Some(self.completion_mode)
+            Some(self.completion_mode.into())
         } else {
-            Some(CompletionMode::Normal)
+            Some(CompletionMode::Normal.into())
         };
 
         request
