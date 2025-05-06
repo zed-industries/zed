@@ -253,7 +253,7 @@ impl RenderOnce for ModalFooter {
             .mt_4()
             .p(DynamicSpacing::Base08.rems(cx))
             .flex_none()
-            .justify_end()
+            .justify_between()
             .gap_1()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)

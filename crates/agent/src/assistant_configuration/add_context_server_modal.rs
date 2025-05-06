@@ -147,47 +147,50 @@ impl Render for AddContextServerModal {
                         ),
                     )
                     .footer(
-                        ModalFooter::new()
-                            .start_slot(
-                                Button::new("cancel", "Cancel")
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &menu::Cancel,
-                                            &focus_handle,
-                                            window,
-                                            cx,
+                        ModalFooter::new().end_slot(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("cancel", "Cancel")
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Cancel,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                    )
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.cancel(&menu::Cancel, cx)
-                                    })),
-                            )
-                            .end_slot(
-                                Button::new("add-server", "Add Server")
-                                    .disabled(is_name_empty || is_command_empty)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &menu::Confirm,
-                                            &focus_handle,
-                                            window,
-                                            cx,
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.cancel(&menu::Cancel, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("add-server", "Add Server")
+                                        .disabled(is_name_empty || is_command_empty)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Confirm,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                    )
-                                    .map(|button| {
-                                        if is_name_empty {
-                                            button.tooltip(Tooltip::text("Name is required"))
-                                        } else if is_command_empty {
-                                            button.tooltip(Tooltip::text("Command is required"))
-                                        } else {
-                                            button
-                                        }
-                                    })
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.confirm(&menu::Confirm, cx)
-                                    })),
-                            ),
+                                        .map(|button| {
+                                            if is_name_empty {
+                                                button.tooltip(Tooltip::text("Name is required"))
+                                            } else if is_command_empty {
+                                                button.tooltip(Tooltip::text("Command is required"))
+                                            } else {
+                                                button
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.confirm(&menu::Confirm, cx)
+                                        })),
+                                ),
+                        ),
                     ),
             )
     }
