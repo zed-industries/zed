@@ -68,7 +68,7 @@ pub fn format_date_medium(
 fn format_absolute_date(
     timestamp: OffsetDateTime,
     reference: OffsetDateTime,
-    enhanced_date_formatting: bool,
+    #[allow(unused_variables)] enhanced_date_formatting: bool,
 ) -> String {
     #[cfg(target_os = "macos")]
     {
