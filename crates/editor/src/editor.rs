@@ -18803,6 +18803,9 @@ impl Editor {
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {
+        if self.mode.is_minimap() {
+            return;
+        }
         self.addons
             .insert(std::any::TypeId::of::<T>(), Box::new(instance));
     }
