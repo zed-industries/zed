@@ -364,22 +364,17 @@ impl InlineAssistant {
                     // Check for an assist at the current cursor position
                     for &assist_id in &editor_assists.assist_ids {
                         let assist = &self.assists[&assist_id];
-                        // Convert cursor position to anchor for comparison
-                        let cursor_anchor = snapshot
-                            .buffer_snapshot
-                            .anchor_before(newest_selection.start);
 
-                        // Check if cursor position is within this assist's range
-                        if assist
-                            .range
-                            .start
-                            .cmp(&cursor_anchor, &snapshot.buffer_snapshot)
-                            .is_le()
-                            && assist
-                                .range
-                                .end
-                                .cmp(&cursor_anchor, &snapshot.buffer_snapshot)
-                                .is_ge()
+                        // Convert cursor and assist ranges to points for comparison
+                        let cursor_point = newest_selection.start;
+                        let assist_start_point = assist.range.start.to_point(&snapshot.buffer_snapshot);
+                        let assist_end_point = assist.range.end.to_point(&snapshot.buffer_snapshot);
+
+                        // Check if cursor position is within this assist's range OR on the same line
+                        if (assist.range.start.cmp(&snapshot.buffer_snapshot.anchor_before(cursor_point), &snapshot.buffer_snapshot).is_le() &&
+                            assist.range.end.cmp(&snapshot.buffer_snapshot.anchor_before(cursor_point), &snapshot.buffer_snapshot).is_ge()) ||
+                           // Check if cursor is on the same line as any part of the assist's range
+                           (cursor_point.row >= assist_start_point.row && cursor_point.row <= assist_end_point.row)
                         {
                             self.focus_assist(assist_id, window, cx);
                             return;
@@ -1235,8 +1230,7 @@ impl InlineAssistant {
                 if (scroll_target_bottom - scroll_target_top) <= height_in_lines {
                     editor.set_scroll_position(
                         point(0., scroll_target_bottom - height_in_lines),
-                        window,
-                        cx,
+                        window, cx,
                     );
                 } else {
                     editor.set_scroll_position(point(0., scroll_target_top), window, cx);
