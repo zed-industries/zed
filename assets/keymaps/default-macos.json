@@ -285,7 +285,6 @@
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
-      "cmd-f": "buffer_search::Deploy",
       "alt-enter": "editor::Newline",
       "cmd-k c": "assistant::CopyCode",
       "cmd-g": "search::SelectNextMatch",
