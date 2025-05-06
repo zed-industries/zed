@@ -168,7 +168,21 @@ enum ActiveView {
     Configuration,
 }
 
+enum WhichFontSize {
+    AgentFont,
+    BufferFont,
+    None,
+}
+
 impl ActiveView {
+    pub fn which_font_size_used(&self) -> WhichFontSize {
+        match self {
+            ActiveView::Thread { .. } | ActiveView::History => WhichFontSize::AgentFont,
+            ActiveView::PromptEditor { .. } => WhichFontSize::BufferFont,
+            ActiveView::Configuration => WhichFontSize::None,
+        }
+    }
+
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
         let summary = thread.read(cx).summary_or_default();
 
@@ -1076,8 +1090,8 @@ impl AssistantPanel {
     }
 
     fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
-        match self.active_view {
-            ActiveView::Configuration | ActiveView::History | ActiveView::Thread { .. } => {
+        match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
                 if persist {
                     update_settings_file::<ThemeSettings>(
                         self.fs.clone(),
@@ -1096,11 +1110,12 @@ impl AssistantPanel {
                     });
                 }
             }
-            ActiveView::PromptEditor { .. } => {
+            WhichFontSize::BufferFont => {
                 // Prompt editor uses the buffer font size, so allow the action to propagate to the
                 // default handler that changes that font size.
                 cx.propagate();
             }
+            WhichFontSize::None => {}
         }
     }
 
@@ -2710,6 +2725,41 @@ impl AssistantPanel {
 
 impl Render for AssistantPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match &self.active_view {
+            ActiveView::Thread { .. } => v_flex()
+                .relative()
+                .justify_between()
+                .size_full()
+                .child(self.render_active_thread_or_empty_state(window, cx))
+                .children(self.render_tool_use_limit_reached(cx))
+                .child(h_flex().child(self.message_editor.clone()))
+                .children(self.render_last_error(cx))
+                .child(self.render_drag_target(cx))
+                .into_any(),
+            ActiveView::History => self.history.clone().into_any_element(),
+            ActiveView::PromptEditor {
+                context_editor,
+                buffer_search_bar,
+                ..
+            } => self
+                .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
+                .into_any(),
+            ActiveView::Configuration => v_flex()
+                .size_full()
+                .children(self.configuration.clone())
+                .into_any(),
+        };
+
+        let content = match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                    .size_full()
+                    .child(content)
+                    .into_any()
+            }
+            _ => content,
+        };
+
         v_flex()
             .key_context(self.key_context())
             .justify_between()
@@ -2735,39 +2785,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
-            .child(match &self.active_view {
-                ActiveView::Thread { .. } => {
-                    WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
-                        .flex()
-                        .flex_col()
-                        .relative()
-                        .justify_between()
-                        .size_full()
-                        .child(self.render_active_thread_or_empty_state(window, cx))
-                        .children(self.render_tool_use_limit_reached(cx))
-                        .child(h_flex().child(self.message_editor.clone()))
-                        .children(self.render_last_error(cx))
-                        .child(self.render_drag_target(cx))
-                        .into_any_element()
-                }
-                ActiveView::History => {
-                    WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
-                        .size_full()
-                        .child(self.history.clone())
-                        .into_any_element()
-                }
-                ActiveView::PromptEditor {
-                    context_editor,
-                    buffer_search_bar,
-                    ..
-                } => self
-                    .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
-                    .into_any_element(),
-                ActiveView::Configuration => v_flex()
-                    .size_full()
-                    .children(self.configuration.clone())
-                    .into_any_element(),
-            })
+            .child(content)
     }
 }
 
