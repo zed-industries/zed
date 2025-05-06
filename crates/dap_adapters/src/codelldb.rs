@@ -142,11 +142,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         .ok_or_else(|| anyhow!("No adapter found"))??
                 };
             let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir
-                .join("codelldb")
-                .to_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
+            let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };

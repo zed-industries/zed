@@ -1,13 +1,15 @@
 use adapters::latest_github_release;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::AsyncApp;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
 use crate::*;
 
 #[derive(Default)]
-pub(crate) struct PhpDebugAdapter;
+pub(crate) struct PhpDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "PHP";
@@ -123,15 +125,17 @@ impl DebugAdapter for PhpDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-            adapters::download_adapter_from_github(
-                self.name(),
-                version,
-                adapters::DownloadedFileType::Vsix,
-                delegate,
-            )
-            .await?;
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version,
+                    adapters::DownloadedFileType::Vsix,
+                    delegate,
+                )
+                .await?;
+            }
         }
 
         self.get_installed_binary(delegate, &config, user_installed_path, cx)

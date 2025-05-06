@@ -4,11 +4,13 @@ use dap::{
     adapters::InlineValueProvider,
 };
 use gpui::AsyncApp;
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
 #[derive(Default)]
-pub(crate) struct PythonDebugAdapter;
+pub(crate) struct PythonDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
@@ -170,9 +172,11 @@ impl DebugAdapter for PythonDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-            self.install_binary(version, delegate).await?;
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                self.install_binary(version, delegate).await?;
+            }
         }
 
         self.get_installed_binary(delegate, &config, user_installed_path, cx)

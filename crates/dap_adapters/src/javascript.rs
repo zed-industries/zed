@@ -1,14 +1,16 @@
 use adapters::latest_github_release;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
 use util::ResultExt;
 
 use crate::*;
 
-#[derive(Debug)]
-pub(crate) struct JsDebugAdapter;
+#[derive(Debug, Default)]
+pub(crate) struct JsDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
@@ -139,15 +141,17 @@ impl DebugAdapter for JsDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-            adapters::download_adapter_from_github(
-                self.name(),
-                version,
-                adapters::DownloadedFileType::GzipTar,
-                delegate,
-            )
-            .await?;
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version,
+                    adapters::DownloadedFileType::GzipTar,
+                    delegate,
+                )
+                .await?;
+            }
         }
 
         self.get_installed_binary(delegate, &config, user_installed_path, cx)
