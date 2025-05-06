@@ -581,18 +581,18 @@ impl ToolCard for EditFileToolCard {
             (IconName::ChevronDown, "Expand Code Block")
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .w_full()
-            .h_2_5()
-            .rounded_b_lg()
-            .bg(gpui::linear_gradient(
-                0.,
-                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-            ));
+        let gradient_overlay =
+            div()
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h_2_5()
+                .bg(gpui::linear_gradient(
+                    0.,
+                    gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                    gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+                ));
 
         let border_color = cx.theme().colors().border.opacity(0.6);
 
@@ -713,6 +713,7 @@ impl ToolCard for EditFileToolCard {
                                 .border_t_1()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)
+                                .rounded_md()
                                 .hover(|style| {
                                     style.bg(cx.theme().colors().element_hover.opacity(0.1))
                                 })
