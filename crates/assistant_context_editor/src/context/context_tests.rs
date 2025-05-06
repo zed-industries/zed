@@ -44,10 +44,8 @@ use workspace::Workspace;
 
 #[gpui::test]
 fn test_inserting_and_removing_messages(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    AssistantSettings::register(cx);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -184,10 +182,8 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
 
 #[gpui::test]
 fn test_message_splitting(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    cx.set_global(settings_store);
-    LanguageModelRegistry::test(cx);
-    AssistantSettings::register(cx);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
@@ -288,10 +284,8 @@ fn test_message_splitting(cx: &mut App) {
 
 #[gpui::test]
 fn test_messages_for_offsets(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    AssistantSettings::register(cx);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -382,11 +376,8 @@ fn test_messages_for_offsets(cx: &mut App) {
 
 #[gpui::test]
 async fn test_slash_commands(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(Project::init_settings);
-    cx.update(AssistantSettings::register);
+    cx.update(init_test);
+
     let fs = FakeFs::new(cx.background_executor.clone());
 
     fs.insert_tree(
@@ -676,23 +667,19 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
-    cx.update(prompt_store::init);
-    let mut settings_store = cx.update(SettingsStore::test);
     cx.update(|cx| {
-        settings_store
-            .set_user_settings(
-                r#"{ "assistant": { "enable_experimental_live_diffs": true } }"#,
-                cx,
-            )
-            .unwrap()
+        init_test(cx);
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_user_settings(
+                    r#"{ "assistant": { "enable_experimental_live_diffs": true } }"#,
+                    cx,
+                )
+                .unwrap()
+        })
     });
-    cx.set_global(settings_store);
-    cx.update(language::init);
-    cx.update(Project::init_settings);
-    cx.update(AssistantSettings::register);
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [Path::new("/root")], cx).await;
-    cx.update(LanguageModelRegistry::test);
 
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
@@ -1075,10 +1062,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_serialization(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(AssistantSettings::register);
-    cx.update(LanguageModelRegistry::test);
+    cx.update(init_test);
+
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -1154,6 +1139,8 @@ async fn test_serialization(cx: &mut TestAppContext) {
 
 #[gpui::test(iterations = 100)]
 async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
+    cx.update(init_test);
+
     let min_peers = env::var("MIN_PEERS")
         .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
         .unwrap_or(2);
@@ -1163,11 +1150,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(50);
-
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(AssistantSettings::register);
 
     let slash_commands = cx.update(SlashCommandRegistry::default_global);
     slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
@@ -1437,10 +1419,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
 #[gpui::test]
 fn test_mark_cache_anchors(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
-    AssistantSettings::register(cx);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -1613,6 +1593,16 @@ fn messages_cache(
         .messages(cx)
         .map(|message| (message.id, message.cache.clone()))
         .collect()
+}
+
+fn init_test(cx: &mut App) {
+    let settings_store = SettingsStore::test(cx);
+    prompt_store::init(cx);
+    LanguageModelRegistry::test(cx);
+    cx.set_global(settings_store);
+    language::init(cx);
+    assistant_settings::init(cx);
+    Project::init_settings(cx);
 }
 
 #[derive(Clone)]

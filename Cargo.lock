@@ -3006,6 +3006,7 @@ dependencies = [
  "anyhow",
  "assistant",
  "assistant_context_editor",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",

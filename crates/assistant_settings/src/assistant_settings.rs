@@ -18,6 +18,10 @@ use settings::{Settings, SettingsSources};
 
 pub use crate::agent_profile::*;
 
+pub fn init(cx: &mut App) {
+    AssistantSettings::register(cx);
+}
+
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssistantDockPosition {
