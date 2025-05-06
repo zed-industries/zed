@@ -1171,9 +1171,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             if let Some(value) = json.get(k) {
                 json = value;
                 key = Some(k);
-            } else if let Some((k, value)) =
-                dbg!(T::FALLBACK_KEY).and_then(|k| Some((k, dbg!(json).get(k)?)))
-            {
+            } else if let Some((k, value)) = T::FALLBACK_KEY.and_then(|k| Some((k, json.get(k)?))) {
                 json = value;
                 key = Some(k);
             } else {
