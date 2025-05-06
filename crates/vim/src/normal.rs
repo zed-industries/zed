@@ -697,6 +697,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let is_return_char = text == "\n".into() || text == "\r".into();
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
@@ -706,7 +707,7 @@ impl Vim {
                 let (map, display_selections) = editor.selections.all_display(cx);
 
                 let mut edits = Vec::new();
-                for selection in display_selections {
+                for selection in &display_selections {
                     let mut range = selection.range();
                     for _ in 0..count {
                         let new_point = movement::saturating_right(&map, range.end);
@@ -719,11 +720,14 @@ impl Vim {
                     edits.push((
                         range.start.to_offset(&map, Bias::Left)
                             ..range.end.to_offset(&map, Bias::Left),
-                        text.repeat(count),
-                    ))
+                        text.repeat(if is_return_char { 0 } else { count }),
+                    ));
                 }
 
                 editor.edit(edits, cx);
+                if is_return_char {
+                    editor.newline(&editor::actions::Newline, window, cx);
+                }
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -1710,6 +1714,14 @@ mod test {
         cx.set_shared_state("ˇhello world\n").await;
         cx.simulate_shared_keystrokes("2 0 r - ").await;
         cx.shared_state().await.assert_eq("ˇhello world\n");
+
+        cx.set_shared_state("  helloˇ world\n").await;
+        cx.simulate_shared_keystrokes("r enter").await;
+        cx.shared_state().await.assert_eq("  hello\n ˇ world\n");
+
+        cx.set_shared_state("  helloˇ world\n").await;
+        cx.simulate_shared_keystrokes("2 r enter").await;
+        cx.shared_state().await.assert_eq("  hello\n ˇ orld\n");
     }
 
     #[gpui::test]

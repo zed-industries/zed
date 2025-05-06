@@ -1,5 +1,6 @@
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 use anyhow::Result;
+use assistant_settings::AgentProfileId;
 use assistant_tools::StreamingEditFileToolInput;
 use async_trait::async_trait;
 
@@ -14,6 +15,7 @@ impl Example for CommentTranslation {
             revision: "504d084e29bce4f60614bc702e91af7f7d9e60ad".to_string(),
             language_server: None,
             max_assertions: Some(1),
+            profile_id: AgentProfileId::default(),
         }
     }
 

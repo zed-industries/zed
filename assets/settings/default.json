@@ -67,6 +67,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // The default font size for text in the agent panel
+  "agent_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -304,6 +306,11 @@
     "selections_menu": true,
     // Whether to show agent review buttons in the editor toolbar.
     "agent_review": true
+  },
+  // Titlebar related settings
+  "title_bar": {
+    // Whether to show the branch icon beside branch switcher in the title bar.
+    "show_branch_icon": false
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -630,27 +637,27 @@
     // Default width of the notification panel.
     "default_width": 380
   },
-  "assistant": {
+  "agent": {
     // Version of this setting.
     "version": "2",
-    // Whether the assistant is enabled.
+    // Whether the agent is enabled.
     "enabled": true,
-    // Whether to show the assistant panel button in the status bar.
+    // Whether to show the agent panel button in the status bar.
     "button": true,
-    // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
+    // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Default width when the assistant is docked to the left or right.
+    // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
-    // Default height when the assistant is docked to the bottom.
+    // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new chats.
+    // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-7-sonnet-latest"
     },
-    // The model to use when applying edits from the assistant.
+    // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -665,24 +672,6 @@
     "single_file_review": true,
     "default_profile": "write",
     "profiles": {
-      "ask": {
-        "name": "Ask",
-        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
-        // "enable_all_context_servers": true,
-        "tools": {
-          "contents": true,
-          "diagnostics": true,
-          "fetch": true,
-          "list_directory": true,
-          "now": true,
-          "find_path": true,
-          "read_file": true,
-          "open": true,
-          "grep": true,
-          "thinking": true,
-          "web_search": true
-        }
-      },
       "write": {
         "name": "Write",
         "enable_all_context_servers": true,
@@ -705,13 +694,31 @@
           "web_search": true
         }
       },
-      "manual": {
-        "name": "Manual",
+      "ask": {
+        "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
+        "tools": {
+          "contents": true,
+          "diagnostics": true,
+          "fetch": true,
+          "list_directory": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "open": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true
+        }
+      },
+      "minimal": {
+        "name": "Minimal",
         "enable_all_context_servers": false,
         "tools": {}
       }
     },
-    // Where to show notifications when an agent has either completed
+    // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
     // "primary_screen" - Show the notification only on your primary screen (default)
@@ -1016,9 +1023,9 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
-    // Whether edit predictions are enabled in the assistant panel.
+    // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_assistant": true
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1320,6 +1327,9 @@
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
+    "Elm": {
+      "tab_size": 4
+    },
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
@@ -1612,7 +1622,7 @@
   //   }
   // ]
   "ssh_connections": [],
-  // Configures context servers for use in the Assistant.
+  // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
     "stepping_granularity": "line",

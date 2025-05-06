@@ -14,6 +14,7 @@ use gpui::{
     pulsating_between,
 };
 use indoc::indoc;
+use inline_completion::EditPredictionUsage;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
@@ -26,9 +27,10 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator, PopoverMenu,
-    PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
+    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
+use util::maybe;
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
@@ -404,7 +406,28 @@ impl InlineCompletionButton {
         let line_height = window.line_height();
 
         if let Some(provider) = self.edit_prediction_provider.as_ref() {
-            if let Some(usage) = provider.usage(cx) {
+            let usage = provider.usage(cx).or_else(|| {
+                let user_store = self.user_store.read(cx);
+
+                maybe!({
+                    let amount = user_store.edit_predictions_usage_amount()?;
+                    let limit = user_store.edit_predictions_usage_limit()?.variant?;
+
+                    Some(EditPredictionUsage {
+                        amount: amount as i32,
+                        limit: match limit {
+                            proto::usage_limit::Variant::Limited(limited) => {
+                                zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                            }
+                            proto::usage_limit::Variant::Unlimited(_) => {
+                                zed_llm_client::UsageLimit::Unlimited
+                            }
+                        },
+                    })
+                })
+            });
+
+            if let Some(usage) = usage {
                 menu = menu.header("Usage");
                 menu = menu.custom_entry(
                     move |_window, cx| {
@@ -462,7 +485,7 @@ impl InlineCompletionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -506,7 +529,7 @@ impl InlineCompletionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -519,7 +542,7 @@ impl InlineCompletionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -550,7 +573,7 @@ impl InlineCompletionButton {
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .icon(icon_name)
                         .icon_color(icon_color)
-                        .documentation_aside(move |cx| {
+                        .documentation_aside(DocumentationSide::Left, move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
                                     "Project identified as open source, and you're sharing data.",
@@ -631,7 +654,7 @@ impl InlineCompletionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(|_| {
+                .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })

@@ -2,29 +2,27 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use icons::IconName;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
-
-use crate::manager::ContextServerManager;
-use crate::types;
+use project::{Project, context_server_store::ContextServerStore};
+use ui::IconName;
 
 pub struct ContextServerTool {
-    server_manager: Entity<ContextServerManager>,
-    server_id: Arc<str>,
+    store: Entity<ContextServerStore>,
+    server_id: ContextServerId,
     tool: types::Tool,
 }
 
 impl ContextServerTool {
     pub fn new(
-        server_manager: Entity<ContextServerManager>,
-        server_id: impl Into<Arc<str>>,
+        store: Entity<ContextServerStore>,
+        server_id: ContextServerId,
         tool: types::Tool,
     ) -> Self {
         Self {
-            server_manager,
-            server_id: server_id.into(),
+            store,
+            server_id,
             tool,
         }
     }
@@ -45,7 +43,7 @@ impl Tool for ContextServerTool {
 
     fn source(&self) -> ToolSource {
         ToolSource::ContextServer {
-            id: self.server_id.clone().into(),
+            id: self.server_id.clone().0.into(),
         }
     }
 
@@ -80,7 +78,7 @@ impl Tool for ContextServerTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
-        if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
+        if let Some(server) = self.store.read(cx).get_running_server(&self.server_id) {
             let tool_name = self.tool.name.clone();
             let server_clone = server.clone();
             let input_clone = input.clone();

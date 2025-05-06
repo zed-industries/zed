@@ -1,4 +1,5 @@
 use crate::db::{BillingCustomerId, BillingSubscriptionId};
+use chrono::{Datelike as _, NaiveDate, Utc};
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
@@ -28,6 +29,38 @@ impl Model {
     pub fn current_period_end_at(&self) -> Option<DateTimeUtc> {
         let period_end = self.stripe_current_period_end?;
         chrono::DateTime::from_timestamp(period_end, 0)
+    }
+
+    pub fn current_period(
+        subscription: Option<Self>,
+        is_staff: bool,
+    ) -> Option<(DateTimeUtc, DateTimeUtc)> {
+        if is_staff {
+            let now = Utc::now();
+            let year = now.year();
+            let month = now.month();
+
+            let first_day_of_this_month =
+                NaiveDate::from_ymd_opt(year, month, 1)?.and_hms_opt(0, 0, 0)?;
+
+            let next_month = if month == 12 { 1 } else { month + 1 };
+            let next_month_year = if month == 12 { year + 1 } else { year };
+            let first_day_of_next_month =
+                NaiveDate::from_ymd_opt(next_month_year, next_month, 1)?.and_hms_opt(23, 59, 59)?;
+
+            let last_day_of_this_month = first_day_of_next_month - chrono::Days::new(1);
+
+            Some((
+                first_day_of_this_month.and_utc(),
+                last_day_of_this_month.and_utc(),
+            ))
+        } else {
+            let subscription = subscription?;
+            let period_start_at = subscription.current_period_start_at()?;
+            let period_end_at = subscription.current_period_end_at()?;
+
+            Some((period_start_at, period_end_at))
+        }
     }
 }
 
@@ -59,6 +92,16 @@ pub enum SubscriptionKind {
     ZedProTrial,
     #[sea_orm(string_value = "zed_free")]
     ZedFree,
+}
+
+impl From<SubscriptionKind> for zed_llm_client::Plan {
+    fn from(value: SubscriptionKind) -> Self {
+        match value {
+            SubscriptionKind::ZedPro => Self::ZedPro,
+            SubscriptionKind::ZedProTrial => Self::ZedProTrial,
+            SubscriptionKind::ZedFree => Self::Free,
+        }
+    }
 }
 
 /// The status of a Stripe subscription.

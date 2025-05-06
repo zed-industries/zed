@@ -4,9 +4,8 @@ use std::{
 };
 
 use anyhow::Context as _;
-use context_server::manager::{ContextServerManager, ContextServerStatus};
+use context_server::ContextServerId;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ContextServerConfiguration;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
     TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, percentage,
@@ -14,6 +13,10 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use notifications::status_toast::{StatusToast, ToastIcon};
+use project::{
+    context_server_store::{ContextServerStatus, ContextServerStore},
+    project_settings::{ContextServerConfiguration, ProjectSettings},
+};
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
@@ -23,11 +26,11 @@ use workspace::{ModalView, Workspace};
 pub(crate) struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     context_servers_to_setup: Vec<ConfigureContextServer>,
-    context_server_manager: Entity<ContextServerManager>,
+    context_server_store: Entity<ContextServerStore>,
 }
 
 struct ConfigureContextServer {
-    id: Arc<str>,
+    id: ContextServerId,
     installation_instructions: Entity<markdown::Markdown>,
     settings_validator: Option<jsonschema::Validator>,
     settings_editor: Entity<Editor>,
@@ -37,9 +40,9 @@ struct ConfigureContextServer {
 
 impl ConfigureContextServerModal {
     pub fn new(
-        configurations: impl Iterator<Item = (Arc<str>, ContextServerConfiguration)>,
+        configurations: impl Iterator<Item = (ContextServerId, extension::ContextServerConfiguration)>,
+        context_server_store: Entity<ContextServerStore>,
         jsonc_language: Option<Arc<Language>>,
-        context_server_manager: Entity<ContextServerManager>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -65,6 +68,8 @@ impl ConfigureContextServerModal {
                     settings_editor: cx.new(|cx| {
                         let mut editor = Editor::auto_height(16, window, cx);
                         editor.set_text(manifest.default_settings.trim(), window, cx);
+                        editor.set_show_gutter(false, cx);
+                        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                         if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                             buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
                         }
@@ -83,7 +88,7 @@ impl ConfigureContextServerModal {
         Some(Self {
             workspace,
             context_servers_to_setup,
-            context_server_manager,
+            context_server_store,
         })
     }
 }
@@ -99,6 +104,7 @@ impl ConfigureContextServerModal {
         };
 
         let configuration = &mut self.context_servers_to_setup[0];
+        configuration.last_error.take();
         if configuration.waiting_for_context_server {
             return;
         }
@@ -123,14 +129,14 @@ impl ConfigureContextServerModal {
         }
         let id = configuration.id.clone();
 
-        let settings_changed = context_server::ContextServerSettings::get_global(cx)
+        let settings_changed = ProjectSettings::get_global(cx)
             .context_servers
-            .get(&id)
+            .get(&id.0)
             .map_or(true, |config| {
                 config.settings.as_ref() != Some(&settings_value)
             });
 
-        let is_running = self.context_server_manager.read(cx).status_for_server(&id)
+        let is_running = self.context_server_store.read(cx).status_for_server(&id)
             == Some(ContextServerStatus::Running);
 
         if !settings_changed && is_running {
@@ -140,7 +146,7 @@ impl ConfigureContextServerModal {
 
         configuration.waiting_for_context_server = true;
 
-        let task = wait_for_context_server(&self.context_server_manager, id.clone(), cx);
+        let task = wait_for_context_server(&self.context_server_store, id.clone(), cx);
         cx.spawn({
             let id = id.clone();
             async move |this, cx| {
@@ -164,29 +170,25 @@ impl ConfigureContextServerModal {
         .detach();
 
         // When we write the settings to the file, the context server will be restarted.
-        update_settings_file::<context_server::ContextServerSettings>(
-            workspace.read(cx).app_state().fs.clone(),
-            cx,
-            {
-                let id = id.clone();
-                |settings, _| {
-                    if let Some(server_config) = settings.context_servers.get_mut(&id) {
-                        server_config.settings = Some(settings_value);
-                    } else {
-                        settings.context_servers.insert(
-                            id,
-                            context_server::ServerConfig {
-                                settings: Some(settings_value),
-                                ..Default::default()
-                            },
-                        );
-                    }
+        update_settings_file::<ProjectSettings>(workspace.read(cx).app_state().fs.clone(), cx, {
+            let id = id.clone();
+            |settings, _| {
+                if let Some(server_config) = settings.context_servers.get_mut(&id.0) {
+                    server_config.settings = Some(settings_value);
+                } else {
+                    settings.context_servers.insert(
+                        id.0,
+                        ContextServerConfiguration {
+                            settings: Some(settings_value),
+                            ..Default::default()
+                        },
+                    );
                 }
-            },
-        );
+            }
+        });
     }
 
-    fn complete_setup(&mut self, id: Arc<str>, cx: &mut Context<Self>) {
+    fn complete_setup(&mut self, id: ContextServerId, cx: &mut Context<Self>) {
         self.context_servers_to_setup.remove(0);
         cx.notify();
 
@@ -220,31 +222,40 @@ impl ConfigureContextServerModal {
 }
 
 fn wait_for_context_server(
-    context_server_manager: &Entity<ContextServerManager>,
-    context_server_id: Arc<str>,
+    context_server_store: &Entity<ContextServerStore>,
+    context_server_id: ContextServerId,
     cx: &mut App,
 ) -> Task<Result<(), Arc<str>>> {
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
-    let subscription = cx.subscribe(context_server_manager, move |_, event, _cx| match event {
-        context_server::manager::Event::ServerStatusChanged { server_id, status } => match status {
-            Some(ContextServerStatus::Running) => {
-                if server_id == &context_server_id {
-                    if let Some(tx) = tx.lock().unwrap().take() {
-                        let _ = tx.send(Ok(()));
+    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| match event {
+        project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
+            match status {
+                ContextServerStatus::Running => {
+                    if server_id == &context_server_id {
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send(Ok(()));
+                        }
                     }
                 }
-            }
-            Some(ContextServerStatus::Error(error)) => {
-                if server_id == &context_server_id {
-                    if let Some(tx) = tx.lock().unwrap().take() {
-                        let _ = tx.send(Err(error.clone()));
+                ContextServerStatus::Stopped => {
+                    if server_id == &context_server_id {
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send(Err("Context server stopped running".into()));
+                        }
                     }
                 }
+                ContextServerStatus::Error(error) => {
+                    if server_id == &context_server_id {
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send(Err(error.clone()));
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        },
+        }
     });
 
     cx.spawn(async move |_cx| {
@@ -264,7 +275,7 @@ impl Render for ConfigureContextServerModal {
 
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .w(rems(42.))
             .key_context("ConfigureContextServerModal")
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.dismiss(cx)))

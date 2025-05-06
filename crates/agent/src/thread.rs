@@ -355,6 +355,7 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
+    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -418,6 +419,7 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
+            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -526,6 +528,7 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
+            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -817,6 +820,10 @@ impl Thread {
             .unwrap_or(false)
     }
 
+    pub fn last_usage(&self) -> Option<RequestUsage> {
+        self.last_usage
+    }
+
     pub fn tool_use_limit_reached(&self) -> bool {
         self.tool_use_limit_reached
     }
@@ -891,7 +898,7 @@ impl Thread {
         if !loaded_context.referenced_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
                 for buffer in loaded_context.referenced_buffers {
-                    log.track_buffer(buffer, cx);
+                    log.buffer_read(buffer, cx);
                 }
             });
         }
@@ -991,7 +998,7 @@ impl Thread {
         for message in &self.messages {
             text.push_str(match message.role {
                 language_model::Role::User => "User:",
-                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::Assistant => "Agent:",
                 language_model::Role::System => "System:",
             });
             text.push('\n');
@@ -1535,7 +1542,9 @@ impl Thread {
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
                                         } => {
-                                            cx.emit(ThreadEvent::UsageUpdated(RequestUsage { limit, amount: amount as i32 }));
+                                            let usage = RequestUsage { limit, amount: amount as i32 };
+
+                                            thread.last_usage = Some(usage);
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
@@ -1704,11 +1713,11 @@ impl Thread {
                         LanguageModelCompletionEvent::StatusUpdate(
                             CompletionRequestStatus::UsageUpdated { amount, limit },
                         ) => {
-                            this.update(cx, |_, cx| {
-                                cx.emit(ThreadEvent::UsageUpdated(RequestUsage {
+                            this.update(cx, |thread, _cx| {
+                                thread.last_usage = Some(RequestUsage {
                                     limit,
                                     amount: amount as i32,
-                                }));
+                                });
                             })?;
                             continue;
                         }
@@ -1902,10 +1911,52 @@ impl Thread {
                         cx,
                     );
                 }
+            } else {
+                self.handle_hallucinated_tool_use(
+                    tool_use.id.clone(),
+                    tool_use.name.clone(),
+                    window,
+                    cx,
+                );
             }
         }
 
         pending_tool_uses
+    }
+
+    pub fn handle_hallucinated_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        hallucinated_tool_name: Arc<str>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Thread>,
+    ) {
+        let available_tools = self.tools.read(cx).enabled_tools(cx);
+
+        let tool_list = available_tools
+            .iter()
+            .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let error_message = format!(
+            "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
+            hallucinated_tool_name, tool_list
+        );
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            hallucinated_tool_name,
+            Err(anyhow!("Missing tool call: {error_message}")),
+            self.configured_model.as_ref(),
+        );
+
+        cx.emit(ThreadEvent::MissingToolUse {
+            tool_use_id: tool_use_id.clone(),
+            ui_text: error_message.into(),
+        });
+
+        self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
     }
 
     pub fn receive_invalid_tool_json(
@@ -2309,7 +2360,7 @@ impl Thread {
                 "## {role}\n",
                 role = match message.role {
                     Role::User => "User",
-                    Role::Assistant => "Assistant",
+                    Role::Assistant => "Agent",
                     Role::System => "System",
                 }
             )?;
@@ -2555,7 +2606,6 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
-    UsageUpdated(RequestUsage),
     StreamedCompletion,
     ReceivedTextChunk,
     NewRequest,
@@ -2565,6 +2615,10 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         ui_text: Arc<str>,
         input: serde_json::Value,
+    },
+    MissingToolUse {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
     },
     InvalidToolInput {
         tool_use_id: LanguageModelToolUseId,
@@ -2606,7 +2660,6 @@ mod tests {
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolRegistry;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
     use language_model::fake_provider::FakeLanguageModel;
@@ -3028,7 +3081,6 @@ fn main() {{
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
