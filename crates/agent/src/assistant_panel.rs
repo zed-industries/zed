@@ -22,18 +22,18 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
-    Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop, linear_gradient,
-    prelude::*, pulsating_between,
+    Corner, DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, FontWeight,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, linear_color_stop,
+    linear_gradient, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage};
 use language_model_selector::ToggleModelSelector;
-use project::Project;
+use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
-use search::{BufferSearchBar, buffer_search::DivRegistrar};
+use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use time::UtcOffset;
@@ -43,7 +43,7 @@ use ui::{
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{CollaboratorId, ToolbarItemView, Workspace};
+use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
 use zed_actions::agent::OpenConfiguration;
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
@@ -2570,6 +2570,108 @@ impl AssistantPanel {
             .into_any()
     }
 
+    fn render_drag_target(&self, cx: &Context<Self>) -> Div {
+        let is_local = self.project.read(cx).is_local();
+        div()
+            .invisible()
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .left_0()
+            .bg(cx.theme().colors().drop_target_background)
+            .drag_over::<DraggedTab>(|this, _, _, _| this.visible())
+            .drag_over::<DraggedSelection>(|this, _, _, _| this.visible())
+            .when(is_local, |this| {
+                this.drag_over::<ExternalPaths>(|this, _, _, _| this.visible())
+            })
+            .on_drop(cx.listener(move |this, tab: &DraggedTab, window, cx| {
+                let item = tab.pane.read(cx).item_for_index(tab.ix);
+                let project_paths = item
+                    .and_then(|item| item.project_path(cx))
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                this.handle_drop(project_paths, vec![], window, cx);
+            }))
+            .on_drop(
+                cx.listener(move |this, selection: &DraggedSelection, window, cx| {
+                    let project_paths = selection
+                        .items()
+                        .filter_map(|item| this.project.read(cx).path_for_entry(item.entry_id, cx))
+                        .collect::<Vec<_>>();
+                    this.handle_drop(project_paths, vec![], window, cx);
+                }),
+            )
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                let tasks = paths
+                    .paths()
+                    .into_iter()
+                    .map(|path| {
+                        Workspace::project_path_for_path(this.project.clone(), &path, false, cx)
+                    })
+                    .collect::<Vec<_>>();
+                cx.spawn_in(window, async move |this, cx| {
+                    let mut paths = vec![];
+                    let mut added_worktrees = vec![];
+                    let opened_paths = futures::future::join_all(tasks).await;
+                    for entry in opened_paths {
+                        if let Some((worktree, project_path)) = entry.log_err() {
+                            added_worktrees.push(worktree);
+                            paths.push(project_path);
+                        }
+                    }
+                    this.update_in(cx, |this, window, cx| {
+                        this.handle_drop(paths, added_worktrees, window, cx);
+                    })
+                    .ok();
+                })
+                .detach();
+            }))
+    }
+
+    fn handle_drop(
+        &mut self,
+        paths: Vec<ProjectPath>,
+        added_worktrees: Vec<Entity<Worktree>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &self.active_view {
+            ActiveView::Thread { .. } => {
+                let context_store = self.thread.read(cx).context_store().clone();
+                context_store.update(cx, move |context_store, cx| {
+                    let mut tasks = Vec::new();
+                    for project_path in &paths {
+                        tasks.push(context_store.add_file_from_path(
+                            project_path.clone(),
+                            false,
+                            cx,
+                        ));
+                    }
+                    cx.background_spawn(async move {
+                        futures::future::join_all(tasks).await;
+                        // Need to hold onto the worktrees until they have already been used when
+                        // opening the buffers.
+                        drop(added_worktrees);
+                    })
+                    .detach();
+                });
+            }
+            ActiveView::PromptEditor { context_editor, .. } => {
+                context_editor.update(cx, |context_editor, cx| {
+                    ContextEditor::insert_dragged_files(
+                        context_editor,
+                        paths,
+                        added_worktrees,
+                        window,
+                        cx,
+                    );
+                });
+            }
+            ActiveView::History | ActiveView::Configuration => {}
+        }
+    }
+
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
         let message = message.into();
         IconButton::new("copy", IconName::Copy)
@@ -2617,18 +2719,24 @@ impl Render for AssistantPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
             .map(|parent| match &self.active_view {
-                ActiveView::Thread { .. } => parent
-                    .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_tool_use_limit_reached(cx))
-                    .child(h_flex().child(self.message_editor.clone()))
-                    .children(self.render_last_error(cx)),
+                ActiveView::Thread { .. } => parent.child(
+                    v_flex()
+                        .relative()
+                        .justify_between()
+                        .size_full()
+                        .child(self.render_active_thread_or_empty_state(window, cx))
+                        .children(self.render_tool_use_limit_reached(cx))
+                        .child(h_flex().child(self.message_editor.clone()))
+                        .children(self.render_last_error(cx))
+                        .child(self.render_drag_target(cx)),
+                ),
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::PromptEditor {
                     context_editor,
                     buffer_search_bar,
                     ..
                 } => {
-                    let mut registrar = DivRegistrar::new(
+                    let mut registrar = buffer_search::DivRegistrar::new(
                         |this, _, _cx| match &this.active_view {
                             ActiveView::PromptEditor {
                                 buffer_search_bar, ..
@@ -2642,6 +2750,7 @@ impl Render for AssistantPanel {
                         registrar
                             .into_div()
                             .size_full()
+                            .relative()
                             .map(|parent| {
                                 buffer_search_bar.update(cx, |buffer_search_bar, cx| {
                                     if buffer_search_bar.is_dismissed() {
@@ -2657,7 +2766,8 @@ impl Render for AssistantPanel {
                                     )
                                 })
                             })
-                            .child(context_editor.clone()),
+                            .child(context_editor.clone())
+                            .child(self.render_drag_target(cx)),
                     )
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
