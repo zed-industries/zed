@@ -1421,11 +1421,7 @@ impl RunningState {
         });
     }
 
-    #[expect(
-        unused,
-        reason = "Support for disconnecting a client is not wired through yet"
-    )]
-    pub fn disconnect_client(&self, cx: &mut Context<Self>) {
+    pub fn detach_client(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.disconnect_client(cx);
         });

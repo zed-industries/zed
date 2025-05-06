@@ -24,7 +24,7 @@ actions!(
     [
         Start,
         Continue,
-        Disconnect,
+        Detach,
         Pause,
         Restart,
         StepInto,

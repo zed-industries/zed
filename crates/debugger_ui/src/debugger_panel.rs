@@ -1,7 +1,7 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::{
-    ClearAllBreakpoints, Continue, Disconnect, FocusBreakpointList, FocusConsole, FocusFrames,
+    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
     StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
@@ -109,7 +109,7 @@ impl DebugPanel {
 
         let filter = CommandPaletteFilter::global_mut(cx);
         let debugger_action_types = [
-            TypeId::of::<Disconnect>(),
+            TypeId::of::<Detach>(),
             TypeId::of::<Stop>(),
             TypeId::of::<ToggleIgnoreBreakpoints>(),
         ];
@@ -879,6 +879,28 @@ impl DebugPanel {
                                                     Tooltip::for_action_in(
                                                         label,
                                                         &Stop,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-disconnect", IconName::DebugDetach)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(window.listener_for(
+                                                &running_session,
+                                                |this, _, _, cx| {
+                                                    this.detach_client(cx);
+                                                },
+                                            ))
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Detach",
+                                                        &Detach,
                                                         &focus_handle,
                                                         window,
                                                         cx,
