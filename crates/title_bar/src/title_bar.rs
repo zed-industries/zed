@@ -726,7 +726,7 @@ impl TitleBar {
                             h_flex()
                                 .gap_0p5()
                                 .children(
-                                    workspace::WorkspaceSettings::get_global(cx)
+                                    TitleBarSettings::get_global(cx)
                                         .show_user_picture
                                         .then(|| Avatar::new(user.avatar_uri.clone())),
                                 )

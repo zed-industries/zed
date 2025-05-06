@@ -312,7 +312,9 @@
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
     // Whether to show onboarding banners in the titlebar.
-    "show_onboarding_banner": true
+    "show_onboarding_banner": true,
+    // Whether to show user picture in the titlebar.
+    "show_user_picture": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -1606,8 +1608,6 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
-  // Whether to show user picture in titlebar.
-  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
