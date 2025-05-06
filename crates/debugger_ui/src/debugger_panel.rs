@@ -213,7 +213,6 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         let dap_store = self.project.read(cx).dap_store();
-        let workspace = self.workspace.clone();
         let session = dap_store.update(cx, |dap_store, cx| {
             dap_store.new_session(
                 scenario.label.clone(),
@@ -252,14 +251,14 @@ impl DebugPanel {
 
         cx.spawn(async move |_, cx| {
             if let Err(error) = task.await {
-                log::error!("{:?}", error);
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_error(&error, cx);
-                    })
-                    .ok();
                 session
-                    .update(cx, |session, cx| session.shutdown(cx))?
+                    .update(cx, |session, cx| {
+                        session
+                            .console_output(cx)
+                            .unbounded_send(format!("error: {}", error))
+                            .ok();
+                        session.shutdown(cx)
+                    })?
                     .await;
             }
             anyhow::Ok(())
