@@ -1805,6 +1805,10 @@ impl AssistantPanel {
     }
 
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if !matches!(self.active_view, ActiveView::Thread { .. }) {
+            return false;
+        }
+
         if self.hide_trial_upsell || dismissed_trial_upsell() {
             return false;
         }
