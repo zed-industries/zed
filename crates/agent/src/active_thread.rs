@@ -1,3 +1,4 @@
+use crate::AssistantPanel;
 use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
@@ -11,7 +12,6 @@ use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
-use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
@@ -1786,8 +1786,15 @@ impl ActiveThread {
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
-            .on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
+            .on_click({
+                let thread = self.thread.clone();
+                let workspace = self.workspace.clone();
+                move |_, window, cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        open_active_thread_as_markdown(thread.clone(), workspace, window, cx)
+                            .detach_and_log_err(cx);
+                    }
+                }
             });
 
         // For all items that should be aligned with the LLM's response.
@@ -3430,6 +3437,55 @@ impl Render for ActiveThread {
                 this.child(scrollbar)
             })
     }
+}
+
+pub(crate) fn open_active_thread_as_markdown(
+    thread: Entity<Thread>,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let markdown_language_task = workspace
+        .read(cx)
+        .app_state()
+        .languages
+        .language_for_name("Markdown");
+
+    window.spawn(cx, async move |cx| {
+        let markdown_language = markdown_language_task.await?;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let thread = thread.read(cx);
+            let markdown = thread.to_markdown(cx)?;
+            let thread_summary = thread
+                .summary()
+                .map(|summary| summary.to_string())
+                .unwrap_or_else(|| "Thread".to_string());
+
+            let project = workspace.project().clone();
+            let buffer = project.update(cx, |project, cx| {
+                project.create_local_buffer(&markdown, Some(markdown_language), cx)
+            });
+            let buffer =
+                cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone()));
+
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                    editor.set_breadcrumb_header(thread_summary);
+                    editor
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
+
+            anyhow::Ok(())
+        })??;
+        anyhow::Ok(())
+    })
 }
 
 pub(crate) fn open_context(

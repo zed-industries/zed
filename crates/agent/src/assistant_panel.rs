@@ -49,7 +49,7 @@ use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
 
-use crate::active_thread::{ActiveThread, ActiveThreadEvent};
+use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_diff::AgentDiff;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
@@ -1155,50 +1155,12 @@ impl AssistantPanel {
             return;
         };
 
-        let markdown_language_task = workspace
-            .read(cx)
-            .app_state()
-            .languages
-            .language_for_name("Markdown");
         let Some(thread) = self.active_thread() else {
             return;
         };
-        cx.spawn_in(window, async move |_this, cx| {
-            let markdown_language = markdown_language_task.await?;
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                let thread = thread.read(cx);
-                let markdown = thread.to_markdown(cx)?;
-                let thread_summary = thread
-                    .summary()
-                    .map(|summary| summary.to_string())
-                    .unwrap_or_else(|| "Thread".to_string());
-
-                let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&markdown, Some(markdown_language), cx)
-                });
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
-                });
-
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_summary);
-                        editor
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-
-                anyhow::Ok(())
-            })
-        })
-        .detach_and_log_err(cx);
+        active_thread::open_active_thread_as_markdown(thread, workspace, window, cx)
+            .detach_and_log_err(cx);
     }
 
     fn handle_assistant_configuration_event(
