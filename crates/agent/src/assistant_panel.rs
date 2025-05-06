@@ -37,6 +37,7 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use time::UtcOffset;
+use ui::utils::WithRemSize;
 use ui::{
     Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
     ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
@@ -2532,6 +2533,46 @@ impl AssistantPanel {
             .into_any()
     }
 
+    fn render_prompt_editor(
+        &self,
+        context_editor: &Entity<ContextEditor>,
+        buffer_search_bar: &Entity<BufferSearchBar>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut registrar = buffer_search::DivRegistrar::new(
+            |this, _, _cx| match &this.active_view {
+                ActiveView::PromptEditor {
+                    buffer_search_bar, ..
+                } => Some(buffer_search_bar.clone()),
+                _ => None,
+            },
+            cx,
+        );
+        BufferSearchBar::register(&mut registrar);
+        registrar
+            .into_div()
+            .size_full()
+            .relative()
+            .map(|parent| {
+                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                    if buffer_search_bar.is_dismissed() {
+                        return parent;
+                    }
+                    parent.child(
+                        div()
+                            .p(DynamicSpacing::Base08.rems(cx))
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(buffer_search_bar.render(window, cx)),
+                    )
+                })
+            })
+            .child(context_editor.clone())
+            .child(self.render_drag_target(cx))
+    }
+
     fn render_drag_target(&self, cx: &Context<Self>) -> Div {
         let is_local = self.project.read(cx).is_local();
         div()
@@ -2680,9 +2721,11 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
-            .map(|parent| match &self.active_view {
-                ActiveView::Thread { .. } => parent.child(
-                    v_flex()
+            .child(match &self.active_view {
+                ActiveView::Thread { .. } => {
+                    WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .flex()
+                        .flex_col()
                         .relative()
                         .justify_between()
                         .size_full()
@@ -2690,49 +2733,31 @@ impl Render for AssistantPanel {
                         .children(self.render_tool_use_limit_reached(cx))
                         .child(h_flex().child(self.message_editor.clone()))
                         .children(self.render_last_error(cx))
-                        .child(self.render_drag_target(cx)),
-                ),
-                ActiveView::History => parent.child(self.history.clone()),
+                        .child(self.render_drag_target(cx))
+                        .into_any_element()
+                }
+                ActiveView::History => {
+                    WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .size_full()
+                        .child(self.history.clone())
+                        .into_any_element()
+                }
+                // Use of WithRemSize intentionally omitted as this view uses the buffer font size.
                 ActiveView::PromptEditor {
                     context_editor,
                     buffer_search_bar,
                     ..
-                } => {
-                    let mut registrar = buffer_search::DivRegistrar::new(
-                        |this, _, _cx| match &this.active_view {
-                            ActiveView::PromptEditor {
-                                buffer_search_bar, ..
-                            } => Some(buffer_search_bar.clone()),
-                            _ => None,
-                        },
-                        cx,
-                    );
-                    BufferSearchBar::register(&mut registrar);
-                    parent.child(
-                        registrar
-                            .into_div()
-                            .size_full()
-                            .relative()
-                            .map(|parent| {
-                                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
-                                    if buffer_search_bar.is_dismissed() {
-                                        return parent;
-                                    }
-                                    parent.child(
-                                        div()
-                                            .p(DynamicSpacing::Base08.rems(cx))
-                                            .border_b_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .bg(cx.theme().colors().editor_background)
-                                            .child(buffer_search_bar.render(window, cx)),
-                                    )
-                                })
-                            })
-                            .child(context_editor.clone())
-                            .child(self.render_drag_target(cx)),
-                    )
+                } => self
+                    .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
+                    .into_any_element(),
+                ActiveView::Configuration => {
+                    WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .flex()
+                        .flex_col()
+                        .size_full()
+                        .children(self.configuration.clone())
+                        .into_any_element()
                 }
-                ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
     }
 }
