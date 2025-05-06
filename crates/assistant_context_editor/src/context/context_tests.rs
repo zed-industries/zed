@@ -3,7 +3,6 @@ use crate::{
     ContextOperation, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
 use anyhow::Result;
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult, SlashCommandWorkingSet,
@@ -24,7 +23,7 @@ use project::Project;
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
-use settings::{Settings as _, SettingsStore};
+use settings::SettingsStore;
 use std::{
     cell::RefCell,
     env,
