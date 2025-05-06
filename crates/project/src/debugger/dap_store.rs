@@ -348,7 +348,6 @@ impl DapStore {
                 if !locators.is_empty() {
                     cx.background_spawn(async move {
                         for locator in locators {
-                            dbg!("Running locator");
                             let result = locator
                                 .run(build_command.clone())
                                 .await

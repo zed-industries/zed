@@ -150,6 +150,7 @@ impl NewSessionModal {
             let task_contexts = workspace
                 .update_in(cx, |this, window, cx| task_contexts(this, window, cx))?
                 .await;
+            let worktree_id = task_contexts.worktree();
             let task_context = task_contexts
                 .active_item_context
                 .map(|(_, _, context)| context)
@@ -159,8 +160,9 @@ impl NewSessionModal {
                         .map(|(_, context)| context)
                 })
                 .unwrap_or_default();
+
             debug_panel.update_in(cx, |debug_panel, window, cx| {
-                debug_panel.start_session(config, task_context, None, window, cx)
+                debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
             })?;
             this.update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -937,19 +939,27 @@ impl PickerDelegate for DebugScenarioDelegate {
                     .await
                     .task_context_for_worktree_id(worktree_id)
                     .cloned()
+                    .map(|context| (context, Some(worktree_id)))
             })
         } else {
             gpui::Task::ready(None)
         };
 
         cx.spawn_in(window, async move |this, cx| {
-            let task_context = task_context.await.unwrap_or_default();
+            let (task_context, worktree_id) = task_context.await.unwrap_or_default();
 
             this.update_in(cx, |this, window, cx| {
                 this.delegate
                     .debug_panel
                     .update(cx, |panel, cx| {
-                        panel.start_session(debug_scenario, task_context, None, window, cx);
+                        panel.start_session(
+                            debug_scenario,
+                            task_context,
+                            None,
+                            worktree_id,
+                            window,
+                            cx,
+                        );
                     })
                     .ok();
 
