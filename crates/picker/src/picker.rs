@@ -1,5 +1,9 @@
 use anyhow::Result;
-use editor::{Editor, scroll::Autoscroll};
+use editor::{
+    Editor,
+    actions::{MoveDown, MoveUp},
+    scroll::Autoscroll,
+};
 use gpui::{
     AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
@@ -451,6 +455,10 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_previous(&Default::default(), window, cx);
+    }
+
     fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
@@ -464,6 +472,10 @@ impl<D: PickerDelegate> Picker<D> {
             self.set_selected_index(ix, Some(Direction::Up), true, window, cx);
             cx.notify();
         }
+    }
+
+    pub fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(&Default::default(), window, cx);
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
@@ -857,6 +869,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::editor_move_down))
+            .on_action(cx.listener(Self::editor_move_up))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::cancel))
