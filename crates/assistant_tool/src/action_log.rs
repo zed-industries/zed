@@ -1089,7 +1089,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
         assert_eq!(
-            buffer.read_with(cx, |buffer, cx| buffer.text()),
+            buffer.read_with(cx, |buffer, _cx| buffer.text()),
             "Lorem ipsum dolor"
         );
     }
