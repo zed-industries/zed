@@ -1,6 +1,9 @@
 # Edit Prediction
 
-### Configuring Zeta
+Edit Prediction is Zed's native mechanism for predicting the code you want to write through AI.
+Each keystroke sends a new request to our [open source, open dataset Zeta model](https://huggingface.co/zed-industries/zeta) and it returns with individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
+
+## Configuring Zeta
 
 Zed's Edit Prediction was initially introduced via a banner on the title bar.
 Clicking on it would take you to a modal with a button ("Enable Edit Prediction") that sets `zed` as your `edit_prediction_provider`.

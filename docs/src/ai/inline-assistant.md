@@ -1,18 +1,20 @@
 # Inline Assistant
 
-## Using the Inline Assistant
-
-You can use `ctrl-enter` to open the inline assistant nearly anywhere you can enter text: editors, the agent panel, the prompt library, channel notes, and even within the terminal panel.
+## Overview
 
 The inline assistant allows you to send the current selection (or the current line) to a language model and modify the selection with the language model's response.
+
+You can use `ctrl-enter` to open the inline assistant nearly anywhere you can write text: editors, the Agent Panel, the Rules Library, channel notes, and even within the terminal panel.
 
 You can also perform multiple generation requests in parallel by pressing `ctrl-enter` with multiple cursors, or by pressing `ctrl-enter` with a selection that spans multiple excerpts in a multibuffer.
 
 ## Context
 
-You can give the inline assistant context the same way you can in the agent panel, allowing you to provide additional instructions or rules for code transformations with @-mentions.
+You can give the inline assistant context the same way you can in the Agent Panel, via @-mentioning files or adding them via the context picker.
+That allows you to provide additional instructions or rules for code transformations.
 
-A useful pattern here is to create a thread in the agent panel, and then use the `@thread` command in the inline assistant to include the thread as context for the inline assistant transformation.
+A useful pattern here is to create a thread in the Agent Panel, and then mention it by typing `@thread`.
+That includes the thread as context, and it stays there until you remove it.
 
 ## Prefilling Prompts
 

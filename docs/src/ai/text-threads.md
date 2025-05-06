@@ -11,6 +11,7 @@ However, the text threads differ with the inclusion of message blocks. These blo
 To begin, type a message in a `You` block.
 
 <!-- todo! update photos in this section, if we are keeping it -->
+
 ![Asking a question](https://zed.dev/img/assistant/ask-a-question.png)
 
 As you type, the remaining tokens count for the selected model is updated.

@@ -1,6 +1,8 @@
 # AI
 
-## AI in Zed
+Zed offers various features that integrate LLMs smoothly into the editor.
+
+## Setting up AI in Zed
 
 - [Models](./models.md): Information about the various language models available in Zed.
 

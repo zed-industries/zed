@@ -9,10 +9,10 @@ If you're using the Agent Panel for the first time, you'll need to [configure at
 
 ## Overview
 
-After you've configured some LLM providers, you're ready to start working with the agent panel.
+After you've configured some LLM providers, you're ready to start working with the Agent Panel.
 
 Type at the message editor and hit `enter` to submit your prompt to the LLM.
-If you need extra room to type, you can expand the message editor via ({#kb agent::ExpandMessageEditor}).
+If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
 You should start to see the responses stream in with indications of which tools the AI is using to fulfill your prompt.
 For example, if the AI chooses to perform an edit, you will see a card with the diff.
@@ -25,8 +25,8 @@ You can click on the card that contains your message and re-submit it with an ad
 ### Checkpoints
 
 Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message.
-This allows you to return the state of your codebase to the one it was prior to that message's point.
-This is usually valuable if the performed edit doesn't go in the right direction.
+This allows you to return your code base to the state it was in prior to that message.
+This is usually valuable if the AI's edit doesn't go in the right direction.
 
 ### Navigating History
 
@@ -38,17 +38,17 @@ You can also view all historical conversations with the `View All` option from w
 
 ### Reviewing Changes
 
-If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the agent panel surfaces the fact that edits have been applied.
+If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the Agent Panel surfaces the fact that edits have been applied.
 
 You can click on the accordion bar that shows up right above the panel's editor see which files have been changed, or click `Review Changes` ({#kb agent::OpenAgentDiff}) to open a multi-buffer to review them.
 Reviewing includes the option to accept or reject each edit, or accept or reject all edits.
 
 Diffs with changes also appear in individual buffers.
-So, if your active tab is already one that had changes, you'll see diffs with the same accept/reject controls as in the multi-buffer.
+So, if your active tab had changes added by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 
 ## Adding Context
 
-Although Zed's agent is very efficient at reading through your codebase to autonomously pick up relevant files, directories, and other context, manually adding context is still usually encouraged as a way to speed up and improve the AI's response quality.
+Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still usually encouraged as a way to speed up and improve the AI's response quality.
 
 If you have a tab open when triggering the Agent Panel, that tab will appear as a suggested context in form of a dashed button.
 You can also add other forms of context, like files, rules, and directories, by either typing `@` or hitting the `+` icon button.
@@ -67,7 +67,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models
 
-After you've configured your LLM providers—either via [a custom API key](/ai/configuration.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb assistant::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](/ai/custom-api-keys.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 ## Using Tools
 
@@ -122,16 +122,16 @@ Zed's UI will inform about this via a warning icon that appears close to the mod
 
 ## Text Threads
 
-"Text threads" present your conversation with the LLM in a different format—as raw text.
-With text threads, you have full control over the conversation data.
-You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
+"Text Threads" present your conversation with the LLM in a different format—as raw text.
+With it, you have full control over the conversation data and an editing experience that resembles writing code in a normal buffer.
 
 For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers.
-We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base through tools, that's only available in the newer, and now default, "threads".
+We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
 
 ### Text Thread History
 
-Text threads save their contents to your file system, which is described more in the [Text thread history](./text-threads.md#history) documentation.
+Content from text thread are saved to your file system.
+Visit [the dedicated docs](./text-threads.md#history) for more info.
 
 ## Errors and Debugging
 
