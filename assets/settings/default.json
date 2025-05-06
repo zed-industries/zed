@@ -67,6 +67,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // The default font size for text in the agent panel
+  "agent_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -300,8 +302,10 @@
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
-    // Whether to show the Selections menu in the editor toolbar
-    "selections_menu": true
+    // Whether to show the Selections menu in the editor toolbar.
+    "selections_menu": true,
+    // Whether to show agent review buttons in the editor toolbar.
+    "agent_review": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -628,27 +632,27 @@
     // Default width of the notification panel.
     "default_width": 380
   },
-  "assistant": {
+  "agent": {
     // Version of this setting.
     "version": "2",
-    // Whether the assistant is enabled.
+    // Whether the agent is enabled.
     "enabled": true,
-    // Whether to show the assistant panel button in the status bar.
+    // Whether to show the agent panel button in the status bar.
     "button": true,
-    // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
+    // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Default width when the assistant is docked to the left or right.
+    // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
-    // Default height when the assistant is docked to the bottom.
+    // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new chats.
+    // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-7-sonnet-latest"
     },
-    // The model to use when applying edits from the assistant.
+    // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -657,8 +661,34 @@
     },
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
+    // When enabled, the agent will stream edits.
+    "stream_edits": false,
+    // When enabled, agent edits will be displayed in single-file editors for review
+    "single_file_review": true,
     "default_profile": "write",
     "profiles": {
+      "write": {
+        "name": "Write",
+        "enable_all_context_servers": true,
+        "tools": {
+          "copy_path": true,
+          "create_directory": true,
+          "create_file": true,
+          "delete_path": true,
+          "diagnostics": true,
+          "edit_file": true,
+          "fetch": true,
+          "list_directory": true,
+          "move_path": true,
+          "now": true,
+          "find_path": true,
+          "read_file": true,
+          "grep": true,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true
+        }
+      },
       "ask": {
         "name": "Ask",
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
@@ -667,49 +697,23 @@
           "contents": true,
           "diagnostics": true,
           "fetch": true,
-          "list_directory": false,
+          "list_directory": true,
           "now": true,
           "find_path": true,
           "read_file": true,
+          "open": true,
           "grep": true,
           "thinking": true,
           "web_search": true
         }
       },
-      "write": {
-        "name": "Write",
-        "enable_all_context_servers": true,
-        "tools": {
-          "batch_tool": false,
-          "code_actions": false,
-          "code_symbols": false,
-          "contents": false,
-          "copy_path": false,
-          "create_file": true,
-          "delete_path": false,
-          "diagnostics": true,
-          "edit_file": true,
-          "fetch": true,
-          "list_directory": true,
-          "move_path": false,
-          "now": false,
-          "find_path": true,
-          "read_file": true,
-          "grep": true,
-          "rename": false,
-          "symbol_info": false,
-          "terminal": true,
-          "thinking": true,
-          "web_search": true
-        }
-      },
-      "manual": {
-        "name": "Manual",
+      "minimal": {
+        "name": "Minimal",
         "enable_all_context_servers": false,
         "tools": {}
       }
     },
-    // Where to show notifications when an agent has either completed
+    // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a
     // tool action.
     // "primary_screen" - Show the notification only on your primary screen (default)
@@ -834,7 +838,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -917,6 +934,11 @@
       // The minimum severity of the diagnostics to show inline.
       // Shows all diagnostics when not specified.
       "max_severity": null
+    },
+    "cargo": {
+      // When enabled, Zed disables rust-analyzer's check on save and starts to query
+      // Cargo diagnostics separately.
+      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
@@ -996,9 +1018,9 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
-    // Whether edit predictions are enabled in the assistant panel.
+    // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_assistant": true
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1592,7 +1614,7 @@
   //   }
   // ]
   "ssh_connections": [],
-  // Configures context servers for use in the Assistant.
+  // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
     "stepping_granularity": "line",

@@ -43,8 +43,8 @@ use language_model_selector::{
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
-use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use project::{ProjectPath, lsp_store::LocalLspAdapterDelegate};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -62,7 +62,10 @@ use ui::{
     prelude::*,
 };
 use util::{ResultExt, maybe};
-use workspace::searchable::{Direction, SearchableItemHandle};
+use workspace::{
+    CollaboratorId,
+    searchable::{Direction, SearchableItemHandle},
+};
 use workspace::{
     Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
@@ -97,7 +100,7 @@ actions!(
 
 #[derive(PartialEq, Clone)]
 pub enum InsertDraggedFiles {
-    ProjectPaths(Vec<PathBuf>),
+    ProjectPaths(Vec<ProjectPath>),
     ExternalFiles(Vec<PathBuf>),
 }
 
@@ -255,7 +258,7 @@ impl ContextEditor {
 
             let show_edit_predictions = all_language_settings(None, cx)
                 .edit_predictions
-                .enabled_in_assistant;
+                .enabled_in_text_threads;
 
             editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
 
@@ -330,7 +333,7 @@ impl ContextEditor {
         self.editor.update(cx, |editor, cx| {
             let show_edit_predictions = all_language_settings(None, cx)
                 .edit_predictions
-                .enabled_in_assistant;
+                .enabled_in_text_threads;
 
             editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
         });
@@ -1054,7 +1057,7 @@ impl ContextEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon: IconName::Ai,
+                        icon_path: SharedString::from(IconName::Ai.path()),
                         label: "Thinking Process".into(),
                     }),
                 );
@@ -1097,7 +1100,7 @@ impl ContextEditor {
                         FoldPlaceholder {
                             render: render_fold_icon_button(
                                 cx.entity().downgrade(),
-                                section.icon,
+                                section.icon.path().into(),
                                 section.label.clone(),
                             ),
                             merge_adjacent: false,
@@ -1107,7 +1110,7 @@ impl ContextEditor {
                         |_, _, _, _| Empty.into_any_element(),
                     )
                     .with_metadata(CreaseMetadata {
-                        icon: section.icon,
+                        icon_path: section.icon.path().into(),
                         label: section.label,
                     }),
                 );
@@ -1403,7 +1406,7 @@ impl ContextEditor {
                                 None,
                             ),
                             Role::Assistant => {
-                                let base_label = Label::new("Assistant").color(Color::Info);
+                                let base_label = Label::new("Agent").color(Color::Info);
                                 let mut spinner = None;
                                 let mut note = None;
                                 let animated_label = if llm_loading {
@@ -1465,7 +1468,7 @@ impl ContextEditor {
                                         Tooltip::with_meta(
                                             "Toggle message role",
                                             None,
-                                            "Available roles: You (User), Assistant, System",
+                                            "Available roles: You (User), Agent, System",
                                             window,
                                             cx,
                                         )
@@ -1722,7 +1725,7 @@ impl ContextEditor {
         );
     }
 
-    pub fn insert_dragged_files(
+    pub fn handle_insert_dragged_files(
         workspace: &mut Workspace,
         action: &InsertDraggedFiles,
         window: &mut Window,
@@ -1737,7 +1740,7 @@ impl ContextEditor {
             return;
         };
 
-        let project = workspace.project().clone();
+        let project = context_editor_view.read(cx).project.clone();
 
         let paths = match action {
             InsertDraggedFiles::ProjectPaths(paths) => Task::ready((paths.clone(), vec![])),
@@ -1748,22 +1751,17 @@ impl ContextEditor {
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
-                cx.spawn(async move |_, cx| {
+                cx.background_spawn(async move {
                     let mut paths = vec![];
                     let mut worktrees = vec![];
 
                     let opened_paths = futures::future::join_all(tasks).await;
-                    for (worktree, project_path) in opened_paths.into_iter().flatten() {
-                        let Ok(worktree_root_name) =
-                            worktree.read_with(cx, |worktree, _| worktree.root_name().to_string())
-                        else {
-                            continue;
-                        };
 
-                        let mut full_path = PathBuf::from(worktree_root_name.clone());
-                        full_path.push(&project_path.path);
-                        paths.push(full_path);
-                        worktrees.push(worktree);
+                    for entry in opened_paths {
+                        if let Some((worktree, project_path)) = entry.log_err() {
+                            worktrees.push(worktree);
+                            paths.push(project_path);
+                        }
                     }
 
                     (paths, worktrees)
@@ -1771,33 +1769,50 @@ impl ContextEditor {
             }
         };
 
-        window
-            .spawn(cx, async move |cx| {
+        context_editor_view.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |this, cx| {
                 let (paths, dragged_file_worktrees) = paths.await;
-                let cmd_name = FileSlashCommand.name();
-
-                context_editor_view
-                    .update_in(cx, |context_editor, window, cx| {
-                        let file_argument = paths
-                            .into_iter()
-                            .map(|path| path.to_string_lossy().to_string())
-                            .collect::<Vec<_>>()
-                            .join(" ");
-
-                        context_editor.editor.update(cx, |editor, cx| {
-                            editor.insert("\n", window, cx);
-                            editor.insert(&format!("/{} {}", cmd_name, file_argument), window, cx);
-                        });
-
-                        context_editor.confirm_command(&ConfirmCommand, window, cx);
-
-                        context_editor
-                            .dragged_file_worktrees
-                            .extend(dragged_file_worktrees);
-                    })
-                    .log_err();
+                this.update_in(cx, |this, window, cx| {
+                    this.insert_dragged_files(paths, dragged_file_worktrees, window, cx);
+                })
+                .ok();
             })
             .detach();
+        })
+    }
+
+    pub fn insert_dragged_files(
+        &mut self,
+        opened_paths: Vec<ProjectPath>,
+        added_worktrees: Vec<Entity<Worktree>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut file_slash_command_args = vec![];
+        for project_path in opened_paths.into_iter() {
+            let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)
+            else {
+                continue;
+            };
+            let worktree_root_name = worktree.read(cx).root_name().to_string();
+            let mut full_path = PathBuf::from(worktree_root_name.clone());
+            full_path.push(&project_path.path);
+            file_slash_command_args.push(full_path.to_string_lossy().to_string());
+        }
+
+        let cmd_name = FileSlashCommand.name();
+
+        let file_argument = file_slash_command_args.join(" ");
+
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+            editor.insert(&format!("/{} {}", cmd_name, file_argument), window, cx);
+        });
+        self.confirm_command(&ConfirmCommand, window, cx);
+        self.dragged_file_worktrees.extend(added_worktrees);
     }
 
     pub fn quote_selection(
@@ -2055,7 +2070,7 @@ impl ContextEditor {
                                 FoldPlaceholder {
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
-                                        metadata.crease.icon,
+                                        metadata.crease.icon_path.clone(),
                                         metadata.crease.label.clone(),
                                     ),
                                     ..Default::default()
@@ -2851,7 +2866,7 @@ fn render_thought_process_fold_icon_button(
 
 fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
-    icon: IconName,
+    icon_path: SharedString,
     label: SharedString,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new(move |fold_id, fold_range, _cx| {
@@ -2859,7 +2874,7 @@ fn render_fold_icon_button(
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
-            .child(Icon::new(icon))
+            .child(Icon::from_path(icon_path.clone()))
             .child(Label::new(label.clone()).single_line())
             .on_click(move |_, window, cx| {
                 editor
@@ -3417,15 +3432,14 @@ impl FollowableItem for ContextEditor {
         true
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<proto::PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_leader_peer_id(leader_peer_id, window, cx)
-        })
+        self.editor
+            .update(cx, |editor, cx| editor.set_leader_id(leader_id, window, cx))
     }
 
     fn dedup(&self, existing: &Self, _window: &Window, cx: &App) -> Option<item::Dedup> {

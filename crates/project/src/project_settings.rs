@@ -1,5 +1,6 @@
 use anyhow::Context as _;
 use collections::HashMap;
+use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
@@ -51,6 +52,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub dap: HashMap<DebugAdapterName, DapSettings>,
 
+    /// Settings for context servers used for AI-related features.
+    #[serde(default)]
+    pub context_servers: HashMap<Arc<str>, ContextServerConfiguration>,
+
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
@@ -78,6 +83,19 @@ pub struct DapSettings {
     pub binary: Option<String>,
 }
 
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
+pub struct ContextServerConfiguration {
+    /// The command to run this context server.
+    ///
+    /// This will override the command set by an extension.
+    pub command: Option<ContextServerCommand>,
+    /// The settings for this context server.
+    ///
+    /// Consult the documentation for the context server to see what settings
+    /// are supported.
+    pub settings: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
     /// The path to the Node binary.
@@ -99,7 +117,7 @@ pub enum DirenvSettings {
     Direct,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
     /// Whether or not to include warning diagnostics
     #[serde(default = "true_value")]
@@ -108,6 +126,18 @@ pub struct DiagnosticsSettings {
     /// Settings for showing inline diagnostics
     #[serde(default)]
     pub inline: InlineDiagnosticsSettings,
+
+    /// Configuration, related to Rust language diagnostics.
+    #[serde(default)]
+    pub cargo: Option<CargoDiagnosticsSettings>,
+}
+
+impl DiagnosticsSettings {
+    pub fn fetch_cargo_diagnostics(&self) -> bool {
+        self.cargo.as_ref().map_or(false, |cargo_diagnostics| {
+            cargo_diagnostics.fetch_cargo_diagnostics
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -117,7 +147,7 @@ pub struct InlineDiagnosticsSettings {
     /// Default: false
     #[serde(default)]
     pub enabled: bool,
-    /// Whether to only show the inline diaganostics after a delay after the
+    /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
@@ -139,6 +169,16 @@ pub struct InlineDiagnosticsSettings {
 
     #[serde(default)]
     pub max_severity: Option<DiagnosticSeverity>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CargoDiagnosticsSettings {
+    /// When enabled, Zed disables rust-analyzer's check on save and starts to query
+    /// Cargo diagnostics separately.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub fetch_cargo_diagnostics: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
@@ -275,7 +315,7 @@ pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
     // this can't be an FxHashMap because the extension APIs require the default SipHash
-    pub env: Option<std::collections::HashMap<String, String, std::hash::RandomState>>,
+    pub env: Option<std::collections::HashMap<String, String>>,
     pub ignore_system_version: Option<bool>,
 }
 
@@ -352,6 +392,40 @@ impl Settings for ProjectSettings {
                     ..Default::default()
                 })
             }
+        }
+
+        #[derive(Deserialize)]
+        struct VsCodeContextServerCommand {
+            command: String,
+            args: Option<Vec<String>>,
+            env: Option<HashMap<String, String>>,
+            // note: we don't support envFile and type
+        }
+        impl From<VsCodeContextServerCommand> for ContextServerCommand {
+            fn from(cmd: VsCodeContextServerCommand) -> Self {
+                Self {
+                    path: cmd.command,
+                    args: cmd.args.unwrap_or_default(),
+                    env: cmd.env,
+                }
+            }
+        }
+        if let Some(mcp) = vscode.read_value("mcp").and_then(|v| v.as_object()) {
+            current
+                .context_servers
+                .extend(mcp.iter().filter_map(|(k, v)| {
+                    Some((
+                        k.clone().into(),
+                        ContextServerConfiguration {
+                            command: Some(
+                                serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
+                                    .ok()?
+                                    .into(),
+                            ),
+                            settings: None,
+                        },
+                    ))
+                }));
         }
 
         // TODO: translate lsp settings for rust-analyzer and other popular ones to old.lsp

@@ -11,7 +11,6 @@ use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
-use util::maybe;
 use uuid::Uuid;
 use zed_llm_client::Plan;
 
@@ -30,8 +29,12 @@ pub struct LlmTokenClaims {
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
     pub has_llm_subscription: bool,
+    #[serde(default)]
+    pub use_llm_request_queue: bool,
     pub max_monthly_spend_in_cents: u32,
     pub custom_llm_monthly_allowance_in_cents: Option<u32>,
+    #[serde(default)]
+    pub use_new_billing: bool,
     pub plan: Plan,
     #[serde(default)]
     pub has_extended_trial: bool,
@@ -90,24 +93,28 @@ impl LlmTokenClaims {
             custom_llm_monthly_allowance_in_cents: user
                 .custom_llm_monthly_allowance_in_cents
                 .map(|allowance| allowance as u32),
-            plan: subscription
-                .as_ref()
-                .and_then(|subscription| subscription.kind)
-                .map_or(Plan::Free, |kind| match kind {
-                    SubscriptionKind::ZedFree => Plan::Free,
-                    SubscriptionKind::ZedPro => Plan::ZedPro,
-                    SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
-                }),
+            use_new_billing: feature_flags.iter().any(|flag| flag == "new-billing"),
+            use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
+            plan: if is_staff {
+                Plan::ZedPro
+            } else {
+                subscription
+                    .as_ref()
+                    .and_then(|subscription| subscription.kind)
+                    .map_or(Plan::Free, |kind| match kind {
+                        SubscriptionKind::ZedFree => Plan::Free,
+                        SubscriptionKind::ZedPro => Plan::ZedPro,
+                        SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+                    })
+            },
             has_extended_trial: feature_flags
                 .iter()
                 .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG),
-            subscription_period: maybe!({
-                let subscription = subscription?;
-                let period_start_at = subscription.current_period_start_at()?;
-                let period_end_at = subscription.current_period_end_at()?;
-
-                Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
-            }),
+            subscription_period: billing_subscription::Model::current_period(
+                subscription,
+                is_staff,
+            )
+            .map(|(start, end)| (start.naive_utc(), end.naive_utc())),
             enable_model_request_overages: billing_preferences
                 .as_ref()
                 .map_or(false, |preferences| {

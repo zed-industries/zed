@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
-    fmt::Debug,
+    fmt::{Debug, Write as _},
     iter, mem,
     ops::Range,
     path::Path,
@@ -2371,6 +2371,7 @@ impl AssistantContext {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StatusUpdate { .. } => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
@@ -2428,8 +2429,8 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(_) => {}
-                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
+                                    LanguageModelCompletionEvent::ToolUse(_) |
+                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
                                 }
                             });
 
@@ -2536,6 +2537,26 @@ impl AssistantContext {
         });
 
         Some(user_message)
+    }
+
+    pub fn to_xml(&self, cx: &App) -> String {
+        let mut output = String::new();
+        let buffer = self.buffer.read(cx);
+        for message in self.messages(cx) {
+            if message.status != MessageStatus::Done {
+                continue;
+            }
+
+            writeln!(&mut output, "<{}>", message.role).unwrap();
+            for chunk in buffer.text_for_range(message.offset_range) {
+                output.push_str(chunk);
+            }
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            writeln!(&mut output, "</{}>", message.role).unwrap();
+        }
+        output
     }
 
     pub fn to_completion_request(
