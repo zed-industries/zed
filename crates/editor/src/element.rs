@@ -25,7 +25,7 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
@@ -1457,7 +1457,7 @@ impl EditorElement {
         // cancel the scrollbar drag.
         if cx.has_active_drag() {
             self.editor.update(cx, |editor, cx| {
-                editor.scroll_manager.reset_scrollbar_dragging_state(cx)
+                editor.scroll_manager.reset_scrollbar_state(cx)
             });
         }
 
@@ -1500,6 +1500,7 @@ impl EditorElement {
             scroll_position,
             self.style.scrollbar_width,
             show_scrollbars,
+            self.editor.read(cx).scroll_manager.active_scrollbar_state(),
             window,
         ))
     }
@@ -5104,7 +5105,7 @@ impl EditorElement {
     }
 
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        let Some(scrollbars_layout) = &layout.scrollbars_layout else {
+        let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
         };
 
@@ -5153,10 +5154,16 @@ impl EditorElement {
                         }
                     }
 
+                    let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
+                        ScrollbarThumbState::Dragging | ScrollbarThumbState::Hovered => {
+                            cx.theme().colors().scrollbar_thumb_hover_background
+                        }
+                        ScrollbarThumbState::Idle => cx.theme().colors().scrollbar_thumb_background,
+                    };
                     window.paint_quad(quad(
                         thumb_bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_thumb_background,
+                        scrollbar_thumb_color,
                         scrollbar_edges,
                         cx.theme().colors().scrollbar_thumb_border,
                         BorderStyle::Solid,
@@ -5203,13 +5210,22 @@ impl EditorElement {
                             });
                             editor.set_scroll_position(position, window, cx);
                         }
-                        cx.stop_propagation();
-                    } else {
-                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
-                    }
 
-                    if scrollbars_layout.get_hovered_axis(window).is_some() {
                         editor.scroll_manager.show_scrollbars(window, cx);
+                        cx.stop_propagation();
+                    } else if let Some((layout, axis)) = scrollbars_layout.get_hovered_axis(window)
+                    {
+                        if layout.thumb_bounds().contains(&event.position) {
+                            editor
+                                .scroll_manager
+                                .set_hovered_scroll_thumb_axis(axis, cx);
+                        } else {
+                            editor.scroll_manager.reset_scrollbar_state(cx);
+                        }
+
+                        editor.scroll_manager.show_scrollbars(window, cx);
+                    } else {
+                        editor.scroll_manager.reset_scrollbar_state(cx);
                     }
 
                     mouse_position = event.position;
@@ -5220,13 +5236,19 @@ impl EditorElement {
         if self.editor.read(cx).scroll_manager.any_scrollbar_dragged() {
             window.on_mouse_event({
                 let editor = self.editor.clone();
-                move |_: &MouseUpEvent, phase, _, cx| {
+                move |_: &MouseUpEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
                         return;
                     }
 
                     editor.update(cx, |editor, cx| {
-                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
+                        if let Some((_, axis)) = scrollbars_layout.get_hovered_axis(window) {
+                            editor
+                                .scroll_manager
+                                .set_hovered_scroll_thumb_axis(axis, cx);
+                        } else {
+                            editor.scroll_manager.reset_scrollbar_state(cx);
+                        }
                         cx.stop_propagation();
                     });
                 }
@@ -5234,7 +5256,6 @@ impl EditorElement {
         } else {
             window.on_mouse_event({
                 let editor = self.editor.clone();
-                let scrollbars_layout = scrollbars_layout.clone();
 
                 move |event: &MouseDownEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
@@ -5255,7 +5276,9 @@ impl EditorElement {
                     let thumb_bounds = scrollbar_layout.thumb_bounds();
 
                     editor.update(cx, |editor, cx| {
-                        editor.scroll_manager.set_dragged_scrollbar_axis(axis, cx);
+                        editor
+                            .scroll_manager
+                            .set_dragged_scroll_thumb_axis(axis, cx);
 
                         let event_position = event.position.along(axis);
 
@@ -8037,6 +8060,7 @@ impl EditorScrollbars {
         scroll_position: gpui::Point<f32>,
         scrollbar_width: Pixels,
         show_scrollbars: bool,
+        scrollbar_state: Option<&ActiveScrollbarState>,
         window: &mut Window,
     ) -> Self {
         let ScrollbarLayoutInformation {
@@ -8082,6 +8106,10 @@ impl EditorScrollbars {
                     axis != ScrollbarAxis::Horizontal || editor_content_size < scroll_range
                 })
                 .map(|(editor_content_size, scroll_range)| {
+                    let thumb_state = scrollbar_state
+                        .and_then(|state| state.thumb_state_for_axis(axis))
+                        .unwrap_or(ScrollbarThumbState::Idle);
+
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), false),
                         editor_content_size,
@@ -8089,6 +8117,7 @@ impl EditorScrollbars {
                         glyph_grid_cell.along(axis),
                         content_offset.along(axis),
                         scroll_position.along(axis),
+                        thumb_state,
                         axis,
                     )
                 })
@@ -8124,6 +8153,7 @@ struct ScrollbarLayout {
     text_unit_size: Pixels,
     content_offset: Pixels,
     thumb_size: Pixels,
+    thumb_state: ScrollbarThumbState,
     axis: ScrollbarAxis,
 }
 
@@ -8140,6 +8170,7 @@ impl ScrollbarLayout {
         glyph_space: Pixels,
         content_offset: Pixels,
         scroll_position: f32,
+        thumb_state: ScrollbarThumbState,
         axis: ScrollbarAxis,
     ) -> Self {
         let track_bounds = scrollbar_track_hitbox.bounds;
@@ -8164,6 +8195,7 @@ impl ScrollbarLayout {
             text_unit_size,
             content_offset,
             thumb_size,
+            thumb_state,
             axis,
         }
     }
