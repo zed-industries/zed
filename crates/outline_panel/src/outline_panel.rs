@@ -29,11 +29,11 @@ use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
     DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
-    uniform_list,
+    InteractiveElement, IntoElement, KeyContext, ListAlignment, ListHorizontalSizingBehavior,
+    ListSizingBehavior, ListState, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    Render, ScrollStrategy, SharedString, Stateful, StatefulInteractiveElement as _, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, list, point, px, size, uniform_list,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -2302,7 +2302,7 @@ impl OutlinePanel {
             depth,
             Some(icon),
             is_active,
-            label_element,
+            label_element.into_any_element(),
             window,
             cx,
         )
@@ -2511,7 +2511,7 @@ impl OutlinePanel {
                     .when_some(icon_element, |list_item, icon_element| {
                         list_item.child(h_flex().child(icon_element))
                     })
-                    .child(h_flex().h_6().child(label_element).ml_1())
+                    .child(h_flex().child(label_element).ml_1())
                     .on_secondary_mouse_down(cx.listener(
                         move |outline_panel, event: &MouseDownEvent, window, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project
@@ -3259,13 +3259,13 @@ impl OutlinePanel {
                     cx.spawn_in(window, async move |outline_panel, cx| {
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                buffer_snapshot
-                                    .outline_items_containing(
-                                        excerpt_range.context,
-                                        false,
-                                        Some(&syntax_theme),
-                                    )
-                                    .unwrap_or_default()
+                                outline_items_containing(
+                                    &buffer_snapshot,
+                                    excerpt_range.context,
+                                    false,
+                                    Some(&syntax_theme),
+                                )
+                                .unwrap_or_default()
                             })
                             .await;
                         outline_panel
@@ -4098,49 +4098,50 @@ impl OutlinePanel {
         query: Option<&str>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(excerpts) = self.excerpts.get(&buffer_id) {
-            for &excerpt_id in entries_to_add {
-                let Some(excerpt) = excerpts.get(&excerpt_id) else {
-                    continue;
-                };
-                let excerpt_depth = parent_depth + 1;
+        let Some(excerpts) = self.excerpts.get(&buffer_id) else {
+            return;
+        };
+        for &excerpt_id in entries_to_add {
+            let Some(excerpt) = excerpts.get(&excerpt_id) else {
+                continue;
+            };
+            let excerpt_depth = parent_depth + 1;
+            self.push_entry(
+                state,
+                track_matches,
+                PanelEntry::Outline(OutlineEntry::Excerpt(OutlineEntryExcerpt {
+                    buffer_id,
+                    id: excerpt_id,
+                    range: excerpt.range.clone(),
+                })),
+                excerpt_depth,
+                cx,
+            );
+
+            let mut outline_base_depth = excerpt_depth + 1;
+            if is_singleton {
+                outline_base_depth = 0;
+                state.clear();
+            } else if query.is_none()
+                && self
+                    .collapsed_entries
+                    .contains(&CollapsedEntry::Excerpt(buffer_id, excerpt_id))
+            {
+                continue;
+            }
+
+            for outline in excerpt.iter_outlines() {
                 self.push_entry(
                     state,
                     track_matches,
-                    PanelEntry::Outline(OutlineEntry::Excerpt(OutlineEntryExcerpt {
+                    PanelEntry::Outline(OutlineEntry::Outline(OutlineEntryOutline {
                         buffer_id,
-                        id: excerpt_id,
-                        range: excerpt.range.clone(),
+                        excerpt_id,
+                        outline: outline.clone(),
                     })),
-                    excerpt_depth,
+                    outline_base_depth + outline.depth,
                     cx,
                 );
-
-                let mut outline_base_depth = excerpt_depth + 1;
-                if is_singleton {
-                    outline_base_depth = 0;
-                    state.clear();
-                } else if query.is_none()
-                    && self
-                        .collapsed_entries
-                        .contains(&CollapsedEntry::Excerpt(buffer_id, excerpt_id))
-                {
-                    continue;
-                }
-
-                for outline in excerpt.iter_outlines() {
-                    self.push_entry(
-                        state,
-                        track_matches,
-                        PanelEntry::Outline(OutlineEntry::Outline(OutlineEntryOutline {
-                            buffer_id,
-                            excerpt_id,
-                            outline: outline.clone(),
-                        })),
-                        outline_base_depth + outline.depth,
-                        cx,
-                    );
-                }
             }
         }
     }
@@ -4537,121 +4538,130 @@ impl OutlinePanel {
                 let multi_buffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
-                uniform_list(cx.entity().clone(), "entries", items_len, {
-                    move |outline_panel, range, window, cx| {
-                        let entries = outline_panel.cached_entries.get(range);
-                        entries
-                            .map(|entries| entries.to_vec())
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter_map(|cached_entry| match cached_entry.entry {
-                                PanelEntry::Fs(entry) => Some(outline_panel.render_entry(
-                                    &entry,
-                                    cached_entry.depth,
-                                    cached_entry.string_match.as_ref(),
-                                    window,
-                                    cx,
-                                )),
-                                PanelEntry::FoldedDirs(folded_dirs_entry) => {
-                                    Some(outline_panel.render_folded_dirs(
-                                        &folded_dirs_entry,
-                                        cached_entry.depth,
-                                        cached_entry.string_match.as_ref(),
-                                        window,
-                                        cx,
-                                    ))
-                                }
-                                PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
-                                    outline_panel.render_excerpt(
-                                        &excerpt,
-                                        cached_entry.depth,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                                PanelEntry::Outline(OutlineEntry::Outline(entry)) => {
-                                    Some(outline_panel.render_outline(
+                let outline_panel = cx.entity();
+                let render_item = {
+                    move |i: usize, window: &mut Window, cx: &mut App| {
+                        outline_panel.update(cx, |outline_panel, cx| {
+                            let entry = outline_panel.cached_entries.get(i).cloned();
+                            let item = entry
+                                .and_then(|cached_entry| match cached_entry.entry {
+                                    PanelEntry::Fs(entry) => Some(outline_panel.render_entry(
                                         &entry,
                                         cached_entry.depth,
                                         cached_entry.string_match.as_ref(),
                                         window,
                                         cx,
-                                    ))
-                                }
-                                PanelEntry::Search(SearchEntry {
-                                    match_range,
-                                    render_data,
-                                    kind,
-                                    ..
-                                }) => outline_panel.render_search_match(
-                                    multi_buffer_snapshot.as_ref(),
-                                    &match_range,
-                                    &render_data,
-                                    kind,
-                                    cached_entry.depth,
-                                    cached_entry.string_match.as_ref(),
-                                    window,
-                                    cx,
-                                ),
-                            })
-                            .collect()
+                                    )),
+                                    PanelEntry::FoldedDirs(folded_dirs_entry) => {
+                                        Some(outline_panel.render_folded_dirs(
+                                            &folded_dirs_entry,
+                                            cached_entry.depth,
+                                            cached_entry.string_match.as_ref(),
+                                            window,
+                                            cx,
+                                        ))
+                                    }
+                                    PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
+                                        outline_panel.render_excerpt(
+                                            &excerpt,
+                                            cached_entry.depth,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                    PanelEntry::Outline(OutlineEntry::Outline(entry)) => {
+                                        Some(outline_panel.render_outline(
+                                            &entry,
+                                            cached_entry.depth,
+                                            cached_entry.string_match.as_ref(),
+                                            window,
+                                            cx,
+                                        ))
+                                    }
+                                    PanelEntry::Search(SearchEntry {
+                                        match_range,
+                                        render_data,
+                                        kind,
+                                        ..
+                                    }) => outline_panel.render_search_match(
+                                        multi_buffer_snapshot.as_ref(),
+                                        &match_range,
+                                        &render_data,
+                                        kind,
+                                        cached_entry.depth,
+                                        cached_entry.string_match.as_ref(),
+                                        window,
+                                        cx,
+                                    ),
+                                })
+                                .map(|div| div.into_any_element())
+                                .unwrap_or_else(|| div().into_any_element());
+                            item
+                        })
                     }
-                })
+                };
+
+                list(ListState::new(
+                    items_len,
+                    ListAlignment::Top,
+                    px(50.0),
+                    render_item,
+                ))
                 .with_sizing_behavior(ListSizingBehavior::Infer)
-                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                .with_width_from_item(self.max_width_item_index)
-                .track_scroll(self.scroll_handle.clone())
-                .when(show_indent_guides, |list| {
-                    list.with_decoration(
-                        ui::indent_guides(
-                            cx.entity().clone(),
-                            px(indent_size),
-                            IndentGuideColors::panel(cx),
-                            |outline_panel, range, _, _| {
-                                let entries = outline_panel.cached_entries.get(range);
-                                if let Some(entries) = entries {
-                                    entries.into_iter().map(|item| item.depth).collect()
-                                } else {
-                                    smallvec::SmallVec::new()
-                                }
-                            },
-                        )
-                        .with_render_fn(
-                            cx.entity().clone(),
-                            move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: Pixels = px(14.);
+                // .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+                // .with_width_from_item(self.max_width_item_index)
+                // .track_scroll(self.scroll_handle.clone())
+                // .when(show_indent_guides, |list| {
+                //     list.with_decoration(
+                //         ui::indent_guides(
+                //             cx.entity().clone(),
+                //             px(indent_size),
+                //             IndentGuideColors::panel(cx),
+                //             |outline_panel, range, _, _| {
+                //                 let entries = outline_panel.cached_entries.get(range);
+                //                 if let Some(entries) = entries {
+                //                     entries.into_iter().map(|item| item.depth).collect()
+                //                 } else {
+                //                     smallvec::SmallVec::new()
+                //                 }
+                //             },
+                //         )
+                //         .with_render_fn(
+                //             cx.entity().clone(),
+                //             move |outline_panel, params, _, _| {
+                //                 const LEFT_OFFSET: Pixels = px(14.);
 
-                                let indent_size = params.indent_size;
-                                let item_height = params.item_height;
-                                let active_indent_guide_ix = find_active_indent_guide_ix(
-                                    outline_panel,
-                                    &params.indent_guides,
-                                );
+                //                 let indent_size = params.indent_size;
+                //                 let item_height = params.item_height;
+                //                 let active_indent_guide_ix = find_active_indent_guide_ix(
+                //                     outline_panel,
+                //                     &params.indent_guides,
+                //                 );
 
-                                params
-                                    .indent_guides
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(ix, layout)| {
-                                        let bounds = Bounds::new(
-                                            point(
-                                                layout.offset.x * indent_size + LEFT_OFFSET,
-                                                layout.offset.y * item_height,
-                                            ),
-                                            size(px(1.), layout.length * item_height),
-                                        );
-                                        ui::RenderedIndentGuide {
-                                            bounds,
-                                            layout,
-                                            is_active: active_indent_guide_ix == Some(ix),
-                                            hitbox: None,
-                                        }
-                                    })
-                                    .collect()
-                            },
-                        ),
-                    )
-                })
+                //                 params
+                //                     .indent_guides
+                //                     .into_iter()
+                //                     .enumerate()
+                //                     .map(|(ix, layout)| {
+                //                         let bounds = Bounds::new(
+                //                             point(
+                //                                 layout.offset.x * indent_size + LEFT_OFFSET,
+                //                                 layout.offset.y * item_height,
+                //                             ),
+                //                             size(px(1.), layout.length * item_height),
+                //                         );
+                //                         ui::RenderedIndentGuide {
+                //                             bounds,
+                //                             layout,
+                //                             is_active: active_indent_guide_ix == Some(ix),
+                //                             hitbox: None,
+                //                         }
+                //                     })
+                //                     .collect()
+                //             },
+                //         ),
+                //     )
+                // })
             };
 
             v_flex()
@@ -4793,6 +4803,248 @@ fn file_name(path: &Path) -> String {
             None => return path.to_string_lossy().into_owned(),
         }
     }
+}
+
+fn outline_items_containing<T: language::ToOffset>(
+    buffer_snapshot: &BufferSnapshot,
+    range: Range<T>,
+    include_extra_context: bool,
+    theme: Option<&SyntaxTheme>,
+) -> Option<Vec<OutlineItem<language::Anchor>>> {
+    fn next_outline_item_linewise(
+        buffer_snapshot: &BufferSnapshot,
+        config: &language::OutlineConfig,
+        mat: &language::SyntaxMapMatch,
+        range: &Range<usize>,
+        include_extra_context: bool,
+        theme: Option<&SyntaxTheme>,
+    ) -> Option<OutlineItem<language::Point>> {
+        use language::ToTreeSitterPoint;
+        let item_node = mat.captures.iter().find_map(|cap| {
+            if cap.index == config.item_capture_ix {
+                Some(cap.node)
+            } else {
+                None
+            }
+        })?;
+
+        let item_byte_range = item_node.byte_range();
+        if item_byte_range.end < range.start || item_byte_range.start > range.end {
+            return None;
+        }
+        let beg = language::Point::from_ts_point(item_node.start_position());
+        let end = language::Point::from_ts_point(item_node.end_position());
+        let item_point_range = beg..end;
+
+        let mut open_point = None;
+        let mut close_point = None;
+        let mut buffer_ranges = Vec::new();
+        let mut prev_row = None;
+        for capture in mat.captures {
+            let node_is_name;
+            if capture.index == config.name_capture_ix {
+                node_is_name = true;
+            } else if Some(capture.index) == config.context_capture_ix
+                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
+            {
+                node_is_name = false;
+            } else {
+                if Some(capture.index) == config.open_capture_ix {
+                    open_point = Some(language::Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.close_capture_ix {
+                    close_point = Some(language::Point::from_ts_point(
+                        capture.node.start_position(),
+                    ));
+                }
+
+                continue;
+            }
+
+            let mut range = capture.node.start_byte()..capture.node.end_byte();
+            let start = capture.node.start_position();
+            if capture.node.end_position().row > start.row {
+                range.end = range.start + buffer_snapshot.line_len(start.row as u32) as usize
+                    - start.column;
+            }
+
+            let is_new_line = prev_row.is_some_and(|prev| prev != start.row);
+            prev_row.replace(capture.node.end_position().row);
+
+            if !range.is_empty() {
+                buffer_ranges.push((range, node_is_name, is_new_line));
+            }
+        }
+        if buffer_ranges.is_empty() {
+            return None;
+        }
+        let mut text = String::new();
+        let mut highlight_ranges = Vec::new();
+        let mut name_ranges = Vec::new();
+        let mut chunks = buffer_snapshot.chunks(
+            buffer_ranges.first().unwrap().0.start..buffer_ranges.last().unwrap().0.end,
+            true,
+        );
+        let mut last_buffer_range_end = 0;
+
+        for (buffer_range, is_name, is_new_line) in buffer_ranges {
+            let space_added = if !is_new_line {
+                let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
+                if space_added {
+                    text.push(' ');
+                }
+                space_added
+            } else {
+                text.push('\n');
+                true
+            };
+            let before_append_len = text.len();
+            let mut offset = buffer_range.start;
+            chunks.seek(buffer_range.clone());
+            for mut chunk in chunks.by_ref() {
+                if chunk.text.len() > buffer_range.end - offset {
+                    chunk.text = &chunk.text[0..(buffer_range.end - offset)];
+                    offset = buffer_range.end;
+                } else {
+                    offset += chunk.text.len();
+                }
+                let style = chunk
+                    .syntax_highlight_id
+                    .zip(theme)
+                    .and_then(|(highlight, theme)| highlight.style(theme));
+                if let Some(style) = style {
+                    let start = text.len();
+                    let end = start + chunk.text.len();
+                    highlight_ranges.push((start..end, style));
+                }
+                text.push_str(chunk.text);
+                if offset >= buffer_range.end {
+                    break;
+                }
+            }
+            if is_name {
+                let after_append_len = text.len();
+                let start = if space_added && !name_ranges.is_empty() {
+                    before_append_len - 1
+                } else {
+                    before_append_len
+                };
+                name_ranges.push(start..after_append_len);
+            }
+            last_buffer_range_end = buffer_range.end;
+        }
+
+        Some(OutlineItem {
+            depth: 0, // We'll calculate the depth later
+            range: item_point_range,
+            text,
+            highlight_ranges,
+            name_ranges,
+            body_range: open_point.zip(close_point).map(|(start, end)| start..end),
+            annotation_range: None,
+        })
+    }
+    let range = range.to_offset(buffer_snapshot);
+    let mut matches =
+        buffer_snapshot
+            .syntax
+            .matches(range.clone(), &buffer_snapshot.text, |grammar| {
+                grammar.outline_config.as_ref().map(|c| &c.query)
+            });
+    let configs = matches
+        .grammars()
+        .iter()
+        .map(|g| g.outline_config.as_ref().unwrap())
+        .collect::<Vec<_>>();
+
+    let mut items = Vec::new();
+    let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
+    while let Some(mat) = matches.peek() {
+        let config = &configs[mat.grammar_index];
+        if let Some(item) = next_outline_item_linewise(
+            &buffer_snapshot,
+            config,
+            &mat,
+            &range,
+            include_extra_context,
+            theme,
+        ) {
+            items.push(item);
+        } else if let Some(capture) = mat
+            .captures
+            .iter()
+            .find(|capture| Some(capture.index) == config.annotation_capture_ix)
+        {
+            let capture_range = capture.node.start_position()..capture.node.end_position();
+            let mut capture_row_range =
+                capture_range.start.row as u32..capture_range.end.row as u32;
+            if capture_range.end.row > capture_range.start.row && capture_range.end.column == 0 {
+                capture_row_range.end -= 1;
+            }
+            if let Some(last_row_range) = annotation_row_ranges.last_mut() {
+                if last_row_range.end >= capture_row_range.start.saturating_sub(1) {
+                    last_row_range.end = capture_row_range.end;
+                } else {
+                    annotation_row_ranges.push(capture_row_range);
+                }
+            } else {
+                annotation_row_ranges.push(capture_row_range);
+            }
+        }
+        matches.advance();
+    }
+
+    items.sort_by_key(|item| (item.range.start, std::cmp::Reverse(item.range.end)));
+
+    // Assign depths based on containment relationships and convert to anchors.
+    let mut item_ends_stack = Vec::<language::Point>::new();
+    let mut anchor_items = Vec::new();
+    let mut annotation_row_ranges = annotation_row_ranges.into_iter().peekable();
+    for item in items {
+        while let Some(last_end) = item_ends_stack.last().copied() {
+            if last_end < item.range.end {
+                item_ends_stack.pop();
+            } else {
+                break;
+            }
+        }
+
+        let mut annotation_row_range = None;
+        while let Some(next_annotation_row_range) = annotation_row_ranges.peek() {
+            let row_preceding_item = item.range.start.row.saturating_sub(1);
+            if next_annotation_row_range.end < row_preceding_item {
+                annotation_row_ranges.next();
+            } else {
+                if next_annotation_row_range.end == row_preceding_item {
+                    annotation_row_range = Some(next_annotation_row_range.clone());
+                    annotation_row_ranges.next();
+                }
+                break;
+            }
+        }
+
+        anchor_items.push(OutlineItem {
+            depth: item_ends_stack.len(),
+            range: buffer_snapshot.anchor_after(item.range.start)
+                ..buffer_snapshot.anchor_before(item.range.end),
+            text: item.text,
+            highlight_ranges: item.highlight_ranges,
+            name_ranges: item.name_ranges,
+            body_range: item.body_range.map(|body_range| {
+                buffer_snapshot.anchor_after(body_range.start)
+                    ..buffer_snapshot.anchor_before(body_range.end)
+            }),
+            annotation_range: annotation_row_range.map(|annotation_range| {
+                buffer_snapshot.anchor_after(language::Point::new(annotation_range.start, 0))
+                    ..buffer_snapshot.anchor_before(language::Point::new(
+                        annotation_range.end,
+                        buffer_snapshot.line_len(annotation_range.end),
+                    ))
+            }),
+        });
+        item_ends_stack.push(item.range.end);
+    }
+
+    Some(anchor_items)
 }
 
 impl Panel for OutlinePanel {
@@ -4991,7 +5243,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(search_state.query.to_string())),
+                        .child(Label::new(format!("'{}'", search_state.query))),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))

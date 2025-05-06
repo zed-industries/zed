@@ -80,7 +80,9 @@ pub use language_registry::{
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
-pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, ToTreeSitterPoint, TreeSitterOptions};
+pub use syntax_map::{
+    OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatch, ToTreeSitterPoint, TreeSitterOptions,
+};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 

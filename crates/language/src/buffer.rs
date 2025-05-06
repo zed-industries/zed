@@ -144,7 +144,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub(crate) syntax: SyntaxSnapshot,
+    pub syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
