@@ -1,8 +1,5 @@
 # Text Threads
 
-<!-- todo! overview was resurrected content and might need cleanup / reorganized  -->
-## Overview {#overview}
-
 Text threads in the agent panel functions similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
 
 However, the text threads differ with the inclusion of message blocks. These blocks serve as containers for text that correspond to different roles within the context. These roles include:
@@ -11,8 +8,9 @@ However, the text threads differ with the inclusion of message blocks. These blo
 - `Assistant`
 - `System`
 
-To begin, select a model and type a message in a `You` block.
+To begin, type a message in a `You` block.
 
+<!-- todo! update photos in this section, if we are keeping it -->
 ![Asking a question](https://zed.dev/img/assistant/ask-a-question.png)
 
 As you type, the remaining tokens count for the selected model is updated.
@@ -33,7 +31,7 @@ If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl
 
 Simple back-and-forth conversations work well with the text threads. However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
 
-### Editing a Context
+## Editing a Context {#edit-context}
 
 > **Note**: Wondering about Context vs. Conversation? [Read more here](./contexts.md).
 
@@ -153,9 +151,7 @@ Usage: `/terminal [<number>]`
 
 The `/selection` command inserts the selected text in the editor into the context. This is useful for referencing specific parts of your code.
 
-<!-- todo! link is broken, but may need to go away -->
-
-This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}). See [Interacting with the Assistant](./assistant-panel.md#interacting-with-the-assistant)).
+This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}).
 
 Usage: `/selection`
 

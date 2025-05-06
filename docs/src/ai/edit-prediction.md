@@ -1,7 +1,5 @@
 # Edit Prediction
 
-<!-- todo! header blurb? -->
-
 ### Configuring Zeta
 
 Zed's Edit Prediction was initially introduced via a banner on the title bar.
