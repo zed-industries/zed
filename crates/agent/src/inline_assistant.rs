@@ -372,7 +372,6 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        // Get the current selection before checking for existing assists
         let (snapshot, newest_selection) = editor.update(cx, |editor, cx| {
             let selections = editor.selections.all::<Point>(cx);
             let newest = selections.iter().max_by_key(|sel| sel.id).cloned();
