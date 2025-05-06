@@ -186,7 +186,10 @@ pub mod icon_theme_selector {
 pub mod agent {
     use gpui::actions;
 
-    actions!(agent, [OpenConfiguration, ResetOnboarding]);
+    actions!(
+        agent,
+        [OpenConfiguration, OpenOnboardingModal, ResetOnboarding]
+    );
 }
 
 pub mod assistant {

@@ -47,7 +47,7 @@ use ui::{
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
-use zed_actions::agent::{OpenConfiguration, ResetOnboarding};
+use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
@@ -60,6 +60,7 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
+use crate::ui::AgentOnboardingModal;
 use crate::{
     AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
     Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -145,6 +146,9 @@ pub fn init(cx: &mut App) {
                             panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
                     }
+                })
+                .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
+                    AgentOnboardingModal::toggle(workspace, window, cx)
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);

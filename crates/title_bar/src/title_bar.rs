@@ -320,7 +320,7 @@ impl TitleBar {
                 IconName::ZedAssistant,
                 "Agentic Editing",
                 None,
-                zed_actions::assistant::ToggleFocus.boxed_clone(),
+                zed_actions::agent::OpenOnboardingModal.boxed_clone(),
                 cx,
             )
         });
