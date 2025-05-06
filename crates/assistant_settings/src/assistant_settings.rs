@@ -315,7 +315,12 @@ impl AssistantSettingsContent {
                                 _ => None,
                             };
                             settings.provider = Some(AssistantProviderContentV1::Ollama {
-                                default_model: Some(ollama::Model::new(&model, None, None)),
+                                default_model: Some(ollama::Model::new(
+                                    &model,
+                                    None,
+                                    None,
+                                    language_model.supports_tools(),
+                                )),
                                 api_url,
                             });
                         }
@@ -688,7 +693,9 @@ pub struct LegacyAssistantSettingsContent {
 }
 
 impl Settings for AssistantSettings {
-    const KEY: Option<&'static str> = Some("assistant");
+    const KEY: Option<&'static str> = Some("agent");
+
+    const FALLBACK_KEY: Option<&'static str> = Some("assistant");
 
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
@@ -821,6 +828,7 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 mod tests {
     use fs::Fs;
     use gpui::{ReadGlobal, TestAppContext};
+    use settings::SettingsStore;
 
     use super::*;
 
@@ -889,12 +897,75 @@ mod tests {
 
         #[derive(Debug, Deserialize)]
         struct AssistantSettingsTest {
-            assistant: AssistantSettingsContent,
+            agent: AssistantSettingsContent,
         }
 
         let assistant_settings: AssistantSettingsTest =
             serde_json_lenient::from_str(&raw_settings_value).unwrap();
 
-        assert!(!assistant_settings.assistant.is_version_outdated());
+        assert!(!assistant_settings.agent.is_version_outdated());
+    }
+
+    #[gpui::test]
+    async fn test_load_settings_from_old_key(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor().clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            let mut test_settings = settings::SettingsStore::test(cx);
+            let user_settings_content = r#"{
+            "assistant": {
+                "enabled": true,
+                "version": "2",
+                "default_model": {
+                  "provider": "zed.dev",
+                  "model": "gpt-99"
+                },
+            }}"#;
+            test_settings
+                .set_user_settings(user_settings_content, cx)
+                .unwrap();
+            cx.set_global(test_settings);
+            AssistantSettings::register(cx);
+        });
+
+        cx.run_until_parked();
+
+        let assistant_settings = cx.update(|cx| AssistantSettings::get_global(cx).clone());
+        assert!(assistant_settings.enabled);
+        assert!(!assistant_settings.using_outdated_settings_version);
+        assert_eq!(assistant_settings.default_model.model, "gpt-99");
+
+        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+            settings_store.update_user_settings::<AssistantSettings>(cx, |settings| {
+                *settings = AssistantSettingsContent {
+                    inner: Some(AssistantSettingsContentInner::for_v2(
+                        AssistantSettingsContentV2 {
+                            enabled: Some(false),
+                            default_model: Some(LanguageModelSelection {
+                                provider: "xai".to_owned(),
+                                model: "grok".to_owned(),
+                            }),
+                            ..Default::default()
+                        },
+                    )),
+                };
+            });
+        });
+
+        cx.run_until_parked();
+
+        let settings = cx.update(|cx| SettingsStore::global(cx).raw_user_settings().clone());
+
+        #[derive(Debug, Deserialize)]
+        struct AssistantSettingsTest {
+            assistant: AssistantSettingsContent,
+            agent: Option<serde_json_lenient::Value>,
+        }
+
+        let assistant_settings: AssistantSettingsTest = serde_json::from_value(settings).unwrap();
+        assert!(assistant_settings.agent.is_none());
     }
 }

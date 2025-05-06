@@ -57,10 +57,6 @@ use std::{
     time::Duration,
 };
 
-const REGEX_SPECIAL_CHARS: &[char] = &[
-    '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
-];
-
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
@@ -111,6 +107,7 @@ pub struct TerminalView {
     context_menu: Option<(Entity<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_state: bool,
+    embedded: bool,
     blinking_terminal_enabled: bool,
     cwd_serialized: bool,
     blinking_paused: bool,
@@ -162,6 +159,7 @@ impl TerminalView {
         workspace: WeakEntity<Workspace>,
         workspace_id: Option<WorkspaceId>,
         project: WeakEntity<Project>,
+        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -200,6 +198,7 @@ impl TerminalView {
             blink_epoch: 0,
             hover_target_tooltip: None,
             hover_tooltip_update: Task::ready(()),
+            embedded,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -381,7 +380,6 @@ impl TerminalView {
                 return;
             }
         }
-
         self.terminal.update(cx, |term, _| term.scroll_wheel(event));
     }
 
@@ -1256,26 +1254,16 @@ fn possible_open_target(
     })
 }
 
-fn regex_to_literal(regex: &str) -> String {
-    regex
-        .chars()
-        .flat_map(|c| {
-            if REGEX_SPECIAL_CHARS.contains(&c) {
-                vec!['\\', c]
-            } else {
-                vec![c]
-            }
-        })
-        .collect()
-}
-
-pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
-    let query = query.as_str();
-    if query == "." {
-        return None;
+fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
+    let str = query.as_str();
+    if query.is_regex() {
+        if str == "." {
+            return None;
+        }
+        RegexSearch::new(str).ok()
+    } else {
+        RegexSearch::new(&regex::escape(str)).ok()
     }
-    let searcher = RegexSearch::new(query);
-    searcher.ok()
 }
 
 impl TerminalView {
@@ -1377,6 +1365,7 @@ impl Render for TerminalView {
                         focused,
                         self.should_show_cursor(focused, cx),
                         self.block_below_cursor.clone(),
+                        self.embedded,
                     ))
                     .when_some(self.render_scrollbar(cx), |div, scrollbar| {
                         div.child(scrollbar)
@@ -1502,6 +1491,7 @@ impl Item for TerminalView {
                 self.workspace.clone(),
                 workspace_id,
                 self.project.clone(),
+                false,
                 window,
                 cx,
             )
@@ -1659,6 +1649,7 @@ impl SerializableItem for TerminalView {
                         workspace,
                         Some(workspace_id),
                         project.downgrade(),
+                        false,
                         window,
                         cx,
                     )
@@ -1735,24 +1726,7 @@ impl SearchableItem for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {
-        let searcher = match &*query {
-            SearchQuery::Text { .. } => regex_search_for_query(
-                &(SearchQuery::text(
-                    regex_to_literal(query.as_str()),
-                    query.whole_word(),
-                    query.case_sensitive(),
-                    query.include_ignored(),
-                    query.files_to_include().clone(),
-                    query.files_to_exclude().clone(),
-                    false,
-                    None,
-                )
-                .unwrap()),
-            ),
-            SearchQuery::Regex { .. } => regex_search_for_query(&query),
-        };
-
-        if let Some(s) = searcher {
+        if let Some(s) = regex_search_for_query(&query) {
             self.terminal()
                 .update(cx, |term, cx| term.find_matches(s, cx))
         } else {
@@ -2046,15 +2020,5 @@ mod tests {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
-    }
-
-    #[test]
-    fn escapes_only_special_characters() {
-        assert_eq!(regex_to_literal(r"test(\w)"), r"test\(\\w\)".to_string());
-    }
-
-    #[test]
-    fn empty_string_stays_empty() {
-        assert_eq!(regex_to_literal(""), "".to_string());
     }
 }

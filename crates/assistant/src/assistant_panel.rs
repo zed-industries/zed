@@ -34,7 +34,7 @@ use smol::stream::StreamExt;
 
 use std::ops::Range;
 use std::path::Path;
-use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{ops::ControlFlow, sync::Arc};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
 use util::{ResultExt, maybe};
@@ -54,7 +54,7 @@ pub fn init(cx: &mut App) {
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
                 .register_action(ContextEditor::copy_code)
-                .register_action(ContextEditor::insert_dragged_files)
+                .register_action(ContextEditor::handle_insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context)
                 .register_action(AssistantPanel::restart_context_servers)
@@ -182,20 +182,7 @@ impl AssistantPanel {
                         None
                     }?;
 
-                    let paths = project_paths
-                        .into_iter()
-                        .filter_map(|project_path| {
-                            let worktree = project
-                                .read(cx)
-                                .worktree_for_id(project_path.worktree_id, cx)?;
-
-                            let mut full_path = PathBuf::from(worktree.read(cx).root_name());
-                            full_path.push(&project_path.path);
-                            Some(full_path)
-                        })
-                        .collect::<Vec<_>>();
-
-                    Some(InsertDraggedFiles::ProjectPaths(paths))
+                    Some(InsertDraggedFiles::ProjectPaths(project_paths))
                 });
 
                 if let Some(action) = action {
@@ -333,7 +320,7 @@ impl AssistantPanel {
 
         let watch_client_status = Self::watch_client_status(workspace.client().clone(), window, cx);
 
-        let mut this = Self {
+        Self {
             pane,
             workspace: workspace.weak_handle(),
             width: None,
@@ -349,9 +336,7 @@ impl AssistantPanel {
             client_status: None,
             watch_client_status: Some(watch_client_status),
             show_zed_ai_notice: false,
-        };
-        this.new_context(window, cx);
-        this
+        }
     }
 
     pub fn toggle_focus(
@@ -1192,21 +1177,19 @@ impl AssistantPanel {
 
     fn restart_context_servers(
         workspace: &mut Workspace,
-        _action: &context_server::Restart,
+        _action: &project::context_server_store::Restart,
         _: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
-            return;
-        };
-
-        assistant_panel.update(cx, |assistant_panel, cx| {
-            assistant_panel
-                .context_store
-                .update(cx, |context_store, cx| {
-                    context_store.restart_context_servers(cx);
-                });
-        });
+        workspace
+            .project()
+            .read(cx)
+            .context_server_store()
+            .update(cx, |store, cx| {
+                for server in store.running_servers() {
+                    store.restart_server(&server.id(), cx).log_err();
+                }
+            });
     }
 }
 

@@ -1,5 +1,6 @@
-use context_server::{ContextServerSettings, ServerCommand, ServerConfig};
+use context_server::ContextServerCommand;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, prelude::*};
+use project::project_settings::{ContextServerConfiguration, ProjectSettings};
 use serde_json::json;
 use settings::update_settings_file;
 use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
@@ -77,11 +78,11 @@ impl AddContextServerModal {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
-                update_settings_file::<ContextServerSettings>(fs.clone(), cx, |settings, _| {
+                update_settings_file::<ProjectSettings>(fs.clone(), cx, |settings, _| {
                     settings.context_servers.insert(
                         name.into(),
-                        ServerConfig {
-                            command: Some(ServerCommand {
+                        ContextServerConfiguration {
+                            command: Some(ContextServerCommand {
                                 path,
                                 args,
                                 env: None,
@@ -146,47 +147,50 @@ impl Render for AddContextServerModal {
                         ),
                     )
                     .footer(
-                        ModalFooter::new()
-                            .start_slot(
-                                Button::new("cancel", "Cancel")
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &menu::Cancel,
-                                            &focus_handle,
-                                            window,
-                                            cx,
+                        ModalFooter::new().end_slot(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("cancel", "Cancel")
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Cancel,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                    )
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.cancel(&menu::Cancel, cx)
-                                    })),
-                            )
-                            .end_slot(
-                                Button::new("add-server", "Add Server")
-                                    .disabled(is_name_empty || is_command_empty)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &menu::Confirm,
-                                            &focus_handle,
-                                            window,
-                                            cx,
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.cancel(&menu::Cancel, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("add-server", "Add Server")
+                                        .disabled(is_name_empty || is_command_empty)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &menu::Confirm,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
                                         )
-                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                    )
-                                    .map(|button| {
-                                        if is_name_empty {
-                                            button.tooltip(Tooltip::text("Name is required"))
-                                        } else if is_command_empty {
-                                            button.tooltip(Tooltip::text("Command is required"))
-                                        } else {
-                                            button
-                                        }
-                                    })
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.confirm(&menu::Confirm, cx)
-                                    })),
-                            ),
+                                        .map(|button| {
+                                            if is_name_empty {
+                                                button.tooltip(Tooltip::text("Name is required"))
+                                            } else if is_command_empty {
+                                                button.tooltip(Tooltip::text("Command is required"))
+                                            } else {
+                                                button
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _event, _window, cx| {
+                                            this.confirm(&menu::Confirm, cx)
+                                        })),
+                                ),
+                        ),
                     ),
             )
     }

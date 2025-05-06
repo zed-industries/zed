@@ -307,8 +307,13 @@ impl ExampleInstance {
             std::fs::write(&last_diff_file_path, "")?;
 
             let thread_store = thread_store.await?;
+
+            let profile_id = meta.profile_id.clone();
+            thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
+
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;

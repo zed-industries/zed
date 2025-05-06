@@ -34,8 +34,7 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
-    QUERY_FILENAME_PREFIXES, Rope,
+    LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage, QUERY_FILENAME_PREFIXES, Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -140,7 +139,7 @@ struct GlobalExtensionStore(Entity<ExtensionStore>);
 
 impl Global for GlobalExtensionStore {}
 
-#[derive(Debug, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Default)]
 pub struct ExtensionIndex {
     pub extensions: BTreeMap<Arc<str>, ExtensionIndexEntry>,
     pub themes: BTreeMap<Arc<str>, ExtensionIndexThemeEntry>,
@@ -167,13 +166,12 @@ pub struct ExtensionIndexIconThemeEntry {
     pub path: PathBuf,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexLanguageEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
-    pub matcher: LanguageMatcher,
-    pub hidden: bool,
-    pub grammar: Option<Arc<str>>,
+    #[serde(skip)]
+    pub config: LanguageConfig,
 }
 
 actions!(zed, [ReloadExtensions]);
@@ -1015,7 +1013,7 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
-        new_index: ExtensionIndex,
+        mut new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
@@ -1130,6 +1128,10 @@ impl ExtensionStore {
                         .remove_language_server(&language, language_server_name);
                 }
             }
+
+            for (server_id, _) in extension.manifest.context_servers.iter() {
+                self.proxy.unregister_context_server(server_id.clone(), cx);
+            }
         }
 
         self.wasm_extensions
@@ -1139,11 +1141,6 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        let languages_to_add = new_index
-            .languages
-            .iter()
-            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
-            .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut icon_themes_to_add = Vec::new();
@@ -1185,39 +1182,7 @@ impl ExtensionStore {
 
         self.proxy.register_grammars(grammars_to_add);
 
-        for (language_name, language) in languages_to_add {
-            let mut language_path = self.installed_dir.clone();
-            language_path.extend([
-                Path::new(language.extension.as_ref()),
-                language.path.as_path(),
-            ]);
-            self.proxy.register_language(
-                language_name.clone(),
-                language.grammar.clone(),
-                language.matcher.clone(),
-                language.hidden,
-                Arc::new(move || {
-                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_str(&config)?;
-                    let queries = load_plugin_queries(&language_path);
-                    let context_provider =
-                        std::fs::read_to_string(language_path.join("tasks.json"))
-                            .ok()
-                            .and_then(|contents| {
-                                let definitions =
-                                    serde_json_lenient::from_str(&contents).log_err()?;
-                                Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
-                            });
-
-                    Ok(LoadedLanguage {
-                        config,
-                        queries,
-                        context_provider,
-                        toolchain_provider: None,
-                    })
-                }),
-            );
-        }
+        let installed_dir = self.installed_dir.clone();
 
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
@@ -1228,11 +1193,59 @@ impl ExtensionStore {
             .filter_map(|name| new_index.extensions.get(name).cloned())
             .collect::<Vec<_>>();
 
-        self.extension_index = new_index;
-        cx.notify();
-        cx.emit(Event::ExtensionsUpdated);
-
         cx.spawn(async move |this, cx| {
+            let languages_to_add = new_index
+                .languages
+                .iter_mut()
+                .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+                .collect::<Vec<_>>();
+            for (_, language) in languages_to_add {
+                let mut language_path = installed_dir.clone();
+                language_path.extend([
+                    Path::new(language.extension.as_ref()),
+                    language.path.as_path(),
+                ]);
+                let Some(config) = fs.load(&language_path.join("config.toml")).await.ok() else {
+                    log::error!("Could not load config.toml in {:?}", language_path);
+                    continue;
+                };
+                let Some(config) = ::toml::from_str::<LanguageConfig>(&config).ok() else {
+                    log::error!(
+                        "Could not parse language config.toml in {:?}",
+                        language_path
+                    );
+                    continue;
+                };
+                language.config = config.clone();
+                proxy.register_language(
+                    language.config.clone(),
+                    Arc::new(move || {
+                        let queries = load_plugin_queries(&language_path);
+                        let context_provider =
+                            std::fs::read_to_string(language_path.join("tasks.json"))
+                                .ok()
+                                .and_then(|contents| {
+                                    let definitions =
+                                        serde_json_lenient::from_str(&contents).log_err()?;
+                                    Some(Arc::new(ContextProviderWithTasks::new(definitions))
+                                        as Arc<_>)
+                                });
+
+                        Ok(LoadedLanguage {
+                            config: config.clone(),
+                            queries,
+                            context_provider,
+                            toolchain_provider: None,
+                        })
+                    }),
+                );
+            }
+            this.update(cx, |this, cx| {
+                this.extension_index = new_index;
+                cx.notify();
+                cx.emit(Event::ExtensionsUpdated);
+            })
+            .ok();
             cx.background_spawn({
                 let fs = fs.clone();
                 async move {
@@ -1435,9 +1448,7 @@ impl ExtensionStore {
                     ExtensionIndexLanguageEntry {
                         extension: extension_id.clone(),
                         path: relative_path,
-                        matcher: config.matcher,
-                        hidden: config.hidden,
-                        grammar: config.grammar,
+                        config,
                     },
                 );
             }

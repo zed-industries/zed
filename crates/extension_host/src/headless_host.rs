@@ -149,10 +149,7 @@ impl HeadlessExtensionStore {
                 config.grammar = None;
 
                 this.proxy.register_language(
-                    config.name.clone(),
-                    None,
-                    config.matcher.clone(),
-                    config.hidden,
+                    config.clone(),
                     Arc::new(move || {
                         Ok(LoadedLanguage {
                             config: config.clone(),

@@ -31,8 +31,12 @@ NEW TEXT 3 HERE
 
 Rules for editing:
 
-- `old_text` represents lines in the input file that will be replaced with `new_text`. `old_text` MUST exactly match the existing file content, character for character, including indentation.
-- Always include enough context around the lines you want to replace in `old_text` such that it's impossible to mistake them for other lines.
+- `old_text` represents lines in the input file that will be replaced with `new_text`.
+- `old_text` MUST exactly match the existing file content, character for character, including indentation.
+- `old_text` MUST NEVER come from the outline, but from actual lines in the file.
+- Strive to be minimal in the lines you replace in `old_text`:
+  - If the lines you want to replace are unique, you MUST include just those in the `old_text`.
+  - If the lines you want to replace are NOT unique, you MUST include enough context around them in `old_text` to distinguish them from other lines.
 - If you want to replace many occurrences of the same text, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
 - When reporting multiple edits, each edit assumes the previous one has already been applied! Therefore, you must ensure `old_text` doesn't reference text that has already been modified by a previous edit.
 - Don't explain the edits, just report them.

@@ -1050,7 +1050,18 @@ impl Element for MarkdownElement {
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    let html = &parsed_markdown.source[range.clone()];
+                    if html.starts_with("<!--") {
+                        builder.html_comment = true;
+                    }
+                    if html.trim_end().ends_with("-->") {
+                        builder.html_comment = false;
+                        continue;
+                    }
+                    if builder.html_comment {
+                        continue;
+                    }
+                    builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
@@ -1267,6 +1278,7 @@ struct MarkdownElementBuilder {
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
     current_source_index: usize,
+    html_comment: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -1294,6 +1306,7 @@ impl MarkdownElementBuilder {
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
             current_source_index: 0,
+            html_comment: false,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -1706,6 +1719,23 @@ mod tests {
         assert_mappings(
             &render_markdown("\"hey\"", cx),
             vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
+        );
+
+        // HTML Comments are ignored
+        assert_mappings(
+            &render_markdown(
+                "<!--\nrdoc-file=string.c\n- str.intern   -> symbol\n- str.to_sym   -> symbol\n-->\nReturns",
+                cx,
+            ),
+            vec![vec![
+                (0, 78),
+                (1, 79),
+                (2, 80),
+                (3, 81),
+                (4, 82),
+                (5, 83),
+                (6, 84),
+            ]],
         );
     }
 

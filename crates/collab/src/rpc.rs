@@ -2,7 +2,7 @@ mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::LlmTokenClaims;
+use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -2701,14 +2701,112 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
 }
 
-async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan(&session.db().await).await?;
+async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
+    let db = session.db().await;
+
+    let feature_flags = db.get_user_flags(user_id).await?;
+    let plan = session.current_plan(&db).await?;
+    let billing_customer = db.get_billing_customer_by_user_id(user_id).await?;
+    let billing_preferences = db.get_billing_preferences(user_id).await?;
+
+    let usage = if let Some(llm_db) = session.app_state.llm_db.clone() {
+        let subscription = db.get_active_billing_subscription(user_id).await?;
+
+        let subscription_period = crate::db::billing_subscription::Model::current_period(
+            subscription,
+            session.is_staff(),
+        );
+
+        if let Some((period_start_at, period_end_at)) = subscription_period {
+            llm_db
+                .get_subscription_usage_for_period(user_id, period_start_at, period_end_at)
+                .await?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     session
         .peer
         .send(
             session.connection_id,
-            proto::UpdateUserPlan { plan: plan.into() },
+            proto::UpdateUserPlan {
+                plan: plan.into(),
+                trial_started_at: billing_customer
+                    .and_then(|billing_customer| billing_customer.trial_started_at)
+                    .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
+                is_usage_based_billing_enabled: if session.is_staff() {
+                    Some(true)
+                } else {
+                    billing_preferences
+                        .map(|preferences| preferences.model_request_overages_enabled)
+                },
+                usage: usage.map(|usage| {
+                    let plan = match plan {
+                        proto::Plan::Free => zed_llm_client::Plan::Free,
+                        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+                    };
+
+                    let model_requests_limit = match plan.model_requests_limit() {
+                        zed_llm_client::UsageLimit::Limited(limit) => {
+                            let limit = if plan == zed_llm_client::Plan::ZedProTrial
+                                && feature_flags
+                                    .iter()
+                                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
+                            {
+                                1_000
+                            } else {
+                                limit
+                            };
+
+                            zed_llm_client::UsageLimit::Limited(limit)
+                        }
+                        zed_llm_client::UsageLimit::Unlimited => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    };
+
+                    proto::SubscriptionUsage {
+                        model_requests_usage_amount: usage.model_requests as u32,
+                        model_requests_usage_limit: Some(proto::UsageLimit {
+                            variant: Some(match model_requests_limit {
+                                zed_llm_client::UsageLimit::Limited(limit) => {
+                                    proto::usage_limit::Variant::Limited(
+                                        proto::usage_limit::Limited {
+                                            limit: limit as u32,
+                                        },
+                                    )
+                                }
+                                zed_llm_client::UsageLimit::Unlimited => {
+                                    proto::usage_limit::Variant::Unlimited(
+                                        proto::usage_limit::Unlimited {},
+                                    )
+                                }
+                            }),
+                        }),
+                        edit_predictions_usage_amount: usage.edit_predictions as u32,
+                        edit_predictions_usage_limit: Some(proto::UsageLimit {
+                            variant: Some(match plan.edit_predictions_limit() {
+                                zed_llm_client::UsageLimit::Limited(limit) => {
+                                    proto::usage_limit::Variant::Limited(
+                                        proto::usage_limit::Limited {
+                                            limit: limit as u32,
+                                        },
+                                    )
+                                }
+                                zed_llm_client::UsageLimit::Unlimited => {
+                                    proto::usage_limit::Variant::Unlimited(
+                                        proto::usage_limit::Unlimited {},
+                                    )
+                                }
+                            }),
+                        }),
+                    }
+                }),
+            },
         )
         .trace_err();
 

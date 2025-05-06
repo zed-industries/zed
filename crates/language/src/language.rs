@@ -26,7 +26,7 @@ pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexSet};
 use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -666,7 +666,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -690,12 +690,20 @@ pub struct LanguageConfig {
     pub auto_indent_on_paste: Option<bool>,
     /// A regex that is used to determine whether the indentation level should be
     /// increased in the following line.
-    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_regex",
+        serialize_with = "serialize_regex"
+    )]
     #[schemars(schema_with = "regex_json_schema")]
     pub increase_indent_pattern: Option<Regex>,
     /// A regex that is used to determine whether the indentation level should be
     /// decreased in the following line.
-    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_regex",
+        serialize_with = "serialize_regex"
+    )]
     #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
     /// A list of characters that trigger the automatic insertion of a closing
@@ -748,6 +756,9 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of preferred debuggers for this language.
+    #[serde(default)]
+    pub debuggers: IndexSet<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -766,7 +777,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -807,7 +818,7 @@ pub struct LanguageScope {
     override_id: Option<u32>,
 }
 
-#[derive(Clone, Deserialize, Default, Debug, JsonSchema)]
+#[derive(Clone, Deserialize, Default, Debug, JsonSchema, Serialize)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
@@ -872,6 +883,7 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            debuggers: Default::default(),
         }
     }
 }
@@ -932,7 +944,7 @@ pub struct FakeLspAdapter {
 ///
 /// This struct includes settings for defining which pairs of characters are considered brackets and
 /// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
-#[derive(Clone, Debug, Default, JsonSchema)]
+#[derive(Clone, Debug, Default, JsonSchema, Serialize)]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
@@ -982,7 +994,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
 /// an opening bracket or to a newline character insertion in between `start` and `end` characters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema, Serialize)]
 pub struct BracketPair {
     /// Starting substring for a bracket.
     pub start: String,
@@ -1948,6 +1960,9 @@ impl CodeLabel {
                 Kind::ENUM => grammar
                     .highlight_id_for_name("enum")
                     .or_else(|| grammar.highlight_id_for_name("type")),
+                Kind::ENUM_MEMBER => grammar
+                    .highlight_id_for_name("variant")
+                    .or_else(|| grammar.highlight_id_for_name("property")),
                 Kind::FIELD => grammar.highlight_id_for_name("property"),
                 Kind::FUNCTION => grammar.highlight_id_for_name("function"),
                 Kind::INTERFACE => grammar.highlight_id_for_name("type"),

@@ -237,7 +237,7 @@ impl PickerDelegate for AttachModalDelegate {
             .flatten();
         if let Some(panel) = panel {
             panel.update(cx, |panel, cx| {
-                panel.start_session(scenario, Default::default(), None, window, cx);
+                panel.start_session(scenario, Default::default(), None, None, window, cx);
             });
         }
 

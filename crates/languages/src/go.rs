@@ -630,10 +630,6 @@ impl ContextProvider for GoContextProvider {
             },
         ]))
     }
-
-    fn debug_adapter(&self) -> Option<String> {
-        Some("Delve".into())
-    }
 }
 
 fn extract_subtest_name(input: &str) -> Option<String> {

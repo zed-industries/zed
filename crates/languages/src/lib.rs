@@ -325,10 +325,7 @@ fn register_language(
         languages.register_lsp_adapter(config.name.clone(), adapter);
     }
     languages.register_language(
-        config.name.clone(),
-        config.grammar.clone(),
-        config.matcher.clone(),
-        config.hidden,
+        config.clone(),
         Arc::new(move || {
             Ok(LoadedLanguage {
                 config: config.clone(),

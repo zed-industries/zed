@@ -47,6 +47,7 @@ use std::{
 };
 use telemetry::Telemetry;
 use thiserror::Error;
+use tokio::net::TcpStream;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
 
@@ -1127,7 +1128,10 @@ impl Client {
             let stream = {
                 let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
                 let _guard = handle.enter();
-                connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?
+                match proxy {
+                    Some(proxy) => connect_socks_proxy_stream(&proxy, rpc_host).await?,
+                    None => Box::new(TcpStream::connect(rpc_host).await?),
+                }
             };
 
             log::info!("connected to rpc endpoint {}", rpc_url);

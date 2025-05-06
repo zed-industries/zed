@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
 
+use crate::TaskTemplate;
+
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct TcpArgumentsTemplate {
@@ -47,10 +49,33 @@ impl TcpArgumentsTemplate {
 }
 
 /// Represents the attach request information of the debug adapter
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Default, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct AttachRequest {
     /// The processId to attach to, if left empty we will show a process picker
     pub process_id: Option<u32>,
+}
+
+impl<'de> Deserialize<'de> for AttachRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            process_id: Option<u32>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        // Skip creating an AttachRequest if process_id is None
+        if helper.process_id.is_none() {
+            return Err(serde::de::Error::custom("process_id is required"));
+        }
+
+        Ok(AttachRequest {
+            process_id: helper.process_id,
+        })
+    }
 }
 
 /// Represents the launch request information of the debug adapter
@@ -148,6 +173,18 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum BuildTaskDefinition {
+    ByName(SharedString),
+    Template {
+        #[serde(flatten)]
+        task_template: TaskTemplate,
+        #[serde(skip)]
+        locator_name: Option<SharedString>,
+    },
+}
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -157,7 +194,7 @@ pub struct DebugScenario {
     pub label: SharedString,
     /// A task to run prior to spawning the debuggee.
     #[serde(default)]
-    pub build: Option<SharedString>,
+    pub build: Option<BuildTaskDefinition>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization
@@ -204,7 +241,7 @@ impl DebugTaskFile {
 
 #[cfg(test)]
 mod tests {
-    use crate::{DebugRequest, LaunchRequest};
+    use crate::{DebugRequest, DebugScenario, LaunchRequest};
 
     #[test]
     fn test_can_deserialize_non_attach_task() {
@@ -217,5 +254,53 @@ mod tests {
                 ..Default::default()
             })
         );
+    }
+
+    #[test]
+    fn test_empty_scenario_has_none_request() {
+        let json = r#"{
+            "label": "Build & debug rust",
+            "build": "rust",
+            "adapter": "CodeLLDB"
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.request, None);
+    }
+
+    #[test]
+    fn test_launch_scenario_deserialization() {
+        let json = r#"{
+            "label": "Launch program",
+            "adapter": "CodeLLDB",
+            "program": "target/debug/myapp",
+            "args": ["--test"]
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        match deserialized.request {
+            Some(DebugRequest::Launch(launch)) => {
+                assert_eq!(launch.program, "target/debug/myapp");
+                assert_eq!(launch.args, vec!["--test"]);
+            }
+            _ => panic!("Expected Launch request"),
+        }
+    }
+
+    #[test]
+    fn test_attach_scenario_deserialization() {
+        let json = r#"{
+            "label": "Attach to process",
+            "adapter": "CodeLLDB",
+            "process_id": 1234
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        match deserialized.request {
+            Some(DebugRequest::Attach(attach)) => {
+                assert_eq!(attach.process_id, Some(1234));
+            }
+            _ => panic!("Expected Attach request"),
+        }
     }
 }
