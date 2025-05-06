@@ -906,6 +906,6 @@ mod tests {
         );
 
         let date = NaiveDate::from_ymd_opt(2022, 12, 28).unwrap();
-        assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::PastWeek);
+        assert_eq!(TimeBucket::from_dates(new_year, date), TimeBucket::ThisWeek);
     }
 }
