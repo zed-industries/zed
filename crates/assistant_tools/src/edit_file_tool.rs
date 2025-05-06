@@ -713,7 +713,7 @@ impl ToolCard for EditFileToolCard {
                                 .border_t_1()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)
-                                .rounded_md()
+                                .rounded_b_md()
                                 .hover(|style| {
                                     style.bg(cx.theme().colors().element_hover.opacity(0.1))
                                 })
