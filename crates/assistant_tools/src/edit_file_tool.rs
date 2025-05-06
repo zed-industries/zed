@@ -581,18 +581,18 @@ impl ToolCard for EditFileToolCard {
             (IconName::ChevronDown, "Expand Code Block")
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .w_full()
-            .h_2_5()
-            .rounded_b_lg()
-            .bg(gpui::linear_gradient(
-                0.,
-                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-            ));
+        let gradient_overlay =
+            div()
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h_2_5()
+                .bg(gpui::linear_gradient(
+                    0.,
+                    gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                    gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+                ));
 
         let border_color = cx.theme().colors().border.opacity(0.6);
 
@@ -610,8 +610,9 @@ impl ToolCard for EditFileToolCard {
 
             let mut container = v_flex()
                 .p_3()
-                .gap_1p5()
+                .gap_1()
                 .border_t_1()
+                .rounded_md()
                 .border_color(border_color)
                 .bg(cx.theme().colors().editor_background);
 
@@ -626,7 +627,7 @@ impl ToolCard for EditFileToolCard {
                     _ => div().w_1_2(),
                 }
                 .id("loading_div")
-                .h_2()
+                .h_1()
                 .rounded_full()
                 .bg(cx.theme().colors().element_active)
                 .with_animation(
@@ -648,7 +649,7 @@ impl ToolCard for EditFileToolCard {
             .border_1()
             .when(failed, |card| card.border_dashed())
             .border_color(border_color)
-            .rounded_lg()
+            .rounded_md()
             .overflow_hidden()
             .child(codeblock_header)
             .when(failed && self.error_expanded, |card| {
@@ -702,8 +703,8 @@ impl ToolCard for EditFileToolCard {
                                 |editor_container| editor_container.child(gradient_overlay),
                             ),
                     )
-                    .when(is_collapsible, |editor_container| {
-                        editor_container.child(
+                    .when(is_collapsible, |card| {
+                        card.child(
                             h_flex()
                                 .id(("expand-button", self.editor_unique_id))
                                 .flex_none()
@@ -711,6 +712,7 @@ impl ToolCard for EditFileToolCard {
                                 .h_5()
                                 .justify_center()
                                 .border_t_1()
+                                .rounded_b_md()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)
                                 .hover(|style| {
