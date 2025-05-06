@@ -470,9 +470,13 @@ impl MessageEditor {
         let active_completion_mode = thread.completion_mode();
 
         Some(
-            IconButton::new("max-mode", IconName::ZedMaxMode)
+            Button::new("max-mode", "Max Mode")
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ZedMaxMode)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
                 .toggle_state(active_completion_mode == CompletionMode::Max)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
