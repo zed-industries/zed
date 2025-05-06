@@ -5,24 +5,26 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MultiBuffer, PathKey};
+use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, WeakEntity, pulsating_between,
+    Task, TextStyle, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
     language_settings::SoftWrap,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
@@ -164,6 +166,19 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
+            // Set the agent's location to the top of the file
+            project
+                .update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::MIN,
+                        }),
+                        cx,
+                    );
+                })
+                .ok();
+
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
             if input.old_string.is_empty() {
@@ -224,8 +239,8 @@ impl Tool for EditFileTool {
             };
 
             let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
-
+                action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+                let base_version = diff.base_version.clone();
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, cx);
@@ -233,6 +248,21 @@ impl Tool for EditFileTool {
                     buffer.snapshot()
                 });
                 action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+
+                // Set the agent's location to the position of the first edit
+                if let Some(first_edit) = snapshot.edits_since::<usize>(&base_version).next() {
+                    let position = snapshot.anchor_before(first_edit.new.start);
+                    project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position,
+                            }),
+                            cx,
+                        );
+                    })
+                }
+
                 snapshot
             })?;
 
@@ -351,14 +381,13 @@ impl EditFileToolCard {
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
                     multibuffer.clear(cx);
-                    let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+                    multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
                         diff_hunk_ranges,
                         editor::DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     );
-                    debug_assert!(is_newly_added);
                     multibuffer.add_diff(buffer_diff, cx);
                     let end = multibuffer.len(cx);
                     Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
@@ -516,7 +545,33 @@ impl ToolCard for EditFileToolCard {
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
                 .unwrap_or_default();
 
-            let element = editor.render(window, cx);
+            let settings = ThemeSettings::get_global(cx);
+            let element = EditorElement::new(
+                &cx.entity(),
+                EditorStyle {
+                    background: cx.theme().colors().editor_background,
+                    horizontal_padding: rems(0.25).to_pixels(window.rem_size()),
+                    local_player: cx.theme().players().local(),
+                    text: TextStyle {
+                        color: cx.theme().colors().editor_foreground,
+                        font_family: settings.buffer_font.family.clone(),
+                        font_features: settings.buffer_font.features.clone(),
+                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                        font_size: TextSize::Small
+                            .rems(cx)
+                            .to_pixels(settings.agent_font_size(cx))
+                            .into(),
+                        font_weight: settings.buffer_font.weight,
+                        line_height: relative(settings.buffer_line_height.value()),
+                        ..Default::default()
+                    },
+                    scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+                    syntax: cx.theme().syntax().clone(),
+                    status: cx.theme().status().clone(),
+                    ..Default::default()
+                },
+            );
+
             (element.into_any_element(), line_height)
         });
 
@@ -655,7 +710,6 @@ impl ToolCard for EditFileToolCard {
                                 .cursor_pointer()
                                 .h_5()
                                 .justify_center()
-                                .rounded_b_md()
                                 .border_t_1()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)
@@ -737,9 +791,16 @@ async fn build_buffer_diff(
         })?
         .await;
 
+    let secondary_diff = cx.new(|cx| {
+        let mut diff = BufferDiff::new(&buffer, cx);
+        diff.set_snapshot(diff_snapshot.clone(), &buffer, cx);
+        diff
+    })?;
+
     cx.new(|cx| {
         let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
+        diff.set_snapshot(diff_snapshot, &buffer, cx);
+        diff.set_secondary_diff(secondary_diff);
         diff
     })
 }

@@ -37,7 +37,7 @@ use settings::Settings;
 use thiserror::Error;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::CompletionMode;
+use zed_llm_client::{CompletionMode, CompletionRequestStatus};
 
 use crate::ThreadStore;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
@@ -355,6 +355,7 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
+    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -418,6 +419,7 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
+            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -526,6 +528,7 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
+            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -817,6 +820,10 @@ impl Thread {
             .unwrap_or(false)
     }
 
+    pub fn last_usage(&self) -> Option<RequestUsage> {
+        self.last_usage
+    }
+
     pub fn tool_use_limit_reached(&self) -> bool {
         self.tool_use_limit_reached
     }
@@ -891,7 +898,7 @@ impl Thread {
         if !loaded_context.referenced_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
                 for buffer in loaded_context.referenced_buffers {
-                    log.track_buffer(buffer, cx);
+                    log.buffer_read(buffer, cx);
                 }
             });
         }
@@ -991,7 +998,7 @@ impl Thread {
         for message in &self.messages {
             text.push_str(match message.role {
                 language_model::Role::User => "User:",
-                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::Assistant => "Agent:",
                 language_model::Role::System => "System:",
             });
             text.push('\n');
@@ -1356,20 +1363,17 @@ impl Thread {
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
-            let stream_completion_future = model.stream_completion_with_usage(request, &cx);
+            let stream_completion_future = model.stream_completion(request, &cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let (mut events, usage) = stream_completion_future.await?;
+                let mut events = stream_completion_future.await?;
 
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
                 thread
                     .update(cx, |_thread, cx| {
-                        if let Some(usage) = usage {
-                            cx.emit(ThreadEvent::UsageUpdated(usage));
-                        }
                         cx.emit(ThreadEvent::NewRequest);
                     })
                     .ok();
@@ -1515,27 +1519,36 @@ impl Thread {
                                     });
                                 }
                             }
-                            LanguageModelCompletionEvent::QueueUpdate(status) => {
+                            LanguageModelCompletionEvent::StatusUpdate(status_update) => {
                                 if let Some(completion) = thread
                                     .pending_completions
                                     .iter_mut()
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
-                                    let queue_state = match status {
-                                        language_model::CompletionRequestStatus::Queued {
+                                    match status_update {
+                                        CompletionRequestStatus::Queued {
                                             position,
-                                        } => Some(QueueState::Queued { position }),
-                                        language_model::CompletionRequestStatus::Started => {
-                                            Some(QueueState::Started)
+                                        } => {
+                                            completion.queue_state = QueueState::Queued { position };
                                         }
-                                        language_model::CompletionRequestStatus::ToolUseLimitReached => {
-                                            thread.tool_use_limit_reached = true;
-                                            None
+                                        CompletionRequestStatus::Started => {
+                                            completion.queue_state =  QueueState::Started;
                                         }
-                                    };
+                                        CompletionRequestStatus::Failed {
+                                            code, message
+                                        } => {
+                                            return Err(anyhow!("completion request failed. code: {code}, message: {message}"));
+                                        }
+                                        CompletionRequestStatus::UsageUpdated {
+                                            amount, limit
+                                        } => {
+                                            let usage = RequestUsage { limit, amount: amount as i32 };
 
-                                    if let Some(queue_state) = queue_state {
-                                        completion.queue_state = queue_state;
+                                            thread.last_usage = Some(usage);
+                                        }
+                                        CompletionRequestStatus::ToolUseLimitReached => {
+                                            thread.tool_use_limit_reached = true;
+                                        }
                                     }
                                 }
                             }
@@ -1582,10 +1595,17 @@ impl Thread {
                                 let tool_uses = thread.use_pending_tools(window, cx, model.clone());
                                 cx.emit(ThreadEvent::UsePendingTools { tool_uses });
                             }
-                            StopReason::EndTurn => {}
-                            StopReason::MaxTokens => {}
+                            StopReason::EndTurn | StopReason::MaxTokens  => {
+                                thread.project.update(cx, |project, cx| {
+                                    project.set_agent_location(None, cx);
+                                });
+                            }
                         },
                         Err(error) => {
+                            thread.project.update(cx, |project, cx| {
+                                project.set_agent_location(None, cx);
+                            });
+
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
                             } else if error.is::<MaxMonthlySpendReachedError>() {
@@ -1683,19 +1703,27 @@ impl Thread {
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.model.stream_completion_text_with_usage(request, &cx);
-                let (mut messages, usage) = stream.await?;
-
-                if let Some(usage) = usage {
-                    this.update(cx, |_thread, cx| {
-                        cx.emit(ThreadEvent::UsageUpdated(usage));
-                    })
-                    .ok();
-                }
+                let mut messages = model.model.stream_completion(request, &cx).await?;
 
                 let mut new_summary = String::new();
-                while let Some(message) = messages.stream.next().await {
-                    let text = message?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, _cx| {
+                                thread.last_usage = Some(RequestUsage {
+                                    limit,
+                                    amount: amount as i32,
+                                });
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+
                     let mut lines = text.lines();
                     new_summary.extend(lines.next());
 
@@ -1883,10 +1911,52 @@ impl Thread {
                         cx,
                     );
                 }
+            } else {
+                self.handle_hallucinated_tool_use(
+                    tool_use.id.clone(),
+                    tool_use.name.clone(),
+                    window,
+                    cx,
+                );
             }
         }
 
         pending_tool_uses
+    }
+
+    pub fn handle_hallucinated_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        hallucinated_tool_name: Arc<str>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Thread>,
+    ) {
+        let available_tools = self.tools.read(cx).enabled_tools(cx);
+
+        let tool_list = available_tools
+            .iter()
+            .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let error_message = format!(
+            "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
+            hallucinated_tool_name, tool_list
+        );
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            hallucinated_tool_name,
+            Err(anyhow!("Missing tool call: {error_message}")),
+            self.configured_model.as_ref(),
+        );
+
+        cx.emit(ThreadEvent::MissingToolUse {
+            tool_use_id: tool_use_id.clone(),
+            ui_text: error_message.into(),
+        });
+
+        self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
     }
 
     pub fn receive_invalid_tool_json(
@@ -2290,7 +2360,7 @@ impl Thread {
                 "## {role}\n",
                 role = match message.role {
                     Role::User => "User",
-                    Role::Assistant => "Assistant",
+                    Role::Assistant => "Agent",
                     Role::System => "System",
                 }
             )?;
@@ -2536,7 +2606,6 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
-    UsageUpdated(RequestUsage),
     StreamedCompletion,
     ReceivedTextChunk,
     NewRequest,
@@ -2546,6 +2615,10 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         ui_text: Arc<str>,
         input: serde_json::Value,
+    },
+    MissingToolUse {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
     },
     InvalidToolInput {
         tool_use_id: LanguageModelToolUseId,
@@ -2587,7 +2660,6 @@ mod tests {
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolRegistry;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
     use language_model::fake_provider::FakeLanguageModel;
@@ -3009,7 +3081,6 @@ fn main() {{
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });
