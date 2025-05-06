@@ -4100,6 +4100,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dap",
+ "futures 0.3.31",
  "gpui",
  "language",
  "lsp-types",

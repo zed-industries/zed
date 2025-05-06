@@ -894,7 +894,6 @@ impl Project {
                     client.http_client(),
                     node.clone(),
                     fs.clone(),
-                    languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
