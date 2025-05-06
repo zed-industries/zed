@@ -30,6 +30,7 @@ pub(crate) struct ConfigureContextServerModal {
     context_server_store: Entity<ContextServerStore>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Configuration {
     NotAvailable,
     Required(ConfigurationRequiredState),
