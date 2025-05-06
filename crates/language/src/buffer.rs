@@ -3307,11 +3307,19 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range,
-            // and if the range is non-empty, extends beyond the start.
+            // Descend to the first leaf that touches the start of the range.
+            //
+            // If the range is non-empty and the current node ends exactly at the start,
+            // move to the next sibling to find a node that extends beyond the start.
+            //
+            // If the range is empty and the current node starts after the range position,
+            // move to the previous sibling to find the node that contains the position.
             while cursor.goto_first_child_for_byte(range.start).is_some() {
                 if !range.is_empty() && cursor.node().end_byte() == range.start {
                     cursor.goto_next_sibling();
+                }
+                if range.is_empty() && cursor.node().start_byte() > range.start {
+                    cursor.goto_previous_sibling();
                 }
             }
 

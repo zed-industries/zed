@@ -559,6 +559,7 @@ message DapModuleId {
 
 message GetDebugAdapterBinary {
     uint64 project_id = 1;
+    uint64 session_id = 3;
     DebugTaskDefinition definition = 2;
 }
 
@@ -604,4 +605,10 @@ message SpawnInTerminal {
     repeated string args = 3;
     map<string, string> env = 4;
     optional string cwd = 5;
+}
+
+message LogToDebugConsole {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    string message = 3;
 }

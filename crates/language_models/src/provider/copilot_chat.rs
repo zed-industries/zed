@@ -193,8 +193,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CopilotChatModel::Gpt4_1
             | CopilotChatModel::O4Mini
             | CopilotChatModel::Claude3_5Sonnet
-            | CopilotChatModel::Claude3_7Sonnet
-            | CopilotChatModel::Claude3_7SonnetThinking => true,
+            | CopilotChatModel::Claude3_7Sonnet => true,
             _ => false,
         }
     }

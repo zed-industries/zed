@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
 use web_search::WebSearchRegistry;
 use workspace::Workspace;
-use zed_llm_client::{WebSearchCitation, WebSearchResponse};
+use zed_llm_client::{WebSearchResponse, WebSearchResult};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
@@ -120,10 +120,10 @@ impl ToolCard for WebSearchToolCard {
     ) -> impl IntoElement {
         let header = match self.response.as_ref() {
             Some(Ok(response)) => {
-                let text: SharedString = if response.citations.len() == 1 {
+                let text: SharedString = if response.results.len() == 1 {
                     "1 result".into()
                 } else {
-                    format!("{} results", response.citations.len()).into()
+                    format!("{} results", response.results.len()).into()
                 };
                 ToolCallCardHeader::new(IconName::Globe, "Searched the Web")
                     .with_secondary_text(text)
@@ -134,52 +134,47 @@ impl ToolCard for WebSearchToolCard {
             None => ToolCallCardHeader::new(IconName::Globe, "Searching the Web").loading(),
         };
 
-        let content =
-            self.response.as_ref().and_then(|response| match response {
-                Ok(response) => {
-                    Some(
-                        v_flex()
-                            .overflow_hidden()
-                            .ml_1p5()
-                            .pl(px(5.))
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .gap_1()
-                            .children(response.citations.iter().enumerate().map(
-                                |(index, citation)| {
-                                    let title = citation.title.clone();
-                                    let url = citation.url.clone();
+        let content = self.response.as_ref().and_then(|response| match response {
+            Ok(response) => Some(
+                v_flex()
+                    .overflow_hidden()
+                    .ml_1p5()
+                    .pl(px(5.))
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .gap_1()
+                    .children(response.results.iter().enumerate().map(|(index, result)| {
+                        let title = result.title.clone();
+                        let url = result.url.clone();
 
-                                    Button::new(("citation", index), title)
-                                        .label_size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_position(IconPosition::End)
-                                        .truncate(true)
-                                        .tooltip({
-                                            let url = url.clone();
-                                            move |window, cx| {
-                                                Tooltip::with_meta(
-                                                    "Citation Link",
-                                                    None,
-                                                    url.clone(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .on_click({
-                                            let url = url.clone();
-                                            move |_, _, cx| cx.open_url(&url)
-                                        })
-                                },
-                            ))
-                            .into_any(),
-                    )
-                }
-                Err(_) => None,
-            });
+                        Button::new(("result", index), title)
+                            .label_size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::End)
+                            .truncate(true)
+                            .tooltip({
+                                let url = url.clone();
+                                move |window, cx| {
+                                    Tooltip::with_meta(
+                                        "Web Search Result",
+                                        None,
+                                        url.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click({
+                                let url = url.clone();
+                                move |_, _, cx| cx.open_url(&url)
+                            })
+                    }))
+                    .into_any(),
+            ),
+            Err(_) => None,
+        });
 
         v_flex().mb_3().gap_1().child(header).children(content)
     }
@@ -269,36 +264,39 @@ impl Component for WebSearchToolCard {
 
 fn example_search_response() -> WebSearchResponse {
     WebSearchResponse {
-        summary: r#"Toronto boasts a vibrant culinary scene with a diverse array of..."#
-            .to_string(),
-        citations: vec![
-            WebSearchCitation {
+        results: vec![
+            WebSearchResult {
                 title: "Alo".to_string(),
                 url: "https://www.google.com/maps/search/Alo%2C+Toronto%2C+Canada".to_string(),
-                range: Some(147..213),
+                text: "Alo is a popular restaurant in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
+                title: "Alo".to_string(),
+                url: "https://www.google.com/maps/search/Alo%2C+Toronto%2C+Canada".to_string(),
+                text: "Information about Alo restaurant in Toronto.".to_string(),
+            },
+            WebSearchResult {
                 title: "Edulis".to_string(),
                 url: "https://www.google.com/maps/search/Edulis%2C+Toronto%2C+Canada".to_string(),
-                range: Some(447..519),
+                text: "Details about Edulis restaurant in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
                 title: "Sushi Masaki Saito".to_string(),
                 url: "https://www.google.com/maps/search/Sushi+Masaki+Saito%2C+Toronto%2C+Canada"
                     .to_string(),
-                range: Some(776..872),
+                text: "Information about Sushi Masaki Saito in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
                 title: "Shoushin".to_string(),
                 url: "https://www.google.com/maps/search/Shoushin%2C+Toronto%2C+Canada".to_string(),
-                range: Some(1072..1148),
+                text: "Details about Shoushin restaurant in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
                 title: "Restaurant 20 Victoria".to_string(),
                 url:
                     "https://www.google.com/maps/search/Restaurant+20+Victoria%2C+Toronto%2C+Canada"
                         .to_string(),
-                range: Some(1291..1395),
+                text: "Information about Restaurant 20 Victoria in Toronto.".to_string(),
             },
         ],
     }

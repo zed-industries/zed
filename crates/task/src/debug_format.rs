@@ -47,10 +47,33 @@ impl TcpArgumentsTemplate {
 }
 
 /// Represents the attach request information of the debug adapter
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Default, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct AttachRequest {
     /// The processId to attach to, if left empty we will show a process picker
     pub process_id: Option<u32>,
+}
+
+impl<'de> Deserialize<'de> for AttachRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            process_id: Option<u32>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+
+        // Skip creating an AttachRequest if process_id is None
+        if helper.process_id.is_none() {
+            return Err(serde::de::Error::custom("process_id is required"));
+        }
+
+        Ok(AttachRequest {
+            process_id: helper.process_id,
+        })
+    }
 }
 
 /// Represents the launch request information of the debug adapter
@@ -204,7 +227,7 @@ impl DebugTaskFile {
 
 #[cfg(test)]
 mod tests {
-    use crate::{DebugRequest, LaunchRequest};
+    use crate::{DebugRequest, DebugScenario, LaunchRequest};
 
     #[test]
     fn test_can_deserialize_non_attach_task() {
@@ -217,5 +240,53 @@ mod tests {
                 ..Default::default()
             })
         );
+    }
+
+    #[test]
+    fn test_empty_scenario_has_none_request() {
+        let json = r#"{
+            "label": "Build & debug rust",
+            "build": "rust",
+            "adapter": "CodeLLDB"
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.request, None);
+    }
+
+    #[test]
+    fn test_launch_scenario_deserialization() {
+        let json = r#"{
+            "label": "Launch program",
+            "adapter": "CodeLLDB",
+            "program": "target/debug/myapp",
+            "args": ["--test"]
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        match deserialized.request {
+            Some(DebugRequest::Launch(launch)) => {
+                assert_eq!(launch.program, "target/debug/myapp");
+                assert_eq!(launch.args, vec!["--test"]);
+            }
+            _ => panic!("Expected Launch request"),
+        }
+    }
+
+    #[test]
+    fn test_attach_scenario_deserialization() {
+        let json = r#"{
+            "label": "Attach to process",
+            "adapter": "CodeLLDB",
+            "process_id": 1234
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        match deserialized.request {
+            Some(DebugRequest::Attach(attach)) => {
+                assert_eq!(attach.process_id, Some(1234));
+            }
+            _ => panic!("Expected Attach request"),
+        }
     }
 }

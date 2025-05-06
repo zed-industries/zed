@@ -772,7 +772,7 @@ impl CodegenAlternative {
         cx: &mut Context<CodegenAlternative>,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
-            // Avoid grouping assistant edits with user edits.
+            // Avoid grouping agent edits with user edits.
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
             buffer.edit(edits, None, cx);
@@ -781,7 +781,7 @@ impl CodegenAlternative {
 
         if let Some(transaction) = transaction {
             if let Some(first_transaction) = self.transformation_transaction_id {
-                // Group all assistant edits into the first transaction.
+                // Group all agent edits into the first transaction.
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.merge_transactions(transaction, first_transaction, cx)
                 });

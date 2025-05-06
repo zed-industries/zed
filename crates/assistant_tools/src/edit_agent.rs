@@ -652,14 +652,16 @@ impl EditAgent {
 }
 
 fn fuzzy_eq(left: &str, right: &str) -> bool {
+    const THRESHOLD: f64 = 0.8;
+
     let min_levenshtein = left.len().abs_diff(right.len());
     let min_normalized_levenshtein =
-        1. - (min_levenshtein as f32 / cmp::max(left.len(), right.len()) as f32);
-    if min_normalized_levenshtein < 0.8 {
+        1. - (min_levenshtein as f64 / cmp::max(left.len(), right.len()) as f64);
+    if min_normalized_levenshtein < THRESHOLD {
         return false;
     }
 
-    strsim::normalized_levenshtein(left, right) >= 0.8
+    strsim::normalized_levenshtein(left, right) >= THRESHOLD
 }
 
 #[derive(Copy, Clone, Debug)]

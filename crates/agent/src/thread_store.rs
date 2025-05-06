@@ -58,6 +58,8 @@ impl SharedProjectContext {
     }
 }
 
+pub type TextThreadStore = assistant_context_editor::ContextStore;
+
 pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
@@ -359,6 +361,10 @@ impl ThreadStore {
     /// Returns the number of threads.
     pub fn thread_count(&self) -> usize {
         self.threads.len()
+    }
+
+    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+        self.threads.iter()
     }
 
     pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {

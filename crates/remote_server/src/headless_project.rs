@@ -106,17 +106,18 @@ impl HeadlessProject {
             cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
         let dap_store = cx.new(|cx| {
-            DapStore::new_local(
+            let mut dap_store = DapStore::new_local(
                 http_client.clone(),
                 node_runtime.clone(),
                 fs.clone(),
-                languages.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 worktree_store.clone(),
                 breakpoint_store.clone(),
                 cx,
-            )
+            );
+            dap_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            dap_store
         });
 
         let git_store = cx.new(|cx| {

@@ -7,7 +7,7 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
+use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
 
 use super::DebugPanelItemEvent;
 use anyhow::{Result, anyhow};
@@ -22,14 +22,14 @@ use dap::{
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
-    Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
-    Project,
+    Project, WorktreeId,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
@@ -73,6 +73,7 @@ pub struct RunningState {
     panes: PaneGroup,
     active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
+    dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
 }
 
@@ -510,7 +511,8 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        serialized_pane_layout: Option<SerializedPaneLayout>,
+        serialized_pane_layout: Option<SerializedLayout>,
+        dock_axis: Axis,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -589,7 +591,8 @@ impl RunningState {
         let mut pane_close_subscriptions = HashMap::default();
         let panes = if let Some(root) = serialized_pane_layout.and_then(|serialized_layout| {
             persistence::deserialize_pane_layout(
-                serialized_layout,
+                serialized_layout.panes,
+                dock_axis != serialized_layout.dock_axis,
                 &workspace,
                 &project,
                 &stack_frame_list,
@@ -617,6 +620,7 @@ impl RunningState {
                 &loaded_source_list,
                 &console,
                 &breakpoint_list,
+                dock_axis,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -643,6 +647,7 @@ impl RunningState {
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
             debug_terminal,
+            dock_axis,
             _schedule_serialize: None,
         }
     }
@@ -679,6 +684,7 @@ impl RunningState {
         scenario: DebugScenario,
         task_context: TaskContext,
         buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
@@ -707,7 +713,7 @@ impl RunningState {
                     this.task_inventory().and_then(|inventory| {
                         inventory
                             .read(cx)
-                            .task_template_by_label(buffer, &build, cx)
+                            .task_template_by_label(buffer, worktree_id, &build, cx)
                     })
                 })?
                 else {
@@ -1056,12 +1062,16 @@ impl RunningState {
                     .timer(Duration::from_millis(100))
                     .await;
 
-                let Some((adapter_name, pane_group)) = this
-                    .update(cx, |this, cx| {
+                let Some((adapter_name, pane_layout)) = this
+                    .read_with(cx, |this, cx| {
                         let adapter_name = this.session.read(cx).adapter();
                         (
                             adapter_name,
-                            persistence::build_serialized_pane_layout(&this.panes.root, cx),
+                            persistence::build_serialized_layout(
+                                &this.panes.root,
+                                this.dock_axis,
+                                cx,
+                            ),
                         )
                     })
                     .ok()
@@ -1069,7 +1079,7 @@ impl RunningState {
                     return;
                 };
 
-                persistence::serialize_pane_layout(adapter_name, pane_group)
+                persistence::serialize_pane_layout(adapter_name, pane_layout)
                     .await
                     .log_err();
 
@@ -1193,6 +1203,11 @@ impl RunningState {
     #[cfg(test)]
     pub(crate) fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
+    }
+
+    #[cfg(test)]
+    pub(crate) fn serialized_layout(&self, cx: &App) -> SerializedLayout {
+        persistence::build_serialized_layout(&self.panes.root, self.dock_axis, cx)
     }
 
     pub fn capabilities(&self, cx: &App) -> Capabilities {
@@ -1408,6 +1423,7 @@ impl RunningState {
         loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
+        dock_axis: Axis,
         subscriptions: &mut HashMap<EntityId, Subscription>,
         window: &mut Window,
         cx: &mut Context<'_, RunningState>,
@@ -1528,7 +1544,7 @@ impl RunningState {
         );
 
         let group_root = workspace::PaneAxis::new(
-            gpui::Axis::Horizontal,
+            dock_axis.invert(),
             [leftmost_pane, center_pane, rightmost_pane]
                 .into_iter()
                 .map(workspace::Member::Pane)
@@ -1536,6 +1552,11 @@ impl RunningState {
         );
 
         Member::Axis(group_root)
+    }
+
+    pub(crate) fn invert_axies(&mut self) {
+        self.dock_axis = self.dock_axis.invert();
+        self.panes.invert_axies();
     }
 }
 
