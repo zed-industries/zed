@@ -31,6 +31,11 @@ pub struct PaneGroup {
     pub root: Member,
 }
 
+pub struct PaneRenderResult {
+    pub element: gpui::AnyElement,
+    pub contains_active_pane: bool,
+}
+
 impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
         Self { root }
@@ -129,8 +134,7 @@ impl PaneGroup {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        let (element, _) = self.root.render(0, zoomed, render_cx, window, cx);
-        element
+        self.root.render(0, zoomed, render_cx, window, cx).element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -379,18 +383,21 @@ impl Member {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> (AnyElement, bool) {
+    ) -> PaneRenderResult {
         match self {
             Member::Pane(pane) => {
                 if zoomed == Some(&pane.downgrade().into()) {
-                    return (div().into_any(), false);
+                    return PaneRenderResult {
+                        element: div().into_any(),
+                        contains_active_pane: false,
+                    };
                 }
 
                 let decoration = render_cx.decorate(pane, cx);
                 let is_active = pane == render_cx.active_pane();
 
-                (
-                    div()
+                PaneRenderResult {
+                    element: div()
                         .relative()
                         .flex_1()
                         .size_full()
@@ -411,8 +418,8 @@ impl Member {
                         })
                         .children(decoration.status_box)
                         .into_any(),
-                    is_active,
-                )
+                    contains_active_pane: is_active,
+                }
             }
             Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
         }
@@ -723,7 +730,7 @@ impl PaneAxis {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> (gpui::AnyElement, bool) {
+    ) -> PaneRenderResult {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
         let mut contains_active_pane = false;
@@ -747,12 +754,11 @@ impl PaneAxis {
                     }
                 }
 
-                let (element, is_active) =
-                    member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
-                if is_active {
+                let result = member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
+                if result.contains_active_pane {
                     contains_active_pane = true;
                 }
-                element.into_any_element()
+                result.element.into_any_element()
             })
             .collect::<Vec<_>>();
 
@@ -768,7 +774,10 @@ impl PaneAxis {
         .with_active_pane(active_pane_ix)
         .into_any_element();
 
-        (element, contains_active_pane)
+        PaneRenderResult {
+            element,
+            contains_active_pane,
+        }
     }
 }
 
