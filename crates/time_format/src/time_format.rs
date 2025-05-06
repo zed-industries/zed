@@ -60,7 +60,7 @@ pub fn format_time(timestamp: OffsetDateTime) -> String {
 pub fn format_date_medium(
     timestamp: OffsetDateTime,
     reference: OffsetDateTime,
-    enhanced_formatting: bool
+    enhanced_formatting: bool,
 ) -> String {
     format_absolute_date_medium(timestamp, reference, enhanced_formatting)
 }
@@ -363,7 +363,6 @@ pub fn format_timestamp_naive(
     }
 }
 
-// Define current locale at the top level for use across multiple functions
 #[cfg(not(target_os = "macos"))]
 static CURRENT_LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
@@ -512,20 +511,20 @@ mod tests {
     fn test_format_date_medium() {
         let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
         let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-        
+
         // Test with enhanced formatting (today)
         let result_enhanced = format_date_medium(timestamp, reference, true);
         assert_eq!(result_enhanced, "Today");
-        
+
         // Test with standard formatting
         let result_standard = format_date_medium(timestamp, reference, false);
         assert!(!result_standard.is_empty());
-        
+
         // Test yesterday with enhanced formatting
         let timestamp_yesterday = create_offset_datetime(1990, 4, 11, 9, 30, 0);
         let result_yesterday = format_date_medium(timestamp_yesterday, reference, true);
         assert_eq!(result_yesterday, "Yesterday");
-        
+
         // Test other date with enhanced formatting
         let timestamp_other = create_offset_datetime(1990, 4, 10, 9, 30, 0);
         let result_other = format_date_medium(timestamp_other, reference, true);
@@ -574,15 +573,15 @@ mod tests {
     fn test_format_absolute_date_medium() {
         let reference = create_offset_datetime(1990, 4, 12, 10, 30, 0);
         let timestamp = create_offset_datetime(1990, 4, 12, 9, 30, 0);
-        
+
         // Test with enhanced formatting (today)
         let result_enhanced = format_absolute_date_medium(timestamp, reference, true);
         assert_eq!(result_enhanced, "Today");
-        
+
         // Test with standard formatting
         let result_standard = format_absolute_date_medium(timestamp, reference, false);
         assert!(!result_standard.is_empty());
-        
+
         // Test yesterday with enhanced formatting
         let timestamp_yesterday = create_offset_datetime(1990, 4, 11, 9, 30, 0);
         let result_yesterday = format_absolute_date_medium(timestamp_yesterday, reference, true);
