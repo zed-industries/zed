@@ -12,7 +12,7 @@ pub struct TitleBarSettings {
 pub struct TitleBarSettingsContent {
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
-    /// Default: true
+    /// Default: false
     pub show_branch_icon: Option<bool>,
 }
 

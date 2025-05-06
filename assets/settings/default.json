@@ -306,7 +306,7 @@
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the title bar.
-    "show_branch_icon": true
+    "show_branch_icon": false
   },
   // Scrollbar related settings
   "scrollbar": {
