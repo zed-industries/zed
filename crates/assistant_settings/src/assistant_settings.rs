@@ -1039,7 +1039,7 @@ mod tests {
                         AssistantSettingsContentV2 {
                             enabled: Some(false),
                             default_model: Some(LanguageModelSelection {
-                                provider: "xai".to_owned(),
+                                provider: "xai".to_owned().into(),
                                 model: "grok".to_owned(),
                             }),
                             ..Default::default()
