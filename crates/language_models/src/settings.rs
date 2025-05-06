@@ -87,8 +87,8 @@ pub struct AllLanguageModelSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum AnthropicSettingsContent {
-    Legacy(LegacyAnthropicSettingsContent),
     Versioned(VersionedAnthropicSettingsContent),
+    Legacy(LegacyAnthropicSettingsContent),
 }
 
 impl AnthropicSettingsContent {
@@ -197,8 +197,8 @@ pub struct MistralSettingsContent {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum OpenAiSettingsContent {
-    Legacy(LegacyOpenAiSettingsContent),
     Versioned(VersionedOpenAiSettingsContent),
+    Legacy(LegacyOpenAiSettingsContent),
 }
 
 impl OpenAiSettingsContent {
