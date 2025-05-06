@@ -328,7 +328,7 @@ impl LanguageRegistry {
     #[cfg(any(feature = "test-support", test))]
     pub fn register_test_language(&self, config: LanguageConfig) {
         self.register_language(
-            config,
+            config.clone(),
             Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),

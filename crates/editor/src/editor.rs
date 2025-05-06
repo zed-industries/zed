@@ -5220,7 +5220,6 @@ impl Editor {
                                                     .config()
                                                     .debuggers
                                                     .first()
-                                                    .as_deref()
                                                     .map(SharedString::from)
                                             })?;
 
