@@ -15,8 +15,8 @@ use gpui::{
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconName, IconSize, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
+    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -291,7 +291,7 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                    inline_completion_entry = inline_completion_entry.documentation_aside(DocumentationSide::Left, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }

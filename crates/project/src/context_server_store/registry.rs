@@ -2,17 +2,21 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
+use context_server::ContextServerCommand;
 use extension::ContextServerConfiguration;
-use gpui::{App, AppContext as _, AsyncApp, Entity, Global, ReadGlobal, Task};
-use project::Project;
+use gpui::{App, AppContext as _, AsyncApp, Entity, Global, Task};
 
-use crate::ServerCommand;
+use crate::worktree_store::WorktreeStore;
 
 pub trait ContextServerDescriptor {
-    fn command(&self, project: Entity<Project>, cx: &AsyncApp) -> Task<Result<ServerCommand>>;
+    fn command(
+        &self,
+        worktree_store: Entity<WorktreeStore>,
+        cx: &AsyncApp,
+    ) -> Task<Result<ContextServerCommand>>;
     fn configuration(
         &self,
-        project: Entity<Project>,
+        worktree_store: Entity<WorktreeStore>,
         cx: &AsyncApp,
     ) -> Task<Result<Option<ContextServerConfiguration>>>;
 }
@@ -27,11 +31,6 @@ pub struct ContextServerDescriptorRegistry {
 }
 
 impl ContextServerDescriptorRegistry {
-    /// Returns the global [`ContextServerDescriptorRegistry`].
-    pub fn global(cx: &App) -> Entity<Self> {
-        GlobalContextServerDescriptorRegistry::global(cx).0.clone()
-    }
-
     /// Returns the global [`ContextServerDescriptorRegistry`].
     ///
     /// Inserts a default [`ContextServerDescriptorRegistry`] if one does not yet exist.

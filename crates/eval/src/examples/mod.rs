@@ -1,4 +1,5 @@
 use anyhow::Result;
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -56,12 +57,19 @@ impl DeclarativeExample {
             None
         };
 
+        let profile_id = if let Some(profile_name) = base.profile_name {
+            AgentProfileId(profile_name.into())
+        } else {
+            AgentProfileId::default()
+        };
+
         let metadata = ExampleMetadata {
             name,
             url: base.url,
             revision: base.revision,
             language_server,
             max_assertions: None,
+            profile_id,
         };
 
         Ok(DeclarativeExample {
@@ -96,6 +104,8 @@ pub struct ExampleToml {
     #[serde(default)]
     pub allow_preexisting_diagnostics: bool,
     pub prompt: String,
+    #[serde(default)]
+    pub profile_name: Option<String>,
     #[serde(default)]
     pub diff_assertions: BTreeMap<String, String>,
     #[serde(default)]
