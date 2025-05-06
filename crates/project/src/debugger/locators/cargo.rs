@@ -45,8 +45,8 @@ impl DapLocator for CargoLocator {
         if build_config.command != "cargo" {
             return None;
         }
-        let mut build = build_config.clone();
-        let cargo_action = build.args.first_mut()?;
+        let mut task_template = build_config.clone();
+        let cargo_action = task_template.args.first_mut()?;
         if cargo_action == "check" {
             return None;
         }
@@ -56,13 +56,16 @@ impl DapLocator for CargoLocator {
                 *cargo_action = "build".to_owned();
             }
             "test" | "bench" => {
-                let delimiter = build
+                let delimiter = task_template
                     .args
                     .iter()
                     .position(|arg| arg == "--")
-                    .unwrap_or(build.args.len());
-                if !build.args[..delimiter].iter().any(|arg| arg == "--no-run") {
-                    build.args.insert(delimiter, "--no-run".to_owned());
+                    .unwrap_or(task_template.args.len());
+                if !task_template.args[..delimiter]
+                    .iter()
+                    .any(|arg| arg == "--no-run")
+                {
+                    task_template.args.insert(delimiter, "--no-run".to_owned());
                 }
             }
             _ => {}
@@ -71,7 +74,10 @@ impl DapLocator for CargoLocator {
         Some(DebugScenario {
             adapter: adapter.to_owned().into(),
             label: SharedString::from(label),
-            build: Some(BuildTaskDefinition::Template(build, self.name())),
+            build: Some(BuildTaskDefinition::Template {
+                task_template,
+                locator_name: Some(self.name()),
+            }),
             request: None,
             initialize_args: None,
             tcp_connection: None,

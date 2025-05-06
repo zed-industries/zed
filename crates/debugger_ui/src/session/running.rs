@@ -706,18 +706,19 @@ impl RunningState {
                 tcp_connection,
                 stop_on_entry,
             } = scenario;
-            let request = if let Some(request) = request {
-                request
-            } else if let Some(build) = build {
-                let task = match build {
-                    BuildTaskDefinition::Template(template, locator_name) => template,
-                    BuildTaskDefinition::ByName(label) => {
+            let build_output = if let Some(build) = build {
+                let (task, locator_name) = match build {
+                    BuildTaskDefinition::Template {
+                        task_template,
+                        locator_name,
+                    } => (task_template, locator_name),
+                    BuildTaskDefinition::ByName(ref label) => {
                         let Some(task) = task_store.update(cx, |this, cx| {
                             this.task_inventory().and_then(|inventory| {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
-                                    &build,
+                                    &label,
                                     cx,
                                 )
                             })
@@ -725,14 +726,31 @@ impl RunningState {
                         else {
                             anyhow::bail!("Couldn't find task template for {:?}", build)
                         };
-                        task
+                        (task, None)
                     }
                 };
-
+                let locator_name = if let Some(locator_name) = locator_name {
+                    debug_assert!(request.is_none());
+                    Some(locator_name)
+                } else if request.is_none() {
+                    dap_store
+                        .update(cx, |this, cx| {
+                            this.debug_scenario_for_build_task(task.clone(), adapter.clone(), cx)
+                                .and_then(|scenario| match scenario.build {
+                                    Some(BuildTaskDefinition::Template {
+                                        locator_name, ..
+                                    }) => locator_name,
+                                    _ => None,
+                                })
+                        })
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
                 let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
-
                 let terminal = project
                     .update_in(cx, |project, window, cx| {
                         project.create_terminal(
@@ -771,9 +789,19 @@ impl RunningState {
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
-
+                Some((task, locator_name))
+            } else {
+                None
+            };
+            let request = if let Some(request) = request {
+                request
+            } else if let Some((task, locator_name)) = build_output {
+                let locator_name = locator_name
+                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
                 dap_store
-                    .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
+                    .update(cx, |this, cx| {
+                        this.run_debug_locator(&locator_name, task.resolved, cx)
+                    })?
                     .await?
             } else {
                 return Err(anyhow!("No request or build provided"));

@@ -297,7 +297,7 @@ impl DapStore {
     pub fn run_debug_locator(
         &mut self,
         locator_name: &str,
-        mut build_command: SpawnInTerminal,
+        build_command: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugRequest>> {
         match &self.mode {
@@ -332,6 +332,7 @@ impl DapStore {
                 let request = ssh.upstream_client.request(proto::RunDebugLocators {
                     project_id: ssh.upstream_project_id,
                     build_command: Some(build_command.to_proto()),
+                    locator: locator_name.to_owned(),
                 });
                 cx.background_spawn(async move {
                     let response = request.await?;
@@ -744,8 +745,11 @@ impl DapStore {
             .build_command
             .ok_or_else(|| anyhow!("missing definition"))?;
         let build_task = SpawnInTerminal::from_proto(task);
+        let locator = envelope.payload.locator;
         let request = this
-            .update(&mut cx, |this, cx| this.run_debug_locator(build_task, cx))?
+            .update(&mut cx, |this, cx| {
+                this.run_debug_locator(&locator, build_task, cx)
+            })?
             .await?;
 
         Ok(request.to_proto())

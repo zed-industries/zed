@@ -172,13 +172,17 @@ impl From<AttachRequest> for DebugRequest {
         DebugRequest::Attach(attach_config)
     }
 }
-type LocatorName = SharedString;
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
-    Template(TaskTemplate, LocatorName),
+    Template {
+        #[serde(flatten)]
+        task_template: TaskTemplate,
+        #[serde(skip)]
+        locator_name: Option<SharedString>,
+    },
 }
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
