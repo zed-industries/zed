@@ -59,7 +59,7 @@ pub trait FeatureFlag {
 /// Controls the values of various feature flags for the Agent launch.
 ///
 /// Change this to `true` when we're ready to build the release candidate.
-const AGENT_LAUNCH: bool = false;
+const AGENT_LAUNCH: bool = true;
 
 pub struct Assistant2FeatureFlag;
 
