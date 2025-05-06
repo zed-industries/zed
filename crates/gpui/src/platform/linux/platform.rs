@@ -140,14 +140,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
-        #[cfg(any(feature = "wayland", feature = "x11"))]
-        {
-            Box::new(super::LinuxKeyboardMapper::new())
-        }
-        #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        {
-            Box::new(crate::EmptyKeyboardMapper)
-        }
+        Box::new(super::LinuxKeyboardMapper::new())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

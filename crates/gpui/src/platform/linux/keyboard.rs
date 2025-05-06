@@ -61,7 +61,7 @@ impl PlatformKeyboardMapper for LinuxKeyboardMapper {
     }
 
     fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
-        if key.chars().count() != 1 {
+        if is_immutable_key(key) {
             return Ok(None);
         }
         if is_alphabetic_key(key) {
@@ -182,6 +182,68 @@ const TYPEABLE_CODES: &[u32] = &[
     0x003c, // . Period
     0x003d, // / Slash
 ];
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn is_immutable_key(key: &str) -> bool {
+    matches!(
+        key,
+        "f1" | "f2"
+            | "f3"
+            | "f4"
+            | "f5"
+            | "f6"
+            | "f7"
+            | "f8"
+            | "f9"
+            | "f10"
+            | "f11"
+            | "f12"
+            | "f13"
+            | "f14"
+            | "f15"
+            | "f16"
+            | "f17"
+            | "f18"
+            | "f19"
+            | "f20"
+            | "f21"
+            | "f22"
+            | "f23"
+            | "f24"
+            | "backspace"
+            | "delete"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "pageup"
+            | "pagedown"
+            | "insert"
+            | "home"
+            | "end"
+            | "back"
+            | "forward"
+            | "escape"
+            | "space"
+            | "tab"
+            | "enter"
+            | "shift"
+            | "control"
+            | "alt"
+            | "platform"
+            | "cmd"
+            | "super"
+            | "win"
+            | "fn"
+            | "menu"
+            | "copy"
+            | "paste"
+            | "cut"
+            | "find"
+            | "open"
+            | "save"
+    )
+}
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 fn get_scan_code(scan_code: ScanCode) -> Option<u32> {
