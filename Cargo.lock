@@ -14746,6 +14746,7 @@ dependencies = [
  "log",
  "project",
  "rand 0.8.5",
+ "regex",
  "schemars",
  "search",
  "serde",
