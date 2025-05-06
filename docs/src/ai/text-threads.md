@@ -1,9 +1,11 @@
 # Text Threads
 
-<!-- todo! resurrected deleted content that we may want to put in here -->
-<!-- Text threads in the agent panel functions similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
+<!-- todo! overview was resurrected content and might need cleanup / reorganized  -->
+## Overview {#overview}
 
-However, the assistant editor differs with the inclusion of message blocks. These blocks serve as containers for text that correspond to different roles within the context. These roles include:
+Text threads in the agent panel functions similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.
+
+However, the text threads differ with the inclusion of message blocks. These blocks serve as containers for text that correspond to different roles within the context. These roles include:
 
 - `You`
 - `Assistant`
@@ -19,9 +21,9 @@ Inserting text from an editor is as simple as highlighting the text and running 
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
-To submit a message, use {#kb assistant::Assist}(`assistant: assist`). Unlike typical chat applications where pressing <kbd>enter</kbd> would submit the message, in the assistant editor, our goal was to make it feel as close to a regular editor as possible. So, pressing {#kb editor::Newline} simply inserts a new line.
+To submit a message, use {#kb assistant::Assist}(`assistant: assist`). Unlike normal threads, where pressing <kbd>enter</kbd> would submit the message, in text threads, our goal is to make it feel as close to a regular editor as possible. So, pressing {#kb editor::Newline} simply inserts a new line.
 
-After submitting a message, the assistant's response will be streamed below, in an `Assistant` message block.
+After submitting a message, the response will be streamed below, in an `Assistant` message block.
 
 ![Receiving an answer](https://zed.dev/img/assistant/receiving-an-answer.png)
 
@@ -29,13 +31,13 @@ The stream can be canceled at any point with <kbd>escape</kbd>. This is useful i
 
 If you want to start a new conversation at any time, you can hit <kbd>cmd-n|ctrl-n</kbd> or use the `New Chat` menu option in the hamburger menu at the top left of the panel.
 
-Simple back-and-forth conversations work well with the assistant. However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
+Simple back-and-forth conversations work well with the text threads. However, there may come a time when you want to modify the previous text in the conversation and steer it in a different direction.
 
 ### Editing a Context
 
 > **Note**: Wondering about Context vs. Conversation? [Read more here](./contexts.md).
 
-The assistant gives you the flexibility to have control over the context. You can freely edit any previous text, including the responses from the assistant. If you want to remove a message block entirely, simply place your cursor at the beginning of the block and use the `delete` key. A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information. Here's an example:
+Text threads give you the flexibility to have control over the context. You can freely edit any previous text, including the responses from the LLM. If you want to remove a message block entirely, simply place your cursor at the beginning of the block and use the `delete` key. A typical workflow might involve making edits and adjustments throughout the context to refine your inquiry or provide additional information. Here's an example:
 
 1. Write text in a `You` block.
 2. Submit the message with {#kb assistant::Assist}.
@@ -51,9 +53,7 @@ Being able to edit previous messages gives you control over how tokens are used.
 
 Some additional points to keep in mind:
 
-- You are free to change the model type at any point in the conversation.
-- You can cycle the role of a message block by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block. -->
-
+- You can cycle the role of a message block by clicking on the role, which is useful when you receive a response in an `Assistant` block that you want to edit and send back up as a `You` block.
 
 ## Commands Overview {#commands}
 
