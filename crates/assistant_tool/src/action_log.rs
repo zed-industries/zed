@@ -1190,8 +1190,8 @@ mod tests {
                 buffer2.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 5),
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "ipsum\n".into(),
+                    diff_status: DiffHunkStatusKind::Added,
+                    old_text: "".into(),
                 }],
             )]
         );
