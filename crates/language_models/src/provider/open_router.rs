@@ -421,14 +421,10 @@ pub fn into_open_router(
                         },
                     };
 
-                    if let Some(last_assistant_message) = messages.iter_mut().rfind(|message| {
-                        matches!(message, open_router::RequestMessage::Assistant { .. })
-                    }) {
-                        if let open_router::RequestMessage::Assistant { tool_calls, .. } =
-                            last_assistant_message
-                        {
-                            tool_calls.push(tool_call);
-                        }
+                    if let Some(open_router::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
                     } else {
                         messages.push(open_router::RequestMessage::Assistant {
                             content: None,
@@ -451,7 +447,7 @@ pub fn into_open_router(
         messages,
         stream: true, // all open router requests should be streamed
         stop: request.stop,
-        temperature: request.temperature.unwrap_or(1.0),
+        temperature: request.temperature.unwrap_or(0.4), // Lower temperature value is preferred in terms of best practices for coding agents
         max_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
