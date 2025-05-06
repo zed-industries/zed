@@ -2857,7 +2857,7 @@ impl BufferSnapshot {
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
-        let language_without_bracket = config.language_without_bracket;
+        let significant_indentation = config.significant_indentation;
 
         // Find the suggested indentation ranges based on the syntax tree.
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
@@ -2894,10 +2894,9 @@ impl BufferSnapshot {
 
             matches.advance();
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && !language_without_bracket {
+                if start.row == end.row && !significant_indentation {
                     continue;
                 }
-
                 let range = start..end;
                 match indent_ranges.binary_search_by_key(&range.start, |r| r.start) {
                     Err(ix) => indent_ranges.insert(ix, range),
@@ -3006,11 +3005,11 @@ impl BufferSnapshot {
             }
 
             for range in &indent_ranges {
-                if language_without_bracket {
+                if significant_indentation {
                     if range.start.row > row {
                         break;
                     }
-                    if range.start.row == row {
+                    if range.start == row_start {
                         indent_from_prev_row = true;
                     }
                 } else {
@@ -3030,26 +3029,21 @@ impl BufferSnapshot {
                 .iter()
                 .any(|e| e.start.row < row && e.end > row_start);
 
-            let suggestion = if outdent_to_row == prev_row
-                || (outdent_from_prev_row && indent_from_prev_row)
-            {
-                let delta = if indent_from_prev_row {
-                    Ordering::Greater
-                } else {
-                    Ordering::Equal
-                };
-
-                let basis_row = if delta == Ordering::Greater {
-                    prev_row
-                } else if language_without_bracket && outdent_to_row == prev_row {
-                    outdent_to_row.saturating_sub(1)
-                } else {
-                    prev_row
-                };
-
+            let suggestion = if outdent_to_row == prev_row && significant_indentation {
                 Some(IndentSuggestion {
-                    basis_row,
-                    delta,
+                    basis_row: outdent_to_row.saturating_sub(1),
+                    delta: if indent_from_prev_row {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    },
+                    within_error: within_error && !from_regex,
+                })
+            } else if outdent_to_row == prev_row || (outdent_from_prev_row && indent_from_prev_row)
+            {
+                Some(IndentSuggestion {
+                    basis_row: prev_row,
+                    delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
                 })
             } else if indent_from_prev_row {
@@ -3060,7 +3054,7 @@ impl BufferSnapshot {
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
-                    basis_row: if language_without_bracket {
+                    basis_row: if significant_indentation {
                         outdent_to_row.saturating_sub(1)
                     } else {
                         outdent_to_row

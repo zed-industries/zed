@@ -28,4 +28,4 @@ brackets = [
 
 auto_indent_using_last_non_empty_line = false
 debuggers = ["Debugpy"]
-language_without_bracket = true
+significant_indentation = true
