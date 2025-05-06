@@ -908,6 +908,8 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // What debuggers are preferred by default for all languages.
+  "debuggers": [],
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.

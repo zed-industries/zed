@@ -621,20 +621,32 @@ impl DebugPanel {
                     move |_, window, cx| {
                         let weak_panel = weak_panel.clone();
                         let past_debug_definition = past_debug_definition.clone();
+                        let workspace = workspace.clone();
+                        window
+                            .spawn(cx, async move |cx| {
+                                let task_contexts = workspace
+                                    .update_in(cx, |workspace, window, cx| {
+                                        tasks_ui::task_contexts(workspace, window, cx)
+                                    })?
+                                    .await;
 
-                        let _ = workspace.update(cx, |this, cx| {
-                            let workspace = cx.weak_entity();
-                            this.toggle_modal(window, cx, |window, cx| {
-                                NewSessionModal::new(
-                                    past_debug_definition,
-                                    weak_panel,
-                                    workspace,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            });
-                        });
+                                workspace.update_in(cx, |this, window, cx| {
+                                    this.toggle_modal(window, cx, |window, cx| {
+                                        NewSessionModal::new(
+                                            past_debug_definition,
+                                            weak_panel,
+                                            workspace.clone(),
+                                            None,
+                                            task_contexts,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                })?;
+
+                                Result::<_, anyhow::Error>::Ok(())
+                            })
+                            .detach();
                     }
                 })
                 .tooltip({
