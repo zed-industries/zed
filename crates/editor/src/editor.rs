@@ -5216,10 +5216,7 @@ impl Editor {
                                         for (_, task) in &resolved_tasks.templates {
                                             if let Some(scenario) = this
                                                 .debug_scenario_for_build_task(
-                                                    task.resolved.clone(),
-                                                    SharedString::from(
-                                                        task.original_task().label.clone(),
-                                                    ),
+                                                    task.original_task.clone(),
                                                     debug_adapter.clone(),
                                                     cx,
                                                 )

@@ -1,12 +1,13 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest};
+use gpui::SharedString;
 use serde_json::Value;
 use smol::{
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
-use task::SpawnInTerminal;
+use task::{BuildTaskDefinition, DebugScenario, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct CargoLocator;
 
@@ -37,18 +38,45 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
 }
 #[async_trait]
 impl DapLocator for CargoLocator {
-    fn accepts(&self, build_config: &SpawnInTerminal) -> bool {
+    fn name(&self) -> SharedString {
+        SharedString::new_static("rust-cargo-locator")
+    }
+    fn create_scenario(&self, build_config: &TaskTemplate, adapter: &str) -> Option<DebugScenario> {
         if build_config.command != "cargo" {
-            return false;
+            return None;
         }
-        let Some(command) = build_config.args.first().map(|s| s.as_str()) else {
-            return false;
-        };
-        if matches!(command, "check" | "run") {
-            return false;
+        let mut build = build_config.clone();
+        let cargo_action = build.args.first_mut()?;
+        if cargo_action == "check" {
+            return None;
         }
-        !matches!(command, "test" | "bench")
-            || build_config.args.iter().any(|arg| arg == "--no-run")
+
+        match cargo_action.as_ref() {
+            "run" => {
+                *cargo_action = "build".to_owned();
+            }
+            "test" | "bench" => {
+                let delimiter = build
+                    .args
+                    .iter()
+                    .position(|arg| arg == "--")
+                    .unwrap_or(build.args.len());
+                if !build.args[..delimiter].iter().any(|arg| arg == "--no-run") {
+                    build.args.insert(delimiter, "--no-run".to_owned());
+                }
+            }
+            _ => {}
+        }
+        let label = format!("Debug `{}`", build_config.label);
+        Some(DebugScenario {
+            adapter: adapter.to_owned().into(),
+            label: SharedString::from(label),
+            build: Some(BuildTaskDefinition::Template(build, self.name())),
+            request: None,
+            initialize_args: None,
+            tcp_connection: None,
+            stop_on_entry: None,
+        })
     }
 
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {

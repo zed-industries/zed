@@ -49,7 +49,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal};
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 use util::{ResultExt as _, merge_json_value_into};
 use worktree::Worktree;
 
@@ -284,78 +284,37 @@ impl DapStore {
 
     pub fn debug_scenario_for_build_task(
         &self,
-        mut build: SpawnInTerminal,
-        unresoved_label: SharedString,
+        build: TaskTemplate,
         adapter: SharedString,
         cx: &mut App,
     ) -> Option<DebugScenario> {
-        build.args = build
-            .args
-            .into_iter()
-            .map(|arg| {
-                if arg.starts_with("$") {
-                    arg.strip_prefix("$")
-                        .and_then(|arg| build.env.get(arg).map(ToOwned::to_owned))
-                        .unwrap_or_else(|| arg)
-                } else {
-                    arg
-                }
-            })
-            .collect();
-
         DapRegistry::global(cx)
             .locators()
             .values()
-            .find(|locator| locator.accepts(&build))
-            .map(|_| DebugScenario {
-                adapter,
-                label: format!("Debug `{}`", build.label).into(),
-                build: Some(unresoved_label),
-                request: None,
-                initialize_args: None,
-                tcp_connection: None,
-                stop_on_entry: None,
-            })
+            .find_map(|locator| locator.create_scenario(&build, &adapter))
     }
 
     pub fn run_debug_locator(
         &mut self,
+        locator_name: &str,
         mut build_command: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugRequest>> {
         match &self.mode {
             DapStoreMode::Local(_) => {
                 // Pre-resolve args with existing environment.
-                build_command.args = build_command
-                    .args
-                    .into_iter()
-                    .map(|arg| {
-                        if arg.starts_with("$") {
-                            arg.strip_prefix("$")
-                                .and_then(|arg| build_command.env.get(arg).map(ToOwned::to_owned))
-                                .unwrap_or_else(|| arg)
-                        } else {
-                            arg
-                        }
-                    })
-                    .collect();
-                let locators = DapRegistry::global(cx)
-                    .locators()
-                    .values()
-                    .filter(|locator| locator.accepts(&build_command))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !locators.is_empty() {
+                let locator = DapRegistry::global(cx).locators().get(locator_name);
+
+                if let Some(locator) = locator.cloned() {
                     cx.background_spawn(async move {
-                        for locator in locators {
-                            let result = locator
-                                .run(build_command.clone())
-                                .await
-                                .log_with_level(log::Level::Error);
-                            if let Some(result) = result {
-                                return Ok(result);
-                            }
+                        let result = locator
+                            .run(build_command.clone())
+                            .await
+                            .log_with_level(log::Level::Error);
+                        if let Some(result) = result {
+                            return Ok(result);
                         }
+
                         Err(anyhow!(
                             "None of the locators for task `{}` completed successfully",
                             build_command.label

@@ -38,7 +38,7 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    DebugScenario, LaunchRequest, TaskContext, substitute_variables_in_map,
+    BuildTaskDefinition, DebugScenario, LaunchRequest, TaskContext, substitute_variables_in_map,
     substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
@@ -709,16 +709,26 @@ impl RunningState {
             let request = if let Some(request) = request {
                 request
             } else if let Some(build) = build {
-                let Some(task) = task_store.update(cx, |this, cx| {
-                    this.task_inventory().and_then(|inventory| {
-                        inventory
-                            .read(cx)
-                            .task_template_by_label(buffer, worktree_id, &build, cx)
-                    })
-                })?
-                else {
-                    anyhow::bail!("Couldn't find task template for {:?}", build)
+                let task = match build {
+                    BuildTaskDefinition::Template(template, locator_name) => template,
+                    BuildTaskDefinition::ByName(label) => {
+                        let Some(task) = task_store.update(cx, |this, cx| {
+                            this.task_inventory().and_then(|inventory| {
+                                inventory.read(cx).task_template_by_label(
+                                    buffer,
+                                    worktree_id,
+                                    &build,
+                                    cx,
+                                )
+                            })
+                        })?
+                        else {
+                            anyhow::bail!("Couldn't find task template for {:?}", build)
+                        };
+                        task
+                    }
                 };
+
                 let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
