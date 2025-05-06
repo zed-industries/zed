@@ -825,6 +825,11 @@ impl Render for NotificationToast {
                 IconButton::new("close", IconName::Close)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
+            .child(
+                IconButton::new("suppress", IconName::XCircle)
+                    .tooltip(Tooltip::text("Do not show until restart"))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SuppressEvent))),
+            )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.focus_notification_panel(window, cx);
                 cx.emit(DismissEvent);

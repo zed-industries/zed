@@ -180,6 +180,7 @@ actions!(
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
+        SuppressNotification,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -5302,6 +5303,13 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ClearAllNotifications, _, cx| {
                     workspace.clear_all_notifications(cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
+                    if let Some((notification_id, _)) = workspace.notifications.pop() {
+                        workspace.suppress_notification(&notification_id, cx);
+                    }
                 },
             ))
             .on_action(cx.listener(

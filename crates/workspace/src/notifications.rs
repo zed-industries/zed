@@ -288,6 +288,14 @@ impl Render for LanguageServerPrompt {
                             )
                             .child(
                                 h_flex()
+                                    .gap_2()
+                                    .child(
+                                        IconButton::new("suppress", IconName::XCircle)
+                                            .tooltip(Tooltip::text("Do not show until restart"))
+                                            .on_click(
+                                                cx.listener(|_, _, _, cx| cx.emit(SuppressEvent)),
+                                            ),
+                                    )
                                     .child(
                                         IconButton::new("copy", IconName::Copy)
                                             .on_click({
@@ -433,7 +441,7 @@ pub mod simple_message_notification {
         AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
         SharedString, Styled, div,
     };
-    use ui::prelude::*;
+    use ui::{Tooltip, prelude::*};
 
     use super::{Notification, SuppressEvent};
 
@@ -584,10 +592,6 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn suppress(&mut self, cx: &mut Context<Self>) {
-            cx.emit(SuppressEvent);
-        }
-
         pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
         }
@@ -597,7 +601,7 @@ pub mod simple_message_notification {
             self
         }
 
-        pub fn show_suppress_buggon(mut self, show: bool) -> Self {
+        pub fn show_suppress_button(mut self, show: bool) -> Self {
             self.show_suppress_button = show;
             self
         }
@@ -631,18 +635,26 @@ pub mod simple_message_notification {
                                 })
                                 .child(div().max_w_96().child((self.build_content)(window, cx))),
                         )
-                        .when(self.show_suppress_button, |this| {
-                            this.child(
-                                IconButton::new("suppress", IconName::Delete)
-                                    .on_click(cx.listener(|this, _, _, cx| this.suppress(cx))),
-                            )
-                        })
-                        .when(self.show_close_button, |this| {
-                            this.child(
-                                IconButton::new("close", IconName::Close)
-                                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
-                            )
-                        }),
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .when(self.show_suppress_button, |this| {
+                                    this.child(
+                                        IconButton::new("suppress", IconName::XCircle)
+                                            .tooltip(Tooltip::text("Do not show until restart"))
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(SuppressEvent);
+                                            })),
+                                    )
+                                })
+                                .when(self.show_close_button, |this| {
+                                    this.child(
+                                        IconButton::new("close", IconName::Close).on_click(
+                                            cx.listener(|this, _, _, cx| this.dismiss(cx)),
+                                        ),
+                                    )
+                                }),
+                        ),
                 )
                 .child(
                     h_flex()
