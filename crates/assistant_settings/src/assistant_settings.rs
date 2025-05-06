@@ -5,11 +5,11 @@ use std::sync::Arc;
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use anyhow::{Result, bail};
+use collections::{HashMap, IndexMap};
 use deepseek::Model as DeepseekModel;
 use feature_flags::{AgentStreamEditsFeatureFlag, Assistant2FeatureFlag, FeatureFlagAppExt};
-use gpui::{App, Pixels};
-use indexmap::IndexMap;
-use language_model::{CloudModel, LanguageModel};
+use gpui::{App, Pixels, SharedString};
+use language_model::{CloudModel, LanguageModel, LanguageModelId, LanguageModelProviderId};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{JsonSchema, schema::Schema};
@@ -89,9 +89,19 @@ pub struct AssistantSettings {
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
     pub single_file_review: bool,
+    pub models: HashMap<LanguageModelProviderId, HashMap<LanguageModelId, LanguageModelSetting>>,
 }
 
 impl AssistantSettings {
+    pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
+        let settings = Self::get_global(cx);
+        settings
+            .models
+            .get(&model.provider_id())?
+            .get(&model.id())?
+            .temperature
+    }
+
     pub fn stream_edits(&self, cx: &App) -> bool {
         cx.has_flag::<AgentStreamEditsFeatureFlag>() || self.stream_edits
     }
@@ -115,6 +125,14 @@ impl AssistantSettings {
     pub fn set_thread_summary_model(&mut self, provider: String, model: String) {
         self.thread_summary_model = Some(LanguageModelSelection { provider, model });
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct LanguageModelSetting {
+    #[schemars(schema_with = "providers_schema")]
+    pub provider: SharedString,
+    pub model: SharedString,
+    pub temperature: Option<f32>,
 }
 
 /// Assistant panel settings
@@ -226,6 +244,7 @@ impl AssistantSettingsContent {
                     notify_when_agent_waiting: None,
                     stream_edits: None,
                     single_file_review: None,
+                    models: Vec::new(),
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -255,6 +274,7 @@ impl AssistantSettingsContent {
                 notify_when_agent_waiting: None,
                 stream_edits: None,
                 single_file_review: None,
+                models: Vec::new(),
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -520,6 +540,7 @@ impl Default for VersionedAssistantSettingsContent {
             notify_when_agent_waiting: None,
             stream_edits: None,
             single_file_review: None,
+            models: Vec::new(),
         })
     }
 }
@@ -583,6 +604,9 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     single_file_review: Option<bool>,
+    /// Custom per-model settings
+    #[serde(default)]
+    models: Vec<LanguageModelSetting>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -695,8 +719,6 @@ pub struct LegacyAssistantSettingsContent {
 impl Settings for AssistantSettings {
     const KEY: Option<&'static str> = Some("agent");
 
-    const FALLBACK_KEY: Option<&'static str> = Some("assistant");
-
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AssistantSettingsContent;
@@ -750,6 +772,21 @@ impl Settings for AssistantSettings {
             merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
+
+            for model in value.models {
+                let setting = settings
+                    .models
+                    .entry(LanguageModelProviderId(model.provider.clone()))
+                    .or_default()
+                    .entry(LanguageModelId(model.model.clone()))
+                    .or_insert(model.clone());
+                let LanguageModelSetting {
+                    provider: _,
+                    model: _,
+                    temperature,
+                } = model;
+                setting.temperature = temperature;
+            }
 
             if let Some(profiles) = value.profiles {
                 settings
@@ -828,7 +865,6 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 mod tests {
     use fs::Fs;
     use gpui::{ReadGlobal, TestAppContext};
-    use settings::SettingsStore;
 
     use super::*;
 
@@ -883,6 +919,7 @@ mod tests {
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,
+                                models: Vec::new(),
                             },
                         )),
                     }
@@ -904,68 +941,5 @@ mod tests {
             serde_json_lenient::from_str(&raw_settings_value).unwrap();
 
         assert!(!assistant_settings.agent.is_version_outdated());
-    }
-
-    #[gpui::test]
-    async fn test_load_settings_from_old_key(cx: &mut TestAppContext) {
-        let fs = fs::FakeFs::new(cx.executor().clone());
-        fs.create_dir(paths::settings_file().parent().unwrap())
-            .await
-            .unwrap();
-
-        cx.update(|cx| {
-            let mut test_settings = settings::SettingsStore::test(cx);
-            let user_settings_content = r#"{
-            "assistant": {
-                "enabled": true,
-                "version": "2",
-                "default_model": {
-                  "provider": "zed.dev",
-                  "model": "gpt-99"
-                },
-            }}"#;
-            test_settings
-                .set_user_settings(user_settings_content, cx)
-                .unwrap();
-            cx.set_global(test_settings);
-            AssistantSettings::register(cx);
-        });
-
-        cx.run_until_parked();
-
-        let assistant_settings = cx.update(|cx| AssistantSettings::get_global(cx).clone());
-        assert!(assistant_settings.enabled);
-        assert!(!assistant_settings.using_outdated_settings_version);
-        assert_eq!(assistant_settings.default_model.model, "gpt-99");
-
-        cx.update_global::<SettingsStore, _>(|settings_store, cx| {
-            settings_store.update_user_settings::<AssistantSettings>(cx, |settings| {
-                *settings = AssistantSettingsContent {
-                    inner: Some(AssistantSettingsContentInner::for_v2(
-                        AssistantSettingsContentV2 {
-                            enabled: Some(false),
-                            default_model: Some(LanguageModelSelection {
-                                provider: "xai".to_owned(),
-                                model: "grok".to_owned(),
-                            }),
-                            ..Default::default()
-                        },
-                    )),
-                };
-            });
-        });
-
-        cx.run_until_parked();
-
-        let settings = cx.update(|cx| SettingsStore::global(cx).raw_user_settings().clone());
-
-        #[derive(Debug, Deserialize)]
-        struct AssistantSettingsTest {
-            assistant: AssistantSettingsContent,
-            agent: Option<serde_json_lenient::Value>,
-        }
-
-        let assistant_settings: AssistantSettingsTest = serde_json::from_value(settings).unwrap();
-        assert!(assistant_settings.agent.is_none());
     }
 }

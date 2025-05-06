@@ -8,6 +8,7 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_settings::AssistantSettings;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -1255,7 +1256,7 @@ impl MessageEditor {
                         messages: vec![request_message],
                         tools: vec![],
                         stop: vec![],
-                        temperature: None,
+                        temperature: AssistantSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))
