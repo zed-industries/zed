@@ -483,7 +483,9 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(|_, cx| cx.new(MaxModeTooltip::new().selected(max_turned_on)).into())
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| MaxModeTooltip::new().selected(max_turned_on)).into()
+                })
                 .into_any_element(),
         )
     }

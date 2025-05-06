@@ -34,7 +34,7 @@ impl Render for MaxModeTooltip {
                                 h_flex()
                                     .gap_0p5()
                                     .child(Icon::new(IconName::Check).size(IconSize::XSmall).color(Color::Accent))
-                                    .child(Label::new("On").size(LabelSize::XSmall).color(Color::Accent))
+                                    .child(Label::new("Turned On").size(LabelSize::XSmall).color(Color::Accent))
                             )
                     )
                 } else {
