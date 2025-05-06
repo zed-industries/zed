@@ -11,13 +11,13 @@ mod component_layout;
 
 pub use component_layout::*;
 
-use std::fmt::Display;
 use std::sync::LazyLock;
 
 use collections::HashMap;
 use gpui::{AnyElement, App, SharedString, Window};
 use linkme::distributed_slice;
 use parking_lot::RwLock;
+use strum::{Display, EnumString};
 
 pub fn components() -> ComponentRegistry {
     COMPONENT_DATA.read().clone()
@@ -242,43 +242,29 @@ pub trait Component {
 //     Deprecated,
 // }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Display, EnumString)]
 pub enum ComponentScope {
     Agent,
     Collaboration,
+    #[strum(serialize = "Data Display")]
     DataDisplay,
     Editor,
+    #[strum(serialize = "Images & Icons")]
     Images,
+    #[strum(serialize = "Forms & Input")]
     Input,
+    #[strum(serialize = "Layout & Structure")]
     Layout,
+    #[strum(serialize = "Loading & Progress")]
     Loading,
     Navigation,
+    #[strum(serialize = "Unsorted")]
     None,
     Notification,
+    #[strum(serialize = "Overlays & Layering")]
     Overlays,
     Status,
     Typography,
+    #[strum(serialize = "Version Control")]
     VersionControl,
-}
-
-impl Display for ComponentScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ComponentScope::Agent => write!(f, "Agent"),
-            ComponentScope::Collaboration => write!(f, "Collaboration"),
-            ComponentScope::DataDisplay => write!(f, "Data Display"),
-            ComponentScope::Editor => write!(f, "Editor"),
-            ComponentScope::Images => write!(f, "Images & Icons"),
-            ComponentScope::Input => write!(f, "Forms & Input"),
-            ComponentScope::Layout => write!(f, "Layout & Structure"),
-            ComponentScope::Loading => write!(f, "Loading & Progress"),
-            ComponentScope::Navigation => write!(f, "Navigation"),
-            ComponentScope::None => write!(f, "Unsorted"),
-            ComponentScope::Notification => write!(f, "Notification"),
-            ComponentScope::Overlays => write!(f, "Overlays & Layering"),
-            ComponentScope::Status => write!(f, "Status"),
-            ComponentScope::Typography => write!(f, "Typography"),
-            ComponentScope::VersionControl => write!(f, "Version Control"),
-        }
-    }
 }
