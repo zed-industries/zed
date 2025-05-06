@@ -12,6 +12,7 @@ use crate::{
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
 use anyhow::{Result, anyhow};
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
@@ -46,6 +47,7 @@ pub struct ExampleMetadata {
     pub revision: String,
     pub language_server: Option<LanguageServer>,
     pub max_assertions: Option<usize>,
+    pub profile_id: AgentProfileId,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +121,7 @@ impl ExampleContext {
                     text.to_string(),
                     ContextLoadResult::default(),
                     None,
+                    Vec::new(),
                     cx,
                 );
             })
@@ -233,9 +236,11 @@ impl ExampleContext {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
                     }
                 },
-                ThreadEvent::StreamedAssistantText(_, _)
+                ThreadEvent::NewRequest
+                | ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. } => {}
+                | ThreadEvent::UsePendingTools { .. }
+                | ThreadEvent::CompletionCanceled => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,
@@ -265,6 +270,12 @@ impl ExampleContext {
                 ThreadEvent::InvalidToolInput { .. } => {
                     println!("{log_prefix} invalid tool input");
                 }
+                ThreadEvent::MissingToolUse {
+                    tool_use_id: _,
+                    ui_text,
+                } => {
+                    println!("{log_prefix} {ui_text}");
+                }
                 ThreadEvent::ToolConfirmationNeeded => {
                     panic!(
                         "{}Bug: Tool confirmation should not be required in eval",
@@ -280,7 +291,6 @@ impl ExampleContext {
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged
-                | ThreadEvent::UsageUpdated(_)
                 | ThreadEvent::CancelEditing => {
                     tx.try_send(Ok(())).ok();
                     if std::env::var("ZED_EVAL_DEBUG").is_ok() {

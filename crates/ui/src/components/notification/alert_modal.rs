@@ -1,3 +1,4 @@
+use crate::component_prelude::*;
 use crate::prelude::*;
 use gpui::IntoElement;
 use smallvec::{SmallVec, smallvec};
@@ -79,6 +80,10 @@ impl ParentElement for AlertModal {
 impl Component for AlertModal {
     fn scope() -> ComponentScope {
         ComponentScope::Notification
+    }
+
+    fn status() -> ComponentStatus {
+        ComponentStatus::WorkInProgress
     }
 
     fn description() -> Option<&'static str> {

@@ -101,6 +101,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,
     pub selections_menu: bool,
+    pub agent_review: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -400,11 +401,15 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub quick_actions: Option<bool>,
-
-    /// Whether to show the selections menu in the editor toolbar
+    /// Whether to show the selections menu in the editor toolbar.
     ///
     /// Default: true
     pub selections_menu: Option<bool>,
+    /// Whether to display Agent review buttons in the editor toolbar.
+    /// Only applicable while reviewing a file edited by the Agent.
+    ///
+    /// Default: true
+    pub agent_review: Option<bool>,
 }
 
 /// Scrollbar related settings

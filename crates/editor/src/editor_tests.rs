@@ -6130,11 +6130,7 @@ async fn test_select_previous_with_single_caret(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndef«abcˇ»\n«abcˇ»");
-
-    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
-        .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 }
 
 #[gpui::test]
@@ -12650,7 +12646,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             Editor::from_state_proto(
                 workspace_entity,
                 ViewId {
-                    creator: Default::default(),
+                    creator: CollaboratorId::PeerId(PeerId::default()),
                     id: 0,
                 },
                 &mut state_message,
@@ -12737,7 +12733,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             Editor::from_state_proto(
                 workspace_entity,
                 ViewId {
-                    creator: Default::default(),
+                    creator: CollaboratorId::PeerId(PeerId::default()),
                     id: 0,
                 },
                 &mut state_message,

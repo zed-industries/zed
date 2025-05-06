@@ -6,16 +6,11 @@ use std::sync::OnceLock;
 use ui::{AnyElement, Component, ComponentScope, Window};
 use workspace::Workspace;
 
-use crate::{ActiveThread, ThreadStore};
+use crate::ActiveThread;
 
 /// Function type for creating agent component previews
-pub type PreviewFn = fn(
-    WeakEntity<Workspace>,
-    Entity<ActiveThread>,
-    WeakEntity<ThreadStore>,
-    &mut Window,
-    &mut App,
-) -> Option<AnyElement>;
+pub type PreviewFn =
+    fn(WeakEntity<Workspace>, Entity<ActiveThread>, &mut Window, &mut App) -> Option<AnyElement>;
 
 /// Distributed slice for preview registration functions
 #[distributed_slice]
@@ -32,7 +27,6 @@ pub trait AgentPreview: Component + Sized {
     fn agent_preview(
         workspace: WeakEntity<Workspace>,
         active_thread: Entity<ActiveThread>,
-        thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement>;
@@ -42,14 +36,14 @@ pub trait AgentPreview: Component + Sized {
 #[macro_export]
 macro_rules! register_agent_preview {
     ($type:ty) => {
-        #[linkme::distributed_slice($crate::ui::agent_preview::__ALL_AGENT_PREVIEWS)]
+        #[linkme::distributed_slice($crate::ui::preview::__ALL_AGENT_PREVIEWS)]
         static __REGISTER_AGENT_PREVIEW: fn() -> (
             component::ComponentId,
-            $crate::ui::agent_preview::PreviewFn,
+            $crate::ui::preview::PreviewFn,
         ) = || {
             (
                 <$type as component::Component>::id(),
-                <$type as $crate::ui::agent_preview::AgentPreview>::agent_preview,
+                <$type as $crate::ui::preview::AgentPreview>::agent_preview,
             )
         };
     };
@@ -75,14 +69,13 @@ pub fn get_agent_preview(
     id: &ComponentId,
     workspace: WeakEntity<Workspace>,
     active_thread: Entity<ActiveThread>,
-    thread_store: WeakEntity<ThreadStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let registry = get_or_init_registry();
     registry
         .get(id)
-        .and_then(|preview_fn| preview_fn(workspace, active_thread, thread_store, window, cx))
+        .and_then(|preview_fn| preview_fn(workspace, active_thread, window, cx))
 }
 
 /// Get all registered agent previews.

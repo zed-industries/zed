@@ -517,7 +517,7 @@ fn eval_from_pixels_constructor() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(indoc! {"
+            assertion: EvalAssertion::judge_diff(indoc! {"
                 - The diff contains a new `from_pixels` constructor
                 - The diff contains new tests for the `from_pixels` constructor
             "}),
@@ -967,7 +967,7 @@ impl EditAgentTest {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
-            agent: EditAgent::new(agent_model, action_log, Templates::new()),
+            agent: EditAgent::new(agent_model, project.clone(), action_log, Templates::new()),
             project,
             judge_model,
         }

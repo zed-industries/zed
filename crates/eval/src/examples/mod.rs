@@ -1,4 +1,5 @@
 use anyhow::Result;
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -13,6 +14,7 @@ use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 
 mod add_arg_to_trait_method;
 mod code_block_citations;
+mod comment_translation;
 mod file_search;
 mod planets;
 
@@ -22,6 +24,7 @@ pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
         Rc::new(add_arg_to_trait_method::AddArgToTraitMethod),
         Rc::new(code_block_citations::CodeBlockCitations),
         Rc::new(planets::Planets),
+        Rc::new(comment_translation::CommentTranslation),
     ];
 
     for example_path in list_declarative_examples(examples_dir).unwrap() {
@@ -54,12 +57,19 @@ impl DeclarativeExample {
             None
         };
 
+        let profile_id = if let Some(profile_name) = base.profile_name {
+            AgentProfileId(profile_name.into())
+        } else {
+            AgentProfileId::default()
+        };
+
         let metadata = ExampleMetadata {
             name,
             url: base.url,
             revision: base.revision,
             language_server,
             max_assertions: None,
+            profile_id,
         };
 
         Ok(DeclarativeExample {
@@ -94,6 +104,8 @@ pub struct ExampleToml {
     #[serde(default)]
     pub allow_preexisting_diagnostics: bool,
     pub prompt: String,
+    #[serde(default)]
+    pub profile_name: Option<String>,
     #[serde(default)]
     pub diff_assertions: BTreeMap<String, String>,
     #[serde(default)]
