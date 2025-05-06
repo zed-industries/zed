@@ -13,6 +13,10 @@ Here are some tips for creating effective rules:
 3. Use examples: If applicable, provide examples to illustrate your request.
 4. Break down complex tasks: For multi-step problems, consider breaking them into smaller, more manageable rules.
 
+## `.rules` files
+
+Zed supports including `.rules` files at the top-level of your repository. Here, you can include project-level instructions you'd like to have included in all of your interactions with the agent panel.
+
 ## Rules Library {#rules-library}
 
 The Rules Library is an interface for writing and managing rules. Like other text-driven UIs in Zed, it is a full editor with syntax highlighting, keyboard shortcuts, etc.
