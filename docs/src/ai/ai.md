@@ -1,8 +1,10 @@
 # AI
 
+Zed offers various features that integrate LLMs smoothly into the editor.
+
 <!-- todo! a summary that sells the new agent -->
 
-## AI in Zed
+## Setting up AI in Zed
 
 - [Models](./models.md): Information about the various language models available in Zed.
 
