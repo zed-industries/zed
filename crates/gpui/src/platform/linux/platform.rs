@@ -30,8 +30,6 @@ use crate::{
     WindowParams, px,
 };
 
-use super::LinuxKeyboardMapper;
-
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
@@ -142,7 +140,14 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
-        Box::new(LinuxKeyboardMapper::new())
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        {
+            Box::new(super::LinuxKeyboardMapper::new())
+        }
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        {
+            Box::new(crate::EmptyKeyboardMapper)
+        }
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
