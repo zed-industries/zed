@@ -17,8 +17,8 @@ impl MaxModeTooltip {
 }
 
 impl Render for MaxModeTooltip {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(_window, cx, |this, _, _| {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(window, cx, |this, _, _| {
             this.gap_1()
                 .map(|header| if self.selected {
                     header.child(

@@ -29,7 +29,7 @@ use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
-    Project,
+    Project, WorktreeId,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
@@ -684,6 +684,7 @@ impl RunningState {
         scenario: DebugScenario,
         task_context: TaskContext,
         buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
@@ -712,7 +713,7 @@ impl RunningState {
                     this.task_inventory().and_then(|inventory| {
                         inventory
                             .read(cx)
-                            .task_template_by_label(buffer, &build, cx)
+                            .task_template_by_label(buffer, worktree_id, &build, cx)
                     })
                 })?
                 else {

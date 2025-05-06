@@ -64,20 +64,8 @@ impl ActionLog {
                 let status;
                 let unreviewed_changes;
                 if is_created {
-                    let existing_file_content = if buffer
-                        .read(cx)
-                        .file()
-                        .map_or(false, |file| file.disk_state().exists())
-                    {
-                        Some(text_snapshot.as_rope().clone())
-                    } else {
-                        None
-                    };
-
                     base_text = Rope::default();
-                    status = TrackedBufferStatus::Created {
-                        existing_file_content,
-                    };
+                    status = TrackedBufferStatus::Created;
                     unreviewed_changes = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
@@ -140,7 +128,7 @@ impl ActionLog {
         };
 
         match tracked_buffer.status {
-            TrackedBufferStatus::Created { .. } | TrackedBufferStatus::Modified => {
+            TrackedBufferStatus::Created | TrackedBufferStatus::Modified => {
                 if buffer
                     .read(cx)
                     .file()
@@ -301,7 +289,7 @@ impl ActionLog {
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
-            TrackedBufferStatus::Created { .. } => {
+            TrackedBufferStatus::Created => {
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
             }
@@ -385,35 +373,19 @@ impl ActionLog {
             return Task::ready(Ok(()));
         };
 
-        match &tracked_buffer.status {
-            TrackedBufferStatus::Created {
-                existing_file_content,
-            } => {
-                let task = if let Some(existing_file_content) = existing_file_content {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.start_transaction();
-                        buffer.set_text("", cx);
-                        for chunk in existing_file_content.chunks() {
-                            buffer.append(chunk, cx);
-                        }
-                        buffer.end_transaction(cx);
-                    });
-                    self.project
-                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-                } else {
-                    buffer
-                        .read(cx)
-                        .entry_id(cx)
-                        .and_then(|entry_id| {
-                            self.project
-                                .update(cx, |project, cx| project.delete_entry(entry_id, false, cx))
-                        })
-                        .unwrap_or(Task::ready(Ok(())))
-                };
-
+        match tracked_buffer.status {
+            TrackedBufferStatus::Created => {
+                let delete = buffer
+                    .read(cx)
+                    .entry_id(cx)
+                    .and_then(|entry_id| {
+                        self.project
+                            .update(cx, |project, cx| project.delete_entry(entry_id, false, cx))
+                    })
+                    .unwrap_or(Task::ready(Ok(())));
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
-                task
+                delete
             }
             TrackedBufferStatus::Deleted => {
                 buffer.update(cx, |buffer, cx| {
@@ -647,8 +619,9 @@ enum ChangeAuthor {
     Agent,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
 enum TrackedBufferStatus {
-    Created { existing_file_content: Option<Rope> },
+    Created,
     Modified,
     Deleted,
 }
@@ -1037,64 +1010,6 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_overwriting_files(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/dir"),
-            json!({
-                "file1": "Lorem ipsum dolor"
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let file_path = project
-            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
-            .unwrap();
-
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| buffer.set_text("sit amet consecteur", cx));
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .await
-            .unwrap();
-        cx.run_until_parked();
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(0, 0)..Point::new(0, 19),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
-                }],
-            )]
-        );
-
-        action_log
-            .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], cx)
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
-        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
-        assert_eq!(
-            buffer.read_with(cx, |buffer, _cx| buffer.text()),
-            "Lorem ipsum dolor"
-        );
-    }
-
-    #[gpui::test(iterations = 10)]
     async fn test_deleting_files(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -1175,7 +1090,7 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer(file2_path, cx))
             .await
             .unwrap();
-        action_log.update(cx, |log, cx| log.buffer_created(buffer2.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
         action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
         project
@@ -1190,8 +1105,8 @@ mod tests {
                 buffer2.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 5),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "ipsum\n".into(),
                 }],
             )]
         );

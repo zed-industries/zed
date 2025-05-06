@@ -4,10 +4,13 @@ use dap::{
     adapters::InlineValueProvider,
 };
 use gpui::AsyncApp;
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
+use util::ResultExt;
 
 #[derive(Default)]
-pub(crate) struct PythonDebugAdapter;
+pub(crate) struct PythonDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
@@ -46,14 +49,6 @@ impl PythonDebugAdapter {
             request: config.request.to_dap(),
         }
     }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for PythonDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
     async fn fetch_latest_adapter_version(
         &self,
         delegate: &dyn DapDelegate,
@@ -161,6 +156,31 @@ impl DebugAdapter for PythonDebugAdapter {
             envs: HashMap::default(),
             request_args: self.request_args(config),
         })
+    }
+}
+
+#[async_trait(?Send)]
+impl DebugAdapter for PythonDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
+        &self,
+        delegate: &dyn DapDelegate,
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                self.install_binary(version, delegate).await?;
+            }
+        }
+
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
     }
 
     fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {

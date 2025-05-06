@@ -29,9 +29,9 @@ use task::TcpArgumentsTemplate;
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
         registry.add_adapter(Arc::from(CodeLldbDebugAdapter::default()));
-        registry.add_adapter(Arc::from(PythonDebugAdapter));
-        registry.add_adapter(Arc::from(PhpDebugAdapter));
-        registry.add_adapter(Arc::from(JsDebugAdapter));
+        registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
+        registry.add_adapter(Arc::from(PhpDebugAdapter::default()));
+        registry.add_adapter(Arc::from(JsDebugAdapter::default()));
         registry.add_adapter(Arc::from(GoDebugAdapter));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
     })

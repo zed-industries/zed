@@ -49,19 +49,19 @@ use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
 
-use crate::active_thread::{ActiveThread, ActiveThreadEvent};
+use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_diff::AgentDiff;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
-use crate::thread_history::{PastContext, PastThread, ThreadHistory};
-use crate::thread_store::{TextThreadStore, ThreadStore};
+use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
+use crate::thread_store::ThreadStore;
 use crate::{
     AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
     Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialUpsell, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu,
-    ToggleOptionsMenu,
+    OpenHistory, ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker,
+    ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -1155,50 +1155,12 @@ impl AssistantPanel {
             return;
         };
 
-        let markdown_language_task = workspace
-            .read(cx)
-            .app_state()
-            .languages
-            .language_for_name("Markdown");
         let Some(thread) = self.active_thread() else {
             return;
         };
-        cx.spawn_in(window, async move |_this, cx| {
-            let markdown_language = markdown_language_task.await?;
 
-            workspace.update_in(cx, |workspace, window, cx| {
-                let thread = thread.read(cx);
-                let markdown = thread.to_markdown(cx)?;
-                let thread_summary = thread
-                    .summary()
-                    .map(|summary| summary.to_string())
-                    .unwrap_or_else(|| "Thread".to_string());
-
-                let project = workspace.project().clone();
-                let buffer = project.update(cx, |project, cx| {
-                    project.create_local_buffer(&markdown, Some(markdown_language), cx)
-                });
-                let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone())
-                });
-
-                workspace.add_item_to_active_pane(
-                    Box::new(cx.new(|cx| {
-                        let mut editor =
-                            Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
-                        editor.set_breadcrumb_header(thread_summary);
-                        editor
-                    })),
-                    None,
-                    true,
-                    window,
-                    cx,
-                );
-
-                anyhow::Ok(())
-            })
-        })
-        .detach_and_log_err(cx);
+        active_thread::open_active_thread_as_markdown(thread, workspace, window, cx)
+            .detach_and_log_err(cx);
     }
 
     fn handle_assistant_configuration_event(
@@ -2229,11 +2191,11 @@ impl AssistantPanel {
                                     // TODO: Add keyboard navigation.
                                     match entry {
                                         HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![])
+                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
                                                 .into_any_element()
                                         }
                                         HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false, vec![])
+                                            PastContext::new(context, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
                                                 .into_any_element()
                                         }
                                     }

@@ -307,6 +307,11 @@
     // Whether to show agent review buttons in the editor toolbar.
     "agent_review": true
   },
+  // Titlebar related settings
+  "title_bar": {
+    // Whether to show the branch icon beside branch switcher in the title bar.
+    "show_branch_icon": false
+  },
   // Scrollbar related settings
   "scrollbar": {
     // When to show the scrollbar in the editor.
@@ -1321,6 +1326,9 @@
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "Elm": {
+      "tab_size": 4
     },
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
