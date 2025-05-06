@@ -16379,12 +16379,19 @@ impl Editor {
             font_weight: Some(MINIMAP_FONT_WEIGHT),
             ..Default::default()
         });
-        minimap.update_minimap_configuration(&self.minimap_settings);
+        minimap.update_minimap_configuration(&self.minimap_settings, cx);
         cx.new(|_| minimap)
     }
 
-    fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings) {
-        let minimap_line_highlight = if minimap_settings.highlight_current_line {
+    fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings, cx: &App) {
+        let highlight_current_line = minimap_settings.highlight_current_line.unwrap_or_else(|| {
+            matches!(
+                EditorSettings::get_global(cx).current_line_highlight,
+                CurrentLineHighlight::All | CurrentLineHighlight::Line
+            )
+        });
+
+        let minimap_line_highlight = if highlight_current_line {
             CurrentLineHighlight::Line
         } else {
             CurrentLineHighlight::None
@@ -18092,17 +18099,14 @@ impl Editor {
 
             let old_minimap_settings = self.minimap_settings;
             self.minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_settings != old_minimap_settings {
-                if self.minimap.as_ref().is_some() != self.minimap_settings.minimap_enabled() {
-                    self.minimap = self.create_minimap(window, cx);
-                } else if let Some(minimap_entity) = self.minimap.as_ref().filter(|_| {
-                    self.minimap_settings
-                        .minimap_configuration_changed(&old_minimap_settings)
-                }) {
-                    minimap_entity.update(cx, |minimap_editor, _| {
-                        minimap_editor.update_minimap_configuration(&self.minimap_settings)
-                    })
-                }
+            if self.minimap_settings != old_minimap_settings
+                && self.minimap.as_ref().is_some() != self.minimap_settings.minimap_enabled()
+            {
+                self.minimap = self.create_minimap(window, cx);
+            } else if let Some(minimap_entity) = self.minimap.as_ref() {
+                minimap_entity.update(cx, |minimap_editor, cx| {
+                    minimap_editor.update_minimap_configuration(&self.minimap_settings, cx)
+                })
             }
         }
 

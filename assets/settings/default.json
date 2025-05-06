@@ -377,7 +377,7 @@
     //    "thumb_border": "none"
     "thumb_border": "left_open",
     // Whether the currently active line should be highlighted in the minimap.
-    "highlight_current_line": false,
+    "highlight_current_line": null,
     // The width of the minimap in pixels.
     "width": 100,
     // The font size of the minimap in pixels.
