@@ -1,7 +1,5 @@
 # Zed AI Improvement
 
-<!-- todo - complete agent panel data collection -->
-
 ## Agent Panel
 
 ### Opt-In
