@@ -47,7 +47,7 @@ use ui::{
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
-use zed_actions::agent::OpenConfiguration;
+use zed_actions::agent::{OpenConfiguration, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
@@ -145,6 +145,10 @@ pub fn init(cx: &mut App) {
                             panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
                     }
+                })
+                .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
+                    window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
+                    window.refresh();
                 })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
                     set_trial_upsell_dismissed(false, cx);

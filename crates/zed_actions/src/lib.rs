@@ -186,7 +186,7 @@ pub mod icon_theme_selector {
 pub mod agent {
     use gpui::actions;
 
-    actions!(agent, [OpenConfiguration]);
+    actions!(agent, [OpenConfiguration, ResetOnboarding]);
 }
 
 pub mod assistant {
