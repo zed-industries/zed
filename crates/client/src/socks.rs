@@ -71,18 +71,15 @@ pub(crate) async fn connect_socks_proxy_stream(
     Ok(socks)
 }
 
-/// Parse a `Url´ to a valid Socks Proxy configuration
 fn parse_socks_proxy(proxy: &Url) -> Option<((String, u16), SocksVersion<'_>)> {
     let scheme = proxy.scheme();
     let socks_version = if scheme.starts_with("socks4") {
-        // Parse optional Identification when using Socks V4
         let identification = match proxy.username() {
             "" => None,
             username => Some(Socks4Identification { user_id: username }),
         };
         SocksVersion::V4(identification)
     } else if scheme.starts_with("socks") {
-        // Parse optional Authorization when using Socks V5
         let authorization = proxy.password().map(|password| Socks5Authorization {
             username: proxy.username(),
             password,
