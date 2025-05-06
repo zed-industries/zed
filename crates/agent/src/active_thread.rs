@@ -1782,8 +1782,8 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
 
         let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::FileCode)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::XSmall)
+            // .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Indicator)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
             .on_click(|_, window, cx| {
@@ -1820,11 +1820,13 @@ impl ActiveThread {
                 .child(
                     h_flex()
                         .pr_1()
-                        .gap_1()
+                        // .gap_1()
+                        .opacity(0.6)
+                        .hover(|style| style.opacity(1.))
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .shape(ui::IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
+                                // .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Indicator)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Accent,
                                     ThreadFeedback::Negative => Color::Ignored,
@@ -1841,8 +1843,8 @@ impl ActiveThread {
                         )
                         .child(
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .shape(ui::IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
+                                // .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Indicator)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Ignored,
                                     ThreadFeedback::Negative => Color::Accent,
@@ -1873,12 +1875,14 @@ impl ActiveThread {
                 .child(
                     h_flex()
                         .pr_1()
-                        .gap_1()
+                        // .gap_1()
+                        .opacity(0.6)
+                        .hover(|style| style.opacity(1.))
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
+                                // .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
@@ -1891,9 +1895,9 @@ impl ActiveThread {
                         )
                         .child(
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .icon_size(IconSize::XSmall)
+                                // .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::Indicator)
                                 .icon_color(Color::Ignored)
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
