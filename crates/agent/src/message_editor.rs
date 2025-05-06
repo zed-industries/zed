@@ -8,6 +8,7 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_settings::CompletionMode;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -42,7 +43,6 @@ use ui::{Disclosure, DocumentationSide, KeyBinding, PopoverMenuHandle, Tooltip, 
 use util::{ResultExt as _, maybe};
 use workspace::dock::DockPosition;
 use workspace::{CollaboratorId, Workspace};
-use zed_llm_client::CompletionMode;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;

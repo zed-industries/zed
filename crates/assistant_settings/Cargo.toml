@@ -27,6 +27,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 fs.workspace = true

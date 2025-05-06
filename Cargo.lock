@@ -612,6 +612,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]

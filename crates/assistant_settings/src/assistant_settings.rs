@@ -89,6 +89,7 @@ pub struct AssistantSettings {
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
     pub single_file_review: bool,
+    pub preferred_completion_mode: CompletionMode,
 }
 
 impl AssistantSettings {
@@ -226,6 +227,7 @@ impl AssistantSettingsContent {
                     notify_when_agent_waiting: None,
                     stream_edits: None,
                     single_file_review: None,
+                    preferred_completion_mode: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -255,6 +257,7 @@ impl AssistantSettingsContent {
                 notify_when_agent_waiting: None,
                 stream_edits: None,
                 single_file_review: None,
+                preferred_completion_mode: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -520,6 +523,7 @@ impl Default for VersionedAssistantSettingsContent {
             notify_when_agent_waiting: None,
             stream_edits: None,
             single_file_review: None,
+            preferred_completion_mode: None,
         })
     }
 }
@@ -583,6 +587,28 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     single_file_review: Option<bool>,
+
+    /// What completion mode to enable for new threads
+    ///
+    /// Default: normal
+    preferred_completion_mode: Option<CompletionMode>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMode {
+    #[default]
+    Normal,
+    Max,
+}
+
+impl From<CompletionMode> for zed_llm_client::CompletionMode {
+    fn from(value: CompletionMode) -> Self {
+        match value {
+            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
+            CompletionMode::Max => zed_llm_client::CompletionMode::Max,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -750,6 +776,10 @@ impl Settings for AssistantSettings {
             merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
+            merge(
+                &mut settings.preferred_completion_mode,
+                value.preferred_completion_mode,
+            );
 
             if let Some(profiles) = value.profiles {
                 settings
@@ -883,6 +913,7 @@ mod tests {
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,
+                                preferred_completion_mode: None,
                             },
                         )),
                     }
