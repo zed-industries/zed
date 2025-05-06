@@ -160,6 +160,7 @@ where
         if self
             .try_global::<FeatureFlags>()
             .is_some_and(|f| f.has_flag::<T>())
+            || true
         {
             self.defer_in(window, move |view, window, cx| {
                 callback(view, window, cx);

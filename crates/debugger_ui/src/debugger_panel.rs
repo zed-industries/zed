@@ -623,7 +623,7 @@ impl DebugPanel {
                         let past_debug_definition = past_debug_definition.clone();
 
                         let _ = workspace.update(cx, |this, cx| {
-                            let workspace = cx.weak_entity();
+                            let workspace = cx.entity();
                             this.toggle_modal(window, cx, |window, cx| {
                                 NewSessionModal::new(
                                     past_debug_definition,
