@@ -1037,7 +1037,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_ovewriting_files(cx: &mut TestAppContext) {
+    async fn test_overwriting_files(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
