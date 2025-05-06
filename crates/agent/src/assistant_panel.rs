@@ -2756,7 +2756,6 @@ impl Render for AssistantPanel {
                         .child(self.history.clone())
                         .into_any_element()
                 }
-                // Use of WithRemSize intentionally omitted as this view uses the buffer font size.
                 ActiveView::PromptEditor {
                     context_editor,
                     buffer_search_bar,
@@ -2764,14 +2763,10 @@ impl Render for AssistantPanel {
                 } => self
                     .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
                     .into_any_element(),
-                ActiveView::Configuration => {
-                    WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
-                        .flex()
-                        .flex_col()
-                        .size_full()
-                        .children(self.configuration.clone())
-                        .into_any_element()
-                }
+                ActiveView::Configuration => v_flex()
+                    .size_full()
+                    .children(self.configuration.clone())
+                    .into_any_element(),
             })
     }
 }
