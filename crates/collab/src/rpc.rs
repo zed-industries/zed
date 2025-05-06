@@ -2733,8 +2733,12 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
                 trial_started_at: billing_customer
                     .and_then(|billing_customer| billing_customer.trial_started_at)
                     .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
-                is_usage_based_billing_enabled: billing_preferences
-                    .map(|preferences| preferences.model_request_overages_enabled),
+                is_usage_based_billing_enabled: if session.is_staff() {
+                    Some(true)
+                } else {
+                    billing_preferences
+                        .map(|preferences| preferences.model_request_overages_enabled)
+                },
                 usage: usage.map(|usage| {
                     let plan = match plan {
                         proto::Plan::Free => zed_llm_client::Plan::Free,
