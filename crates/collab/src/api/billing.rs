@@ -1023,29 +1023,6 @@ async fn handle_customer_subscription_event(
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
     {
-        let llm_db = app
-            .llm_db
-            .clone()
-            .ok_or_else(|| anyhow!("LLM DB not initialized"))?;
-
-        let new_period_start_at =
-            chrono::DateTime::from_timestamp(subscription.current_period_start, 0)
-                .ok_or_else(|| anyhow!("No subscription period start"))?;
-        let new_period_end_at =
-            chrono::DateTime::from_timestamp(subscription.current_period_end, 0)
-                .ok_or_else(|| anyhow!("No subscription period end"))?;
-
-        llm_db
-            .transfer_existing_subscription_usage(
-                billing_customer.user_id,
-                &existing_subscription,
-                subscription_kind,
-                subscription.status.into(),
-                new_period_start_at,
-                new_period_end_at,
-            )
-            .await?;
-
         app.db
             .update_billing_subscription(
                 existing_subscription.id,
