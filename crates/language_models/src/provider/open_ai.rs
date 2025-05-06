@@ -372,14 +372,10 @@ pub fn into_open_ai(
                         },
                     };
 
-                    if let Some(last_assistant_message) = messages.iter_mut().rfind(|message| {
-                        matches!(message, open_ai::RequestMessage::Assistant { .. })
-                    }) {
-                        if let open_ai::RequestMessage::Assistant { tool_calls, .. } =
-                            last_assistant_message
-                        {
-                            tool_calls.push(tool_call);
-                        }
+                    if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
                             content: None,
