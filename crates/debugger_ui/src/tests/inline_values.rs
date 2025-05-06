@@ -45,13 +45,29 @@ async fn test_inline_values(executor: BackgroundExecutor, cx: &mut TestAppContex
 
     let fs = FakeFs::new(executor.clone());
     let source_code = r#"
+static mut GLOBAL: usize = 1;
+
 fn main() {
     let x = 10;
     let value = 42;
+    let y = 4;
     let tester = {
         let y = 10;
+        let y = 5;
+        let b = 3;
         vec![y, 20, 30]
     };
+
+    let caller = || {
+        let x = 3;
+        println!("x={}", x);
+    };
+
+    caller();
+
+    unsafe {
+        GLOBAL = 2;
+    }
 
     let result = value * 2 * x;
     println!("Simple test executed: value={}, result={}", value, result);
@@ -85,12 +101,26 @@ fn main() {
 
     client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
         Ok(dap::StackTraceResponse {
-            stack_frames: vec![stack_frame_for_line(2)],
+            stack_frames: vec![stack_frame_for_line(4)],
             total_frames: None,
         })
     });
 
-    let mut local_variables = vec![
+    client.on_request::<dap::requests::Evaluate, _>(move |_, args| {
+        assert_eq!("GLOBAL", args.expression);
+        Ok(dap::EvaluateResponse {
+            result: "1".into(),
+            type_: None,
+            presentation_hint: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            value_location_reference: None,
+        })
+    });
+
+    let local_variables = vec![
         Variable {
             name: "x".into(),
             value: "10".into(),
@@ -106,7 +136,7 @@ fn main() {
         },
         Variable {
             name: "y".into(),
-            value: "10".into(),
+            value: "4".into(),
             type_: None,
             presentation_hint: None,
             evaluate_name: None,
@@ -218,80 +248,31 @@ fn main() {
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(source_code, editor.snapshot(window, cx).text());
-    });
-
-    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
-        Ok(dap::StackTraceResponse {
-            stack_frames: vec![stack_frame_for_line(3)],
-            total_frames: None,
-        })
-    });
-    client
-        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-            reason: dap::StoppedEventReason::Pause,
-            description: None,
-            thread_id: Some(1),
-            preserve_focus_hint: None,
-            text: None,
-            all_threads_stopped: None,
-            hit_breakpoint_ids: None,
-        }))
-        .await;
-
-    cx.run_until_parked();
-
-    editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             r#"
+    static mut GLOBAL: 1: usize = 1;
+
     fn main() {
-        let x: 10 = 10;
+        let x = 10;
         let value = 42;
+        let y = 4;
         let tester = {
             let y = 10;
+            let y = 5;
+            let b = 3;
             vec![y, 20, 30]
         };
 
-        let result = value * 2 * x;
-        println!("Simple test executed: value={}, result={}", value, result);
-        assert!(true);
-    }
-    "#
-            .unindent(),
-            editor.snapshot(window, cx).text()
-        );
-    });
-
-    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
-        Ok(dap::StackTraceResponse {
-            stack_frames: vec![stack_frame_for_line(4)],
-            total_frames: None,
-        })
-    });
-    client
-        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-            reason: dap::StoppedEventReason::Pause,
-            description: None,
-            thread_id: Some(1),
-            preserve_focus_hint: None,
-            text: None,
-            all_threads_stopped: None,
-            hit_breakpoint_ids: None,
-        }))
-        .await;
-
-    cx.run_until_parked();
-
-    editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
-            r#"
-    fn main() {
-        let x: 10 = 10;
-        let value: 42 = 42;
-        let tester = {
-            let y = 10;
-            vec![y, 20, 30]
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
         };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
 
         let result = value * 2 * x;
         println!("Simple test executed: value={}, result={}", value, result);
@@ -324,15 +305,31 @@ fn main() {
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             r#"
+    static mut GLOBAL: 1: usize = 1;
+
     fn main() {
         let x: 10 = 10;
-        let value: 42 = 42;
+        let value = 42;
+        let y = 4;
         let tester = {
             let y = 10;
+            let y = 5;
+            let b = 3;
             vec![y, 20, 30]
         };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
 
         let result = value * 2 * x;
         println!("Simple test executed: value={}, result={}", value, result);
@@ -365,15 +362,31 @@ fn main() {
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             r#"
+    static mut GLOBAL: 1: usize = 1;
+
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
+        let y = 4;
         let tester = {
-            let y: 10 = 10;
+            let y = 10;
+            let y = 5;
+            let b = 3;
             vec![y, 20, 30]
         };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
 
         let result = value * 2 * x;
         println!("Simple test executed: value={}, result={}", value, result);
@@ -406,15 +419,31 @@ fn main() {
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             r#"
+    static mut GLOBAL: 1: usize = 1;
+
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
+        let y: 4 = 4;
         let tester = {
-            let y: 10 = 10;
+            let y = 10;
+            let y = 5;
+            let b = 3;
             vec![y, 20, 30]
         };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
 
         let result = value * 2 * x;
         println!("Simple test executed: value={}, result={}", value, result);
@@ -426,19 +455,104 @@ fn main() {
         );
     });
 
-    local_variables.push(Variable {
-        name: "tester".into(),
-        value: "size=3".into(),
-        type_: None,
-        presentation_hint: None,
-        evaluate_name: None,
-        variables_reference: 0,
-        named_variables: None,
-        indexed_variables: None,
-        memory_reference: None,
-        declaration_location_reference: None,
-        value_location_reference: None,
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(8)],
+            total_frames: None,
+        })
     });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 1: usize = 1;
+
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y: 4 = 4;
+        let tester = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
 
     client.on_request::<Variables, _>({
         let local_variables = Arc::new(local_variables.clone());
@@ -469,15 +583,31 @@ fn main() {
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             r#"
+    static mut GLOBAL: 1: usize = 1;
+
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
-        let tester: size=3 = {
-            let y = 10;
+        let y = 4;
+        let tester = {
+            let y: 10 = 10;
+            let y = 5;
+            let b = 3;
             vec![y, 20, 30]
         };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
 
         let result = value * 2 * x;
         println!("Simple test executed: value={}, result={}", value, result);
@@ -489,19 +619,47 @@ fn main() {
         );
     });
 
-    local_variables.push(Variable {
-        name: "result".into(),
-        value: "840".into(),
-        type_: None,
-        presentation_hint: None,
-        evaluate_name: None,
-        variables_reference: 0,
-        named_variables: None,
-        indexed_variables: None,
-        memory_reference: None,
-        declaration_location_reference: None,
-        value_location_reference: None,
-    });
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "5".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
 
     client.on_request::<Variables, _>({
         let local_variables = Arc::new(local_variables.clone());
@@ -532,15 +690,826 @@ fn main() {
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
-        assert_eq!(
+        pretty_assertions::assert_eq!(
             r#"
+    static mut GLOBAL: 1: usize = 1;
+
     fn main() {
         let x: 10 = 10;
         let value: 42 = 42;
-        let tester: size=3 = {
+        let y = 4;
+        let tester = {
             let y = 10;
+            let y: 5 = 5;
+            let b = 3;
             vec![y, 20, 30]
         };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "5".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "b".into(),
+            value: "3".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(11)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 1: usize = 1;
+
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y = 4;
+        let tester = {
+            let y = 10;
+            let y: 5 = 5;
+            let b: 3 = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "4".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "tester".into(),
+            value: "size=3".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(14)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 1: usize = 1;
+
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y: 4 = 4;
+        let tester: size=3 = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "4".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "tester".into(),
+            value: "size=3".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "callled".into(),
+            value: "<not available>".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(19)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 1: usize = 1;
+
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y: 4 = 4;
+        let tester: size=3 = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(15)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 1: usize = 1;
+
+    fn main() {
+        let x = 10;
+        let value = 42;
+        let y = 4;
+        let tester = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![Variable {
+        name: "x".into(),
+        value: "3".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 0,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+        declaration_location_reference: None,
+        value_location_reference: None,
+    }];
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(16)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 1: usize = 1;
+
+    fn main() {
+        let x = 10;
+        let value = 42;
+        let y = 4;
+        let tester = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller = || {
+            let x: 3 = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "4".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "tester".into(),
+            value: "size=3".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "caller".into(),
+            value: "<not available>".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::Evaluate, _>(move |_, args| {
+        assert_eq!("GLOBAL", args.expression);
+        Ok(dap::EvaluateResponse {
+            result: "2".into(),
+            type_: None,
+            presentation_hint: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            value_location_reference: None,
+        })
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(25)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 2: usize = 1;
+
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y: 4 = 4;
+        let tester: size=3 = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller: <not available> = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
+
+        let result = value * 2 * x;
+        println!("Simple test executed: value={}, result={}", value, result);
+        assert!(true);
+    }
+    "#
+            .unindent(),
+            editor.snapshot(window, cx).text()
+        );
+    });
+
+    let local_variables = vec![
+        Variable {
+            name: "x".into(),
+            value: "10".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "y".into(),
+            value: "4".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "value".into(),
+            value: "42".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "tester".into(),
+            value: "size=3".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "caller".into(),
+            value: "<not available>".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+        Variable {
+            name: "result".into(),
+            value: "840".into(),
+            type_: None,
+            presentation_hint: None,
+            evaluate_name: None,
+            variables_reference: 0,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+            declaration_location_reference: None,
+            value_location_reference: None,
+        },
+    ];
+    client.on_request::<Variables, _>({
+        let local_variables = Arc::new(local_variables.clone());
+        move |_, _| {
+            Ok(dap::VariablesResponse {
+                variables: (*local_variables).clone(),
+            })
+        }
+    });
+    client.on_request::<dap::requests::StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: vec![stack_frame_for_line(26)],
+            total_frames: None,
+        })
+    });
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        pretty_assertions::assert_eq!(
+            r#"
+    static mut GLOBAL: 2: usize = 1;
+
+    fn main() {
+        let x: 10 = 10;
+        let value: 42 = 42;
+        let y: 4 = 4;
+        let tester: size=3 = {
+            let y = 10;
+            let y = 5;
+            let b = 3;
+            vec![y, 20, 30]
+        };
+
+        let caller: <not available> = || {
+            let x = 3;
+            println!("x={}", x);
+        };
+
+        caller();
+
+        unsafe {
+            GLOBAL = 2;
+        }
 
         let result: 840 = value * 2 * x;
         println!("Simple test executed: value={}, result={}", value, result);

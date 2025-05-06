@@ -107,7 +107,7 @@ impl InlineValueProvider for RustInlineValueProvider {
 
             variable_names.extend(variable_names_in_scope.keys().cloned());
 
-            if node.kind() == "function_item" || node.kind() == "closure_expression" {
+            if matches!(node.kind(), "function_item" | "closure_expression") {
                 scope = VariableScope::Global;
             }
 
