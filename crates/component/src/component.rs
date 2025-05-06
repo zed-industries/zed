@@ -1,3 +1,12 @@
+//! # Component
+//!
+//! This module provides the Component trait, which is used to define
+//! components for visual testing and debugging.
+//!
+//! Additionally, it includes layouts for rendering component examples
+//! and example groups, as well as the distributed slice mechanism for
+//! registering components.
+
 use std::fmt::Display;
 use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
