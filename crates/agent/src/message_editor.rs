@@ -315,6 +315,10 @@ impl MessageEditor {
         self.editor.read(cx).text(cx).trim().is_empty()
     }
 
+    pub fn is_editor_fully_empty(&self, cx: &App) -> bool {
+        self.editor.read(cx).is_empty(cx)
+    }
+
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ConfiguredModel { model, provider }) = self
             .thread
