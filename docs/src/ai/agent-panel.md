@@ -14,7 +14,7 @@ After you've configured some LLM providers, you're ready to start working with t
 Type at the message editor and hit `enter` to submit your prompt to the LLM.
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
-You should start to see the responses stream in with indications of which tools the AI is using to fulfill your prompt.
+You should start to see the responses stream in with indications of which [tools](/ai/tools.md) the AI is using to fulfill your prompt.
 For example, if the AI chooses to perform an edit, you will see a card with the diff.
 
 ### Editing Messages
@@ -71,8 +71,8 @@ After you've configured your LLM providers—either via [a custom API key](/ai/c
 
 ## Using Tools
 
-Unlike the previous version, the new Agent Panel supports tool calling, which largely enables agentic collaboration with AI.
-Zed comes with several built-in tools that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
+The new Agent Panel supports tool calling, which enables agentic collaboration with AI.
+Zed comes with [several built-in tools](/ai/tools.md) that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
 
 You can also extend the set of available tools via [MCP Servers](/ai/mcp.md).
 
@@ -113,7 +113,7 @@ You should see a "No tools" disabled button if you select a model that falls int
 We want to support all of them, though!
 We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute.
 
-All [Zed's hosted models](/ai/models.md) support tool calling out-of-the-box.
+All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
 ### MCP Servers
 
@@ -122,8 +122,9 @@ Zed's UI will inform about this via a warning icon that appears close to the mod
 
 ## Text Threads
 
-"Text Threads" present your conversation with the LLM in a different format—as raw text.
-With it, you have full control over the conversation data and an editing experience that resembles writing code in a normal buffer.
+["Text threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
+With text threads, you have full control over the conversation data.
+You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
 
 For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers.
 We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
