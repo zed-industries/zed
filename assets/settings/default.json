@@ -1322,6 +1322,9 @@
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
+    "Elm": {
+      "tab_size": 4
+    },
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
