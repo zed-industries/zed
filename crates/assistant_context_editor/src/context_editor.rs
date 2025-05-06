@@ -43,8 +43,8 @@ use language_model_selector::{
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
-use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use project::{ProjectPath, lsp_store::LocalLspAdapterDelegate};
 use rope::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -100,7 +100,7 @@ actions!(
 
 #[derive(PartialEq, Clone)]
 pub enum InsertDraggedFiles {
-    ProjectPaths(Vec<PathBuf>),
+    ProjectPaths(Vec<ProjectPath>),
     ExternalFiles(Vec<PathBuf>),
 }
 
@@ -1725,7 +1725,7 @@ impl ContextEditor {
         );
     }
 
-    pub fn insert_dragged_files(
+    pub fn handle_insert_dragged_files(
         workspace: &mut Workspace,
         action: &InsertDraggedFiles,
         window: &mut Window,
@@ -1740,7 +1740,7 @@ impl ContextEditor {
             return;
         };
 
-        let project = workspace.project().clone();
+        let project = context_editor_view.read(cx).project.clone();
 
         let paths = match action {
             InsertDraggedFiles::ProjectPaths(paths) => Task::ready((paths.clone(), vec![])),
@@ -1751,22 +1751,17 @@ impl ContextEditor {
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
-                cx.spawn(async move |_, cx| {
+                cx.background_spawn(async move {
                     let mut paths = vec![];
                     let mut worktrees = vec![];
 
                     let opened_paths = futures::future::join_all(tasks).await;
-                    for (worktree, project_path) in opened_paths.into_iter().flatten() {
-                        let Ok(worktree_root_name) =
-                            worktree.read_with(cx, |worktree, _| worktree.root_name().to_string())
-                        else {
-                            continue;
-                        };
 
-                        let mut full_path = PathBuf::from(worktree_root_name.clone());
-                        full_path.push(&project_path.path);
-                        paths.push(full_path);
-                        worktrees.push(worktree);
+                    for entry in opened_paths {
+                        if let Some((worktree, project_path)) = entry.log_err() {
+                            worktrees.push(worktree);
+                            paths.push(project_path);
+                        }
                     }
 
                     (paths, worktrees)
@@ -1774,33 +1769,50 @@ impl ContextEditor {
             }
         };
 
-        window
-            .spawn(cx, async move |cx| {
+        context_editor_view.update(cx, |_, cx| {
+            cx.spawn_in(window, async move |this, cx| {
                 let (paths, dragged_file_worktrees) = paths.await;
-                let cmd_name = FileSlashCommand.name();
-
-                context_editor_view
-                    .update_in(cx, |context_editor, window, cx| {
-                        let file_argument = paths
-                            .into_iter()
-                            .map(|path| path.to_string_lossy().to_string())
-                            .collect::<Vec<_>>()
-                            .join(" ");
-
-                        context_editor.editor.update(cx, |editor, cx| {
-                            editor.insert("\n", window, cx);
-                            editor.insert(&format!("/{} {}", cmd_name, file_argument), window, cx);
-                        });
-
-                        context_editor.confirm_command(&ConfirmCommand, window, cx);
-
-                        context_editor
-                            .dragged_file_worktrees
-                            .extend(dragged_file_worktrees);
-                    })
-                    .log_err();
+                this.update_in(cx, |this, window, cx| {
+                    this.insert_dragged_files(paths, dragged_file_worktrees, window, cx);
+                })
+                .ok();
             })
             .detach();
+        })
+    }
+
+    pub fn insert_dragged_files(
+        &mut self,
+        opened_paths: Vec<ProjectPath>,
+        added_worktrees: Vec<Entity<Worktree>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut file_slash_command_args = vec![];
+        for project_path in opened_paths.into_iter() {
+            let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)
+            else {
+                continue;
+            };
+            let worktree_root_name = worktree.read(cx).root_name().to_string();
+            let mut full_path = PathBuf::from(worktree_root_name.clone());
+            full_path.push(&project_path.path);
+            file_slash_command_args.push(full_path.to_string_lossy().to_string());
+        }
+
+        let cmd_name = FileSlashCommand.name();
+
+        let file_argument = file_slash_command_args.join(" ");
+
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", window, cx);
+            editor.insert(&format!("/{} {}", cmd_name, file_argument), window, cx);
+        });
+        self.confirm_command(&ConfirmCommand, window, cx);
+        self.dragged_file_worktrees.extend(added_worktrees);
     }
 
     pub fn quote_selection(
