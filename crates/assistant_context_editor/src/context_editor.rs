@@ -1,5 +1,5 @@
+use agent_settings::AgentSettings;
 use anyhow::Result;
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
     DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
@@ -303,7 +303,7 @@ impl ContextEditor {
                 LanguageModelSelector::new(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model.clone()),
@@ -2462,7 +2462,7 @@ impl ContextEditor {
             })
             .layer(ElevationIndex::ModalSurface)
             .child(Label::new(
-                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
+                if AgentSettings::get_global(cx).are_live_diffs_enabled(cx) {
                     "Chat"
                 } else {
                     "Send"
@@ -3149,7 +3149,7 @@ impl Render for ContextEditor {
                                 .w_full()
                                 .justify_end()
                                 .when(
-                                    AssistantSettings::get_global(cx).are_live_diffs_enabled(cx),
+                                    AgentSettings::get_global(cx).are_live_diffs_enabled(cx),
                                     |buttons| {
                                         buttons
                                             .items_center()

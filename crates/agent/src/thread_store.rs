@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
+use agent_settings::{AgentProfile, AgentProfileId, AgentSettings};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -462,15 +462,15 @@ impl ThreadStore {
     }
 
     fn load_default_profile(&self, cx: &mut Context<Self>) {
-        let assistant_settings = AssistantSettings::get_global(cx);
+        let agent_settings = AgentSettings::get_global(cx);
 
-        self.load_profile_by_id(assistant_settings.default_profile.clone(), cx);
+        self.load_profile_by_id(agent_settings.default_profile.clone(), cx);
     }
 
     pub fn load_profile_by_id(&self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
-        let assistant_settings = AssistantSettings::get_global(cx);
+        let agent_settings = AgentSettings::get_global(cx);
 
-        if let Some(profile) = assistant_settings.profiles.get(&profile_id) {
+        if let Some(profile) = agent_settings.profiles.get(&profile_id) {
             self.load_profile(profile.clone(), cx);
         }
     }

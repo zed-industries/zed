@@ -3,12 +3,12 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/agent",
+    "crates/agent_settings",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
     "crates/assistant",
     "crates/assistant_context_editor",
-    "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
     "crates/assistant_tool",
@@ -216,7 +216,7 @@ askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
-assistant_settings = { path = "crates/assistant_settings" }
+agent_settings = { path = "crates/agent_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }

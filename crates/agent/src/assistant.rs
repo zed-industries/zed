@@ -27,7 +27,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfileId, AssistantSettings};
+use agent_settings::{AgentProfileId, AgentSettings};
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -117,7 +117,7 @@ pub fn init(
     language_registry: Arc<LanguageRegistry>,
     cx: &mut App,
 ) {
-    AssistantSettings::register(cx);
+    AgentSettings::register(cx);
     thread_store::init(cx);
     assistant_panel::init(cx);
     context_server_configuration::init(language_registry, cx);

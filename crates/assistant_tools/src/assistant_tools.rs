@@ -24,7 +24,7 @@ mod web_search_tool;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
 use feature_flags::{AgentStreamEditsFeatureFlag, FeatureFlagAppExt};
@@ -114,7 +114,7 @@ fn register_edit_file_tool(cx: &mut App) {
     registry.unregister_tool(EditFileTool);
     registry.unregister_tool(StreamingEditFileTool);
 
-    if AssistantSettings::get_global(cx).stream_edits(cx) {
+    if AgentSettings::get_global(cx).stream_edits(cx) {
         registry.register_tool(StreamingEditFileTool);
     } else {
         registry.register_tool(CreateFileTool);
@@ -160,7 +160,7 @@ mod tests {
     #[gpui::test]
     fn test_builtin_tool_schema_compatibility(cx: &mut App) {
         settings::init(cx);
-        AssistantSettings::register(cx);
+        AgentSettings::register(cx);
 
         let client = Client::new(
             Arc::new(FakeSystemClock::new()),

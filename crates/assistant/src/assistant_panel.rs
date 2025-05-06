@@ -3,6 +3,7 @@ use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
     DeployHistory, InlineAssistant, NewChat, terminal_inline_assistant::TerminalInlineAssistant,
 };
+use agent_settings::{AgentDockPosition, AgentSettings};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AssistantContext, AssistantPanelDelegate, ContextEditor, ContextEditorToolbarItem,
@@ -10,7 +11,6 @@ use assistant_context_editor::{
     DEFAULT_TAB_TITLE, InsertDraggedFiles, SlashCommandCompletionProvider,
     make_lsp_adapter_delegate,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use client::{Client, Status, proto};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
@@ -984,7 +984,7 @@ impl AssistantPanel {
                             .map_or(true, |default| default.provider.id() != provider.id())
                         {
                             if let Some(model) = provider.default_model(cx) {
-                                update_settings_file::<AssistantSettings>(
+                                update_settings_file::<AgentSettings>(
                                     this.fs.clone(),
                                     cx,
                                     move |settings, _| settings.set_model(model),
@@ -1231,10 +1231,10 @@ impl Panel for AssistantPanel {
     }
 
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
-        match AssistantSettings::get_global(cx).dock {
-            AssistantDockPosition::Left => DockPosition::Left,
-            AssistantDockPosition::Bottom => DockPosition::Bottom,
-            AssistantDockPosition::Right => DockPosition::Right,
+        match AgentSettings::get_global(cx).dock {
+            AgentDockPosition::Left => DockPosition::Left,
+            AgentDockPosition::Bottom => DockPosition::Bottom,
+            AgentDockPosition::Right => DockPosition::Right,
         }
     }
 
@@ -1243,22 +1243,18 @@ impl Panel for AssistantPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<AssistantSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => AssistantDockPosition::Left,
-                    DockPosition::Bottom => AssistantDockPosition::Bottom,
-                    DockPosition::Right => AssistantDockPosition::Right,
-                };
-                settings.set_dock(dock);
-            },
-        );
+        settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => AgentDockPosition::Left,
+                DockPosition::Bottom => AgentDockPosition::Bottom,
+                DockPosition::Right => AgentDockPosition::Right,
+            };
+            settings.set_dock(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or(settings.default_width)
@@ -1302,8 +1298,7 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
-            .then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {

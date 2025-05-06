@@ -13,7 +13,7 @@ path = "src/assistant_context_editor.rs"
 
 [dependencies]
 anyhow.workspace = true
-assistant_settings.workspace = true
+agent_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 chrono.workspace = true

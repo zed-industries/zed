@@ -8,7 +8,7 @@ mod terminal_inline_assistant;
 
 use std::sync::Arc;
 
-use assistant_settings::{AssistantSettings, LanguageModelSelection};
+use agent_settings::{AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
@@ -97,7 +97,7 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(Assistant::default());
-    AssistantSettings::register(cx);
+    AgentSettings::register(cx);
     SlashCommandSettings::register(cx);
 
     assistant_context_editor::init(client.clone(), cx);
@@ -126,13 +126,13 @@ pub fn init(
         filter.hide_namespace(Assistant::NAMESPACE);
     });
     Assistant::update_global(cx, |assistant, cx| {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
 
         assistant.set_enabled(settings.enabled, cx);
     });
     cx.observe_global::<SettingsStore>(|cx| {
         Assistant::update_global(cx, |assistant, cx| {
-            let settings = AssistantSettings::get_global(cx);
+            let settings = AgentSettings::get_global(cx);
             assistant.set_enabled(settings.enabled, cx);
         });
     })
@@ -159,7 +159,7 @@ fn init_language_model_settings(cx: &mut App) {
 }
 
 fn update_active_language_model_from_settings(cx: &mut App) {
-    let settings = AssistantSettings::get_global(cx);
+    let settings = AgentSettings::get_global(cx);
 
     fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
         language_model::SelectedModel {

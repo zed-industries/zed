@@ -19,7 +19,7 @@ test-support = ["multi_buffer/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
-assistant_settings.workspace = true
+agent_settings.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true

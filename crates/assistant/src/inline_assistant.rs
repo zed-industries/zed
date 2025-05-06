@@ -2,9 +2,9 @@ use crate::{
     Assistant, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
     CyclePreviousInlineAssist,
 };
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_context_editor::{RequestType, humanize_token_count};
-use assistant_settings::AssistantSettings;
 use client::{ErrorExt, telemetry::Telemetry};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::{
@@ -156,7 +156,7 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = AssistantSettings::get_global(cx).enabled;
+            let enabled = AgentSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
@@ -1761,7 +1761,7 @@ impl PromptEditor {
                 LanguageModelSelector::new(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model.clone()),

@@ -52,9 +52,9 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-watch",
@@ -132,6 +132,31 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+]
+
+[[package]]
+name = "agent_settings"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "deepseek",
+ "feature_flags",
+ "fs",
+ "gpui",
+ "indexmap",
+ "language_model",
+ "lmstudio",
+ "log",
+ "ollama",
+ "open_ai",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -475,9 +500,9 @@ dependencies = [
 name = "assistant"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
@@ -537,8 +562,8 @@ dependencies = [
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "chrono",
@@ -587,31 +612,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "assistant_settings"
-version = "0.1.0"
-dependencies = [
- "anthropic",
- "anyhow",
- "deepseek",
- "feature_flags",
- "fs",
- "gpui",
- "indexmap",
- "language_model",
- "lmstudio",
- "log",
- "ollama",
- "open_ai",
- "paths",
- "schemars",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "workspace-hack",
 ]
 
 [[package]]
@@ -711,9 +711,9 @@ dependencies = [
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "aho-corasick",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
  "buffer_diff",
  "chrono",
@@ -5004,8 +5004,8 @@ name = "eval"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-trait",
@@ -6064,9 +6064,9 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "askpass",
- "assistant_settings",
  "buffer_diff",
  "chrono",
  "collections",
@@ -18698,13 +18698,13 @@ version = "0.186.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "agent_settings",
  "anyhow",
  "ashpd",
  "askpass",
  "assets",
  "assistant",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_tools",
  "async-watch",
  "audio",

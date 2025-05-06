@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, builtin_profiles};
+use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;
@@ -42,7 +42,7 @@ enum Mode {
 
 impl Mode {
     pub fn choose_profile(_window: &mut Window, cx: &mut Context<ManageProfilesModal>) -> Self {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
 
         let mut builtin_profiles = Vec::new();
         let mut custom_profiles = Vec::new();
@@ -196,7 +196,7 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         let Some(profile) = settings.profiles.get(&profile_id).cloned() else {
             return;
         };
@@ -234,7 +234,7 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         let Some(profile) = settings.profiles.get(&profile_id).cloned() else {
             return;
         };
@@ -270,7 +270,7 @@ impl ManageProfilesModal {
         match &self.mode {
             Mode::ChooseProfile { .. } => {}
             Mode::NewProfile(mode) => {
-                let settings = AssistantSettings::get_global(cx);
+                let settings = AgentSettings::get_global(cx);
 
                 let base_profile = mode
                     .base_profile_id
@@ -332,7 +332,7 @@ impl ManageProfilesModal {
         profile: AgentProfile,
         cx: &mut Context<Self>,
     ) {
-        update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
+        update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
             move |settings, _cx| {
                 settings.create_profile(profile_id, profile).log_err();
             }
@@ -485,7 +485,7 @@ impl ManageProfilesModal {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
 
         let base_profile_name = mode.base_profile_id.as_ref().map(|base_profile_id| {
             settings
@@ -518,7 +518,7 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
 
         let profile_id = &settings.default_profile;
         let profile_name = settings
@@ -704,7 +704,7 @@ impl ManageProfilesModal {
 
 impl Render for ManageProfilesModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
 
         let go_back_item = div()
             .id("cancel-item")
