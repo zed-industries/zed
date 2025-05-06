@@ -208,8 +208,9 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
-                    .when(workspace::WorkspaceSettings::get_global(cx).show_onboarding_banner,
-                        |title_bar| title_bar.child(self.banner.clone())
+                    .when(
+                        TitleBarSettings::get_global(cx).show_onboarding_banner,
+                        |title_bar| title_bar.child(self.banner.clone()),
                     )
                     .child(
                         h_flex()
