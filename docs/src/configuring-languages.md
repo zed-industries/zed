@@ -259,7 +259,7 @@ Zed provides support for code formatting and linting to maintain consistent code
 
 ### Configuring Formatters
 
-Zed supports both built-in and external formatters. Detailed documentation lives [over here](configuring-zed#formatter). Configure formatters globally or per-language in your `settings.json`:
+Zed supports both built-in and external formatters. See [`formatter`](./configuring-zed.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
 ```json
 "languages": {
