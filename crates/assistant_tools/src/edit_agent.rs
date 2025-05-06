@@ -536,6 +536,7 @@ impl EditAgent {
 
         let request = LanguageModelRequest {
             messages,
+            // temperature: Some(0.5),
             ..Default::default()
         };
         Ok(self.model.stream_completion_text(request, cx).await?.stream)

@@ -1033,7 +1033,7 @@ impl EvalAssertion {
 
 fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut evaluated_count = 0;
-    report_progress(evaluated_count, iterations);
+    report_progress(evaluated_count, 0, iterations);
 
     let (tx, rx) = mpsc::channel();
 
@@ -1075,7 +1075,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         }
 
         evaluated_count += 1;
-        report_progress(evaluated_count, iterations);
+        report_progress(evaluated_count, failed_count, iterations);
     }
 
     let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
@@ -1146,8 +1146,13 @@ impl Display for EvalOutput {
     }
 }
 
-fn report_progress(evaluated_count: usize, iterations: usize) {
-    print!("\r\x1b[KEvaluated {}/{}", evaluated_count, iterations);
+fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usize) {
+    let failing_rate = failed_count as f32 / evaluated_count as f32;
+    let passing_rate = ((1. - failing_rate) * 100.).round() as usize;
+    print!(
+        "\r\x1b[KEvaluated {}/{} ({}% passing)",
+        evaluated_count, iterations, passing_rate
+    );
     std::io::stdout().flush().unwrap();
 }
 
