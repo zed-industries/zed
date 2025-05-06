@@ -1063,7 +1063,7 @@ impl AssistantPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.adjust_font_size(action.persist, px(1.0), cx);
+        self.handle_font_size_action(action.persist, px(1.0), cx);
     }
 
     pub fn decrease_font_size(
@@ -1072,21 +1072,35 @@ impl AssistantPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.adjust_font_size(action.persist, px(-1.0), cx);
+        self.handle_font_size_action(action.persist, px(-1.0), cx);
     }
 
-    fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
-        if persist {
-            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, cx| {
-                let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
-                let _ = settings
-                    .agent_font_size
-                    .insert(theme::clamp_font_size(agent_font_size).0);
-            });
-        } else {
-            theme::adjust_agent_font_size(cx, |size| {
-                *size += delta;
-            });
+    fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        match self.active_view {
+            ActiveView::Configuration | ActiveView::History | ActiveView::Thread { .. } => {
+                if persist {
+                    update_settings_file::<ThemeSettings>(
+                        self.fs.clone(),
+                        cx,
+                        move |settings, cx| {
+                            let agent_font_size =
+                                ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                            let _ = settings
+                                .agent_font_size
+                                .insert(theme::clamp_font_size(agent_font_size).0);
+                        },
+                    );
+                } else {
+                    theme::adjust_agent_font_size(cx, |size| {
+                        *size += delta;
+                    });
+                }
+            }
+            ActiveView::PromptEditor { .. } => {
+                // Prompt editor uses the buffer font size, so allow the action to propagate to the
+                // default handler that changes that font size.
+                cx.propagate();
+            }
         }
     }
 
