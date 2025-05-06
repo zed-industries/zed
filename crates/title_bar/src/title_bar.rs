@@ -54,7 +54,6 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
-
 pub fn init(cx: &mut App) {
     TitleBarSettings::register(cx);
 
