@@ -20,6 +20,177 @@ use gpui::{AnyElement, App, SharedString, Window};
 use linkme::distributed_slice;
 use parking_lot::RwLock;
 
+pub fn init() {
+    let component_fns: Vec<_> = __ALL_COMPONENTS.iter().cloned().collect();
+    for f in component_fns {
+        f();
+    }
+}
+
+pub fn components() -> AllComponents {
+    let data = COMPONENT_DATA.read();
+    AllComponents(data.components.clone())
+}
+
+pub fn register_component<T: Component>() {
+    let id = T::id();
+    let metadata = ComponentMetadata {
+        id: id.clone(),
+        name: SharedString::new_static(T::name()),
+        sort_name: SharedString::new_static(T::sort_name()),
+        scope: T::scope(),
+        description: T::description().map(Into::into),
+        preview: Some(T::preview),
+    };
+
+    let mut data = COMPONENT_DATA.write();
+    data.components.insert(id, metadata);
+}
+
+#[distributed_slice]
+pub static __ALL_COMPONENTS: [fn()] = [..];
+
+pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
+    LazyLock::new(|| RwLock::new(ComponentRegistry::default()));
+
+#[derive(Default)]
+pub struct ComponentRegistry {
+    components: HashMap<ComponentId, ComponentMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ComponentId(pub &'static str);
+
+#[derive(Clone)]
+pub struct ComponentMetadata {
+    id: ComponentId,
+    name: SharedString,
+    sort_name: SharedString,
+    scope: ComponentScope,
+    description: Option<SharedString>,
+    preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
+}
+
+impl ComponentMetadata {
+    pub fn id(&self) -> ComponentId {
+        self.id.clone()
+    }
+    pub fn name(&self) -> SharedString {
+        self.name.clone()
+    }
+
+    pub fn sort_name(&self) -> SharedString {
+        self.sort_name.clone()
+    }
+
+    pub fn scopeless_name(&self) -> SharedString {
+        self.name
+            .clone()
+            .split("::")
+            .last()
+            .unwrap_or(&self.name)
+            .to_string()
+            .into()
+    }
+
+    pub fn scope(&self) -> ComponentScope {
+        self.scope.clone()
+    }
+    pub fn description(&self) -> Option<SharedString> {
+        self.description.clone()
+    }
+    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
+        self.preview
+    }
+}
+
+pub struct AllComponents(pub HashMap<ComponentId, ComponentMetadata>);
+
+impl AllComponents {
+    pub fn new() -> Self {
+        AllComponents(HashMap::default())
+    }
+    pub fn all_previews(&self) -> Vec<&ComponentMetadata> {
+        self.0.values().filter(|c| c.preview.is_some()).collect()
+    }
+    pub fn all_previews_sorted(&self) -> Vec<ComponentMetadata> {
+        let mut previews: Vec<ComponentMetadata> =
+            self.all_previews().into_iter().cloned().collect();
+        previews.sort_by_key(|a| a.name());
+        previews
+    }
+    pub fn all(&self) -> Vec<&ComponentMetadata> {
+        self.0.values().collect()
+    }
+    pub fn all_sorted(&self) -> Vec<ComponentMetadata> {
+        let mut components: Vec<ComponentMetadata> = self.all().into_iter().cloned().collect();
+        components.sort_by_key(|a| a.name());
+        components
+    }
+}
+
+impl Deref for AllComponents {
+    type Target = HashMap<ComponentId, ComponentMetadata>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for AllComponents {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+// pub enum ComponentStatus {
+//     WorkInProgress,
+//     EngineeringReady,
+//     Live,
+//     Deprecated,
+// }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComponentScope {
+    Agent,
+    Collaboration,
+    DataDisplay,
+    Editor,
+    Images,
+    Input,
+    Layout,
+    Loading,
+    Navigation,
+    None,
+    Notification,
+    Overlays,
+    Status,
+    Typography,
+    VersionControl,
+}
+
+impl Display for ComponentScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ComponentScope::Agent => write!(f, "Agent"),
+            ComponentScope::Collaboration => write!(f, "Collaboration"),
+            ComponentScope::DataDisplay => write!(f, "Data Display"),
+            ComponentScope::Editor => write!(f, "Editor"),
+            ComponentScope::Images => write!(f, "Images & Icons"),
+            ComponentScope::Input => write!(f, "Forms & Input"),
+            ComponentScope::Layout => write!(f, "Layout & Structure"),
+            ComponentScope::Loading => write!(f, "Loading & Progress"),
+            ComponentScope::Navigation => write!(f, "Navigation"),
+            ComponentScope::None => write!(f, "Unsorted"),
+            ComponentScope::Notification => write!(f, "Notification"),
+            ComponentScope::Overlays => write!(f, "Overlays & Layering"),
+            ComponentScope::Status => write!(f, "Status"),
+            ComponentScope::Typography => write!(f, "Typography"),
+            ComponentScope::VersionControl => write!(f, "Version Control"),
+        }
+    }
+}
+
 /// Implement this trait to define a UI component. This will allow you to
 /// derive `RegisterComponent` on it, in tutn allowing you to preview the
 /// contents of the preview fn in `workspace: open component preview`.
@@ -108,183 +279,5 @@ pub trait Component {
     /// tooltip on hover, or a grid of icons showcasing all the icons available.
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         None
-    }
-}
-
-#[distributed_slice]
-pub static __ALL_COMPONENTS: [fn()] = [..];
-
-pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
-    LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
-
-pub struct ComponentRegistry {
-    components: HashMap<ComponentId, ComponentMetadata>,
-}
-
-impl ComponentRegistry {
-    fn new() -> Self {
-        ComponentRegistry {
-            components: HashMap::default(),
-        }
-    }
-}
-
-pub fn init() {
-    let component_fns: Vec<_> = __ALL_COMPONENTS.iter().cloned().collect();
-    for f in component_fns {
-        f();
-    }
-}
-
-pub fn register_component<T: Component>() {
-    let id = T::id();
-    let metadata = ComponentMetadata {
-        id: id.clone(),
-        name: SharedString::new_static(T::name()),
-        sort_name: SharedString::new_static(T::sort_name()),
-        scope: T::scope(),
-        description: T::description().map(Into::into),
-        preview: Some(T::preview),
-    };
-
-    let mut data = COMPONENT_DATA.write();
-    data.components.insert(id, metadata);
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ComponentId(pub &'static str);
-
-#[derive(Clone)]
-pub struct ComponentMetadata {
-    id: ComponentId,
-    name: SharedString,
-    sort_name: SharedString,
-    scope: ComponentScope,
-    description: Option<SharedString>,
-    preview: Option<fn(&mut Window, &mut App) -> Option<AnyElement>>,
-}
-
-impl ComponentMetadata {
-    pub fn id(&self) -> ComponentId {
-        self.id.clone()
-    }
-    pub fn name(&self) -> SharedString {
-        self.name.clone()
-    }
-
-    pub fn sort_name(&self) -> SharedString {
-        self.sort_name.clone()
-    }
-
-    pub fn scopeless_name(&self) -> SharedString {
-        self.name
-            .clone()
-            .split("::")
-            .last()
-            .unwrap_or(&self.name)
-            .to_string()
-            .into()
-    }
-
-    pub fn scope(&self) -> ComponentScope {
-        self.scope.clone()
-    }
-    pub fn description(&self) -> Option<SharedString> {
-        self.description.clone()
-    }
-    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> Option<AnyElement>> {
-        self.preview
-    }
-}
-
-pub struct AllComponents(pub HashMap<ComponentId, ComponentMetadata>);
-
-impl AllComponents {
-    pub fn new() -> Self {
-        AllComponents(HashMap::default())
-    }
-    pub fn all_previews(&self) -> Vec<&ComponentMetadata> {
-        self.0.values().filter(|c| c.preview.is_some()).collect()
-    }
-    pub fn all_previews_sorted(&self) -> Vec<ComponentMetadata> {
-        let mut previews: Vec<ComponentMetadata> =
-            self.all_previews().into_iter().cloned().collect();
-        previews.sort_by_key(|a| a.name());
-        previews
-    }
-    pub fn all(&self) -> Vec<&ComponentMetadata> {
-        self.0.values().collect()
-    }
-    pub fn all_sorted(&self) -> Vec<ComponentMetadata> {
-        let mut components: Vec<ComponentMetadata> = self.all().into_iter().cloned().collect();
-        components.sort_by_key(|a| a.name());
-        components
-    }
-}
-
-impl Deref for AllComponents {
-    type Target = HashMap<ComponentId, ComponentMetadata>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for AllComponents {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-pub fn components() -> AllComponents {
-    let data = COMPONENT_DATA.read();
-    AllComponents(data.components.clone())
-}
-
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub enum ComponentStatus {
-//     WorkInProgress,
-//     EngineeringReady,
-//     Live,
-//     Deprecated,
-// }
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ComponentScope {
-    Agent,
-    Collaboration,
-    DataDisplay,
-    Editor,
-    Images,
-    Input,
-    Layout,
-    Loading,
-    Navigation,
-    None,
-    Notification,
-    Overlays,
-    Status,
-    Typography,
-    VersionControl,
-}
-
-impl Display for ComponentScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ComponentScope::Agent => write!(f, "Agent"),
-            ComponentScope::Collaboration => write!(f, "Collaboration"),
-            ComponentScope::DataDisplay => write!(f, "Data Display"),
-            ComponentScope::Editor => write!(f, "Editor"),
-            ComponentScope::Images => write!(f, "Images & Icons"),
-            ComponentScope::Input => write!(f, "Forms & Input"),
-            ComponentScope::Layout => write!(f, "Layout & Structure"),
-            ComponentScope::Loading => write!(f, "Loading & Progress"),
-            ComponentScope::Navigation => write!(f, "Navigation"),
-            ComponentScope::None => write!(f, "Unsorted"),
-            ComponentScope::Notification => write!(f, "Notification"),
-            ComponentScope::Overlays => write!(f, "Overlays & Layering"),
-            ComponentScope::Status => write!(f, "Status"),
-            ComponentScope::Typography => write!(f, "Typography"),
-            ComponentScope::VersionControl => write!(f, "Version Control"),
-        }
     }
 }
