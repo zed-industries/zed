@@ -127,6 +127,10 @@ impl Model {
             _ => None,
         }
     }
+
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        return true;
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -140,6 +144,10 @@ pub struct Request {
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
@@ -184,12 +192,17 @@ pub enum Prediction {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
+    #[serde(rename = "auto")]
     Auto,
+    #[serde(rename = "required")]
     Required,
+    #[serde(rename = "none")]
     None,
-    Other(ToolDefinition),
+    #[serde(rename = "any")]
+    Any,
+    Function(ToolDefinition),
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
