@@ -16,9 +16,9 @@ pub struct LmStudioEmbeddingProvider {
 }
 
 #[derive(Serialize)]
-struct LmStudioEmbeddingRequest {
-    model: String,
-    prompt: String,
+struct LmStudioEmbeddingRequest<'a> {
+    model: &'a str,
+    prompt: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -40,8 +40,8 @@ impl EmbeddingProvider for LmStudioEmbeddingProvider {
 
         futures::future::try_join_all(texts.iter().map(|to_embed| {
             let request = LmStudioEmbeddingRequest {
-                model: model.to_string(),
-                prompt: to_embed.text.to_string(),
+                model,
+                prompt: to_embed.text,
             };
 
             let request = serde_json::to_string(&request).unwrap();

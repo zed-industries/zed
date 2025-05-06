@@ -17,9 +17,9 @@ pub struct OllamaEmbeddingProvider {
 }
 
 #[derive(Serialize)]
-struct OllamaEmbeddingRequest {
-    model: String,
-    prompt: String,
+struct OllamaEmbeddingRequest<'a> {
+    model: &'a str,
+    prompt: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -35,7 +35,6 @@ impl OllamaEmbeddingProvider {
 
 impl EmbeddingProvider for OllamaEmbeddingProvider {
     fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>> {
-        //
         let model = match self.model {
             OllamaEmbeddingModel::NomicEmbedText => "nomic-embed-text",
             OllamaEmbeddingModel::MxbaiEmbedLarge => "mxbai-embed-large",
@@ -43,8 +42,8 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
 
         futures::future::try_join_all(texts.iter().map(|to_embed| {
             let request = OllamaEmbeddingRequest {
-                model: model.to_string(),
-                prompt: to_embed.text.to_string(),
+                model,
+                prompt: to_embed.text,
             };
 
             let request = serde_json::to_string(&request).unwrap();
