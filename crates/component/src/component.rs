@@ -3,23 +3,45 @@ use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
 use collections::HashMap;
-use gpui::{
-    AnyElement, App, IntoElement, Pixels, RenderOnce, SharedString, Window, div, pattern_slash,
-    prelude::*, px, rems,
-};
+use gpui::{AnyElement, App, SharedString, Window};
 use linkme::distributed_slice;
 use parking_lot::RwLock;
-use theme::ActiveTheme;
 
+mod component_layout;
+
+pub use component_layout::*;
+
+/// Implement this trait to define a UI component. This will allow you to
+/// derive `RegisterComponent` on it, in tutn allowing you to preview the
+/// contents of the preview fn in `workspace: open component preview`.
+///
+/// This can be useful for visual debugging and testing, documenting UI
+/// patterns, or simply showing all the variants of a component.
+///
+/// Generally you will want to implement at least `scope` and `preview`
+/// from this trait, so you can preview the component, and it will show up
+/// in a section that makes sense.
 pub trait Component {
+    /// The component's unique identifier.
+    ///
+    /// Used to access previews, or state for more
+    /// complex, stateful components.
+    fn id() -> ComponentId {
+        ComponentId(Self::name())
+    }
+    /// Returns the scope of the component.
+    ///
+    /// This scope is used to determine how components and
+    /// their previews are displayed and organized.
     fn scope() -> ComponentScope {
         ComponentScope::None
     }
+    /// The name of the component.
+    ///
+    /// This name is used to identify the component
+    /// and is usually derived from the component's type.
     fn name() -> &'static str {
         std::any::type_name::<Self>()
-    }
-    fn id() -> ComponentId {
-        ComponentId(Self::name())
     }
     /// Returns a name that the component should be sorted by.
     ///
@@ -37,9 +59,44 @@ pub trait Component {
     fn sort_name() -> &'static str {
         Self::name()
     }
+    /// An optional description of the component.
+    ///
+    /// This will be displayed in the component's preview. To show a
+    /// component's doc comment as it's description, derive `Documented`.
+    ///
+    /// Example:
+    ///
+    /// ```
+    /// /// This is a doc comment.
+    /// #[derive(Documented)]
+    /// struct MyComponent;
+    ///
+    /// impl MyComponent {
+    ///     fn description() -> Option<&'static str> {
+    ///         Some(Self::DOCS)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// This will result in "This is a doc comment." being passed
+    /// to the component's description.
     fn description() -> Option<&'static str> {
         None
     }
+    /// The component's preview.
+    ///
+    /// An element returned here will be shown in the component's preview.
+    ///
+    /// Useful component helpers:
+    /// - [`component::single_example`]
+    /// - [`component::component_group`]
+    /// - [`component::component_group_with_title`]
+    ///
+    /// Note: Any arbitrary element can be returned here.
+    ///
+    /// This is useful for displaying related UI to the component you are
+    /// trying to preview, such as a button that opens a modal or shows a
+    /// tooltip on hover, or a grid of icons showcasing all the icons available.
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         None
     }
@@ -241,204 +298,4 @@ impl Display for ComponentScope {
             ComponentScope::VersionControl => write!(f, "Version Control"),
         }
     }
-}
-
-/// A single example of a component.
-#[derive(IntoElement)]
-pub struct ComponentExample {
-    pub variant_name: SharedString,
-    pub description: Option<SharedString>,
-    pub element: AnyElement,
-    pub width: Option<Pixels>,
-}
-
-impl RenderOnce for ComponentExample {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        div()
-            .pt_2()
-            .map(|this| {
-                if let Some(width) = self.width {
-                    this.w(width)
-                } else {
-                    this.w_full()
-                }
-            })
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .child(self.variant_name.clone())
-                            .text_size(rems(1.0))
-                            .text_color(cx.theme().colors().text),
-                    )
-                    .when_some(self.description, |this, description| {
-                        this.child(
-                            div()
-                                .text_size(rems(0.875))
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(description.clone()),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .w_full()
-                    .rounded_xl()
-                    .min_h(px(100.))
-                    .justify_center()
-                    .p_8()
-                    .border_1()
-                    .border_color(cx.theme().colors().border.opacity(0.5))
-                    .bg(pattern_slash(
-                        cx.theme().colors().surface_background.opacity(0.5),
-                        12.0,
-                        12.0,
-                    ))
-                    .shadow_sm()
-                    .child(self.element),
-            )
-            .into_any_element()
-    }
-}
-
-impl ComponentExample {
-    pub fn new(variant_name: impl Into<SharedString>, element: AnyElement) -> Self {
-        Self {
-            variant_name: variant_name.into(),
-            element,
-            description: None,
-            width: None,
-        }
-    }
-
-    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    pub fn width(mut self, width: Pixels) -> Self {
-        self.width = Some(width);
-        self
-    }
-}
-
-/// A group of component examples.
-#[derive(IntoElement)]
-pub struct ComponentExampleGroup {
-    pub title: Option<SharedString>,
-    pub examples: Vec<ComponentExample>,
-    pub width: Option<Pixels>,
-    pub grow: bool,
-    pub vertical: bool,
-}
-
-impl RenderOnce for ComponentExampleGroup {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        div()
-            .flex_col()
-            .text_sm()
-            .text_color(cx.theme().colors().text_muted)
-            .map(|this| {
-                if let Some(width) = self.width {
-                    this.w(width)
-                } else {
-                    this.w_full()
-                }
-            })
-            .when_some(self.title, |this, title| {
-                this.gap_4().child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .pb_1()
-                        .child(div().h_px().w_4().bg(cx.theme().colors().border))
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_size(px(10.))
-                                .child(title.to_uppercase()),
-                        )
-                        .child(
-                            div()
-                                .h_px()
-                                .w_full()
-                                .flex_1()
-                                .bg(cx.theme().colors().border),
-                        ),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .w_full()
-                    .gap_6()
-                    .children(self.examples)
-                    .into_any_element(),
-            )
-            .into_any_element()
-    }
-}
-
-impl ComponentExampleGroup {
-    pub fn new(examples: Vec<ComponentExample>) -> Self {
-        Self {
-            title: None,
-            examples,
-            width: None,
-            grow: false,
-            vertical: false,
-        }
-    }
-    pub fn with_title(title: impl Into<SharedString>, examples: Vec<ComponentExample>) -> Self {
-        Self {
-            title: Some(title.into()),
-            examples,
-            width: None,
-            grow: false,
-            vertical: false,
-        }
-    }
-    pub fn width(mut self, width: Pixels) -> Self {
-        self.width = Some(width);
-        self
-    }
-    pub fn grow(mut self) -> Self {
-        self.grow = true;
-        self
-    }
-    pub fn vertical(mut self) -> Self {
-        self.vertical = true;
-        self
-    }
-}
-
-pub fn single_example(
-    variant_name: impl Into<SharedString>,
-    example: AnyElement,
-) -> ComponentExample {
-    ComponentExample::new(variant_name, example)
-}
-
-pub fn empty_example(variant_name: impl Into<SharedString>) -> ComponentExample {
-    ComponentExample::new(variant_name, div().w_full().text_center().items_center().text_xs().opacity(0.4).child("This space is intentionally left blank. It indicates a case that should render nothing.").into_any_element())
-}
-
-pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {
-    ComponentExampleGroup::new(examples)
-}
-
-pub fn example_group_with_title(
-    title: impl Into<SharedString>,
-    examples: Vec<ComponentExample>,
-) -> ComponentExampleGroup {
-    ComponentExampleGroup::with_title(title, examples)
 }
