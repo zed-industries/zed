@@ -164,7 +164,7 @@ impl ComponentPreview {
         })
         .detach();
 
-        let sorted_components = components().all_sorted();
+        let sorted_components = components().sorted_components();
         let selected_index = selected_index.into().unwrap_or(0);
         let active_page = active_page.unwrap_or(PreviewPage::AllComponents);
         let filter_editor =
@@ -197,7 +197,7 @@ impl ComponentPreview {
             workspace,
             project,
             active_page,
-            component_map: components().0,
+            component_map: components().component_map(),
             components: sorted_components,
             component_list,
             cursor_index: selected_index,
@@ -971,7 +971,7 @@ impl SerializableItem for ComponentPreview {
         } else {
             let component_str = deserialized_active_page.0;
             let component_registry = components();
-            let all_components = component_registry.all();
+            let all_components = component_registry.components();
             let found_component = all_components.iter().find(|c| c.id().0 == component_str);
 
             if let Some(component) = found_component {
