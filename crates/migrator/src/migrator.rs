@@ -589,7 +589,7 @@ mod tests {
             Some(
                 r#"
                 {
-                    "assistant": {
+                    "agent": {
                         "profiles": {
                             "custom": {
                                 "name": "Custom",
@@ -627,7 +627,7 @@ mod tests {
             Some(
                 r#"
                 {
-                    "assistant": {
+                    "agent": {
                         "profiles": {
                             "custom": {
                                 "name": "Custom",
@@ -663,7 +663,24 @@ mod tests {
                     }
                 }
             "#,
-            None,
+            Some(
+                r#"
+                {
+                    "agent": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "diagnostics": true,
+                                    "find_path": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            ),
         )
     }
 
@@ -687,7 +704,7 @@ mod tests {
             Some(
                 r#"
                 {
-                    "assistant": {
+                    "agent": {
                         "profiles": {
                             "default": {
                                 "tools": {
