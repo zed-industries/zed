@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use assistant_context_editor::SavedContextMetadata;
-use chrono::{Datelike as _, NaiveDate, TimeDelta, Utc};
+use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -140,10 +140,14 @@ impl ThreadHistory {
 
         let bg_task = cx.background_spawn(async move {
             let mut bucket = None;
-            let today = Utc::now().naive_local().date();
+            let today = Local::now().naive_local().date();
 
             for (index, entry) in all_entries.iter().enumerate() {
-                let entry_date = entry.updated_at().naive_local().date();
+                let entry_date = entry
+                    .updated_at()
+                    .with_timezone(&Local)
+                    .naive_local()
+                    .date();
                 let entry_bucket = TimeBucket::from_dates(today, entry_date);
 
                 if Some(entry_bucket) != bucket {
