@@ -4,20 +4,20 @@
 
 While Zed offers hosted versions of models through our various plans, we're always happy to support users wanting to supply their own API keys for LLM providers.
 
->Using your own API keys is ***free*** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
+> Using your own API keys is **_free_** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
 
 ## Supported LLM Providers
 
-| Provider | Tool Use Supported  |
-| ---------| ------------------- |
-| [Anthropic](#anthropic) | ✅ |
-| [GitHub Copilot Chat](#github-copilot-chat) | In Some Cases |
-| [Google AI](#google-ai) | ✅ |
-| [Ollama](#ollama) | ✅ |
-| [OpenAI](#openai) | ✅ |
-| [DeepSeek](#deepseek) | 🚫 |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫 |
-| [LM Studio](#lmstudio) | 🚫 |
+| Provider                                        | Tool Use Supported |
+| ----------------------------------------------- | ------------------ |
+| [Anthropic](#anthropic)                         | ✅                 |
+| [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
+| [Google AI](#google-ai)                         | ✅                 |
+| [Ollama](#ollama)                               | ✅                 |
+| [OpenAI](#openai)                               | ✅                 |
+| [DeepSeek](#deepseek)                           | 🚫                 |
+| [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
+| [LM Studio](#lmstudio)                          | 🚫                 |
 
 ## Providers {#providers}
 
@@ -27,7 +27,7 @@ Below you can find all the supported providers available so far.
 
 ### Anthropic {#anthropic}
 
->🔨Supports tool use
+> 🔨Supports tool use
 
 You can use Anthropic models with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
@@ -86,14 +86,14 @@ by changing the mode in of your models configuration to `thinking`, for example:
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
->🔨Supports tool use in some cases.
->See [here](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset
+> 🔨Supports tool use in some cases.
+> See [here](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset
 
 You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
 ### Google AI {#google-ai}
 
->🔨Supports tool use
+> 🔨Supports tool use
 
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
@@ -129,7 +129,7 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Ollama {#ollama}
 
->🔨Supports tool use
+> 🔨Supports tool use
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
@@ -178,7 +178,7 @@ You may also optionally specify a value for `keep_alive` for each available mode
 
 ### OpenAI {#openai}
 
->🔨Supports tool use
+> 🔨Supports tool use
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits

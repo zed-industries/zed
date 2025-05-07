@@ -1,6 +1,7 @@
 # Text Threads
 
 <!-- todo! overview was resurrected content and might need cleanup / reorganized  -->
+
 ## Overview {#overview}
 
 Text threads in the [Agent Panel](./agent-panel.md) function similarly to any other editor. You can use custom key bindings and work with multiple cursors, allowing for seamless transitions between coding and engaging in discussions with the language models.

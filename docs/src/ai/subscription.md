@@ -2,7 +2,7 @@
 
 Zed's hosted models are offered via subscription to Zed Pro or Zed Business.
 
->Using your own API keys is ***free*** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
+> Using your own API keys is **_free_** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
 
 See the following pages for specific aspects of our subscription offering:
 
