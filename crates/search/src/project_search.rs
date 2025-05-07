@@ -2768,7 +2768,7 @@ pub mod tests {
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
                     "\n\nconst FOUR: usize = one::ONE + three::THREE;",
-                    "Search view results should contain the queried result in the previosly excluded file with filters disabled"
+                    "Search view results should contain the queried result in the previously excluded file with filters toggled off"
                 );
             });
             })
