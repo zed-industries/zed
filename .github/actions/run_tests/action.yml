@@ -20,6 +20,4 @@ runs:
 
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      run: |
-        export DISPLAY=:99
-        cargo nextest run --workspace --no-fail-fast
+      run: xvfb-run --auto-servernum cargo nextest run --workspace --no-fail-fast
