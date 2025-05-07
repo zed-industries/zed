@@ -370,8 +370,6 @@
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
-    // Whether to show code action buttons in the gutter.
-    "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
     // Whether to show breakpoints in the gutter.

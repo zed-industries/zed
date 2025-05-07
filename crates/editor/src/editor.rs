@@ -1020,7 +1020,6 @@ pub struct EditorSnapshot {
     show_gutter: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
-    show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     git_blame_gutter_max_author_length: Option<usize>,
@@ -2212,7 +2211,6 @@ impl Editor {
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
-            show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
@@ -6698,69 +6696,6 @@ impl Editor {
 
     pub fn edit_prediction_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
-    }
-
-    fn render_code_actions_indicator(
-        &self,
-        _style: &EditorStyle,
-        row: DisplayRow,
-        is_active: bool,
-        breakpoint: Option<&(Anchor, Breakpoint)>,
-        cx: &mut Context<Self>,
-    ) -> Option<IconButton> {
-        let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let show_tooltip = !self.context_menu_visible();
-
-        if self.available_code_actions.is_some() {
-            Some(
-                IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(color)
-                    .toggle_state(is_active)
-                    .when(show_tooltip, |this| {
-                        this.tooltip({
-                            let focus_handle = self.focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Toggle Code Actions",
-                                    &ToggleCodeActions {
-                                        deployed_from_indicator: None,
-                                        quick_launch: false,
-                                    },
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                    })
-                    .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-                        let quick_launch = e.down.button == MouseButton::Left;
-                        window.focus(&editor.focus_handle(cx));
-                        editor.toggle_code_actions(
-                            &ToggleCodeActions {
-                                deployed_from_indicator: Some(row),
-                                quick_launch,
-                            },
-                            window,
-                            cx,
-                        );
-                    }))
-                    .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                        editor.set_breakpoint_context_menu(
-                            row,
-                            position,
-                            event.down.position,
-                            window,
-                            cx,
-                        );
-                    })),
-            )
-        } else {
-            None
-        }
     }
 
     fn clear_tasks(&mut self) {
@@ -20093,10 +20028,6 @@ impl EditorSnapshot {
             0.0.into()
         };
 
-        let show_code_actions = self
-            .show_code_actions
-            .unwrap_or(gutter_settings.code_actions);
-
         let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
@@ -20122,7 +20053,7 @@ impl EditorSnapshot {
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if !is_singleton {
             em_width * 4.0
-        } else if show_code_actions || show_runnables || show_breakpoints {
+        } else if show_runnables || show_breakpoints {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
