@@ -1532,9 +1532,7 @@ impl EditorElement {
             .editor
             .read_with(cx, |editor, _| editor.minimap().cloned())?;
 
-        let minimap_settings = self
-            .editor
-            .read_with(cx, |editor, _| editor.minimap_settings);
+        let minimap_settings = EditorSettings::get_global(cx).minimap;
 
         if !snapshot.mode.is_full()
             || minimap_width.is_zero()

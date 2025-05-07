@@ -122,7 +122,7 @@ pub struct Minimap {
     pub show: ShowMinimap,
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
-    pub highlight_current_line: Option<bool>,
+    pub current_line_highlight: Option<CurrentLineHighlight>,
 }
 
 impl Minimap {
@@ -529,10 +529,10 @@ pub struct MinimapContent {
     /// Default: left_open
     pub thumb_border: Option<MinimapThumbBorder>,
 
-    /// Whether the currently active line should be highlighted in the minimap.
+    /// How to highlight the current line in the minimap.
     ///
     /// Default: inherits editor line highlights setting
-    pub highlight_current_line: Option<Option<bool>>,
+    pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis

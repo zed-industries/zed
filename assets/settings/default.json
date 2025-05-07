@@ -376,8 +376,13 @@
     // 5. Display the thumb without any border:
     //    "thumb_border": "none"
     "thumb_border": "left_open",
-    // Whether the currently active line should be highlighted in the minimap.
-    "highlight_current_line": null,
+    // How to highlight the current line in the minimap.
+    // This setting can take the following values:
+    //
+    // 1. `null` to inherit the editor `current_line_highlight` setting (default)
+    // 2. "line" or "all" to highlight the current line in the minimap.
+    // 3. "gutter" or "none" to not highlight the current line in the minimap.
+    "current_line_highlight": null,
     // The width of the minimap in pixels.
     "width": 100,
     // The font size of the minimap in pixels.

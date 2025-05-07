@@ -1000,7 +1000,6 @@ pub struct Editor {
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
-    minimap_settings: MinimapSettings,
     minimap: Option<Entity<Self>>,
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
@@ -1840,7 +1839,6 @@ impl Editor {
             load_diff_task: load_uncommitted_diff,
             temporary_diff_override: false,
             mouse_cursor_hidden: false,
-            minimap_settings: EditorSettings::get_global(cx).minimap,
             minimap: None,
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
@@ -1953,7 +1951,7 @@ impl Editor {
                 }
             }
 
-            this.minimap = this.create_minimap(window, cx);
+            this.minimap = this.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
         }
 
         this.report_editor_event("Editor Opened", None, cx);
@@ -16355,12 +16353,22 @@ impl Editor {
             .text()
     }
 
-    fn create_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Self>> {
-        (self.minimap_settings.minimap_enabled() && self.is_singleton(cx))
-            .then(|| self.initialize_new_minimap(window, cx))
+    fn create_minimap(
+        &self,
+        minimap_settings: MinimapSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
+        (minimap_settings.minimap_enabled() && self.is_singleton(cx))
+            .then(|| self.initialize_new_minimap(minimap_settings, window, cx))
     }
 
-    fn initialize_new_minimap(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Self> {
+    fn initialize_new_minimap(
+        &self,
+        minimap_settings: MinimapSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Self> {
         const MINIMAP_FONT_WEIGHT: gpui::FontWeight = gpui::FontWeight::BLACK;
 
         let mut minimap = Editor::new_internal(
@@ -16379,24 +16387,15 @@ impl Editor {
             font_weight: Some(MINIMAP_FONT_WEIGHT),
             ..Default::default()
         });
-        minimap.update_minimap_configuration(&self.minimap_settings, cx);
+        minimap.update_minimap_configuration(minimap_settings, cx);
         cx.new(|_| minimap)
     }
 
-    fn update_minimap_configuration(&mut self, minimap_settings: &MinimapSettings, cx: &App) {
-        let highlight_current_line = minimap_settings.highlight_current_line.unwrap_or_else(|| {
-            matches!(
-                EditorSettings::get_global(cx).current_line_highlight,
-                CurrentLineHighlight::All | CurrentLineHighlight::Line
-            )
-        });
-
-        let minimap_line_highlight = if highlight_current_line {
-            CurrentLineHighlight::Line
-        } else {
-            CurrentLineHighlight::None
-        };
-        self.set_current_line_highlight(Some(minimap_line_highlight));
+    fn update_minimap_configuration(&mut self, minimap_settings: MinimapSettings, cx: &App) {
+        let current_line_highlight = minimap_settings
+            .current_line_highlight
+            .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight);
+        self.set_current_line_highlight(Some(current_line_highlight));
     }
 
     pub fn minimap(&self) -> Option<&Entity<Self>> {
@@ -18097,15 +18096,12 @@ impl Editor {
                 self.toggle_git_blame_inline_internal(false, window, cx);
             }
 
-            let old_minimap_settings = self.minimap_settings;
-            self.minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_settings != old_minimap_settings
-                && self.minimap.as_ref().is_some() != self.minimap_settings.minimap_enabled()
-            {
-                self.minimap = self.create_minimap(window, cx);
+            let minimap_settings = EditorSettings::get_global(cx).minimap;
+            if self.minimap.as_ref().is_some() != minimap_settings.minimap_enabled() {
+                self.minimap = self.create_minimap(minimap_settings, window, cx);
             } else if let Some(minimap_entity) = self.minimap.as_ref() {
                 minimap_entity.update(cx, |minimap_editor, cx| {
-                    minimap_editor.update_minimap_configuration(&self.minimap_settings, cx)
+                    minimap_editor.update_minimap_configuration(minimap_settings, cx)
                 })
             }
         }
