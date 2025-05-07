@@ -2,15 +2,18 @@ use client::telemetry::Telemetry;
 
 use client::TelemetrySettings;
 use fs::Fs;
+use gpui::{percentage, AnyView};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior, ListState,
     ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
+use language_model::{ LanguageModelProviderName, LanguageModelRegistry};
 use persistence::WALKTHROUGH_DB;
 use regex::Regex;
 use settings::Settings;
 use settings::SettingsStore;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -32,12 +35,12 @@ use zed_actions::{ExtensionCategoryFilter, Extensions, OpenKeymap, OpenSettings}
 
 use crate::BaseKeymap;
 use crate::recent_projects;
-use crate::welcome_ui::{theme_preview::ThemePreviewTile, transparent_tabs::TransparentTabs};
+use crate::welcome_ui::{theme_preview::ThemePreviewTile, pill_tabs::PillTabs};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &workspace::Walkthrough, window, cx| {
-            let walkthrough = Walkthrough::new(workspace, cx);
+            let walkthrough = Walkthrough::new(workspace, window, cx);
             workspace.add_item_to_active_pane(Box::new(walkthrough), None, true, window, cx)
         });
     })
@@ -47,11 +50,20 @@ pub fn init(cx: &mut App) {
 }
 
 enum WalkthroughStep {
-    Theme { tab_selection: Entity<usize> },
-    Settings,
-    AiIntegrations,
+    Theme {
+        tab_selection: Entity<usize>,
+    },
+    Settings {
+        tab_selection: Entity<usize>,
+    },
+    AiIntegrations {
+        tab_selection: Entity<usize>,
+        model_providers: HashMap<LanguageModelProviderName, AnyView>,
+    },
     DataSharing,
-    OpenProject { tab_selection: Entity<usize> },
+    OpenProject {
+        tab_selection: Entity<usize>,
+    },
 }
 
 pub struct Walkthrough {
@@ -94,26 +106,42 @@ impl Walkthrough {
                         cx.notify();
                     }))
                     .border_color(theme.colors().border)
-                    .child(v_flex().child(Label::new(title)).when(active, |div| {
-                        div.text_sm()
-                            .size_full()
-                            .text_color(theme.colors().text_muted)
-                            .child(description)
-                    })),
+                    .child(v_flex().child(Label::new(title))
+                    //     .when(active, |div| {
+                    //     div.text_sm()
+                    //         .size_full()
+                    //         .text_color(theme.colors().text_muted)
+                    //         .child(description)
+                    // })
+                    ),
             )
             .into_any()
     }
 
-    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+    pub fn new(
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let this = cx.new(|cx| {
             let fs = workspace.app_state().fs.clone();
+            let model_providers = LanguageModelRegistry::read_global(cx)
+                .providers()
+                .into_iter()
+                .map(|provider| (provider.name(), provider.configuration_view(window, cx)))
+                .collect::<HashMap<_, _>>();
 
             let steps = vec![
                 WalkthroughStep::Theme {
                     tab_selection: cx.new(|_| 0),
                 },
-                WalkthroughStep::Settings,
-                WalkthroughStep::AiIntegrations,
+                WalkthroughStep::Settings {
+                    tab_selection: cx.new(|_| 0),
+                },
+                WalkthroughStep::AiIntegrations {
+                    model_providers,
+                    tab_selection: cx.new(|_| 0),
+                },
                 WalkthroughStep::DataSharing,
                 WalkthroughStep::OpenProject {
                     tab_selection: cx.new(|_| 0),
@@ -200,8 +228,13 @@ impl Walkthrough {
             WalkthroughStep::Theme { tab_selection } => {
                 self.render_theme_step(tab_selection, window, cx)
             }
-            WalkthroughStep::Settings => self.render_settings_step(window, cx),
-            WalkthroughStep::AiIntegrations => self.render_ai_integrations_step(window, cx),
+            WalkthroughStep::Settings { tab_selection } => {
+                self.render_settings_step(tab_selection, window, cx)
+            }
+            WalkthroughStep::AiIntegrations {
+                tab_selection,
+                model_providers,
+            } => self.render_ai_integrations_step(tab_selection, model_providers, window, cx),
             WalkthroughStep::DataSharing => self.render_data_sharing_step(window, cx),
             WalkthroughStep::OpenProject { tab_selection } => {
                 self.render_open_project_step(tab_selection, window, cx)
@@ -217,13 +250,13 @@ impl Walkthrough {
                 "Select one of our built-in themes, or download one from the extensions page",
                 cx,
             ),
-            WalkthroughStep::Settings => self.section_button(
+            WalkthroughStep::Settings { .. } => self.section_button(
                 ix,
                 "Configure Zed",
                 "Set initial settings and/or import from other editors",
                 cx,
             ),
-            WalkthroughStep::AiIntegrations => self.section_button(
+            WalkthroughStep::AiIntegrations { .. } => self.section_button(
                 ix,
                 "AI Setup",
                 "Log in and pick providers for agentic editing and edit predictions",
@@ -293,7 +326,7 @@ impl Walkthrough {
                     CheckboxWithLabel::new(
                         "predictions",
                         Label::new("Help Improve Edit Predictions"),
-                        ,
+                        false.into(),
                         |_, _, _| {}, // TODO
                     ),
                     CheckboxWithLabel::new(
@@ -309,6 +342,7 @@ impl Walkthrough {
 
     fn render_settings_step(
         &self,
+        _tab_selection: &Entity<usize>,
         _window: &mut Window,
         cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
@@ -443,7 +477,7 @@ impl Walkthrough {
         v_flex()
             .size_full()
             .child(
-                TransparentTabs::new(theme_tab_selection.clone())
+                PillTabs::new(theme_tab_selection.clone())
                     .tab("Dark", {
                         let fs = fs.clone();
                         move |window, cx| {
@@ -527,10 +561,22 @@ impl Walkthrough {
 
     fn render_ai_integrations_step(
         &self,
+        tab_selection: &Entity<usize>,
+        providers: &HashMap<LanguageModelProviderName, AnyView>,
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        div().size_20().bg(gpui::green()).into_any()
+        let mut tabs = PillTabs::new(tab_selection.clone());
+        for (name, view) in providers {
+            let view = view.clone();
+            tabs = tabs.tab(name.0.as_ref(), move |_window, _cx| view.clone().into_any());
+        }
+        div()
+            .id("ai-integration-configuration")
+            .h_96()
+            .overflow_scroll()
+            .child(tabs)
+            .into_any_element()
     }
 
     fn render_open_project_step(
@@ -543,7 +589,7 @@ impl Walkthrough {
             Regex::new(&format!("^{}", paths::home_dir().to_string_lossy())).unwrap()
         });
         if !self.recent_projects.is_empty() {
-            let mut tabs = TransparentTabs::new(tab_selection.clone());
+            let mut tabs = PillTabs::new(tab_selection.clone());
             for (name, projects) in &self.recent_projects {
                 let workspace = self.workspace.clone();
                 let projects = projects.clone();
@@ -671,15 +717,15 @@ impl Render for Walkthrough {
                     )
                     .child(
                         h_flex()
-                            .w(px(768.))
+                            .w(px(640.0))
                             .h_full()
                             .child(
                                 list(self.list.clone())
                                     .with_sizing_behavior(ListSizingBehavior::Infer)
                                     .h_full()
-                                    .w_96(),
+                                    .w(relative(0.25)),
                             )
-                            .child(div().w_96().h_full().child(self.render_subpane(
+                            .child(div().w(relative(0.75)).h_full().child(self.render_subpane(
                                 self.active_step,
                                 window,
                                 cx,
@@ -715,11 +761,11 @@ impl Item for Walkthrough {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
         self.workspace
-            .update(cx, |workspace, cx| Walkthrough::new(workspace, cx))
+            .update(cx, |workspace, cx| Walkthrough::new(workspace, window, cx))
             .ok()
     }
 
@@ -753,13 +799,15 @@ impl SerializableItem for Walkthrough {
         workspace: WeakEntity<Workspace>,
         workspace_id: WorkspaceId,
         item_id: workspace::ItemId,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         let has_walkthrough = WALKTHROUGH_DB.get_walkthrough(item_id, workspace_id);
-        cx.spawn(async move |cx| {
+        window.spawn(cx, async move |cx| {
             has_walkthrough?;
-            workspace.update(cx, |workspace, cx| Walkthrough::new(workspace, cx))
+            workspace.update_in(cx, |workspace, window, cx| {
+                Walkthrough::new(workspace, window, cx)
+            })
         })
     }
 

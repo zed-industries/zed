@@ -17100,6 +17100,7 @@ dependencies = [
  "gpui",
  "install_cli",
  "language",
+ "language_model",
  "linkme",
  "paths",
  "picker",

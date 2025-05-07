@@ -411,6 +411,12 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
 
+/// Returns the path to the vscode user settings file
+pub fn vscode_settings_file() -> &'static PathBuf {
+    static VSCODE_SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();
+    VSCODE_SETTINGS_PATH.get_or_init(|| vscode_data_dir().join("User/Settings.json"))
+}
+
 pub fn vscode_data_dir() -> &'static PathBuf {
     static VSCODE_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
     VSCODE_DATA_DIR.get_or_init(|| {
@@ -431,10 +437,4 @@ pub fn sublime_data_dir() -> &'static PathBuf {
             config_dir().join("sublime-text-3") // TODO: handle 4?
         }
     })
-}
-
-/// Returns the path to the vscode user settings file
-pub fn vscode_settings_file() -> &'static PathBuf {
-    static VSCODE_SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();
-    VSCODE_SETTINGS_PATH.get_or_init(|| vscode_data_dir().join("User/Settings.json"))
 }

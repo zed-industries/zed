@@ -1,2 +1,2 @@
 pub mod theme_preview;
-pub mod transparent_tabs;
+pub mod pill_tabs;

@@ -5,7 +5,7 @@ use ui::{IntoElement, RenderOnce, component_prelude::Documented, prelude::*};
 
 /// The tabs in the Zed walkthrough
 #[derive(IntoElement, RegisterComponent, Documented)]
-pub struct TransparentTabs {
+pub struct PillTabs {
     selected: Entity<usize>,
     tabs: Vec<Tab>,
 }
@@ -15,7 +15,7 @@ struct Tab {
     content: Option<Box<dyn Fn(&mut ui::Window, &mut ui::App) -> AnyElement>>,
 }
 
-impl TransparentTabs {
+impl PillTabs {
     pub fn new(selected: Entity<usize>) -> Self {
         Self {
             selected,
@@ -38,13 +38,15 @@ impl TransparentTabs {
     }
 }
 
-impl RenderOnce for TransparentTabs {
+impl RenderOnce for PillTabs {
     fn render(mut self, window: &mut ui::Window, cx: &mut ui::App) -> impl IntoElement {
         let content = self.tabs[*self.selected.read(cx)].content.take().unwrap();
         let selected = *self.selected.read(cx);
         v_flex()
+            .gap_2()
             .child(
                 h_flex()
+                    .flex_wrap()
                     .children(self.tabs.into_iter().enumerate().map(|(i, t)| {
                         // using index was causing id collisions with the content from that tab...
                         // should probably do something more robust for that
@@ -69,7 +71,7 @@ impl RenderOnce for TransparentTabs {
     }
 }
 
-impl Component for TransparentTabs {
+impl Component for PillTabs {
     fn description() -> Option<&'static str> {
         Some(Self::DOCS)
     }
@@ -78,7 +80,7 @@ impl Component for TransparentTabs {
         static SELECTED: OnceLock<Entity<usize>> = OnceLock::new();
         let selected = SELECTED.get_or_init(|| cx.new(|_| 0)).clone();
 
-        let tabs = TransparentTabs::new(selected)
+        let tabs = PillTabs::new(selected)
             .tab("Tab 1", |_window, _cx| div().size_10().bg(gpui::red()))
             .tab("Tab 2", |_window, _cx| div().size_10().bg(gpui::blue()))
             .tab("Tab 3", |_window, _cx| div().size_10().bg(gpui::green()));
