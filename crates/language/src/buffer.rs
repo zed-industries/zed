@@ -69,7 +69,7 @@ use util::RandomCharIter;
 use util::{RangeExt, debug_panic, maybe};
 
 #[cfg(any(test, feature = "test-support"))]
-pub use {tree_sitter_rust, tree_sitter_typescript};
+pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 

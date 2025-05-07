@@ -7807,6 +7807,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
