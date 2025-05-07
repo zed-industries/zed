@@ -1,6 +1,12 @@
 name: "Run tests"
 description: "Runs the tests"
 
+inputs:
+  use-xvfb:
+    description: "Whether to run tests with xvfb"
+    required: false
+    default: "false"
+
 runs:
   using: "composite"
   steps:
@@ -20,4 +26,9 @@ runs:
 
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      run: xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24 -nolisten tcp" cargo nextest run --workspace --no-fail-fast
+      run: |
+        if [ "${{ inputs.use-xvfb }}" == "true" ]; then
+          xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24 -nolisten tcp" cargo nextest run --workspace --no-fail-fast
+        else
+          cargo nextest run --workspace --no-fail-fast
+        fi

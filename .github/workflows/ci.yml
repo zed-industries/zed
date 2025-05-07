@@ -290,12 +290,9 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
-      # - name: Start xvfb
-      #   run: |
-      #     export DISPLAY=:99
-      #     Xvfb :99 -screen 0 1024x768x24 &
-
       - name: cargo clippy
+        with:
+          use-xvfb: true
         run: ./script/clippy
 
       - name: Run tests
