@@ -776,7 +776,7 @@ impl Element for TerminalElement {
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
-                let cursor_layout = if let AlacCursorShape::Hidden = cursor.shape {
+                let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
                 } else {
                     let cursor_point = DisplayCursor::from(cursor.point, display_offset);
@@ -860,7 +860,7 @@ impl Element for TerminalElement {
                 LayoutState {
                     hitbox,
                     cells,
-                    cursor: cursor_layout,
+                    cursor,
                     background_color,
                     dimensions,
                     rects,
@@ -900,11 +900,11 @@ impl Element for TerminalElement {
             let terminal_input_handler = TerminalInputHandler {
                 terminal: self.terminal.clone(),
                 terminal_view: self.terminal_view.clone(),
-                workspace: self.workspace.clone(),
                 cursor_bounds: layout
                     .cursor
                     .as_ref()
                     .map(|cursor| cursor.bounding_rect(origin)),
+                workspace: self.workspace.clone(),
             };
 
             self.register_mouse_listeners(layout.mode, &layout.hitbox, window);
@@ -1116,7 +1116,7 @@ impl InputHandler for TerminalInputHandler {
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        _range_utf16: Option<std::ops::Range<usize>>, // TODO: Pass range to set_marked_text if needed
+        _range_utf16: Option<std::ops::Range<usize>>,
         new_text: &str,
         new_marked_range: Option<std::ops::Range<usize>>,
         _window: &mut Window,
