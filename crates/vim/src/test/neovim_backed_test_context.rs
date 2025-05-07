@@ -200,7 +200,7 @@ impl NeovimBackedTestContext {
         for keystroke_text in keystroke_texts.split(' ') {
             self.recent_keystrokes.push(keystroke_text.to_string());
             self.neovim
-                .send_keystroke(keystroke_text, keyboard_mapper.as_ref())
+                .send_keystroke(keystroke_text, keyboard_mapper)
                 .await;
         }
         self.simulate_keystrokes(keystroke_texts);

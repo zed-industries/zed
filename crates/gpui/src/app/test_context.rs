@@ -25,6 +25,7 @@ pub struct TestAppContext {
     pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
     text_system: Arc<TextSystem>,
+    keyboard_mapper: Rc<Box<dyn PlatformKeyboardMapper>>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
 }
@@ -121,6 +122,7 @@ impl TestAppContext {
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let keyboard_mapper = std::rc::Rc::new(platform.keyboard_mapper());
 
         Self {
             app: App::new_app(platform.clone(), asset_source, http_client),
@@ -129,6 +131,7 @@ impl TestAppContext {
             dispatcher: dispatcher.clone(),
             test_platform: platform,
             text_system,
+            keyboard_mapper,
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
@@ -398,8 +401,8 @@ impl TestAppContext {
     }
 
     /// Returns the current keyboard mapper for this platform.
-    pub fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
-        self.test_platform.keyboard_mapper()
+    pub fn keyboard_mapper(&self) -> &dyn PlatformKeyboardMapper {
+        self.keyboard_mapper.as_ref().as_ref()
     }
 
     /// simulate_keystrokes takes a space-separated list of keys to type.
