@@ -20,7 +20,6 @@ agent.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
-assistant.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
 assistant_tools.workspace = true
