@@ -27,7 +27,6 @@ use std::sync::Arc;
 use assistant_settings::AssistantSettings;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
-use feature_flags::{AgentStreamEditsFeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
@@ -77,8 +76,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(FetchTool::new(http_client));
 
     register_edit_file_tool(cx);
-    cx.observe_flag::<AgentStreamEditsFeatureFlag, _>(|_, cx| register_edit_file_tool(cx))
-        .detach();
     cx.observe_global::<SettingsStore>(register_edit_file_tool)
         .detach();
 

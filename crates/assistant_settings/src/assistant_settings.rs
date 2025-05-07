@@ -7,7 +7,6 @@ use anthropic::Model as AnthropicModel;
 use anyhow::{Result, bail};
 use collections::IndexMap;
 use deepseek::Model as DeepseekModel;
-use feature_flags::{AgentStreamEditsFeatureFlag, Assistant2FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Pixels, SharedString};
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
@@ -107,16 +106,12 @@ impl AssistantSettings {
             .and_then(|m| m.temperature)
     }
 
-    pub fn stream_edits(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentStreamEditsFeatureFlag>() || self.stream_edits
+    pub fn stream_edits(&self, _cx: &App) -> bool {
+        true || self.stream_edits
     }
 
-    pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
-        if cx.has_flag::<Assistant2FeatureFlag>() {
-            return false;
-        }
-
-        cx.is_staff() || self.enable_experimental_live_diffs
+    pub fn are_live_diffs_enabled(&self, _cx: &App) -> bool {
+        false
     }
 
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {

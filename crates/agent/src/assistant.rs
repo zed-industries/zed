@@ -29,8 +29,6 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfileId, AssistantSettings};
 use client::Client;
-use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{App, actions, impl_actions};
 use language::LanguageRegistry;
@@ -107,8 +105,6 @@ impl ManageProfiles {
 
 impl_actions!(agent, [NewThread, ManageProfiles]);
 
-const NAMESPACE: &str = "agent";
-
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -136,25 +132,4 @@ pub fn init(
     );
     cx.observe_new(AddContextServerModal::register).detach();
     cx.observe_new(ManageProfilesModal::register).detach();
-
-    feature_gate_agent_actions(cx);
-}
-
-fn feature_gate_agent_actions(cx: &mut App) {
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_namespace(NAMESPACE);
-    });
-
-    cx.observe_flag::<Assistant2FeatureFlag, _>(move |is_enabled, cx| {
-        if is_enabled {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                filter.show_namespace(NAMESPACE);
-            });
-        } else {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                filter.hide_namespace(NAMESPACE);
-            });
-        }
-    })
-    .detach();
 }

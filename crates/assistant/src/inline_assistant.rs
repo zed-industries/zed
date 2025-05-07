@@ -17,9 +17,7 @@ use editor::{
         ToDisplayPoint,
     },
 };
-use feature_flags::{
-    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedProFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _,  ZedProFeatureFlag};
 use fs::Fs;
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
@@ -82,15 +80,6 @@ pub fn init(
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
         });
-
-        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
-            |is_assistant2_enabled, _workspace, _window, cx| {
-                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
-                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
-                });
-            }
-        })
-        .detach();
     })
     .detach();
 }
@@ -108,7 +97,6 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
-    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -130,7 +118,6 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
-            is_assistant2_enabled: false,
         }
     }
 
@@ -199,7 +186,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = self.is_assistant2_enabled;
+        let is_assistant2_enabled = true;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
