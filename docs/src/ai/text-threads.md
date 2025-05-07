@@ -156,7 +156,7 @@ This is equivalent to the `assistant: quote selection` command ({#kb assistant::
 
 Usage: `/selection`
 
-## Commands in the Rules Library (previously known as Prompt Libary) {#slash-commands-in-rules}
+## Commands in the Rules Library (previously known as Prompt Library) {#slash-commands-in-rules}
 
 [Commands](#commands) can be used in rules to insert dynamic content or perform actions. For example, if you want to create a rule where it is important for the model to know the date, you can use the `/now` command to insert the current date.
 
