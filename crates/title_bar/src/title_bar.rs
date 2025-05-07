@@ -18,7 +18,6 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
     Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -662,22 +661,20 @@ impl TitleBar {
             PopoverMenu::new("user-menu")
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
-                    ContextMenu::build(window, cx, |menu, _, cx| {
-                        menu.when(cx.has_flag::<NewBillingFeatureFlag>(), |menu| {
-                            menu.action(
-                                format!(
-                                    "Current Plan: {}",
-                                    match plan {
-                                        None => "",
-                                        Some(proto::Plan::Free) => "Free",
-                                        Some(proto::Plan::ZedPro) => "Pro",
-                                        Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
-                                    }
-                                ),
-                                zed_actions::OpenAccountSettings.boxed_clone(),
-                            )
-                            .separator()
-                        })
+                    ContextMenu::build(window, cx, |menu, _, _cx| {
+                        menu.action(
+                            format!(
+                                "Current Plan: {}",
+                                match plan {
+                                    None => "",
+                                    Some(proto::Plan::Free) => "Free",
+                                    Some(proto::Plan::ZedPro) => "Pro",
+                                    Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
+                                }
+                            ),
+                            zed_actions::OpenAccountSettings.boxed_clone(),
+                        )
+                        .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                         .action(
