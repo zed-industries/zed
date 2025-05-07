@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{Axis, Bounds, WindowBounds, WindowId, point, size};
+use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use itertools::Itertools;
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
@@ -21,16 +21,17 @@ use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::{SqlType, Statement},
+    thread_safe_connection::ThreadSafeConnection,
 };
 
-use ui::px;
+use ui::{App, px};
 use util::{ResultExt, maybe};
 use uuid::Uuid;
 
 use crate::WorkspaceId;
 
 use model::{
-    GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
+    GroupId, ItemId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
     SerializedSshProject, SerializedWorkspace,
 };
 
@@ -739,6 +740,7 @@ impl WorkspaceDb {
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+        log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
@@ -909,6 +911,7 @@ impl WorkspaceDb {
         {
             Ok(project)
         } else {
+            log::debug!("Inserting SSH project at host {host}");
             self.insert_ssh_project(host, port, paths, user)
                 .await?
                 .ok_or_else(|| anyhow!("failed to insert ssh project"))
@@ -1209,6 +1212,9 @@ impl WorkspaceDb {
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
+        if parent.is_none() {
+            log::debug!("Saving a pane group for workspace {workspace_id:?}");
+        }
         match pane_group {
             SerializedPaneGroup::Group {
                 axis,
@@ -1334,17 +1340,18 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        relative_path: String,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ?
+                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_path = ?
                 ))
                 .context("Preparing insertion")?;
 
             let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize()))?;
+                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_path))?;
 
             Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),
@@ -1386,6 +1393,10 @@ impl WorkspaceDb {
         relative_worktree_path: String,
         toolchain: Toolchain,
     ) -> Result<()> {
+        log::debug!(
+            "Setting toolchain for workspace, worktree: {worktree_id:?}, relative path: {relative_worktree_path:?}, toolchain: {}",
+            toolchain.name
+        );
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
@@ -1412,6 +1423,37 @@ impl WorkspaceDb {
     }
 }
 
+pub fn delete_unloaded_items(
+    alive_items: Vec<ItemId>,
+    workspace_id: WorkspaceId,
+    table: &'static str,
+    db: &ThreadSafeConnection,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let db = db.clone();
+    cx.spawn(async move |_| {
+        let placeholders = alive_items
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<&str>>()
+            .join(", ");
+
+        let query = format!(
+            "DELETE FROM {table} WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
+        );
+
+        db.write(move |conn| {
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&workspace_id, 1)?;
+            for id in alive_items {
+                next_index = statement.bind(&id, next_index)?;
+            }
+            statement.exec()
+        })
+        .await
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -1420,14 +1462,13 @@ mod tests {
     use super::*;
     use crate::persistence::model::SerializedWorkspace;
     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
-    use db::open_test_db;
     use gpui;
 
     #[gpui::test]
     async fn test_breakpoints() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_breakpoints").await);
+        let db = WorkspaceDb::open_test_db("test_breakpoints").await;
         let id = db.next_id().await.unwrap();
 
         let path = Path::new("/tmp/test.rs");
@@ -1612,7 +1653,7 @@ mod tests {
     async fn test_remove_last_breakpoint() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_remove_last_breakpoint").await);
+        let db = WorkspaceDb::open_test_db("test_remove_last_breakpoint").await;
         let id = db.next_id().await.unwrap();
 
         let singular_path = Path::new("/tmp/test_remove_last_breakpoint.rs");
@@ -1699,7 +1740,7 @@ mod tests {
     async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_next_id_stability").await);
+        let db = WorkspaceDb::open_test_db("test_next_id_stability").await;
 
         db.write(|conn| {
             conn.migrate(
@@ -1747,7 +1788,7 @@ mod tests {
     async fn test_workspace_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_workspace_id_stability").await);
+        let db = WorkspaceDb::open_test_db("test_workspace_id_stability").await;
 
         db.write(|conn| {
             conn.migrate(
@@ -1841,7 +1882,7 @@ mod tests {
     async fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_full_workspace_serialization").await);
+        let db = WorkspaceDb::open_test_db("test_full_workspace_serialization").await;
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -1916,7 +1957,7 @@ mod tests {
     async fn test_workspace_assignment() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
+        let db = WorkspaceDb::open_test_db("test_basic_functionality").await;
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
@@ -2012,7 +2053,7 @@ mod tests {
     async fn test_session_workspaces() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_serializing_workspaces_session_id").await);
+        let db = WorkspaceDb::open_test_db("test_serializing_workspaces_session_id").await;
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
@@ -2165,7 +2206,7 @@ mod tests {
         let dir4 = tempfile::TempDir::with_prefix("dir4").unwrap();
 
         let db =
-            WorkspaceDb(open_test_db("test_serializing_workspaces_last_session_workspaces").await);
+            WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces").await;
 
         let workspaces = [
             (1, vec![dir1.path()], vec![0], 9),
@@ -2254,9 +2295,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_last_session_workspace_locations_ssh_projects() {
-        let db = WorkspaceDb(
-            open_test_db("test_serializing_workspaces_last_session_workspaces_ssh_projects").await,
-        );
+        let db = WorkspaceDb::open_test_db(
+            "test_serializing_workspaces_last_session_workspaces_ssh_projects",
+        )
+        .await;
 
         let ssh_projects = [
             ("host-1", "my-user-1"),
@@ -2330,7 +2372,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_get_or_create_ssh_project() {
-        let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project").await);
+        let db = WorkspaceDb::open_test_db("test_get_or_create_ssh_project").await;
 
         let (host, port, paths, user) = (
             "example.com".to_string(),
@@ -2376,7 +2418,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_get_or_create_ssh_project_with_null_user() {
-        let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project_with_null_user").await);
+        let db = WorkspaceDb::open_test_db("test_get_or_create_ssh_project_with_null_user").await;
 
         let (host, port, paths, user) = (
             "example.com".to_string(),
@@ -2405,7 +2447,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_get_ssh_projects() {
-        let db = WorkspaceDb(open_test_db("test_get_ssh_projects").await);
+        let db = WorkspaceDb::open_test_db("test_get_ssh_projects").await;
 
         let projects = vec![
             (
@@ -2448,7 +2490,7 @@ mod tests {
     async fn test_simple_split() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("simple_split").await);
+        let db = WorkspaceDb::open_test_db("simple_split").await;
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -2503,7 +2545,7 @@ mod tests {
     async fn test_cleanup_panes() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
+        let db = WorkspaceDb::open_test_db("test_cleanup_panes").await;
 
         let center_pane = group(
             Axis::Horizontal,

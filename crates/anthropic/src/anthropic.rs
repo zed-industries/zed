@@ -1,5 +1,3 @@
-mod supported_countries;
-
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -10,8 +8,6 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-
-pub use supported_countries::*;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
@@ -74,6 +70,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_5Haiku
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
             Ok(Self::Claude3_5Sonnet)
@@ -507,6 +507,15 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
     #[serde(rename = "image")]
     Image {
         source: ImageSource,

@@ -10,7 +10,6 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
-use dap::DapRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -21,7 +20,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
@@ -180,6 +179,11 @@ fn main() {
 
     let args = Args::parse();
 
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return;
+    }
+
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
@@ -214,25 +218,9 @@ fn main() {
         };
     }
 
-    log::info!("========== starting zed ==========");
-
-    let app = Application::new().with_assets(Assets);
-
-    let system_id = app.background_executor().block(system_id()).ok();
-    let installation_id = app.background_executor().block(installation_id()).ok();
-    let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().block(Session::new());
-    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
-
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -243,6 +231,23 @@ fn main() {
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
     }
+
+    log::info!("========== starting zed ==========");
+
+    let app = Application::new().with_assets(Assets);
+
+    let system_id = app.background_executor().block(system_id()).ok();
+    let installation_id = app.background_executor().block(installation_id()).ok();
+    let session_id = Uuid::new_v4().to_string();
+    let session = app.background_executor().block(Session::new());
+
+    reliability::init_panic_hook(
+        app_version,
+        app_commit_sha.clone(),
+        system_id.as_ref().map(|id| id.to_string()),
+        installation_id.as_ref().map(|id| id.to_string()),
+        session_id.clone(),
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -349,7 +354,7 @@ fn main() {
             .as_ref()
             .and_then(|input| {
                 input
-                    .parse::<Uri>()
+                    .parse::<Url>()
                     .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                     .ok()
             })
@@ -373,7 +378,7 @@ fn main() {
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
-        cx.set_http_client(client.http_client().clone());
+        cx.set_http_client(client.http_client());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
@@ -444,7 +449,6 @@ fn main() {
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
-            debug_adapters: DapRegistry::default().into(),
             client: client.clone(),
             user_store: user_store.clone(),
             fs: fs.clone(),
@@ -456,7 +460,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
-        dap_adapters::init(app_state.debug_adapters.clone());
+        dap_adapters::init(cx);
         auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),
@@ -490,6 +494,8 @@ fn main() {
             app_state.fs.clone(),
             cx,
         );
+        web_search::init(cx);
+        web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
         inline_completion_registry::init(
             app_state.client.clone(),
@@ -507,6 +513,7 @@ fn main() {
             app_state.fs.clone(),
             app_state.client.clone(),
             prompt_builder.clone(),
+            app_state.languages.clone(),
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);
@@ -599,7 +606,7 @@ fn main() {
             setting = "keymap",
             value = BaseKeymap::get_global(cx).to_string()
         );
-        telemetry.flush_events();
+        telemetry.flush_events().detach();
 
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
@@ -999,6 +1006,11 @@ struct Args {
     /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
     #[arg(long)]
     system_specs: bool,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    askpass: Option<String>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]

@@ -1,13 +1,15 @@
 use adapters::latest_github_release;
-use dap::adapters::TcpArguments;
+use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::AsyncApp;
-use std::path::PathBuf;
-use task::DebugTaskDefinition;
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use util::ResultExt;
 
 use crate::*;
 
 #[derive(Default)]
-pub(crate) struct PhpDebugAdapter;
+pub(crate) struct PhpDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "PHP";
@@ -19,28 +21,19 @@ impl PhpDebugAdapter {
         config: &DebugTaskDefinition,
     ) -> Result<dap::StartDebuggingRequestArguments> {
         match &config.request {
-            dap::DebugRequestType::Attach(_) => {
+            dap::DebugRequest::Attach(_) => {
                 anyhow::bail!("php adapter does not support attaching")
             }
-            dap::DebugRequestType::Launch(launch_config) => {
-                Ok(dap::StartDebuggingRequestArguments {
-                    configuration: json!({
-                        "program": launch_config.program,
-                        "cwd": launch_config.cwd,
-                        "args": launch_config.args,
-                        "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
-                    }),
-                    request: config.request.to_dap(),
-                })
-            }
+            dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
+                configuration: json!({
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                    "args": launch_config.args,
+                    "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
+                }),
+                request: config.request.to_dap(),
+            }),
         }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for PhpDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
     async fn fetch_latest_adapter_version(
@@ -94,41 +87,58 @@ impl DebugAdapter for PhpDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delegate
                 .node_runtime()
                 .binary_path()
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                format!("--server={}", port).into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--server={}", port),
+            ],
             connection: Some(TcpArguments {
                 port,
                 host,
                 timeout,
             }),
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })
     }
+}
 
-    async fn install_binary(
+#[async_trait(?Send)]
+impl DebugAdapter for PhpDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
         &self,
-        version: AdapterVersion,
         delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::Vsix,
-            delegate,
-        )
-        .await?;
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version,
+                    adapters::DownloadedFileType::Vsix,
+                    delegate,
+                )
+                .await?;
+            }
+        }
 
-        Ok(())
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
     }
 }

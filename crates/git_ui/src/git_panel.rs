@@ -354,6 +354,7 @@ pub struct GitPanel {
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
+    show_placeholders: bool,
     _settings_subscription: Subscription,
 }
 
@@ -407,6 +408,16 @@ impl GitPanel {
         })
         .detach();
 
+        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            if is_sort_by_path != was_sort_by_path {
+                this.update_visible_entries(cx);
+            }
+            was_sort_by_path = is_sort_by_path
+        })
+        .detach();
+
         // just to let us render a placeholder editor.
         // Once the active git repo is set, this buffer will be replaced.
         let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
@@ -447,7 +458,7 @@ impl GitPanel {
                         .ok();
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                GitStoreEvent::JobsUpdated => {}
+                GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
             },
         )
         .detach();
@@ -506,6 +517,7 @@ impl GitPanel {
             tracked_staged_count: 0,
             update_visible_entries_task: Task::ready(()),
             width: None,
+            show_placeholders: false,
             context_menu: None,
             workspace,
             modal_open: false,
@@ -598,13 +610,20 @@ impl GitPanel {
         cx.notify();
     }
 
-    pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
+    pub fn entry_by_path(&self, path: &RepoPath, cx: &App) -> Option<usize> {
+        if GitPanelSettings::get_global(cx).sort_by_path {
+            return self
+                .entries
+                .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
+                .ok();
+        }
+
         if self.conflicted_count > 0 {
             let conflicted_start = 1;
             if let Ok(ix) = self.entries[conflicted_start..conflicted_start + self.conflicted_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(conflicted_start + ix);
             }
         }
         if self.tracked_count > 0 {
@@ -616,7 +635,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[tracked_start..tracked_start + self.tracked_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(tracked_start + ix);
             }
         }
         if self.new_count > 0 {
@@ -632,7 +651,7 @@ impl GitPanel {
             if let Ok(ix) = self.entries[untracked_start..untracked_start + self.new_count]
                 .binary_search_by(|entry| entry.status_entry().unwrap().repo_path.cmp(&path))
             {
-                return Some(ix);
+                return Some(untracked_start + ix);
             }
         }
         None
@@ -650,7 +669,7 @@ impl GitPanel {
         let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
             return;
         };
-        let Some(ix) = self.entry_by_path(&repo_path) else {
+        let Some(ix) = self.entry_by_path(&repo_path, cx) else {
             return;
         };
         self.selected_entry = Some(ix);
@@ -1406,13 +1425,20 @@ impl GitPanel {
             .focus_handle(cx)
             .contains_focused(window, cx)
         {
-            if !self.amend_pending {
-                self.set_amend_pending(true, cx);
-                self.load_last_commit_message_if_empty(cx);
-            } else {
-                telemetry::event!("Git Amended", source = "Git Panel");
-                self.set_amend_pending(false, cx);
-                self.commit_changes(CommitOptions { amend: true }, window, cx);
+            if self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.read(cx).head_commit.as_ref())
+                .is_some()
+            {
+                if !self.amend_pending {
+                    self.set_amend_pending(true, cx);
+                    self.load_last_commit_message_if_empty(cx);
+                } else {
+                    telemetry::event!("Git Amended", source = "Git Panel");
+                    self.set_amend_pending(false, cx);
+                    self.commit_changes(CommitOptions { amend: true }, window, cx);
+                }
             }
         } else {
             cx.propagate();
@@ -1426,11 +1452,9 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
-            return;
-        };
-        let Some(recent_sha) = branch
-            .most_recent_commit
+        let Some(recent_sha) = active_repository
+            .read(cx)
+            .head_commit
             .as_ref()
             .map(|commit| commit.sha.to_string())
         else {
@@ -1645,7 +1669,7 @@ impl GitPanel {
         if let Some(merge_message) = self
             .active_repository
             .as_ref()
-            .and_then(|repo| repo.read(cx).merge_message.as_ref())
+            .and_then(|repo| repo.read(cx).merge.message.as_ref())
         {
             return Some(merge_message.to_string());
         }
@@ -1711,6 +1735,8 @@ impl GitPanel {
             }
         });
 
+        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -1739,6 +1765,9 @@ impl GitPanel {
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let request = LanguageModelRequest {
+                    thread_id: None,
+                    prompt_id: None,
+                    mode: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,
                         content: vec![content.into()],
@@ -1746,7 +1775,7 @@ impl GitPanel {
                     }],
                     tools: Vec::new(),
                     stop: Vec::new(),
-                    temperature: None,
+                    temperature,
                 };
 
                 let stream = model.stream_completion_text(request, &cx);
@@ -1926,7 +1955,12 @@ impl GitPanel {
             })?;
 
             let pull = repo.update(cx, |repo, cx| {
-                repo.pull(branch.name.clone(), remote.name.clone(), askpass, cx)
+                repo.pull(
+                    branch.name().to_owned().into(),
+                    remote.name.clone(),
+                    askpass,
+                    cx,
+                )
             })?;
 
             let remote_message = pull.await?;
@@ -1993,7 +2027,7 @@ impl GitPanel {
 
             let push = repo.update(cx, |repo, cx| {
                 repo.push(
-                    branch.name.clone(),
+                    branch.name().to_owned().into(),
                     remote.name.clone(),
                     options,
                     askpass_delegate,
@@ -2003,7 +2037,7 @@ impl GitPanel {
 
             let remote_output = push.await?;
 
-            let action = RemoteAction::Push(branch.name, remote);
+            let action = RemoteAction::Push(branch.name().to_owned().into(), remote);
             this.update(cx, |this, cx| match remote_output {
                 Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
                 Err(e) => {
@@ -2065,7 +2099,7 @@ impl GitPanel {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
-                    Ok(repo.get_remotes(Some(current_branch.name.to_string())))
+                    Ok(repo.get_remotes(Some(current_branch.name().to_string())))
                 })??
                 .await??;
 
@@ -2286,6 +2320,8 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
 
+        let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
@@ -2345,7 +2381,9 @@ impl GitPanel {
                 None => max_width_item = Some((entry.repo_path.clone(), width_estimate)),
             }
 
-            if is_conflict {
+            if sort_by_path {
+                changed_entries.push(entry);
+            } else if is_conflict {
                 conflict_entries.push(entry);
             } else if is_new {
                 new_entries.push(entry);
@@ -2400,9 +2438,11 @@ impl GitPanel {
         }
 
         if changed_entries.len() > 0 {
-            self.entries.push(GitListEntry::Header(GitHeaderEntry {
-                header: Section::Tracked,
-            }));
+            if !sort_by_path {
+                self.entries.push(GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked,
+                }));
+            }
             self.entries.extend(
                 changed_entries
                     .into_iter()
@@ -2456,6 +2496,7 @@ impl GitPanel {
     }
 
     fn update_counts(&mut self, repo: &Repository) {
+        self.show_placeholders = false;
         self.conflicted_count = 0;
         self.conflicted_staged_count = 0;
         self.new_count = 0;
@@ -2515,10 +2556,6 @@ impl GitPanel {
         self.tracked_count > self.tracked_staged_count
             || self.new_count > self.new_staged_count
             || self.conflicted_count > self.conflicted_staged_count
-    }
-
-    fn has_conflicts(&self) -> bool {
-        self.conflicted_count > 0
     }
 
     fn has_tracked_changes(&self) -> bool {
@@ -2725,18 +2762,26 @@ impl GitPanel {
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let potential_co_authors = self.potential_co_authors(cx);
+
+        let (tooltip_label, icon) = if self.add_coauthors {
+            ("Add co-authored-by", IconName::UserCheck)
+        } else {
+            ("Remove co-authored-by", IconName::Person)
+        };
+
         if potential_co_authors.is_empty() {
             None
         } else {
             Some(
-                IconButton::new("co-authors", IconName::Person)
+                IconButton::new("co-authors", icon)
                     .shape(ui::IconButtonShape::Square)
                     .icon_color(Color::Disabled)
                     .selected_icon_color(Color::Selected)
                     .toggle_state(self.add_coauthors)
                     .tooltip(move |_, cx| {
                         let title = format!(
-                            "Add co-authored-by:{}{}",
+                            "{}:{}{}",
+                            tooltip_label,
                             if potential_co_authors.len() == 1 {
                                 ""
                             } else {
@@ -2927,17 +2972,15 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let (can_commit, tooltip) = self.configure_commit_button(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         let enable_coauthors = self.render_co_authors(cx);
-        let title = self.commit_button_title();
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
-        let commit_tooltip_focus_handle = editor_focus_handle.clone();
         let expand_tooltip_focus_handle = editor_focus_handle.clone();
 
         let branch = active_repository.read(cx).branch.clone();
+        let head_commit = active_repository.read(cx).head_commit.clone();
 
         let footer_size = px(32.);
         let gap = px(9.0);
@@ -2957,15 +3000,13 @@ impl GitPanel {
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
-        let has_previous_commit = branch
-            .as_ref()
-            .and_then(|branch| branch.most_recent_commit.as_ref())
-            .is_some();
+        let has_previous_commit = head_commit.is_some();
 
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
                 branch,
+                head_commit,
                 Some(git_panel.clone()),
             ))
             .child(
@@ -3003,183 +3044,7 @@ impl GitPanel {
                                 h_flex()
                                     .gap_0p5()
                                     .children(enable_coauthors)
-                                    .when(self.amend_pending, {
-                                        |this| {
-                                            this.h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    panel_filled_button("Cancel")
-                                                        .tooltip({
-                                                            let handle =
-                                                                commit_tooltip_focus_handle.clone();
-                                                            move |window, cx| {
-                                                                Tooltip::for_action_in(
-                                                                    "Cancel amend",
-                                                                    &git::Cancel,
-                                                                    &handle,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                            }
-                                                        })
-                                                        .on_click(move |_, window, cx| {
-                                                            window.dispatch_action(
-                                                                Box::new(git::Cancel),
-                                                                cx,
-                                                            );
-                                                        }),
-                                                )
-                                                .child(
-                                                    panel_filled_button(title)
-                                                        .tooltip({
-                                                            let handle =
-                                                                commit_tooltip_focus_handle.clone();
-                                                            move |window, cx| {
-                                                                if can_commit {
-                                                                    Tooltip::for_action_in(
-                                                                        tooltip, &Amend, &handle,
-                                                                        window, cx,
-                                                                    )
-                                                                } else {
-                                                                    Tooltip::simple(tooltip, cx)
-                                                                }
-                                                            }
-                                                        })
-                                                        .disabled(!can_commit || self.modal_open)
-                                                        .on_click({
-                                                            let git_panel = git_panel.downgrade();
-                                                            move |_, window, cx| {
-                                                                telemetry::event!(
-                                                                    "Git Amended",
-                                                                    source = "Git Panel"
-                                                                );
-                                                                git_panel
-                                                                    .update(cx, |git_panel, cx| {
-                                                                        git_panel
-                                                                            .set_amend_pending(
-                                                                                false, cx,
-                                                                            );
-                                                                        git_panel.commit_changes(
-                                                                            CommitOptions {
-                                                                                amend: true,
-                                                                            },
-                                                                            window,
-                                                                            cx,
-                                                                        );
-                                                                    })
-                                                                    .ok();
-                                                            }
-                                                        }),
-                                                )
-                                        }
-                                    })
-                                    .when(!self.amend_pending, |this| {
-                                        this.when(has_previous_commit, |this| {
-                                            this.child(SplitButton::new(
-                                                ui::ButtonLike::new_rounded_left(ElementId::Name(
-                                                    format!("split-button-left-{}", title).into(),
-                                                ))
-                                                .layer(ui::ElevationIndex::ModalSurface)
-                                                .size(ui::ButtonSize::Compact)
-                                                .child(
-                                                    div()
-                                                        .child(
-                                                            Label::new(title)
-                                                                .size(LabelSize::Small),
-                                                        )
-                                                        .mr_0p5(),
-                                                )
-                                                .on_click({
-                                                    let git_panel = git_panel.downgrade();
-                                                    move |_, window, cx| {
-                                                        telemetry::event!(
-                                                            "Git Committed",
-                                                            source = "Git Panel"
-                                                        );
-                                                        git_panel
-                                                            .update(cx, |git_panel, cx| {
-                                                                git_panel.commit_changes(
-                                                                    CommitOptions { amend: false },
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            })
-                                                            .ok();
-                                                    }
-                                                })
-                                                .disabled(!can_commit || self.modal_open)
-                                                .tooltip({
-                                                    let handle =
-                                                        commit_tooltip_focus_handle.clone();
-                                                    move |window, cx| {
-                                                        if can_commit {
-                                                            Tooltip::with_meta_in(
-                                                                tooltip,
-                                                                Some(&git::Commit),
-                                                                "git commit",
-                                                                &handle.clone(),
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        } else {
-                                                            Tooltip::simple(tooltip, cx)
-                                                        }
-                                                    }
-                                                }),
-                                                self.render_git_commit_menu(
-                                                    ElementId::Name(
-                                                        format!("split-button-right-{}", title)
-                                                            .into(),
-                                                    ),
-                                                    Some(commit_tooltip_focus_handle.clone()),
-                                                )
-                                                .into_any_element(),
-                                            ))
-                                        })
-                                        .when(
-                                            !has_previous_commit,
-                                            |this| {
-                                                this.child(
-                                                    panel_filled_button(title)
-                                                        .tooltip(move |window, cx| {
-                                                            if can_commit {
-                                                                Tooltip::with_meta_in(
-                                                                    tooltip,
-                                                                    Some(&git::Commit),
-                                                                    "git commit",
-                                                                    &commit_tooltip_focus_handle,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                            } else {
-                                                                Tooltip::simple(tooltip, cx)
-                                                            }
-                                                        })
-                                                        .disabled(!can_commit || self.modal_open)
-                                                        .on_click({
-                                                            let git_panel = git_panel.downgrade();
-                                                            move |_, window, cx| {
-                                                                telemetry::event!(
-                                                                    "Git Committed",
-                                                                    source = "Git Panel"
-                                                                );
-                                                                git_panel
-                                                                    .update(cx, |git_panel, cx| {
-                                                                        git_panel.commit_changes(
-                                                                            CommitOptions {
-                                                                                amend: false,
-                                                                            },
-                                                                            window,
-                                                                            cx,
-                                                                        );
-                                                                    })
-                                                                    .ok();
-                                                            }
-                                                        }),
-                                                )
-                                            },
-                                        )
-                                    }),
+                                    .child(self.render_commit_button(has_previous_commit, cx)),
                             ),
                     )
                     .child(
@@ -3226,6 +3091,168 @@ impl GitPanel {
             );
 
         Some(footer)
+    }
+
+    fn render_commit_button(
+        &self,
+        has_previous_commit: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (can_commit, tooltip) = self.configure_commit_button(cx);
+        let title = self.commit_button_title();
+        let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
+        div()
+            .id("commit-wrapper")
+            .on_hover(cx.listener(move |this, hovered, _, cx| {
+                this.show_placeholders =
+                    *hovered && !this.has_staged_changes() && !this.has_unstaged_conflicts();
+                cx.notify()
+            }))
+            .when(self.amend_pending, {
+                |this| {
+                    this.h_flex()
+                        .gap_1()
+                        .child(
+                            panel_filled_button("Cancel")
+                                .tooltip({
+                                    let handle = commit_tooltip_focus_handle.clone();
+                                    move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Cancel amend",
+                                            &git::Cancel,
+                                            &handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                })
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(Box::new(git::Cancel), cx);
+                                }),
+                        )
+                        .child(
+                            panel_filled_button(title)
+                                .tooltip({
+                                    let handle = commit_tooltip_focus_handle.clone();
+                                    move |window, cx| {
+                                        if can_commit {
+                                            Tooltip::for_action_in(
+                                                tooltip, &Amend, &handle, window, cx,
+                                            )
+                                        } else {
+                                            Tooltip::simple(tooltip, cx)
+                                        }
+                                    }
+                                })
+                                .disabled(!can_commit || self.modal_open)
+                                .on_click({
+                                    let git_panel = cx.weak_entity();
+                                    move |_, window, cx| {
+                                        telemetry::event!("Git Amended", source = "Git Panel");
+                                        git_panel
+                                            .update(cx, |git_panel, cx| {
+                                                git_panel.set_amend_pending(false, cx);
+                                                git_panel.commit_changes(
+                                                    CommitOptions { amend: true },
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                }),
+                        )
+                }
+            })
+            .when(!self.amend_pending, |this| {
+                this.when(has_previous_commit, |this| {
+                    this.child(SplitButton::new(
+                        ui::ButtonLike::new_rounded_left(ElementId::Name(
+                            format!("split-button-left-{}", title).into(),
+                        ))
+                        .layer(ui::ElevationIndex::ModalSurface)
+                        .size(ui::ButtonSize::Compact)
+                        .child(
+                            div()
+                                .child(Label::new(title).size(LabelSize::Small))
+                                .mr_0p5(),
+                        )
+                        .on_click({
+                            let git_panel = cx.weak_entity();
+                            move |_, window, cx| {
+                                telemetry::event!("Git Committed", source = "Git Panel");
+                                git_panel
+                                    .update(cx, |git_panel, cx| {
+                                        git_panel.commit_changes(
+                                            CommitOptions { amend: false },
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .disabled(!can_commit || self.modal_open)
+                        .tooltip({
+                            let handle = commit_tooltip_focus_handle.clone();
+                            move |window, cx| {
+                                if can_commit {
+                                    Tooltip::with_meta_in(
+                                        tooltip,
+                                        Some(&git::Commit),
+                                        "git commit",
+                                        &handle.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::simple(tooltip, cx)
+                                }
+                            }
+                        }),
+                        self.render_git_commit_menu(
+                            ElementId::Name(format!("split-button-right-{}", title).into()),
+                            Some(commit_tooltip_focus_handle.clone()),
+                        )
+                        .into_any_element(),
+                    ))
+                })
+                .when(!has_previous_commit, |this| {
+                    this.child(
+                        panel_filled_button(title)
+                            .tooltip(move |window, cx| {
+                                if can_commit {
+                                    Tooltip::with_meta_in(
+                                        tooltip,
+                                        Some(&git::Commit),
+                                        "git commit",
+                                        &commit_tooltip_focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::simple(tooltip, cx)
+                                }
+                            })
+                            .disabled(!can_commit || self.modal_open)
+                            .on_click({
+                                let git_panel = cx.weak_entity();
+                                move |_, window, cx| {
+                                    telemetry::event!("Git Committed", source = "Git Panel");
+                                    git_panel
+                                        .update(cx, |git_panel, cx| {
+                                            git_panel.commit_changes(
+                                                CommitOptions { amend: false },
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            }),
+                    )
+                })
+            })
     }
 
     fn render_pending_amend(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3475,7 +3502,7 @@ impl GitPanel {
         let repo = self.active_repository.as_ref()?.read(cx);
         let project_path = (file.worktree_id(cx), file.path()).into();
         let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
-        let ix = self.entry_by_path(&repo_path)?;
+        let ix = self.entry_by_path(&repo_path, cx)?;
         let entry = self.entries.get(ix)?;
 
         let entry_staging = self.entry_staging(entry.status_entry()?);
@@ -3845,8 +3872,7 @@ impl GitPanel {
 
         let entry_staging = self.entry_staging(entry);
         let mut is_staged: ToggleState = self.entry_staging(entry).as_bool().into();
-
-        if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
+        if self.show_placeholders && !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
 
@@ -3946,11 +3972,6 @@ impl GitPanel {
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
                             .fill()
-                            .placeholder(
-                                !self.has_staged_changes()
-                                    && !self.has_conflicts()
-                                    && !entry.status.is_created(),
-                            )
                             .elevation(ElevationIndex::Surface)
                             .on_click({
                                 let entry = entry.clone();
@@ -4291,6 +4312,8 @@ impl Render for GitPanelMessageTooltip {
 pub struct PanelRepoFooter {
     active_repository: SharedString,
     branch: Option<Branch>,
+    head_commit: Option<CommitDetails>,
+
     // Getting a GitPanel in previews will be difficult.
     //
     // For now just take an option here, and we won't bind handlers to buttons in previews.
@@ -4301,11 +4324,13 @@ impl PanelRepoFooter {
     pub fn new(
         active_repository: SharedString,
         branch: Option<Branch>,
+        head_commit: Option<CommitDetails>,
         git_panel: Option<Entity<GitPanel>>,
     ) -> Self {
         Self {
             active_repository,
             branch,
+            head_commit,
             git_panel,
         }
     }
@@ -4314,6 +4339,7 @@ impl PanelRepoFooter {
         Self {
             active_repository,
             branch,
+            head_commit: None,
             git_panel: None,
         }
     }
@@ -4339,11 +4365,24 @@ impl RenderOnce for PanelRepoFooter {
         const MAX_BRANCH_LEN: usize = 16;
         const MAX_REPO_LEN: usize = 16;
         const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
+        const MAX_SHORT_SHA_LEN: usize = 8;
 
-        let branch = self.branch.clone();
-        let branch_name = branch
+        let branch_name = self
+            .branch
             .as_ref()
-            .map_or(" (no branch)".into(), |branch| branch.name.clone());
+            .map(|branch| branch.name().to_owned())
+            .or_else(|| {
+                self.head_commit.as_ref().map(|commit| {
+                    commit
+                        .sha
+                        .chars()
+                        .take(MAX_SHORT_SHA_LEN)
+                        .collect::<String>()
+                })
+            })
+            .unwrap_or_else(|| " (no branch)".to_owned());
+        let show_separator = self.branch.is_some() || self.head_commit.is_some();
+
         let active_repo_name = self.active_repository.clone();
 
         let branch_actual_len = branch_name.len();
@@ -4449,7 +4488,7 @@ impl RenderOnce for PanelRepoFooter {
                         ),
                     )
                     .child(repo_selector)
-                    .when_some(branch.clone(), |this, _| {
+                    .when(show_separator, |this| {
                         this.child(
                             div()
                                 .text_color(cx.theme().colors().text_muted)
@@ -4508,7 +4547,7 @@ impl Component for PanelRepoFooter {
         fn branch(upstream: Option<UpstreamTracking>) -> Branch {
             Branch {
                 is_head: true,
-                name: "some-branch".into(),
+                ref_name: "some-branch".into(),
                 upstream: upstream.map(|tracking| Upstream {
                     ref_name: "origin/some-branch".into(),
                     tracking,
@@ -4525,7 +4564,7 @@ impl Component for PanelRepoFooter {
         fn custom(branch_name: &str, upstream: Option<UpstreamTracking>) -> Branch {
             Branch {
                 is_head: true,
-                name: branch_name.to_string().into(),
+                ref_name: branch_name.to_string().into(),
                 upstream: upstream.map(|tracking| Upstream {
                     ref_name: format!("zed/{}", branch_name).into(),
                     tracking,

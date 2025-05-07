@@ -1,27 +1,32 @@
 use std::sync::Arc;
 
 use collections::{HashSet, IndexMap};
-use feature_flags::{Assistant2FeatureFlag, ZedPro};
+use feature_flags::ZedProFeatureFlag;
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
 };
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
+    LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 action_with_deprecated_aliases!(
-    assistant,
+    agent,
     ToggleModelSelector,
-    ["assistant2::ToggleModelSelector"]
+    [
+        "assistant::ToggleModelSelector",
+        "assistant2::ToggleModelSelector"
+    ]
 );
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
-type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &App) + 'static>;
+type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
+type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
 
 pub struct LanguageModelSelector {
     picker: Entity<Picker<LanguageModelPickerDelegate>>,
@@ -31,7 +36,8 @@ pub struct LanguageModelSelector {
 
 impl LanguageModelSelector {
     pub fn new(
-        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+        get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
+        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -44,8 +50,9 @@ impl LanguageModelSelector {
             language_model_selector: cx.entity().downgrade(),
             on_model_changed: on_model_changed.clone(),
             all_models: Arc::new(all_models),
-            selected_index: Self::get_active_model_index(&entries, cx),
+            selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
+            get_active_model: Arc::new(get_active_model),
         };
 
         let picker = cx.new(|cx| {
@@ -194,8 +201,14 @@ impl LanguageModelSelector {
         }
     }
 
-    fn get_active_model_index(entries: &[LanguageModelPickerEntry], cx: &App) -> usize {
-        let active_model = LanguageModelRegistry::read_global(cx).default_model();
+    pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        (self.picker.read(cx).delegate.get_active_model)(cx)
+    }
+
+    fn get_active_model_index(
+        entries: &[LanguageModelPickerEntry],
+        active_model: Option<ConfiguredModel>,
+    ) -> usize {
         entries
             .iter()
             .position(|entry| {
@@ -204,7 +217,7 @@ impl LanguageModelSelector {
                         .as_ref()
                         .map(|active_model| {
                             active_model.model.id() == model.model.id()
-                                && active_model.model.provider_id() == model.model.provider_id()
+                                && active_model.provider.id() == model.model.provider_id()
                         })
                         .unwrap_or_default()
                 } else {
@@ -297,6 +310,7 @@ struct ModelInfo {
 pub struct LanguageModelPickerDelegate {
     language_model_selector: WeakEntity<LanguageModelSelector>,
     on_model_changed: OnModelChanged,
+    get_active_model: GetActiveModel,
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
@@ -493,8 +507,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .into_any_element(),
             ),
             LanguageModelPickerEntry::Model(model_info) => {
-                let active_model = LanguageModelRegistry::read_global(cx).default_model();
-
+                let active_model = (self.get_active_model)(cx);
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
                 let active_model_id = active_model.map(|m| m.model.id());
 
@@ -546,7 +559,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;
-        let is_trial = false;
 
         Some(
             h_flex()
@@ -556,9 +568,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedPro>(), |this| {
+                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
                     this.child(match plan {
-                        // Already a Zed Pro subscriber
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)
                             .icon_size(IconSize::Small)
@@ -568,10 +579,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 window
                                     .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
-                        // Free user
-                        Plan::Free => Button::new(
+                        Plan::Free | Plan::ZedProTrial => Button::new(
                             "try-pro",
-                            if is_trial {
+                            if plan == Plan::ZedProTrial {
                                 "Upgrade to Pro"
                             } else {
                                 "Try Pro"
@@ -587,13 +597,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
-                            let configure_action = if cx.has_flag::<Assistant2FeatureFlag>() {
-                                zed_actions::agent::OpenConfiguration.boxed_clone()
-                            } else {
-                                zed_actions::assistant::ShowConfiguration.boxed_clone()
-                            };
-
-                            window.dispatch_action(configure_action, cx);
+                            window.dispatch_action(
+                                zed_actions::agent::OpenConfiguration.boxed_clone(),
+                                cx,
+                            );
                         }),
                 )
                 .into_any(),

@@ -14,3 +14,4 @@ brackets = [
 ]
 tab_size = 4
 hard_tabs = true
+debuggers = ["Delve"]

@@ -5,11 +5,8 @@ use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
-use task::{
-    RevealTarget, TaskContext, TaskId, TaskModal, TaskTemplate, TaskVariables, VariableName,
-};
-use workspace::tasks::schedule_task;
-use workspace::{Workspace, tasks::schedule_resolved_task};
+use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
+use workspace::Workspace;
 
 mod modal;
 
@@ -50,15 +47,15 @@ pub fn init(cx: &mut App) {
                                 let task_contexts = task_contexts.await;
                                 let default_context = TaskContext::default();
                                 workspace
-                                    .update_in(cx, |workspace, _, cx| {
-                                        schedule_task(
-                                            workspace,
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.schedule_task(
                                             task_source_kind,
                                             &original_task,
                                             task_contexts
                                                 .active_context()
                                                 .unwrap_or(&default_context),
                                             false,
+                                            window,
                                             cx,
                                         )
                                     })
@@ -66,25 +63,25 @@ pub fn init(cx: &mut App) {
                             })
                             .detach()
                         } else {
-                            if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
-                                if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                    resolved.allow_concurrent_runs = allow_concurrent_runs;
-                                }
-                                if let Some(use_new_terminal) = action.use_new_terminal {
-                                    resolved.use_new_terminal = use_new_terminal;
-                                }
+                            let resolved = &mut last_scheduled_task.resolved;
+
+                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                                resolved.allow_concurrent_runs = allow_concurrent_runs;
+                            }
+                            if let Some(use_new_terminal) = action.use_new_terminal {
+                                resolved.use_new_terminal = use_new_terminal;
                             }
 
-                            schedule_resolved_task(
-                                workspace,
+                            workspace.schedule_resolved_task(
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
+                                window,
                                 cx,
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
+                        toggle_modal(workspace, None, window, cx).detach();
                     };
                 });
         },
@@ -126,21 +123,15 @@ fn spawn_task_or_modal(
             )
             .detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => toggle_modal(
-            workspace,
-            *reveal_target,
-            TaskModal::ScriptModal,
-            window,
-            cx,
-        )
-        .detach(),
+        Spawn::ViaModal { reveal_target } => {
+            toggle_modal(workspace, *reveal_target, window, cx).detach()
+        }
     }
 }
 
 pub fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
-    task_type: TaskModal,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
@@ -163,7 +154,6 @@ pub fn toggle_modal(
                                 reveal_target: Some(target),
                             }),
                             workspace_handle,
-                            task_type,
                             window,
                             cx,
                         )
@@ -217,7 +207,7 @@ where
         })?;
 
         let did_spawn = workspace
-            .update(cx, |workspace, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 let default_context = TaskContext::default();
                 let active_context = task_contexts.active_context().unwrap_or(&default_context);
 
@@ -228,12 +218,12 @@ where
                                 target_task.reveal_target = target_override;
                             }
                         }
-                        schedule_task(
-                            workspace,
+                        workspace.schedule_task(
                             task_source_kind.clone(),
                             target_task,
                             active_context,
                             false,
+                            window,
                             cx,
                         );
                         true

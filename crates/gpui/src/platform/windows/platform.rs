@@ -297,8 +297,12 @@ impl Platform for WindowsPlatform {
         self.text_system.clone()
     }
 
-    fn keyboard_layout(&self) -> String {
-        "unknown".into()
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(
+            WindowsKeyboardLayout::new()
+                .log_err()
+                .unwrap_or(WindowsKeyboardLayout::unknown()),
+        )
     }
 
     fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {

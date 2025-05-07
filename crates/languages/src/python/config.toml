@@ -29,3 +29,4 @@ brackets = [
 auto_indent_using_last_non_empty_line = false
 increase_indent_pattern = "^[^#].*:\\s*$"
 decrease_indent_pattern = "^\\s*(else|elif|except|finally)\\b.*:"
+debuggers = ["Debugpy"]

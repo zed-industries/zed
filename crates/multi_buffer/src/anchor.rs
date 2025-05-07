@@ -71,7 +71,7 @@ impl Anchor {
         if self_excerpt_id == ExcerptId::min() || self_excerpt_id == ExcerptId::max() {
             return Ordering::Equal;
         }
-        if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+        if let Some(excerpt) = snapshot.excerpt(self_excerpt_id) {
             let text_cmp = self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer);
             if text_cmp.is_ne() {
                 return text_cmp;

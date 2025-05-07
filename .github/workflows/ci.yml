@@ -162,8 +162,18 @@ jobs:
         working-directory: ./docs
         run: |
           pnpm dlx prettier@${PRETTIER_VERSION} . --check || {
-            echo "To fix, run from the root of the zed repo:"
+            echo "To fix, run from the root of the Zed repo:"
             echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
+            false
+          }
+        env:
+          PRETTIER_VERSION: 3.5.0
+
+      - name: Prettier Check on default.json
+        run: |
+          pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --check || {
+            echo "To fix, run from the root of the Zed repo:"
+            echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
             false
           }
         env:
@@ -519,7 +529,7 @@ jobs:
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "18"
 

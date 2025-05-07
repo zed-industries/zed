@@ -26,7 +26,7 @@ pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexSet};
 use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -237,6 +237,14 @@ impl CachedLspAdapter {
     ) {
         self.adapter
             .process_diagnostics(params, server_id, existing_diagnostics)
+    }
+
+    pub fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, cx: &App) -> bool {
+        self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
+    }
+
+    pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        self.adapter.diagnostic_message_to_markdown(message)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -457,8 +465,17 @@ pub trait LspAdapter: 'static + Send + Sync {
     ) {
     }
 
+    /// When processing new `lsp::PublishDiagnosticsParams` diagnostics, whether to retain previous one(s) or not.
+    fn retain_old_diagnostic(&self, _previous_diagnostic: &Diagnostic, _cx: &App) -> bool {
+        false
+    }
+
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
+
+    fn diagnostic_message_to_markdown(&self, _message: &str) -> Option<String> {
+        None
+    }
 
     async fn labels_for_completions(
         self: Arc<Self>,
@@ -649,7 +666,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -673,12 +690,20 @@ pub struct LanguageConfig {
     pub auto_indent_on_paste: Option<bool>,
     /// A regex that is used to determine whether the indentation level should be
     /// increased in the following line.
-    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_regex",
+        serialize_with = "serialize_regex"
+    )]
     #[schemars(schema_with = "regex_json_schema")]
     pub increase_indent_pattern: Option<Regex>,
     /// A regex that is used to determine whether the indentation level should be
     /// decreased in the following line.
-    #[serde(default, deserialize_with = "deserialize_regex")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_regex",
+        serialize_with = "serialize_regex"
+    )]
     #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
     /// A list of characters that trigger the automatic insertion of a closing
@@ -731,6 +756,9 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of preferred debuggers for this language.
+    #[serde(default)]
+    pub debuggers: IndexSet<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -749,7 +777,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -790,7 +818,7 @@ pub struct LanguageScope {
     override_id: Option<u32>,
 }
 
-#[derive(Clone, Deserialize, Default, Debug, JsonSchema)]
+#[derive(Clone, Deserialize, Default, Debug, JsonSchema, Serialize)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
@@ -855,6 +883,7 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            debuggers: Default::default(),
         }
     }
 }
@@ -915,7 +944,7 @@ pub struct FakeLspAdapter {
 ///
 /// This struct includes settings for defining which pairs of characters are considered brackets and
 /// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
-#[derive(Clone, Debug, Default, JsonSchema)]
+#[derive(Clone, Debug, Default, JsonSchema, Serialize)]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
@@ -965,7 +994,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
 /// an opening bracket or to a newline character insertion in between `start` and `end` characters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema, Serialize)]
 pub struct BracketPair {
     /// Starting substring for a bracket.
     pub start: String,
@@ -1015,6 +1044,7 @@ pub struct Grammar {
     pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
+    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
@@ -1115,6 +1145,18 @@ struct RunnableConfig {
     pub extra_captures: Vec<RunnableCapture>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum DebugVariableCapture {
+    Named(SharedString),
+    Variable,
+}
+
+#[derive(Debug)]
+struct DebugVariablesConfig {
+    pub query: Query,
+    pub captures: Vec<DebugVariableCapture>,
+}
+
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, OverrideEntry>,
@@ -1175,6 +1217,7 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
+                    debug_variables_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1245,6 +1288,11 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
+        }
+        if let Some(query) = queries.debug_variables {
+            self = self
+                .with_debug_variables_query(query.as_ref())
+                .context("Error loading debug variable query")?;
         }
         Ok(self)
     }
@@ -1338,6 +1386,25 @@ impl Language {
             query,
             text_objects_by_capture_ix,
         });
+        Ok(self)
+    }
+
+    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self
+            .grammar_mut()
+            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut captures = Vec::new();
+        for name in query.capture_names() {
+            captures.push(if *name == "debug_variable" {
+                DebugVariableCapture::Variable
+            } else {
+                DebugVariableCapture::Named(name.to_string().into())
+            });
+        }
+        grammar.debug_variables_config = Some(DebugVariablesConfig { query, captures });
+
         Ok(self)
     }
 
@@ -1893,6 +1960,9 @@ impl CodeLabel {
                 Kind::ENUM => grammar
                     .highlight_id_for_name("enum")
                     .or_else(|| grammar.highlight_id_for_name("type")),
+                Kind::ENUM_MEMBER => grammar
+                    .highlight_id_for_name("variant")
+                    .or_else(|| grammar.highlight_id_for_name("property")),
                 Kind::FIELD => grammar.highlight_id_for_name("property"),
                 Kind::FUNCTION => grammar.highlight_id_for_name("function"),
                 Kind::INTERFACE => grammar.highlight_id_for_name("type"),
@@ -1913,12 +1983,13 @@ impl CodeLabel {
         let runs = highlight_id
             .map(|highlight_id| vec![(0..label_length, highlight_id)])
             .unwrap_or_default();
-        let text = if let Some(detail) = &item.detail {
+        let text = if let Some(detail) = item.detail.as_deref().filter(|detail| detail != label) {
             format!("{label} {detail}")
         } else if let Some(description) = item
             .label_details
             .as_ref()
-            .and_then(|label_details| label_details.description.as_ref())
+            .and_then(|label_details| label_details.description.as_deref())
+            .filter(|description| description != label)
         {
             format!("{label} {description}")
         } else {
@@ -2212,5 +2283,101 @@ mod tests {
 
         // Loading an unknown language returns an error.
         assert!(languages.language_for_name("Unknown").await.is_err());
+    }
+
+    #[gpui::test]
+    async fn test_completion_label_omits_duplicate_data() {
+        let regular_completion_item_1 = lsp::CompletionItem {
+            label: "regular1".to_string(),
+            detail: Some("detail1".to_string()),
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some("description 1".to_string()),
+            }),
+            ..lsp::CompletionItem::default()
+        };
+
+        let regular_completion_item_2 = lsp::CompletionItem {
+            label: "regular2".to_string(),
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some("description 2".to_string()),
+            }),
+            ..lsp::CompletionItem::default()
+        };
+
+        let completion_item_with_duplicate_detail_and_proper_description = lsp::CompletionItem {
+            detail: Some(regular_completion_item_1.label.clone()),
+            ..regular_completion_item_1.clone()
+        };
+
+        let completion_item_with_duplicate_detail = lsp::CompletionItem {
+            detail: Some(regular_completion_item_1.label.clone()),
+            label_details: None,
+            ..regular_completion_item_1.clone()
+        };
+
+        let completion_item_with_duplicate_description = lsp::CompletionItem {
+            label_details: Some(lsp::CompletionItemLabelDetails {
+                detail: None,
+                description: Some(regular_completion_item_2.label.clone()),
+            }),
+            ..regular_completion_item_2.clone()
+        };
+
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&regular_completion_item_1, None).text,
+            format!(
+                "{} {}",
+                regular_completion_item_1.label,
+                regular_completion_item_1.detail.unwrap()
+            ),
+            "LSP completion items with both detail and label_details.description should prefer detail"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&regular_completion_item_2, None).text,
+            format!(
+                "{} {}",
+                regular_completion_item_2.label,
+                regular_completion_item_2
+                    .label_details
+                    .as_ref()
+                    .unwrap()
+                    .description
+                    .as_ref()
+                    .unwrap()
+            ),
+            "LSP completion items without detail but with label_details.description should use that"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(
+                &completion_item_with_duplicate_detail_and_proper_description,
+                None
+            )
+            .text,
+            format!(
+                "{} {}",
+                regular_completion_item_1.label,
+                regular_completion_item_1
+                    .label_details
+                    .as_ref()
+                    .unwrap()
+                    .description
+                    .as_ref()
+                    .unwrap()
+            ),
+            "LSP completion items with both detail and label_details.description should prefer description only if the detail duplicates the completion label"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&completion_item_with_duplicate_detail, None).text,
+            regular_completion_item_1.label,
+            "LSP completion items with duplicate label and detail, should omit the detail"
+        );
+        assert_eq!(
+            CodeLabel::fallback_for_completion(&completion_item_with_duplicate_description, None)
+                .text,
+            regular_completion_item_2.label,
+            "LSP completion items with duplicate label and detail, should omit the detail"
+        );
     }
 }

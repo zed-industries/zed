@@ -1,10 +1,10 @@
-use std::ffi::OsStr;
+use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use dap::StartDebuggingRequestArguments;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use task::{DebugRequestType, DebugTaskDefinition};
+use task::DebugRequest;
 
 use crate::*;
 
@@ -17,18 +17,18 @@ impl GdbDebugAdapter {
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = json!({
             "request": match config.request {
-                DebugRequestType::Launch(_) => "launch",
-                DebugRequestType::Attach(_) => "attach",
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
             },
         });
 
         let map = args.as_object_mut().unwrap();
         match &config.request {
-            DebugRequestType::Attach(attach) => {
+            DebugRequest::Attach(attach) => {
                 map.insert("pid".into(), attach.process_id.into());
             }
 
-            DebugRequestType::Launch(launch) => {
+            DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
 
                 if !launch.args.is_empty() {
@@ -82,35 +82,12 @@ impl DebugAdapter for GdbDebugAdapter {
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
         Ok(DebugAdapterBinary {
-            adapter_name: Self::ADAPTER_NAME.into(),
             command: gdb_path,
-            arguments: Some(vec!["-i=dap".into()]),
-            envs: None,
+            arguments: vec!["-i=dap".into()],
+            envs: HashMap::default(),
             cwd: None,
             connection: None,
             request_args: self.request_args(config),
         })
-    }
-
-    async fn install_binary(
-        &self,
-        _version: AdapterVersion,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        unimplemented!("GDB debug adapter cannot be installed by Zed (yet)")
-    }
-
-    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
-        unimplemented!("Fetch latest GDB version not implemented (yet)")
-    }
-
-    async fn get_installed_binary(
-        &self,
-        _: &dyn DapDelegate,
-        _: &DebugTaskDefinition,
-        _: Option<std::path::PathBuf>,
-        _: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        unimplemented!("GDB cannot be installed by Zed (yet)")
     }
 }

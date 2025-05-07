@@ -1,7 +1,6 @@
-use dap::StartDebuggingRequestArguments;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use std::{ffi::OsStr, path::PathBuf};
-use task::DebugTaskDefinition;
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use crate::*;
 
@@ -12,12 +11,12 @@ impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         let mut args = match &config.request {
-            dap::DebugRequestType::Attach(attach_config) => {
+            dap::DebugRequest::Attach(attach_config) => {
                 json!({
                     "processId": attach_config.process_id,
                 })
             }
-            dap::DebugRequestType::Launch(launch_config) => json!({
+            dap::DebugRequest::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
                 "args": launch_config.args
@@ -47,41 +46,8 @@ impl DebugAdapter for GoDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
         config: &DebugTaskDefinition,
-        user_installed_path: Option<PathBuf>,
-        cx: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        self.get_installed_binary(delegate, config, user_installed_path, cx)
-            .await
-    }
-
-    async fn fetch_latest_adapter_version(
-        &self,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<AdapterVersion> {
-        unimplemented!("This adapter is used from path for now");
-    }
-
-    async fn install_binary(
-        &self,
-        version: AdapterVersion,
-        delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::Zip,
-            delegate,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn get_installed_binary(
-        &self,
-        delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
-        _: Option<PathBuf>,
-        _: &mut AsyncApp,
+        _user_installed_path: Option<PathBuf>,
+        _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))
@@ -92,15 +58,14 @@ impl DebugAdapter for GoDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delve_path,
-            arguments: Some(vec![
+            arguments: vec![
                 "dap".into(),
                 "--listen".into(),
-                format!("{}:{}", host, port).into(),
-            ]),
+                format!("{}:{}", host, port),
+            ],
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,

@@ -19,6 +19,9 @@ extend-exclude = [
     # Some crate names are flagged as typos.
     "crates/indexed_docs/src/providers/rustdoc/popular_crates.txt",
 
+    # Some mock data is flagged as typos.
+    "crates/assistant_tools/src/web_search_tool.rs",
+
     # Stripe IDs are flagged as typos.
     "crates/collab/src/db/tests/processed_stripe_event_tests.rs",
     # Not our typos.
@@ -42,9 +45,9 @@ extend-exclude = [
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
-    "crates/eval/examples/checkpoint_stability/criteria.md",
-    "crates/eval/examples/tax_id_validation/prompt.md",
-    "crates/eval/examples/tax_id_validation/criteria.md"
+    "crates/eval/src/examples/",
+    # typos-cli doesn't understand our `vˇariable` markup
+    "crates/editor/src/hover_links.rs"
 ]
 
 [default]
@@ -62,6 +65,8 @@ extend-ignore-re = [
     # macOS version
     "Big Sur",
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
-    "#fof"
+    "#fof",
+    # Stripped version of reserved keyword `type`
+    "typ"
 ]
 check-filename = true

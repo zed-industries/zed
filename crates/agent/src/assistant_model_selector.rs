@@ -1,17 +1,19 @@
 use assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use language_model::LanguageModelRegistry;
+
+use crate::Thread;
+use language_model::{ConfiguredModel, LanguageModelRegistry};
 use language_model_selector::{
     LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{PopoverMenuHandle, Tooltip, prelude::*};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum ModelType {
-    Default,
+    Default(Entity<Thread>),
     InlineAssistant,
 }
 
@@ -19,7 +21,6 @@ pub struct AssistantModelSelector {
     selector: Entity<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     focus_handle: FocusHandle,
-    model_type: ModelType,
 }
 
 impl AssistantModelSelector {
@@ -29,18 +30,39 @@ impl AssistantModelSelector {
         focus_handle: FocusHandle,
         model_type: ModelType,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            selector: cx.new(|cx| {
+            selector: cx.new(move |cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
+                    {
+                        let model_type = model_type.clone();
+                        move |cx| match &model_type {
+                            ModelType::Default(thread) => thread.read(cx).configured_model(),
+                            ModelType::InlineAssistant => {
+                                LanguageModelRegistry::read_global(cx).inline_assistant_model()
+                            }
+                        }
+                    },
                     move |model, cx| {
                         let provider = model.provider_id().0.to_string();
                         let model_id = model.id().0.to_string();
-
-                        match model_type {
-                            ModelType::Default => {
+                        match &model_type {
+                            ModelType::Default(thread) => {
+                                thread.update(cx, |thread, cx| {
+                                    let registry = LanguageModelRegistry::read_global(cx);
+                                    if let Some(provider) = registry.provider(&model.provider_id())
+                                    {
+                                        thread.set_configured_model(
+                                            Some(ConfiguredModel {
+                                                provider,
+                                                model: model.clone(),
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                });
                                 update_settings_file::<AssistantSettings>(
                                     fs.clone(),
                                     cx,
@@ -69,7 +91,6 @@ impl AssistantModelSelector {
             }),
             menu_handle,
             focus_handle,
-            model_type,
         }
     }
 
@@ -82,40 +103,20 @@ impl Render for AssistantModelSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let model = match self.model_type {
-            ModelType::Default => model_registry.default_model(),
-            ModelType::InlineAssistant => model_registry.inline_assistant_model(),
-        };
-        let (model_name, model_icon) = match model {
-            Some(model) => (model.model.name().0, Some(model.provider.icon())),
-            _ => (SharedString::from("No model selected"), None),
-        };
+        let model = self.selector.read(cx).active_model(cx);
+        let model_name = model
+            .map(|model| model.model.name().0)
+            .unwrap_or_else(|| SharedString::from("No model selected"));
 
         LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),
-            ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .children(
-                            model_icon.map(|icon| {
-                                Icon::new(icon).color(Color::Muted).size(IconSize::Small)
-                            }),
-                        )
-                        .child(
-                            Label::new(model_name)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .ml_1(),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                ),
+            Button::new("active-model", model_name)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ChevronDown)
+                .icon_size(IconSize::XSmall)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted),
             move |window, cx| {
                 Tooltip::for_action_in(
                     "Change Model",

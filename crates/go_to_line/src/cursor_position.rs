@@ -99,7 +99,7 @@ impl CursorPosition {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if snapshot.excerpts().count() > 0 {
-                                    for selection in editor.selections.all::<Point>(cx) {
+                                    for selection in editor.selections.all_adjusted(cx) {
                                         let selection_summary = snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
                                                 selection.start..selection.end,
@@ -280,10 +280,6 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-/// Whether or not to automatically check for updates.
-///
-/// Values: short, long
-/// Default: short
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
@@ -301,4 +297,6 @@ impl Settings for LineIndicatorFormat {
 
         Ok(format.0)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
