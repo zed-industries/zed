@@ -1783,8 +1783,7 @@ impl ActiveThread {
         let colors = cx.theme().colors();
         let editor_bg_color = colors.editor_background;
 
-        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::FileCode)
-            .shape(ui::IconButtonShape::Square)
+        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::DocumentText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
@@ -1809,13 +1808,16 @@ impl ActiveThread {
             .mt_1()
             .py_2()
             .px(RESPONSE_PADDING_X)
-            .gap_1()
+            .mr_1()
+            .opacity(0.4)
+            .hover(|style| style.opacity(1.))
+            .gap_1p5()
             .flex_wrap()
             .justify_end();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
-                    div().mr_1().visible_on_hover("feedback_container").child(
+                    div().visible_on_hover("feedback_container").child(
                         Label::new(match feedback {
                             ThreadFeedback::Positive => "Thanks for your feedback!",
                             ThreadFeedback::Negative => {
@@ -1828,11 +1830,8 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
-                        .pr_1()
-                        .gap_1()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Accent,
@@ -1850,7 +1849,6 @@ impl ActiveThread {
                         )
                         .child(
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Ignored,
@@ -1871,7 +1869,7 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(
-                    div().mr_1().visible_on_hover("feedback_container").child(
+                    div().visible_on_hover("feedback_container").child(
                         Label::new(
                             "Rating the thread sends all of your current conversation to the Zed team.",
                         )
@@ -1881,13 +1879,10 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
-                        .pr_1()
-                        .gap_1()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
@@ -1902,7 +1897,6 @@ impl ActiveThread {
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
