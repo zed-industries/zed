@@ -156,7 +156,7 @@ impl Tool for EditFileTool {
         });
 
         let card_clone = card.clone();
-        let task = cx.spawn(async move |cx: &mut AsyncApp| {
+        let task: Task<Result<ToolResultOutput, _>> = cx.spawn(async move |cx: &mut AsyncApp| {
             let project_path = project.read_with(cx, |project, cx| {
                 project
                     .find_project_path(&input.path, cx)
@@ -306,12 +306,11 @@ impl Tool for EditFileTool {
                     old_text,
                 })
                 .ok(),
-            }
-            .into())
+            })
         });
 
         ToolResult {
-            output: task.into(),
+            output: task,
             card: card.map(AnyToolCard::from),
         }
     }

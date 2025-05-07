@@ -258,7 +258,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content");
+        assert_eq!(result.unwrap().content, "This is a small file content");
     }
 
     #[gpui::test]
@@ -358,7 +358,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+        assert_eq!(result.unwrap().content, "Line 2\nLine 3\nLine 4");
     }
 
     #[gpui::test]
@@ -389,7 +389,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+        assert_eq!(result.unwrap().content, "Line 1\nLine 2");
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -404,7 +404,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1");
+        assert_eq!(result.unwrap().content, "Line 1");
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -419,7 +419,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3");
+        assert_eq!(result.unwrap().content, "Line 3");
     }
 
     fn init_test(cx: &mut TestAppContext) {

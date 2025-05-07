@@ -7,6 +7,7 @@ mod tool_working_set;
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Formatter;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -61,6 +62,7 @@ impl ToolUseStatus {
     }
 }
 
+#[derive(Debug)]
 pub struct ToolResultOutput {
     pub content: String,
     pub output: Option<serde_json::Value>,
@@ -72,6 +74,14 @@ impl From<String> for ToolResultOutput {
             content: value,
             output: None,
         }
+    }
+}
+
+impl Deref for ToolResultOutput {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.content
     }
 }
 

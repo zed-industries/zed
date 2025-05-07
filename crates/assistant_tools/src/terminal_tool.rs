@@ -661,7 +661,7 @@ mod tests {
             )
         });
 
-        let output = result.output.await.log_err();
+        let output = result.output.await.log_err().map(|output| output.content);
         assert_eq!(output, Some("Command executed successfully.".into()));
     }
 
@@ -693,7 +693,11 @@ mod tests {
                 cx,
             );
             cx.spawn(async move |_| {
-                let output = headless_result.output.await.log_err();
+                let output = headless_result
+                    .output
+                    .await
+                    .log_err()
+                    .map(|output| output.content);
                 assert_eq!(output, expected);
             })
         };
