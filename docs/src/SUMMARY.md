@@ -42,6 +42,7 @@
 - [Overview](./ai/ai.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [Model Temperature](./ai/temperature.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Text Threads](./ai/text-threads.md)
