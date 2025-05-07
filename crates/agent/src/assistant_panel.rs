@@ -2338,14 +2338,13 @@ impl AssistantPanel {
             ""
         };
 
-        Some(
-            Banner::new()
-                .severity(ui::Severity::Info)
-                .child(h_flex().child(Label::new(format!(
-                    "Consecutive tool use limit reached.{max_mode_upsell}"
-                ))))
-                .into_any_element(),
-        )
+        let banner = Banner::new()
+            .severity(ui::Severity::Info)
+            .child(h_flex().child(Label::new(format!(
+                "Consecutive tool use limit reached.{max_mode_upsell}"
+            ))));
+
+        Some(div().px_2().pb_2().child(banner).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
