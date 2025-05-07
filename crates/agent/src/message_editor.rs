@@ -637,7 +637,7 @@ impl MessageEditor {
                         this.h(vh(0.8, window)).justify_between()
                     })
                     .child(
-                        div()
+                        v_flex()
                             .min_h_16()
                             .when(is_editor_expanded, |this| this.h_full())
                             .child({
