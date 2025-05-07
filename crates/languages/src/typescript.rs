@@ -347,7 +347,7 @@ impl EsLintLspAdapter {
         "eslint.config.cjs",
         "eslint.config.ts",
         "eslint.config.cts",
-        "eslint.config.mts"
+        "eslint.config.mts",
     ];
 
     pub fn new(node: NodeRuntime) -> Self {
