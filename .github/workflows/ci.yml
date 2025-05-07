@@ -290,6 +290,9 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
+      - name: Test
+        run: echo "DISPLAY=$DISPLAY"
+
       - name: cargo clippy
         run: ./script/clippy
 
