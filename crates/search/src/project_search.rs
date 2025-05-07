@@ -1010,41 +1010,51 @@ impl ProjectSearchView {
         } else {
             None
         };
-        let included_files =
-            match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
-                Ok(included_files) => {
-                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Include);
-                    if should_unmark_error {
-                        cx.notify();
+        let included_files = self
+            .filters_enabled
+            .then(|| {
+                match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
+                    Ok(included_files) => {
+                        let should_unmark_error =
+                            self.panels_with_errors.remove(&InputPanel::Include);
+                        if should_unmark_error {
+                            cx.notify();
+                        }
+                        included_files
                     }
-                    included_files
+                    Err(_e) => {
+                        let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
+                        if should_mark_error {
+                            cx.notify();
+                        }
+                        PathMatcher::default()
+                    }
                 }
-                Err(_e) => {
-                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Include);
-                    if should_mark_error {
-                        cx.notify();
-                    }
-                    PathMatcher::default()
-                }
-            };
-        let excluded_files =
-            match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
-                Ok(excluded_files) => {
-                    let should_unmark_error = self.panels_with_errors.remove(&InputPanel::Exclude);
-                    if should_unmark_error {
-                        cx.notify();
-                    }
+            })
+            .unwrap_or_default();
+        let excluded_files = self
+            .filters_enabled
+            .then(|| {
+                match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
+                    Ok(excluded_files) => {
+                        let should_unmark_error =
+                            self.panels_with_errors.remove(&InputPanel::Exclude);
+                        if should_unmark_error {
+                            cx.notify();
+                        }
 
-                    excluded_files
-                }
-                Err(_e) => {
-                    let should_mark_error = self.panels_with_errors.insert(InputPanel::Exclude);
-                    if should_mark_error {
-                        cx.notify();
+                        excluded_files
                     }
-                    PathMatcher::default()
+                    Err(_e) => {
+                        let should_mark_error = self.panels_with_errors.insert(InputPanel::Exclude);
+                        if should_mark_error {
+                            cx.notify();
+                        }
+                        PathMatcher::default()
+                    }
                 }
-            };
+            })
+            .unwrap_or_default();
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
