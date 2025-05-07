@@ -3,7 +3,7 @@ use crate::{
     edit_agent::{EditAgent, EditAgentOutputEvent},
     schema::json_schema_for,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_tool::{
     ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus,
 };
@@ -19,9 +19,7 @@ use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
     language_settings::SoftWrap,
 };
-use language_model::{
-    LanguageModelRegistry, LanguageModelRequestMessage, LanguageModelToolSchemaFormat,
-};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -151,6 +149,7 @@ impl Tool for EditFileTool {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -180,10 +179,6 @@ impl Tool for EditFileTool {
         let card_clone = card.clone();
         let messages = messages.to_vec();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let model = cx
-                .update(|cx| LanguageModelRegistry::read_global(cx).default_model())?
-                .context("default model not set")?
-                .model;
             let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
             let buffer = project
@@ -196,7 +191,7 @@ impl Tool for EditFileTool {
                 buffer
                     .file()
                     .as_ref()
-                    .map_or(true, |file| !file.disk_state().exists())
+                    .map_or(false, |file| file.disk_state().exists())
             })?;
             if !input.create_or_overwrite && !exists {
                 return Err(anyhow!("{} not found", input.path.display()));
@@ -846,6 +841,7 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -858,6 +854,7 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = serde_json::to_value(EditFileToolInput {
@@ -867,7 +864,7 @@ mod tests {
                 })
                 .unwrap();
                 Arc::new(EditFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(input, &[], project.clone(), action_log, model, None, cx)
                     .output
             })
             .await;
@@ -950,7 +947,6 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            language_model::init_settings(cx);
         });
     }
 }

@@ -7,7 +7,7 @@ use gpui::{AnyWindowHandle, App, Entity, Task};
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -86,6 +86,7 @@ impl Tool for ReadFileTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -209,6 +210,7 @@ mod test {
     use super::*;
     use gpui::{AppContext, TestAppContext};
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -222,13 +224,14 @@ mod test {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(input, &[], project.clone(), action_log, model, None, cx)
                     .output
             })
             .await;
@@ -252,13 +255,14 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(input, &[], project.clone(), action_log, model, None, cx)
                     .output
             })
             .await;
@@ -281,6 +285,7 @@ mod test {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(Arc::new(rust_lang()));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let result = cx
             .update(|cx| {
@@ -288,7 +293,15 @@ mod test {
                     "path": "root/large_file.rs"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        &[],
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -312,7 +325,7 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(input, &[], project.clone(), action_log, model, None, cx)
                     .output
             })
             .await;
@@ -350,6 +363,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
@@ -358,7 +372,7 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(input, &[], project.clone(), action_log, model, None, cx)
                     .output
             })
             .await;
@@ -379,6 +393,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -389,7 +404,15 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        &[],
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -404,7 +427,15 @@ mod test {
                     "end_line": 0
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        &[],
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -419,7 +450,7 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(input, &[], project.clone(), action_log, model, None, cx)
                     .output
             })
             .await;
