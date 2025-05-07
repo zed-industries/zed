@@ -119,7 +119,15 @@ impl ProfileSelector {
             let fs = self.fs.clone();
             let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
+            let profile = profile.clone();
+
+            let thread = self.thread.clone();
+
             move |_window, cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.set_configured_profile(Some(profile.clone()), cx);
+                });
+
                 update_settings_file::<AssistantSettings>(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
@@ -139,9 +147,15 @@ impl ProfileSelector {
 
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
-        let profile_id = &settings.default_profile;
-        let profile = settings.profiles.get(profile_id);
+        let profile = self
+            .thread
+            .read_with(cx, |thread, _cx| thread.configured_profile())
+            .or_else(|| {
+                let settings = AssistantSettings::get_global(cx);
+                let profile_id = &settings.default_profile;
+                let profile = settings.profiles.get(profile_id);
+                profile.cloned()
+            });
 
         let selected_profile = profile
             .map(|profile| profile.name.clone())

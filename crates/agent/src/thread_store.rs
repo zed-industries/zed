@@ -657,6 +657,8 @@ pub struct SerializedThread {
     pub model: Option<SerializedLanguageModel>,
     #[serde(default)]
     pub completion_mode: Option<CompletionMode>,
+    #[serde(default)]
+    pub profile: Option<AgentProfileId>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -802,6 +804,7 @@ impl LegacySerializedThread {
             exceeded_window_error: None,
             model: None,
             completion_mode: None,
+            profile: None,
         }
     }
 }
