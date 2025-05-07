@@ -43,6 +43,7 @@ pub struct ActivityIndicator {
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
+#[derive(Debug)]
 struct ServerStatus {
     name: SharedString,
     status: BinaryStatus,
@@ -70,6 +71,7 @@ impl ActivityIndicator {
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
+        let workspace_handle = cx.entity();
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
@@ -82,6 +84,25 @@ impl ActivityIndicator {
                 }
                 anyhow::Ok(())
             })
+            .detach();
+
+            cx.subscribe_in(
+                &workspace_handle,
+                window,
+                |activity_indicator, _, event, window, cx| match event {
+                    workspace::Event::ClearActivityIndicator { .. } => {
+                        if activity_indicator.statuses.pop().is_some() {
+                            activity_indicator.dismiss_error_message(
+                                &DismissErrorMessage,
+                                window,
+                                cx,
+                            );
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            )
             .detach();
 
             cx.subscribe(
@@ -115,7 +136,7 @@ impl ActivityIndicator {
             }
 
             Self {
-                statuses: Default::default(),
+                statuses: Vec::new(),
                 project: project.clone(),
                 auto_updater,
                 context_menu_handle: Default::default(),
@@ -185,11 +206,8 @@ impl ActivityIndicator {
         cx: &mut Context<Self>,
     ) {
         if let Some(updater) = &self.auto_updater {
-            updater.update(cx, |updater, cx| {
-                updater.dismiss_error(cx);
-            });
+            updater.update(cx, |updater, cx| updater.dismiss_error(cx));
         }
-        cx.notify();
     }
 
     fn pending_language_server_work<'a>(
