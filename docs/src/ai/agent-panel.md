@@ -5,7 +5,7 @@ You can use it for various tasks, such as generating code, asking questions abou
 
 To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md#providers).
+If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./custom-api-keys.md#providers).
 
 ## Overview {#overview}
 
