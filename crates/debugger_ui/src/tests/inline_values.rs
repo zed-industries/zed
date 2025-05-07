@@ -1018,7 +1018,7 @@ fn main() {
             value_location_reference: None,
         },
         Variable {
-            name: "callled".into(),
+            name: "called".into(),
             value: "<not available>".into(),
             type_: None,
             presentation_hint: None,

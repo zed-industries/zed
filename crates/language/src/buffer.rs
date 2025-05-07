@@ -3345,35 +3345,33 @@ impl BufferSnapshot {
     }
 
     /// Returns the root syntax node within the given row
-    pub fn syntax_root_ancestor<'a>(&'a self, position: Anchor) -> Option<tree_sitter::Node<'a>> {
+    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node> {
         let start_offset = position.to_offset(self);
 
         let row = self.summary_for_anchor::<text::PointUtf16>(&position).row as usize;
 
-        for layer in self
+        let layer = self
             .syntax
             .layers_for_range(start_offset..start_offset, &self.text, true)
-        {
-            let mut cursor = layer.node().walk();
+            .next()?;
 
-            // Descend to the first leaf that touches the start of the range.
-            while cursor.goto_first_child_for_byte(start_offset).is_some() {
-                if cursor.node().end_byte() == start_offset {
-                    cursor.goto_next_sibling();
-                }
+        let mut cursor = layer.node().walk();
+
+        // Descend to the first leaf that touches the start of the range.
+        while cursor.goto_first_child_for_byte(start_offset).is_some() {
+            if cursor.node().end_byte() == start_offset {
+                cursor.goto_next_sibling();
             }
-
-            // Ascend to the root node within the same row.
-            while cursor.goto_parent() {
-                if cursor.node().start_position().row != row {
-                    break;
-                }
-            }
-
-            return Some(cursor.node());
         }
 
-        None
+        // Ascend to the root node within the same row.
+        while cursor.goto_parent() {
+            if cursor.node().start_position().row != row {
+                break;
+            }
+        }
+
+        return Some(cursor.node());
     }
 
     /// Returns the outline for the buffer.

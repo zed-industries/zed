@@ -3535,7 +3535,7 @@ impl Project {
         let inline_value_locations = inline_value_provider.provide(
             root_node,
             snapshot
-                .text_for_range(Anchor::MIN..range.end.clone())
+                .text_for_range(Anchor::MIN..range.end)
                 .collect::<String>()
                 .as_str(),
             row,
