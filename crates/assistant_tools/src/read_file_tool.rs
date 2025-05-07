@@ -307,7 +307,7 @@ mod test {
             .await;
         let content = result.unwrap();
         assert_eq!(
-            content.lines().skip(2).take(6).collect::<Vec<_>>(),
+            content.lines().skip(4).take(6).collect::<Vec<_>>(),
             vec![
                 "struct Test0 [L1-4]",
                 " a [L2]",
@@ -342,7 +342,7 @@ mod test {
         pretty_assertions::assert_eq!(
             content
                 .lines()
-                .skip(2)
+                .skip(4)
                 .take(expected_content.len())
                 .collect::<Vec<_>>(),
             expected_content
