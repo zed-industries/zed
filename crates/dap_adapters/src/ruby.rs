@@ -5,13 +5,9 @@ use dap::{
     adapters::{
         self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
     },
-    inline_value::{InlineValueLocation, InlineValueProvider, VariableScope},
 };
 use gpui::AsyncApp;
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 use util::command::new_smol_command;
 
 use crate::ToDap;
