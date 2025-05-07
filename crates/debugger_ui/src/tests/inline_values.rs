@@ -1018,7 +1018,7 @@ fn main() {
             value_location_reference: None,
         },
         Variable {
-            name: "called".into(),
+            name: "caller".into(),
             value: "<not available>".into(),
             type_: None,
             presentation_hint: None,
@@ -1075,7 +1075,7 @@ fn main() {
             vec![y, 20, 30]
         };
 
-        let caller = || {
+        let caller: <not available> = || {
             let x = 3;
             println!("x={}", x);
         };
