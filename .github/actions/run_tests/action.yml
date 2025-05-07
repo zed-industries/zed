@@ -20,5 +20,4 @@ runs:
 
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      # run: xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24 -nolisten tcp" cargo nextest run --workspace --no-fail-fast
-      run: cargo nextest run --workspace --no-fail-fast
+      run: xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24 -nolisten tcp" cargo nextest run --workspace --no-fail-fast
