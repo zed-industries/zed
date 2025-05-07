@@ -2,18 +2,17 @@ use client::telemetry::Telemetry;
 
 use client::TelemetrySettings;
 use fs::Fs;
-use gpui::{percentage, AnyView};
+use gpui::{AnyView, ScrollHandle};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior, ListState,
     ParentElement, Render, Styled, Subscription, WeakEntity, Window, list, svg,
 };
-use language_model::{ LanguageModelProviderName, LanguageModelRegistry};
+use language_model::{LanguageModelProviderName, LanguageModelRegistry};
 use persistence::WALKTHROUGH_DB;
 use regex::Regex;
 use settings::Settings;
 use settings::SettingsStore;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -22,8 +21,8 @@ use theme::ThemeRegistry;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use time_format::TimestampFormat;
-use ui::CheckboxWithLabel;
-use ui::prelude::*;
+use ui::{CheckboxWithLabel, Divider, scrollbar};
+use ui::{ScrollbarState, prelude::*};
 use vim_mode_setting::VimModeSetting;
 use workspace::OpenOptions;
 use workspace::{
@@ -35,7 +34,7 @@ use zed_actions::{ExtensionCategoryFilter, Extensions, OpenKeymap, OpenSettings}
 
 use crate::BaseKeymap;
 use crate::recent_projects;
-use crate::welcome_ui::{theme_preview::ThemePreviewTile, pill_tabs::PillTabs};
+use crate::welcome_ui::{pill_tabs::PillTabs, theme_preview::ThemePreviewTile};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
@@ -49,21 +48,19 @@ pub fn init(cx: &mut App) {
     register_serializable_item::<Walkthrough>(cx);
 }
 
+struct AiIntegrationState {
+    tab_selection: Entity<usize>,
+    model_providers: Vec<(LanguageModelProviderName, AnyView)>,
+    scroll_handle: ScrollHandle,
+    scrollbar_state: ScrollbarState,
+}
+
 enum WalkthroughStep {
-    Theme {
-        tab_selection: Entity<usize>,
-    },
-    Settings {
-        tab_selection: Entity<usize>,
-    },
-    AiIntegrations {
-        tab_selection: Entity<usize>,
-        model_providers: HashMap<LanguageModelProviderName, AnyView>,
-    },
+    Theme { tab_selection: Entity<usize> },
+    Settings { tab_selection: Entity<usize> },
+    AiIntegrations(AiIntegrationState),
     DataSharing,
-    OpenProject {
-        tab_selection: Entity<usize>,
-    },
+    OpenProject { tab_selection: Entity<usize> },
 }
 
 pub struct Walkthrough {
@@ -84,7 +81,7 @@ impl Walkthrough {
         &mut self,
         ix: usize,
         title: &'static str,
-        description: &'static str,
+        _description: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let active = ix == self.active_step;
@@ -106,13 +103,13 @@ impl Walkthrough {
                         cx.notify();
                     }))
                     .border_color(theme.colors().border)
-                    .child(v_flex().child(Label::new(title))
-                    //     .when(active, |div| {
-                    //     div.text_sm()
-                    //         .size_full()
-                    //         .text_color(theme.colors().text_muted)
-                    //         .child(description)
-                    // })
+                    .child(
+                        v_flex().child(Label::new(title)), //     .when(active, |div| {
+                                                           //     div.text_sm()
+                                                           //         .size_full()
+                                                           //         .text_color(theme.colors().text_muted)
+                                                           //         .child(description)
+                                                           // })
                     ),
             )
             .into_any()
@@ -129,7 +126,10 @@ impl Walkthrough {
                 .providers()
                 .into_iter()
                 .map(|provider| (provider.name(), provider.configuration_view(window, cx)))
-                .collect::<HashMap<_, _>>();
+                .collect::<Vec<_>>();
+
+            let scroll_handle = ScrollHandle::new();
+            let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
             let steps = vec![
                 WalkthroughStep::Theme {
@@ -138,10 +138,12 @@ impl Walkthrough {
                 WalkthroughStep::Settings {
                     tab_selection: cx.new(|_| 0),
                 },
-                WalkthroughStep::AiIntegrations {
-                    model_providers,
+                WalkthroughStep::AiIntegrations(AiIntegrationState {
                     tab_selection: cx.new(|_| 0),
-                },
+                    model_providers: model_providers,
+                    scroll_handle,
+                    scrollbar_state,
+                }),
                 WalkthroughStep::DataSharing,
                 WalkthroughStep::OpenProject {
                     tab_selection: cx.new(|_| 0),
@@ -231,10 +233,9 @@ impl Walkthrough {
             WalkthroughStep::Settings { tab_selection } => {
                 self.render_settings_step(tab_selection, window, cx)
             }
-            WalkthroughStep::AiIntegrations {
-                tab_selection,
-                model_providers,
-            } => self.render_ai_integrations_step(tab_selection, model_providers, window, cx),
+            WalkthroughStep::AiIntegrations(state) => {
+                self.render_ai_integrations_step(state, window, cx)
+            }
             WalkthroughStep::DataSharing => self.render_data_sharing_step(window, cx),
             WalkthroughStep::OpenProject { tab_selection } => {
                 self.render_open_project_step(tab_selection, window, cx)
@@ -304,7 +305,8 @@ impl Walkthrough {
                                 );
                             }
                         },
-                    ),
+                    )
+                    .into_any_element(),
                     CheckboxWithLabel::new(
                         "telemetry",
                         Label::new("Send Telemetry"),
@@ -321,20 +323,23 @@ impl Walkthrough {
                                 );
                             }
                         },
-                    ),
-                    // "---", // TODO: line break?
+                    )
+                    .into_any_element(),
+                    Divider::horizontal().into_any_element(),
                     CheckboxWithLabel::new(
                         "predictions",
                         Label::new("Help Improve Edit Predictions"),
                         false.into(),
                         |_, _, _| {}, // TODO
-                    ),
+                    )
+                    .into_any_element(),
                     CheckboxWithLabel::new(
                         "agent",
                         Label::new("Rate Agentic Edits"),
                         false.into(),
                         |_, _, _| {}, // TODO
-                    ), // TODO: add note about how zed never shares your code/data by default
+                    )
+                    .into_any_element(), // TODO: add note about how zed never shares your code/data by default
                 ]
             })
             .into_any()
@@ -561,22 +566,37 @@ impl Walkthrough {
 
     fn render_ai_integrations_step(
         &self,
-        tab_selection: &Entity<usize>,
-        providers: &HashMap<LanguageModelProviderName, AnyView>,
+        state: &AiIntegrationState,
         _window: &mut Window,
         _cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
-        let mut tabs = PillTabs::new(tab_selection.clone());
-        for (name, view) in providers {
-            let view = view.clone();
-            tabs = tabs.tab(name.0.as_ref(), move |_window, _cx| view.clone().into_any());
+        let mut tabs = PillTabs::new(state.tab_selection.clone());
+        for (name, view) in &state.model_providers {
+            tabs = tabs.tab(name.0.as_ref(), {
+                let scroll_handle = state.scroll_handle.clone();
+                let scrollbar_state = state.scrollbar_state.clone();
+                let view = view.clone();
+                move |window, _cx| {
+                    // div()
+                    //     .relative()
+                    //     .size_full()
+                    //     .p_1()
+                    //     .child(
+                            div()
+                                .id("provider-configuration")
+                                .size_full()
+                                .track_scroll(&scroll_handle)
+                                .overflow_y_scroll()
+                                .child(
+                                    view.clone().into_any()
+                                )
+                        .child(scrollbar(scrollbar_state.clone(), window))
+                        // )
+
+                }
+            });
         }
-        div()
-            .id("ai-integration-configuration")
-            .h_96()
-            .overflow_scroll()
-            .child(tabs)
-            .into_any_element()
+        tabs.into_any_element()
     }
 
     fn render_open_project_step(
@@ -659,7 +679,7 @@ fn theme_preview_tile(
                         .into_any_element(),
                 ),
             )
-            .text_ui_sm(cx)
+            .text_ui_sm()
             .child(theme.name.clone())
             .on_click(move |_event, _window, cx| {
                 let name = theme.name.to_string();
@@ -717,15 +737,16 @@ impl Render for Walkthrough {
                     )
                     .child(
                         h_flex()
-                            .w(px(640.0))
+                            .w(px(576.0))
                             .h_full()
                             .child(
                                 list(self.list.clone())
                                     .with_sizing_behavior(ListSizingBehavior::Infer)
                                     .h_full()
-                                    .w(relative(0.25)),
+                                    .w(relative(0.33)),
                             )
-                            .child(div().w(relative(0.75)).h_full().child(self.render_subpane(
+                            .child(Divider::vertical())
+                            .child(div().w(relative(0.66)).h_96().child(self.render_subpane(
                                 self.active_step,
                                 window,
                                 cx,
