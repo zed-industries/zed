@@ -85,8 +85,8 @@ impl PlatformKeyboardMapper for LinuxKeyboardMapper {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl LinuxKeyboardMapper {
     pub(crate) fn new() -> Self {
-        let dpy_name = std::ffi::CString::new(":0").unwrap();
-        let (xcb_connection, _) = XCBConnection::connect(Some(&dpy_name)).unwrap();
+        println!("{:?}", std::env::var("DISPLAY"));
+        let (xcb_connection, _) = XCBConnection::connect(None).unwrap();
         let _ = xcb_connection
             .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
             .unwrap()

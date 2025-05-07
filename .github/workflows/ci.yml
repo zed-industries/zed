@@ -290,14 +290,18 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
-      - name: Test
-        run: echo "DISPLAY=$DISPLAY"
+      - name: Start xvfb
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1024x768x24 &
 
       - name: cargo clippy
         run: ./script/clippy
 
       - name: Run tests
-        uses: ./.github/actions/run_tests
+        uses: |
+          export DISPLAY=:99
+          ./.github/actions/run_tests
 
       - name: Build other binaries and features
         run: |
