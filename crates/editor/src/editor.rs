@@ -5200,13 +5200,6 @@ impl Editor {
                                         tasks.column,
                                     )),
                                 });
-                        let spawn_straight_away = quick_launch
-                            && resolved_tasks
-                                .as_ref()
-                                .map_or(false, |tasks| tasks.templates.len() == 1)
-                            && code_actions
-                                .as_ref()
-                                .map_or(true, |actions| actions.is_empty());
                         let debug_scenarios = editor.update(cx, |editor, cx| {
                             if cx.has_flag::<DebuggerFeatureFlag>() {
                                 maybe!({
@@ -5250,6 +5243,14 @@ impl Editor {
                                 vec![]
                             }
                         })?;
+                        let spawn_straight_away = quick_launch
+                            && resolved_tasks
+                                .as_ref()
+                                .map_or(false, |tasks| tasks.templates.len() == 1)
+                            && code_actions
+                                .as_ref()
+                                .map_or(true, |actions| actions.is_empty())
+                            && debug_scenarios.is_empty();
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
