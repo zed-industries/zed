@@ -1,11 +1,20 @@
-use crate::*;
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use dap::{
-    DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition,
-    adapters::InlineValueProvider,
+    DebugRequest, StartDebuggingRequestArguments,
+    adapters::{
+        self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
+    },
+    inline_value::{InlineValueLocation, InlineValueProvider, VariableScope},
 };
 use gpui::AsyncApp;
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 use util::command::new_smol_command;
+
+use crate::ToDap;
 
 #[derive(Default)]
 pub(crate) struct RubyDebugAdapter;
@@ -93,35 +102,5 @@ impl DebugAdapter for RubyDebugAdapter {
                 request: definition.request.to_dap(),
             },
         })
-    }
-
-    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
-        Some(Box::new(PythonInlineValueProvider))
-    }
-}
-
-struct PythonInlineValueProvider;
-
-impl InlineValueProvider for PythonInlineValueProvider {
-    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
-        variables
-            .into_iter()
-            .map(|(variable, range)| {
-                if variable.contains(".") || variable.contains("[") {
-                    lsp_types::InlineValue::EvaluatableExpression(
-                        lsp_types::InlineValueEvaluatableExpression {
-                            range,
-                            expression: Some(variable),
-                        },
-                    )
-                } else {
-                    lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
-                        range,
-                        variable_name: Some(variable),
-                        case_sensitive_lookup: true,
-                    })
-                }
-            })
-            .collect()
     }
 }
