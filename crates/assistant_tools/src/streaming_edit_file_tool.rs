@@ -68,6 +68,13 @@ pub struct StreamingEditFileToolInput {
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct StreamingEditFileToolOutput {
+    pub original_path: PathBuf,
+    pub new_text: String,
+    pub old_text: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct PartialInput {
     #[serde(default)]
     path: String,
@@ -248,6 +255,12 @@ impl Tool for StreamingEditFileTool {
             });
             let (new_text, diff) = futures::join!(new_text, diff);
 
+            let output = StreamingEditFileToolOutput {
+                original_path: project_path.path.to_path_buf(),
+                new_text: new_text.clone(),
+                old_text: old_text.clone(),
+            };
+
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
                     card.set_diff(project_path.path.clone(), old_text, new_text, cx);
@@ -264,10 +277,13 @@ impl Tool for StreamingEditFileTool {
                         I can perform the requested edits.
                     "}))
                 } else {
-                    Ok("No edits were made.".to_string())
+                    Ok("No edits were made.".to_string().into())
                 }
             } else {
-                Ok(format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff))
+                Ok(ToolResultOutput {
+                    content: format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff),
+                    output: serde_json::to_value(output).ok(),
+                })
             }
         });
 
