@@ -19,6 +19,11 @@
   consequence: (block) @indent
 )
 
+(for_statement
+  ":" @start
+  body: (block) @indent
+)
+
 (try_statement
   ":" @start
   body: (block) @indent
