@@ -1,0 +1,127 @@
+use crate::*;
+use dap::{
+    DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition,
+    adapters::InlineValueProvider,
+};
+use gpui::AsyncApp;
+use std::path::PathBuf;
+use util::command::new_smol_command;
+
+#[derive(Default)]
+pub(crate) struct RubyDebugAdapter;
+
+impl RubyDebugAdapter {
+    const ADAPTER_NAME: &'static str = "Ruby";
+}
+
+#[async_trait(?Send)]
+impl DebugAdapter for RubyDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
+        &self,
+        delegate: &dyn DapDelegate,
+        definition: &DebugTaskDefinition,
+        _user_installed_path: Option<PathBuf>,
+        _cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+        let mut rdbg_path = adapter_path.join("rdbg");
+        if !delegate.fs().is_file(&rdbg_path).await {
+            match delegate.which("rdbg".as_ref()) {
+                Some(path) => rdbg_path = path,
+                None => {
+                    delegate.output_to_console(
+                        "rdbg not found on path, trying `gem install debug`".to_string(),
+                    );
+                    let output = new_smol_command("gem")
+                        .arg("install")
+                        .arg("--no-document")
+                        .arg("--bindir")
+                        .arg(adapter_path)
+                        .arg("debug")
+                        .output()
+                        .await?;
+                    if !output.status.success() {
+                        return Err(anyhow!(
+                            "Failed to install rdbg:\n{}",
+                            String::from_utf8_lossy(&output.stderr).to_string()
+                        ));
+                    }
+                }
+            }
+        }
+
+        let tcp_connection = definition.tcp_connection.clone().unwrap_or_default();
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+
+        let DebugRequest::Launch(mut launch) = definition.request.clone() else {
+            anyhow::bail!("rdbg does not yet support attaching");
+        };
+
+        let mut arguments = vec![
+            "--open".to_string(),
+            format!("--port={}", port),
+            format!("--host={}", host),
+        ];
+        if launch.args.is_empty() {
+            let program = launch.program.clone();
+            let mut split = program.split(" ");
+            launch.program = split.next().unwrap().to_string();
+            launch.args = split.map(|s| s.to_string()).collect();
+        }
+        if delegate.which(launch.program.as_ref()).is_some() {
+            arguments.push("--command".to_string())
+        }
+        arguments.push(launch.program);
+        arguments.extend(launch.args);
+
+        Ok(DebugAdapterBinary {
+            command: rdbg_path.to_string_lossy().to_string(),
+            arguments,
+            connection: Some(adapters::TcpArguments {
+                host,
+                port,
+                timeout,
+            }),
+            cwd: launch.cwd,
+            envs: launch.env.into_iter().collect(),
+            request_args: StartDebuggingRequestArguments {
+                configuration: serde_json::Value::Object(Default::default()),
+                request: definition.request.to_dap(),
+            },
+        })
+    }
+
+    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
+        Some(Box::new(PythonInlineValueProvider))
+    }
+}
+
+struct PythonInlineValueProvider;
+
+impl InlineValueProvider for PythonInlineValueProvider {
+    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
+        variables
+            .into_iter()
+            .map(|(variable, range)| {
+                if variable.contains(".") || variable.contains("[") {
+                    lsp_types::InlineValue::EvaluatableExpression(
+                        lsp_types::InlineValueEvaluatableExpression {
+                            range,
+                            expression: Some(variable),
+                        },
+                    )
+                } else {
+                    lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
+                        range,
+                        variable_name: Some(variable),
+                        case_sensitive_lookup: true,
+                    })
+                }
+            })
+            .collect()
+    }
+}

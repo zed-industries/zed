@@ -152,7 +152,7 @@ impl Console {
             session
                 .evaluate(
                     expression,
-                    Some(dap::EvaluateArgumentsContext::Variables),
+                    Some(dap::EvaluateArgumentsContext::Repl),
                     self.stack_frame_list.read(cx).selected_stack_frame_id(),
                     None,
                     cx,

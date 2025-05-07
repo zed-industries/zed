@@ -169,8 +169,7 @@ impl LocalMode {
                     .await?
             } else {
                 DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
-                    .await
-                    .with_context(|| format!("Failed to start {:?}", &binary.command))?
+                    .await?
             },
         );
 
