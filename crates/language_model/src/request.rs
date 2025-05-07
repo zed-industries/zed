@@ -131,6 +131,7 @@ pub struct LanguageModelToolResult {
     pub tool_name: Arc<str>,
     pub is_error: bool,
     pub content: Arc<str>,
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]

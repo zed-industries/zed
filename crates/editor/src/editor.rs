@@ -5206,20 +5206,27 @@ impl Editor {
                                     let dap_store = project.read(cx).dap_store();
                                     let mut scenarios = vec![];
                                     let resolved_tasks = resolved_tasks.as_ref()?;
-                                    let debug_adapter: SharedString = buffer
-                                        .read(cx)
-                                        .language()?
-                                        .context_provider()?
-                                        .debug_adapter()?
-                                        .into();
+                                    let buffer = buffer.read(cx);
+                                    let language = buffer.language()?;
+                                    let file = buffer.file();
+                                    let debug_adapter =
+                                        language_settings(language.name().into(), file, cx)
+                                            .debuggers
+                                            .first()
+                                            .map(SharedString::from)
+                                            .or_else(|| {
+                                                language
+                                                    .config()
+                                                    .debuggers
+                                                    .first()
+                                                    .map(SharedString::from)
+                                            })?;
+
                                     dap_store.update(cx, |this, cx| {
                                         for (_, task) in &resolved_tasks.templates {
                                             if let Some(scenario) = this
                                                 .debug_scenario_for_build_task(
-                                                    task.resolved.clone(),
-                                                    SharedString::from(
-                                                        task.original_task().label.clone(),
-                                                    ),
+                                                    task.original_task().clone(),
                                                     debug_adapter.clone(),
                                                     cx,
                                                 )

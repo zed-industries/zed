@@ -8,6 +8,7 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -16,7 +17,6 @@ use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
     EditorMode, EditorStyle, MultiBuffer,
 };
-use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -26,7 +26,10 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
+use language_model::{
+    ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
+    ZED_CLOUD_PROVIDER_ID,
+};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -39,7 +42,6 @@ use ui::{Disclosure, DocumentationSide, KeyBinding, PopoverMenuHandle, Tooltip, 
 use util::{ResultExt as _, maybe};
 use workspace::dock::DockPosition;
 use workspace::{CollaboratorId, Workspace};
-use zed_llm_client::CompletionMode;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
@@ -312,6 +314,10 @@ impl MessageEditor {
         self.editor.read(cx).text(cx).trim().is_empty()
     }
 
+    pub fn is_editor_fully_empty(&self, cx: &App) -> bool {
+        self.editor.read(cx).is_empty(cx)
+    }
+
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ConfiguredModel { model, provider }) = self
             .thread
@@ -457,10 +463,6 @@ impl MessageEditor {
     }
 
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
         if !model?.model.supports_max_mode() {
@@ -1067,7 +1069,14 @@ impl MessageEditor {
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
+        let is_using_zed_provider = self
+            .thread
+            .read(cx)
+            .configured_model()
+            .map_or(false, |model| {
+                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+            });
+        if !is_using_zed_provider {
             return None;
         }
 
@@ -1121,10 +1130,6 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
         let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
             "Thread reached the token limit"
         } else {
@@ -1255,7 +1260,7 @@ impl MessageEditor {
                         messages: vec![request_message],
                         tools: vec![],
                         stop: vec![],
-                        temperature: None,
+                        temperature: AssistantSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))

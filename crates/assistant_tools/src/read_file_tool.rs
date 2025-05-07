@@ -145,9 +145,9 @@ impl Tool for ReadFileTool {
                     let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count as usize), "\n").collect()
+                        Itertools::intersperse(lines.take(count as usize), "\n").collect::<String>().into()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect()
+                        Itertools::intersperse(lines, "\n").collect::<String>().into()
                     }
                 })?;
 
@@ -180,7 +180,7 @@ impl Tool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(result.into())
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
@@ -192,7 +192,7 @@ impl Tool for ReadFileTool {
 
                         Using the line numbers in this outline, you can call this tool again while specifying
                         the start_line and end_line fields to see the implementations of symbols in the outline."
-                    })
+                    }.into())
                 }
             }
         })
@@ -258,7 +258,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content");
+        assert_eq!(result.unwrap().content, "This is a small file content");
     }
 
     #[gpui::test]
@@ -358,7 +358,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+        assert_eq!(result.unwrap().content, "Line 2\nLine 3\nLine 4");
     }
 
     #[gpui::test]
@@ -389,7 +389,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+        assert_eq!(result.unwrap().content, "Line 1\nLine 2");
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -404,7 +404,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1");
+        assert_eq!(result.unwrap().content, "Line 1");
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -419,7 +419,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3");
+        assert_eq!(result.unwrap().content, "Line 3");
     }
 
     fn init_test(cx: &mut TestAppContext) {

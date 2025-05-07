@@ -56,41 +56,6 @@ pub trait FeatureFlag {
     }
 }
 
-/// Controls the values of various feature flags for the Agent launch.
-///
-/// Change this to `true` when we're ready to build the release candidate.
-const AGENT_LAUNCH: bool = false;
-
-pub struct Assistant2FeatureFlag;
-
-impl FeatureFlag for Assistant2FeatureFlag {
-    const NAME: &'static str = "assistant2";
-
-    fn enabled_for_all() -> bool {
-        AGENT_LAUNCH
-    }
-}
-
-pub struct AgentStreamEditsFeatureFlag;
-
-impl FeatureFlag for AgentStreamEditsFeatureFlag {
-    const NAME: &'static str = "agent-stream-edits";
-
-    fn enabled_for_all() -> bool {
-        AGENT_LAUNCH
-    }
-}
-
-pub struct NewBillingFeatureFlag;
-
-impl FeatureFlag for NewBillingFeatureFlag {
-    const NAME: &'static str = "new-billing";
-
-    fn enabled_for_all() -> bool {
-        AGENT_LAUNCH
-    }
-}
-
 pub struct PredictEditsRateCompletionsFeatureFlag;
 impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";

@@ -70,7 +70,7 @@ impl Tool for OpenTool {
             }
             .context("Failed to open URL or file path")?;
 
-            Ok(format!("Successfully opened {}", input.path_or_url))
+            Ok(format!("Successfully opened {}", input.path_or_url).into())
         })
         .into()
     }

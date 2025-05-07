@@ -1,9 +1,12 @@
 use crate::{
     replace::{replace_exact, replace_with_flexible_indent},
     schema::json_schema_for,
+    streaming_edit_file_tool::StreamingEditFileToolOutput,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus,
+};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
 use gpui::{
@@ -153,7 +156,7 @@ impl Tool for EditFileTool {
         });
 
         let card_clone = card.clone();
-        let task = cx.spawn(async move |cx: &mut AsyncApp| {
+        let task: Task<Result<ToolResultOutput, _>> = cx.spawn(async move |cx: &mut AsyncApp| {
             let project_path = project.read_with(cx, |project, cx| {
                 project
                     .find_project_path(&input.path, cx)
@@ -281,22 +284,61 @@ impl Tool for EditFileTool {
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
-                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+                    card.set_diff(
+                        project_path.path.clone(),
+                        old_text.clone(),
+                        new_text.clone(),
+                        cx,
+                    );
                 })
                 .log_err();
             }
 
-            Ok(format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                input.path.display(),
-                diff_str
-            ))
+            Ok(ToolResultOutput {
+                content: format!(
+                    "Edited {}:\n\n```diff\n{}\n```",
+                    input.path.display(),
+                    diff_str
+                ),
+                output: serde_json::to_value(StreamingEditFileToolOutput {
+                    original_path: input.path,
+                    new_text,
+                    old_text,
+                })
+                .ok(),
+            })
         });
 
         ToolResult {
             output: task,
             card: card.map(AnyToolCard::from),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        let output = match serde_json::from_value::<StreamingEditFileToolOutput>(output) {
+            Ok(output) => output,
+            Err(_) => return None,
+        };
+
+        let card = cx.new(|cx| {
+            let mut card = EditFileToolCard::new(output.original_path.clone(), project, window, cx);
+            card.set_diff(
+                output.original_path.into(),
+                output.old_text,
+                output.new_text,
+                cx,
+            );
+            card
+        });
+
+        Some(card.into())
     }
 }
 
@@ -581,18 +623,18 @@ impl ToolCard for EditFileToolCard {
             (IconName::ChevronDown, "Expand Code Block")
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .w_full()
-            .h_2_5()
-            .rounded_b_lg()
-            .bg(gpui::linear_gradient(
-                0.,
-                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-            ));
+        let gradient_overlay =
+            div()
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h_2_5()
+                .bg(gpui::linear_gradient(
+                    0.,
+                    gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                    gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+                ));
 
         let border_color = cx.theme().colors().border.opacity(0.6);
 
@@ -610,8 +652,9 @@ impl ToolCard for EditFileToolCard {
 
             let mut container = v_flex()
                 .p_3()
-                .gap_1p5()
+                .gap_1()
                 .border_t_1()
+                .rounded_md()
                 .border_color(border_color)
                 .bg(cx.theme().colors().editor_background);
 
@@ -626,7 +669,7 @@ impl ToolCard for EditFileToolCard {
                     _ => div().w_1_2(),
                 }
                 .id("loading_div")
-                .h_2()
+                .h_1()
                 .rounded_full()
                 .bg(cx.theme().colors().element_active)
                 .with_animation(
@@ -648,7 +691,7 @@ impl ToolCard for EditFileToolCard {
             .border_1()
             .when(failed, |card| card.border_dashed())
             .border_color(border_color)
-            .rounded_lg()
+            .rounded_md()
             .overflow_hidden()
             .child(codeblock_header)
             .when(failed && self.error_expanded, |card| {
@@ -702,8 +745,8 @@ impl ToolCard for EditFileToolCard {
                                 |editor_container| editor_container.child(gradient_overlay),
                             ),
                     )
-                    .when(is_collapsible, |editor_container| {
-                        editor_container.child(
+                    .when(is_collapsible, |card| {
+                        card.child(
                             h_flex()
                                 .id(("expand-button", self.editor_unique_id))
                                 .flex_none()
@@ -711,6 +754,7 @@ impl ToolCard for EditFileToolCard {
                                 .h_5()
                                 .justify_center()
                                 .border_t_1()
+                                .rounded_b_md()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)
                                 .hover(|style| {

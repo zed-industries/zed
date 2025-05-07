@@ -166,7 +166,7 @@ impl Tool for FetchTool {
                     bail!("no textual content found");
                 }
 
-                Ok(text)
+                Ok(text.into())
             })
             .into()
     }

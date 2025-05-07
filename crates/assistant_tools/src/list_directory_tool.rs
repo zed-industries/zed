@@ -102,7 +102,7 @@ impl Tool for ListDirectoryTool {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return Task::ready(Ok(output)).into();
+            return Task::ready(Ok(output.into())).into();
         }
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
@@ -134,8 +134,8 @@ impl Tool for ListDirectoryTool {
             .unwrap();
         }
         if output.is_empty() {
-            return Task::ready(Ok(format!("{} is empty.", input.path))).into();
+            return Task::ready(Ok(format!("{} is empty.", input.path).into())).into();
         }
-        Task::ready(Ok(output)).into()
+        Task::ready(Ok(output.into())).into()
     }
 }

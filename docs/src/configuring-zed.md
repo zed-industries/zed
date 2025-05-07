@@ -3070,99 +3070,29 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-## Agent Panel
+## Agent
 
-- Description: Customize the Agent Panel
+- Description: Customize agent behavior
 - Setting: `agent`
 - Default:
 
 ```json
-{
-  "agent": {
-    "version": "2",
-    "enabled": true,
-    "button": true,
-    "dock": "right",
-    // Default width when the agent panel is docked to  the left or right.
-    "default_width": 640,
-    // Default height when the agent panel is docked to the bottom.
-    "default_height": 320,
-    // The default model to use when creating new   threads.
-    "default_model": {
-      // The provider to use.
-      "provider": "zed.dev",
-      // The model to use.
-      "model": "claude-3-7-sonnet-latest"
-    },
-    // The model to use when applying edits from the  agent.
-    "editor_model": {
-      // The provider to use.
-      "provider": "zed.dev",
-      // The model to use.
-      "model": "claude-3-7-sonnet-latest"
-    },
-    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
-    "preferred_completion_mode": "normal",
-    // When enabled, the agent can run potentially  destructive actions without asking for your confirmation.
-    "always_allow_tool_actions": false,
-    // When enabled, the agent will stream edits.
-    "stream_edits": false,
-    // When enabled, agent edits will be displayed in single-file editors for review
-    "single_file_review": true,
-    "default_profile": "write",
-    "profiles": {
-      "write": {
-        "name": "Write",
-        "enable_all_context_servers": true,
-        "tools": {
-          "copy_path": true,
-          "create_directory": true,
-          "create_file": true,
-          "delete_path": true,
-          "diagnostics": true,
-          "edit_file": true,
-          "fetch": true,
-          "list_directory": true,
-          "move_path": true,
-          "now": true,
-          "find_path": true,
-          "read_file": true,
-          "grep": true,
-          "terminal": true,
-          "thinking": true,
-          "web_search": true
-        }
-      },
-      "ask": {
-        "name": "Ask",
-        "tools": {
-          "contents": true,
-          "diagnostics": true,
-          "fetch": true,
-          "list_directory": true,
-          "now": true,
-          "find_path": true,
-          "read_file": true,
-          "open": true,
-          "grep": true,
-          "thinking": true,
-          "web_search": true
-        }
-      },
-      "minimal": {
-        "name": "Minimal",
-        "enable_all_context_servers": false,
-        "tools": {}
-      }
-    },
-    // Where to show notifications when the agent has   either completed
-    // its response, or else needs confirmation before  it can run a
-    // tool action.
-    // "primary_screen" - Show the notification only  on your primary screen (default)
-    // "all_screens" - Show these notifications on all  screens
-    // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen"
-  }
+"agent": {
+  "version": "2",
+  "enabled": true,
+  "button": true,
+  "dock": "right",
+  "default_width": 640,
+  "default_height": 320,
+  "default_model": {
+    "provider": "zed.dev",
+    "model": "claude-3-7-sonnet-latest"
+  },
+  "editor_model": {
+    "provider": "zed.dev",
+    "model": "claude-3-7-sonnet-latest"
+  },
+  "single_file_review": true,
 }
 ```
 

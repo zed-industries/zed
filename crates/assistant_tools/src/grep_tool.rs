@@ -260,16 +260,16 @@ impl Tool for GrepTool {
             }
 
             if matches_found == 0 {
-                Ok("No matches found".to_string())
+                Ok("No matches found".to_string().into())
             } else if has_more_matches {
                 Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
                     input.offset + 1,
                     input.offset + matches_found,
                     input.offset + RESULTS_PER_PAGE,
-                ))
+                ).into())
             } else {
-                Ok(format!("Found {matches_found} matches:\n{output}"))
+                Ok(format!("Found {matches_found} matches:\n{output}").into())
             }
         }).into()
     }
@@ -748,9 +748,9 @@ mod tests {
         match task.output.await {
             Ok(result) => {
                 if cfg!(windows) {
-                    result.replace("root\\", "root/")
+                    result.content.replace("root\\", "root/")
                 } else {
-                    result
+                    result.content
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),
