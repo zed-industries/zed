@@ -219,7 +219,7 @@ impl AgentDiffPane {
             .thread
             .read(cx)
             .summary()
-            .unwrap_or("Assistant Changes".into());
+            .unwrap_or("Agent Changes".into());
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
@@ -324,10 +324,6 @@ fn keep_edits_in_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if thread.read(cx).is_generating() {
-        return;
-    }
-
     let diff_hunks_in_ranges = editor
         .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
@@ -353,10 +349,6 @@ fn reject_edits_in_ranges(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if thread.read(cx).is_generating() {
-        return;
-    }
-
     let diff_hunks_in_ranges = editor
         .diff_hunks_in_ranges(&ranges, buffer_snapshot)
         .collect::<Vec<_>>();
@@ -481,7 +473,7 @@ impl Item for AgentDiffPane {
             .thread
             .read(cx)
             .summary()
-            .unwrap_or("Assistant Changes".into());
+            .unwrap_or("Agent Changes".into());
         Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default
@@ -702,10 +694,6 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
-
-    if thread.read(cx).is_generating() {
-        return Empty.into_any();
-    }
 
     h_flex()
         .h(line_height)
@@ -937,7 +925,7 @@ impl AgentDiffToolbar {
             Some(AgentDiffToolbarItem::Pane(_)) => ToolbarItemLocation::PrimaryRight,
             Some(AgentDiffToolbarItem::Editor { state, .. }) => match state {
                 EditorState::Generating | EditorState::Reviewing => {
-                    ToolbarItemLocation::PrimaryLeft
+                    ToolbarItemLocation::PrimaryRight
                 }
                 EditorState::Idle => ToolbarItemLocation::Hidden,
             },
@@ -990,6 +978,11 @@ impl ToolbarItemView for AgentDiffToolbar {
 
 impl Render for AgentDiffToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let generating_label = div()
+            .w(rems_from_px(110.)) // Arbitrary size so the label doesn't dance around
+            .child(AnimatedLabel::new("Generating"))
+            .into_any();
+
         let Some(active_item) = self.active_item.as_ref() else {
             return Empty.into_any();
         };
@@ -1004,24 +997,13 @@ impl Render for AgentDiffToolbar {
 
                 let content = match state {
                     EditorState::Idle => return Empty.into_any(),
-                    EditorState::Generating => vec![
-                        h_flex()
-                            .ml_1()
-                            .gap_1p5()
-                            .w_32()
-                            .child(Icon::new(IconName::ZedAssistant))
-                            .child(
-                                div()
-                                    .w(rems(6.5625))
-                                    .child(AnimatedLabel::new("Generating")),
-                            )
-                            .into_any(),
-                    ],
+                    EditorState::Generating => vec![generating_label],
                     EditorState::Reviewing => vec![
                         h_flex()
                             .child(
                                 IconButton::new("hunk-up", IconName::ArrowUp)
-                                    .tooltip(ui::Tooltip::for_action_title_in(
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::for_action_title_in(
                                         "Previous Hunk",
                                         &GoToPreviousHunk,
                                         &editor_focus_handle,
@@ -1039,7 +1021,8 @@ impl Render for AgentDiffToolbar {
                             )
                             .child(
                                 IconButton::new("hunk-down", IconName::ArrowDown)
-                                    .tooltip(ui::Tooltip::for_action_title_in(
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::for_action_title_in(
                                         "Next Hunk",
                                         &GoToHunk,
                                         &editor_focus_handle,
@@ -1052,9 +1035,10 @@ impl Render for AgentDiffToolbar {
                                         }
                                     }),
                             )
-                            .into_any(),
+                            .into_any_element(),
                         vertical_divider().into_any_element(),
                         h_flex()
+                            .gap_0p5()
                             .child(
                                 Button::new("reject-all", "Reject All")
                                     .key_binding({
@@ -1085,31 +1069,23 @@ impl Render for AgentDiffToolbar {
                                         this.dispatch_action(&KeepAll, window, cx)
                                     })),
                             )
-                            .into_any(),
+                            .into_any_element(),
                     ],
                 };
 
                 h_flex()
-                    .bg(cx.theme().colors().surface_background)
-                    .rounded_md()
-                    .p_1()
-                    .mx_2()
+                    .track_focus(&editor_focus_handle)
+                    .size_full()
+                    .px_1()
+                    .mr_1()
                     .gap_1()
                     .children(content)
                     .child(vertical_divider())
-                    .track_focus(&editor_focus_handle)
-                    .on_action({
-                        let editor = editor.clone();
-                        move |_action: &OpenAgentDiff, window, cx| {
-                            AgentDiff::global(cx).update(cx, |agent_diff, cx| {
-                                agent_diff.deploy_pane_from_editor(&editor, window, cx);
-                            });
-                        }
-                    })
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
-                            IconButton::new("review", IconName::ListTree)
-                                .tooltip(ui::Tooltip::for_action_title_in(
+                            IconButton::new("review", IconName::ListCollapse)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::for_action_title_in(
                                     "Review All Files",
                                     &OpenAgentDiff,
                                     &editor_focus_handle,
@@ -1121,6 +1097,15 @@ impl Render for AgentDiffToolbar {
                                 }),
                         )
                     })
+                    .child(vertical_divider())
+                    .on_action({
+                        let editor = editor.clone();
+                        move |_action: &OpenAgentDiff, window, cx| {
+                            AgentDiff::global(cx).update(cx, |agent_diff, cx| {
+                                agent_diff.deploy_pane_from_editor(&editor, window, cx);
+                            });
+                        }
+                    })
                     .into_any()
             }
             AgentDiffToolbarItem::Pane(agent_diff) => {
@@ -1130,10 +1115,7 @@ impl Render for AgentDiffToolbar {
 
                 let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
                 if is_generating {
-                    return div()
-                        .w(rems(6.5625)) // Arbitrary 105px size—so the label doesn't dance around
-                        .child(AnimatedLabel::new("Generating"))
-                        .into_any();
+                    return div().px_2().child(generating_label).into_any();
                 }
 
                 let is_empty = agent_diff.read(cx).multibuffer.read(cx).is_empty();
@@ -1145,10 +1127,9 @@ impl Render for AgentDiffToolbar {
 
                 h_group_xl()
                     .my_neg_1()
+                    .py_1()
                     .items_center()
-                    .p_1()
                     .flex_wrap()
-                    .justify_between()
                     .child(
                         h_group_sm()
                             .child(
@@ -1371,13 +1352,13 @@ impl AgentDiff {
             }
             // intentionally being exhaustive in case we add a variant we should handle
             ThreadEvent::Stopped(Ok(StopReason::ToolUse))
-            | ThreadEvent::UsageUpdated(_)
             | ThreadEvent::StreamedCompletion
             | ThreadEvent::ReceivedTextChunk
             | ThreadEvent::StreamedAssistantText(_, _)
             | ThreadEvent::StreamedAssistantThinking(_, _)
             | ThreadEvent::StreamedToolUse { .. }
             | ThreadEvent::InvalidToolInput { .. }
+            | ThreadEvent::MissingToolUse { .. }
             | ThreadEvent::MessageAdded(_)
             | ThreadEvent::MessageEdited(_)
             | ThreadEvent::MessageDeleted(_)
@@ -1753,7 +1734,6 @@ mod tests {
     use crate::{Keep, ThreadStore, thread_store};
     use assistant_settings::AssistantSettings;
     use assistant_tool::ToolWorkingSet;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1776,7 +1756,6 @@ mod tests {
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
         });
@@ -1822,7 +1801,7 @@ mod tests {
             .await
             .unwrap();
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer
                     .edit(
@@ -1933,7 +1912,6 @@ mod tests {
             thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
@@ -2037,7 +2015,7 @@ mod tests {
 
         // Make changes
         cx.update(|_, cx| {
-            action_log.update(cx, |log, cx| log.track_buffer(buffer1.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer1.clone(), cx));
             buffer1.update(cx, |buffer, cx| {
                 buffer
                     .edit(
@@ -2054,7 +2032,7 @@ mod tests {
             });
             action_log.update(cx, |log, cx| log.buffer_edited(buffer1.clone(), cx));
 
-            action_log.update(cx, |log, cx| log.track_buffer(buffer2.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
             buffer2.update(cx, |buffer, cx| {
                 buffer
                     .edit(
@@ -2086,7 +2064,7 @@ mod tests {
         // The toolbar is displayed in the right state
         assert_eq!(
             diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryRight
         );
         assert!(diff_toolbar.read_with(cx, |toolbar, _cx| matches!(
             toolbar.active_item,
@@ -2105,7 +2083,7 @@ mod tests {
         override_toolbar_agent_review_setting(true, cx);
         assert_eq!(
             diff_toolbar.read_with(cx, |toolbar, cx| toolbar.location(cx)),
-            ToolbarItemLocation::PrimaryLeft
+            ToolbarItemLocation::PrimaryRight
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.

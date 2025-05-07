@@ -134,7 +134,6 @@ impl Minimap {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
     pub line_numbers: bool,
-    pub code_actions: bool,
     pub runnables: bool,
     pub breakpoints: bool,
     pub folds: bool,
@@ -556,10 +555,6 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
-    /// Whether to show code action buttons in the gutter.
-    ///
-    /// Default: true
-    pub code_actions: Option<bool>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true

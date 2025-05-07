@@ -28,7 +28,7 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
@@ -1461,7 +1461,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if !snapshot.mode.is_full() {
+        if !snapshot.mode.is_full() || !self.editor.read(cx).show_scrollbars {
             return None;
         }
 
@@ -1469,41 +1469,40 @@ impl EditorElement {
         // cancel the scrollbar drag.
         if cx.has_active_drag() {
             self.editor.update(cx, |editor, cx| {
-                editor.scroll_manager.reset_scrollbar_dragging_state(cx)
+                editor.scroll_manager.reset_scrollbar_state(cx)
             });
         }
 
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
-        let show_scrollbars = self.editor.read(cx).show_scrollbars
-            && match scrollbar_settings.show {
-                ShowScrollbar::Auto => {
-                    let editor = self.editor.read(cx);
-                    let is_singleton = editor.is_singleton(cx);
-                    // Git
-                    (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_diff_hunks())
-                    ||
-                    // Buffer Search Results
-                    (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
-                    ||
-                    // Selected Text Occurrences
-                    (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
-                    ||
-                    // Selected Symbol Occurrences
-                    (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
-                    ||
-                    // Diagnostics
-                    (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot.has_diagnostics())
-                    ||
-                    // Cursors out of sight
-                    non_visible_cursors
-                    ||
-                    // Scrollmanager
-                    editor.scroll_manager.scrollbars_visible()
-                }
-                ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
-                ShowScrollbar::Always => true,
-                ShowScrollbar::Never => return None,
-            };
+        let show_scrollbars = match scrollbar_settings.show {
+            ShowScrollbar::Auto => {
+                let editor = self.editor.read(cx);
+                let is_singleton = editor.is_singleton(cx);
+                // Git
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_diff_hunks())
+                ||
+                // Buffer Search Results
+                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
+                ||
+                // Selected Text Occurrences
+                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                ||
+                // Selected Symbol Occurrences
+                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+                ||
+                // Diagnostics
+                (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot.has_diagnostics())
+                ||
+                // Cursors out of sight
+                non_visible_cursors
+                ||
+                // Scrollmanager
+                editor.scroll_manager.scrollbars_visible()
+            }
+            ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => return None,
+        };
 
         Some(EditorScrollbars::from_scrollbar_axes(
             scrollbar_settings.axes,
@@ -1514,6 +1513,7 @@ impl EditorElement {
             right_margin,
             editor_width,
             show_scrollbars,
+            self.editor.read(cx).scroll_manager.active_scrollbar_state(),
             window,
         ))
     }
@@ -2562,52 +2562,6 @@ impl EditorElement {
             .collect();
 
         elements
-    }
-
-    fn layout_code_actions_indicator(
-        &self,
-        line_height: Pixels,
-        newest_selection_head: DisplayPoint,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        breakpoint_points: &mut HashMap<DisplayRow, (Anchor, Breakpoint)>,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let mut active = false;
-        let mut button = None;
-        let row = newest_selection_head.row();
-        self.editor.update(cx, |editor, cx| {
-            if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
-                deployed_from_indicator,
-                ..
-            })) = editor.context_menu.borrow().as_ref()
-            {
-                active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
-            };
-
-            let breakpoint = breakpoint_points.get(&row);
-            button = editor.render_code_actions_indicator(&self.style, row, active, breakpoint, cx);
-        });
-
-        let button = button?;
-        breakpoint_points.remove(&row);
-
-        let button = prepaint_gutter_button(
-            button,
-            row,
-            line_height,
-            gutter_dimensions,
-            scroll_pixel_position,
-            gutter_hitbox,
-            display_hunks,
-            window,
-            cx,
-        );
-
-        Some(button)
     }
 
     fn calculate_relative_line_numbers(
@@ -5033,10 +4987,6 @@ impl EditorElement {
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
             }
-
-            if let Some(indicator) = layout.code_actions_indicator.as_mut() {
-                indicator.paint(window, cx);
-            }
         });
     }
 
@@ -5280,7 +5230,7 @@ impl EditorElement {
     }
 
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        let Some(scrollbars_layout) = &layout.scrollbars_layout else {
+        let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
         };
 
@@ -5329,10 +5279,16 @@ impl EditorElement {
                         }
                     }
 
+                    let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
+                        ScrollbarThumbState::Dragging | ScrollbarThumbState::Hovered => {
+                            cx.theme().colors().scrollbar_thumb_hover_background
+                        }
+                        ScrollbarThumbState::Idle => cx.theme().colors().scrollbar_thumb_background,
+                    };
                     window.paint_quad(quad(
                         thumb_bounds,
                         Corners::default(),
-                        cx.theme().colors().scrollbar_thumb_background,
+                        scrollbar_thumb_color,
                         scrollbar_edges,
                         cx.theme().colors().scrollbar_thumb_border,
                         BorderStyle::Solid,
@@ -5379,13 +5335,22 @@ impl EditorElement {
                             });
                             editor.set_scroll_position(position, window, cx);
                         }
-                        cx.stop_propagation();
-                    } else {
-                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
-                    }
 
-                    if scrollbars_layout.get_hovered_axis(window).is_some() {
                         editor.scroll_manager.show_scrollbars(window, cx);
+                        cx.stop_propagation();
+                    } else if let Some((layout, axis)) = scrollbars_layout.get_hovered_axis(window)
+                    {
+                        if layout.thumb_bounds().contains(&event.position) {
+                            editor
+                                .scroll_manager
+                                .set_hovered_scroll_thumb_axis(axis, cx);
+                        } else {
+                            editor.scroll_manager.reset_scrollbar_state(cx);
+                        }
+
+                        editor.scroll_manager.show_scrollbars(window, cx);
+                    } else {
+                        editor.scroll_manager.reset_scrollbar_state(cx);
                     }
 
                     mouse_position = event.position;
@@ -5396,13 +5361,19 @@ impl EditorElement {
         if self.editor.read(cx).scroll_manager.any_scrollbar_dragged() {
             window.on_mouse_event({
                 let editor = self.editor.clone();
-                move |_: &MouseUpEvent, phase, _, cx| {
+                move |_: &MouseUpEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
                         return;
                     }
 
                     editor.update(cx, |editor, cx| {
-                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
+                        if let Some((_, axis)) = scrollbars_layout.get_hovered_axis(window) {
+                            editor
+                                .scroll_manager
+                                .set_hovered_scroll_thumb_axis(axis, cx);
+                        } else {
+                            editor.scroll_manager.reset_scrollbar_state(cx);
+                        }
                         cx.stop_propagation();
                     });
                 }
@@ -5410,7 +5381,6 @@ impl EditorElement {
         } else {
             window.on_mouse_event({
                 let editor = self.editor.clone();
-                let scrollbars_layout = scrollbars_layout.clone();
 
                 move |event: &MouseDownEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
@@ -5431,7 +5401,9 @@ impl EditorElement {
                     let thumb_bounds = scrollbar_layout.thumb_bounds();
 
                     editor.update(cx, |editor, cx| {
-                        editor.scroll_manager.set_dragged_scrollbar_axis(axis, cx);
+                        editor
+                            .scroll_manager
+                            .set_dragged_scroll_thumb_axis(axis, cx);
 
                         let event_position = event.position.along(axis);
 
@@ -7154,7 +7126,9 @@ impl Element for EditorElement {
                             self.max_line_number_width(&snapshot, window, cx),
                             cx,
                         )
-                        .unwrap_or_default();
+                        .unwrap_or_else(|| {
+                            GutterDimensions::default_with_margin(font_id, font_size, cx)
+                        });
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -7908,7 +7882,6 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let newest_selection_point =
                             newest_selection_head.to_point(&snapshot.display_snapshot);
@@ -7928,52 +7901,6 @@ impl Element for EditorElement {
                                 window,
                                 cx,
                             );
-
-                            let show_code_actions = snapshot
-                                .show_code_actions
-                                .unwrap_or(gutter_settings.code_actions);
-                            if show_code_actions {
-                                let newest_selection_point =
-                                    newest_selection_head.to_point(&snapshot.display_snapshot);
-                                if !snapshot
-                                    .is_line_folded(MultiBufferRow(newest_selection_point.row))
-                                {
-                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
-                                    );
-                                    if let Some((buffer, range)) = buffer {
-                                        let buffer_id = buffer.remote_id();
-                                        let row = range.start.row;
-                                        let has_test_indicator = self
-                                            .editor
-                                            .read(cx)
-                                            .tasks
-                                            .contains_key(&(buffer_id, row));
-
-                                        let has_expand_indicator = row_infos
-                                            .get(
-                                                (newest_selection_head.row() - start_row).0
-                                                    as usize,
-                                            )
-                                            .is_some_and(|row_info| row_info.expand_info.is_some());
-
-                                        if !has_test_indicator && !has_expand_indicator {
-                                            code_actions_indicator = self
-                                                .layout_code_actions_indicator(
-                                                    line_height,
-                                                    newest_selection_head,
-                                                    scroll_pixel_position,
-                                                    &gutter_dimensions,
-                                                    &gutter_hitbox,
-                                                    &mut breakpoint_rows,
-                                                    &display_hunks,
-                                                    window,
-                                                    cx,
-                                                );
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
@@ -8197,7 +8124,6 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
-                        code_actions_indicator,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -8369,7 +8295,6 @@ pub struct EditorLayout {
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
-    code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
@@ -8441,6 +8366,7 @@ impl EditorScrollbars {
         right_margin: Pixels,
         editor_width: Pixels,
         show_scrollbars: bool,
+        scrollbar_state: Option<&ActiveScrollbarState>,
         window: &mut Window,
     ) -> Self {
         let ScrollbarLayoutInformation {
@@ -8486,6 +8412,10 @@ impl EditorScrollbars {
                     axis != ScrollbarAxis::Horizontal || viewport_size < scroll_range
                 })
                 .map(|(viewport_size, scroll_range)| {
+                    let thumb_state = scrollbar_state
+                        .and_then(|state| state.thumb_state_for_axis(axis))
+                        .unwrap_or(ScrollbarThumbState::Idle);
+
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), false),
                         viewport_size,
@@ -8493,6 +8423,7 @@ impl EditorScrollbars {
                         glyph_grid_cell.along(axis),
                         content_offset.along(axis),
                         scroll_position.along(axis),
+                        thumb_state,
                         axis,
                     )
                 })
@@ -8528,6 +8459,7 @@ struct ScrollbarLayout {
     text_unit_size: Pixels,
     content_offset: Pixels,
     thumb_size: Pixels,
+    thumb_state: ScrollbarThumbState,
     axis: ScrollbarAxis,
 }
 
@@ -8544,6 +8476,7 @@ impl ScrollbarLayout {
         glyph_space: Pixels,
         content_offset: Pixels,
         scroll_position: f32,
+        thumb_state: ScrollbarThumbState,
         axis: ScrollbarAxis,
     ) -> Self {
         let track_bounds = scrollbar_track_hitbox.bounds;
@@ -8559,6 +8492,7 @@ impl ScrollbarLayout {
             glyph_space,
             content_offset,
             scroll_position,
+            thumb_state,
             axis,
         )
     }
@@ -8598,6 +8532,7 @@ impl ScrollbarLayout {
             minimap_line_height,
             track_top_offset,
             scroll_position,
+            ScrollbarThumbState::Idle,
             ScrollbarAxis::Vertical,
         )
     }
@@ -8610,6 +8545,7 @@ impl ScrollbarLayout {
         glyph_space: Pixels,
         content_offset: Pixels,
         scroll_position: f32,
+        thumb_state: ScrollbarThumbState,
         axis: ScrollbarAxis,
     ) -> Self {
         let text_units_per_page = viewport_size / glyph_space;
@@ -8629,6 +8565,7 @@ impl ScrollbarLayout {
             text_unit_size,
             content_offset,
             thumb_size,
+            thumb_state,
             axis,
         }
     }
@@ -9205,15 +9142,17 @@ fn compute_auto_height_layout(
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot
         .gutter_dimensions(font_id, font_size, max_line_number_width, cx)
-        .unwrap_or_default();
+        .unwrap_or_else(|| GutterDimensions::default_with_margin(font_id, font_size, cx));
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if editor.set_wrap_width(Some(editor_width), cx) {
-        snapshot = editor.snapshot(window, cx);
+    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
+        if editor.set_wrap_width(Some(editor_width), cx) {
+            snapshot = editor.snapshot(window, cx);
+        }
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;

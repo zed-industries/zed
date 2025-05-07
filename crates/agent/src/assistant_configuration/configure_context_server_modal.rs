@@ -4,9 +4,8 @@ use std::{
 };
 
 use anyhow::Context as _;
-use context_server::manager::{ContextServerManager, ContextServerStatus};
+use context_server::ContextServerId;
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::ContextServerConfiguration;
 use gpui::{
     Animation, AnimationExt, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
     TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, percentage,
@@ -14,20 +13,30 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use notifications::status_toast::{StatusToast, ToastIcon};
+use project::{
+    context_server_store::{ContextServerStatus, ContextServerStore},
+    project_settings::{ContextServerConfiguration, ProjectSettings},
+};
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
-use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, prelude::*};
+use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
 pub(crate) struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
-    context_servers_to_setup: Vec<ConfigureContextServer>,
-    context_server_manager: Entity<ContextServerManager>,
+    focus_handle: FocusHandle,
+    context_servers_to_setup: Vec<ContextServerSetup>,
+    context_server_store: Entity<ContextServerStore>,
 }
 
-struct ConfigureContextServer {
-    id: Arc<str>,
+#[allow(clippy::large_enum_variant)]
+enum Configuration {
+    NotAvailable,
+    Required(ConfigurationRequiredState),
+}
+
+struct ConfigurationRequiredState {
     installation_instructions: Entity<markdown::Markdown>,
     settings_validator: Option<jsonschema::Validator>,
     settings_editor: Entity<Editor>,
@@ -35,62 +44,91 @@ struct ConfigureContextServer {
     waiting_for_context_server: bool,
 }
 
+struct ContextServerSetup {
+    id: ContextServerId,
+    repository_url: Option<SharedString>,
+    configuration: Configuration,
+}
+
 impl ConfigureContextServerModal {
     pub fn new(
-        configurations: impl Iterator<Item = (Arc<str>, ContextServerConfiguration)>,
+        configurations: impl Iterator<Item = crate::context_server_configuration::Configuration>,
+        context_server_store: Entity<ContextServerStore>,
         jsonc_language: Option<Arc<Language>>,
-        context_server_manager: Entity<ContextServerManager>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Self> {
+        cx: &mut Context<Self>,
+    ) -> Self {
         let context_servers_to_setup = configurations
-            .map(|(id, manifest)| {
-                let jsonc_language = jsonc_language.clone();
-                let settings_validator = jsonschema::validator_for(&manifest.settings_schema)
-                    .context("Failed to load JSON schema for context server settings")
-                    .log_err();
-                ConfigureContextServer {
-                    id: id.clone(),
-                    installation_instructions: cx.new(|cx| {
-                        Markdown::new(
-                            manifest.installation_instructions.clone().into(),
-                            Some(language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    }),
-                    settings_validator,
-                    settings_editor: cx.new(|cx| {
-                        let mut editor = Editor::auto_height(16, window, cx);
-                        editor.set_text(manifest.default_settings.trim(), window, cx);
-                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                            buffer.update(cx, |buffer, cx| buffer.set_language(jsonc_language, cx))
-                        }
-                        editor
-                    }),
-                    waiting_for_context_server: false,
-                    last_error: None,
+            .map(|config| match config {
+                crate::context_server_configuration::Configuration::NotAvailable(
+                    context_server_id,
+                    repository_url,
+                ) => ContextServerSetup {
+                    id: context_server_id,
+                    repository_url,
+                    configuration: Configuration::NotAvailable,
+                },
+                crate::context_server_configuration::Configuration::Required(
+                    context_server_id,
+                    repository_url,
+                    config,
+                ) => {
+                    let jsonc_language = jsonc_language.clone();
+                    let settings_validator = jsonschema::validator_for(&config.settings_schema)
+                        .context("Failed to load JSON schema for context server settings")
+                        .log_err();
+                    let state = ConfigurationRequiredState {
+                        installation_instructions: cx.new(|cx| {
+                            Markdown::new(
+                                config.installation_instructions.clone().into(),
+                                Some(language_registry.clone()),
+                                None,
+                                cx,
+                            )
+                        }),
+                        settings_validator,
+                        settings_editor: cx.new(|cx| {
+                            let mut editor = Editor::auto_height(16, window, cx);
+                            editor.set_text(config.default_settings.trim(), window, cx);
+                            editor.set_show_gutter(false, cx);
+                            editor.set_soft_wrap_mode(
+                                language::language_settings::SoftWrap::None,
+                                cx,
+                            );
+                            if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_language(jsonc_language, cx)
+                                })
+                            }
+                            editor
+                        }),
+                        waiting_for_context_server: false,
+                        last_error: None,
+                    };
+                    ContextServerSetup {
+                        id: context_server_id,
+                        repository_url,
+                        configuration: Configuration::Required(state),
+                    }
                 }
             })
             .collect::<Vec<_>>();
 
-        if context_servers_to_setup.is_empty() {
-            return None;
-        }
-
-        Some(Self {
+        Self {
             workspace,
+            focus_handle: cx.focus_handle(),
             context_servers_to_setup,
-            context_server_manager,
-        })
+            context_server_store,
+        }
     }
 }
 
 impl ConfigureContextServerModal {
     pub fn confirm(&mut self, cx: &mut Context<Self>) {
         if self.context_servers_to_setup.is_empty() {
+            self.dismiss(cx);
             return;
         }
 
@@ -98,7 +136,19 @@ impl ConfigureContextServerModal {
             return;
         };
 
-        let configuration = &mut self.context_servers_to_setup[0];
+        let id = self.context_servers_to_setup[0].id.clone();
+        let configuration = match &mut self.context_servers_to_setup[0].configuration {
+            Configuration::NotAvailable => {
+                self.context_servers_to_setup.remove(0);
+                if self.context_servers_to_setup.is_empty() {
+                    self.dismiss(cx);
+                }
+                return;
+            }
+            Configuration::Required(state) => state,
+        };
+
+        configuration.last_error.take();
         if configuration.waiting_for_context_server {
             return;
         }
@@ -121,16 +171,16 @@ impl ConfigureContextServerModal {
                 return;
             }
         }
-        let id = configuration.id.clone();
+        let id = id.clone();
 
-        let settings_changed = context_server::ContextServerSettings::get_global(cx)
+        let settings_changed = ProjectSettings::get_global(cx)
             .context_servers
-            .get(&id)
+            .get(&id.0)
             .map_or(true, |config| {
                 config.settings.as_ref() != Some(&settings_value)
             });
 
-        let is_running = self.context_server_manager.read(cx).status_for_server(&id)
+        let is_running = self.context_server_store.read(cx).status_for_server(&id)
             == Some(ContextServerStatus::Running);
 
         if !settings_changed && is_running {
@@ -140,7 +190,7 @@ impl ConfigureContextServerModal {
 
         configuration.waiting_for_context_server = true;
 
-        let task = wait_for_context_server(&self.context_server_manager, id.clone(), cx);
+        let task = wait_for_context_server(&self.context_server_store, id.clone(), cx);
         cx.spawn({
             let id = id.clone();
             async move |this, cx| {
@@ -150,9 +200,14 @@ impl ConfigureContextServerModal {
                         this.complete_setup(id, cx);
                     }
                     Err(err) => {
-                        if let Some(configuration) = this.context_servers_to_setup.get_mut(0) {
-                            configuration.last_error = Some(err.into());
-                            configuration.waiting_for_context_server = false;
+                        if let Some(setup) = this.context_servers_to_setup.get_mut(0) {
+                            match &mut setup.configuration {
+                                Configuration::NotAvailable => {}
+                                Configuration::Required(state) => {
+                                    state.last_error = Some(err.into());
+                                    state.waiting_for_context_server = false;
+                                }
+                            }
                         } else {
                             this.dismiss(cx);
                         }
@@ -164,29 +219,25 @@ impl ConfigureContextServerModal {
         .detach();
 
         // When we write the settings to the file, the context server will be restarted.
-        update_settings_file::<context_server::ContextServerSettings>(
-            workspace.read(cx).app_state().fs.clone(),
-            cx,
-            {
-                let id = id.clone();
-                |settings, _| {
-                    if let Some(server_config) = settings.context_servers.get_mut(&id) {
-                        server_config.settings = Some(settings_value);
-                    } else {
-                        settings.context_servers.insert(
-                            id,
-                            context_server::ServerConfig {
-                                settings: Some(settings_value),
-                                ..Default::default()
-                            },
-                        );
-                    }
+        update_settings_file::<ProjectSettings>(workspace.read(cx).app_state().fs.clone(), cx, {
+            let id = id.clone();
+            |settings, _| {
+                if let Some(server_config) = settings.context_servers.get_mut(&id.0) {
+                    server_config.settings = Some(settings_value);
+                } else {
+                    settings.context_servers.insert(
+                        id.0,
+                        ContextServerConfiguration {
+                            settings: Some(settings_value),
+                            ..Default::default()
+                        },
+                    );
                 }
-            },
-        );
+            }
+        });
     }
 
-    fn complete_setup(&mut self, id: Arc<str>, cx: &mut Context<Self>) {
+    fn complete_setup(&mut self, id: ContextServerId, cx: &mut Context<Self>) {
         self.context_servers_to_setup.remove(0);
         cx.notify();
 
@@ -220,31 +271,40 @@ impl ConfigureContextServerModal {
 }
 
 fn wait_for_context_server(
-    context_server_manager: &Entity<ContextServerManager>,
-    context_server_id: Arc<str>,
+    context_server_store: &Entity<ContextServerStore>,
+    context_server_id: ContextServerId,
     cx: &mut App,
 ) -> Task<Result<(), Arc<str>>> {
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
-    let subscription = cx.subscribe(context_server_manager, move |_, event, _cx| match event {
-        context_server::manager::Event::ServerStatusChanged { server_id, status } => match status {
-            Some(ContextServerStatus::Running) => {
-                if server_id == &context_server_id {
-                    if let Some(tx) = tx.lock().unwrap().take() {
-                        let _ = tx.send(Ok(()));
+    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| match event {
+        project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
+            match status {
+                ContextServerStatus::Running => {
+                    if server_id == &context_server_id {
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send(Ok(()));
+                        }
                     }
                 }
-            }
-            Some(ContextServerStatus::Error(error)) => {
-                if server_id == &context_server_id {
-                    if let Some(tx) = tx.lock().unwrap().take() {
-                        let _ = tx.send(Err(error.clone()));
+                ContextServerStatus::Stopped => {
+                    if server_id == &context_server_id {
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send(Err("Context server stopped running".into()));
+                        }
                     }
                 }
+                ContextServerStatus::Error(error) => {
+                    if server_id == &context_server_id {
+                        if let Some(tx) = tx.lock().unwrap().take() {
+                            let _ = tx.send(Err(error.clone()));
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        },
+        }
     });
 
     cx.spawn(async move |_cx| {
@@ -256,16 +316,17 @@ fn wait_for_context_server(
 
 impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(configuration) = self.context_servers_to_setup.first() else {
-            return div().child("No context servers to setup");
+        let Some(setup) = self.context_servers_to_setup.first() else {
+            return div().into_any_element();
         };
 
         let focus_handle = self.focus_handle(cx);
 
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .w(rems(42.))
             .key_context("ConfigureContextServerModal")
+            .track_focus(&focus_handle)
             .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
             .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.dismiss(cx)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
@@ -273,9 +334,15 @@ impl Render for ConfigureContextServerModal {
             }))
             .child(
                 Modal::new("configure-context-server", None)
-                    .header(ModalHeader::new().headline(format!("Configure {}", configuration.id)))
-                    .section(
-                        Section::new()
+                    .header(ModalHeader::new().headline(format!("Configure {}", setup.id)))
+                    .section(match &setup.configuration {
+                        Configuration::NotAvailable => Section::new().child(
+                            Label::new(
+                                "No configuration options available for this context server. Visit the Repository for any further instructions.",
+                            )
+                            .color(Color::Muted),
+                        ),
+                        Configuration::Required(configuration) => Section::new()
                             .child(div().pb_2().text_sm().child(MarkdownElement::new(
                                 configuration.installation_instructions.clone(),
                                 default_markdown_style(window, cx),
@@ -359,45 +426,84 @@ impl Render for ConfigureContextServerModal {
                                         ),
                                 )
                             }),
-                    )
+                    })
                     .footer(
-                        ModalFooter::new().end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Button::new("cancel", "Cancel")
-                                        .key_binding(
-                                            KeyBinding::for_action_in(
-                                                &menu::Cancel,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        )
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.dismiss(cx)
-                                        })),
+                        ModalFooter::new()
+                            .when_some(setup.repository_url.clone(), |this, repository_url| {
+                                this.start_slot(
+                                    h_flex().w_full().child(
+                                        Button::new("open-repository", "Open Repository")
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_color(Color::Muted)
+                                            .icon_size(IconSize::XSmall)
+                                            .tooltip({
+                                                let repository_url = repository_url.clone();
+                                                move |window, cx| {
+                                                    Tooltip::with_meta(
+                                                        "Open Repository",
+                                                        None,
+                                                        repository_url.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
+                                            .on_click(move |_, _, cx| cx.open_url(&repository_url)),
+                                    ),
                                 )
-                                .child(
-                                    Button::new("configure-server", "Configure MCP")
-                                        .disabled(configuration.waiting_for_context_server)
-                                        .key_binding(
-                                            KeyBinding::for_action_in(
-                                                &menu::Confirm,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
+                            })
+                            .end_slot(match &setup.configuration {
+                                Configuration::NotAvailable => Button::new("dismiss", "Dismiss")
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &menu::Cancel,
+                                            &focus_handle,
+                                            window,
+                                            cx,
                                         )
-                                        .on_click(cx.listener(|this, _event, _window, cx| {
-                                            this.confirm(cx)
-                                        })),
-                                ),
-                        ),
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                    )
+                                    .on_click(
+                                        cx.listener(|this, _event, _window, cx| this.dismiss(cx)),
+                                    )
+                                    .into_any_element(),
+                                Configuration::Required(state) => h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("cancel", "Cancel")
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Cancel,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.dismiss(cx)
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("configure-server", "Configure MCP")
+                                            .disabled(state.waiting_for_context_server)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &menu::Confirm,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.confirm(cx)
+                                            })),
+                                    )
+                                    .into_any_element(),
+                            }),
                     ),
-            )
+            ).into_any_element()
     }
 }
 
@@ -435,9 +541,14 @@ impl EventEmitter<DismissEvent> for ConfigureContextServerModal {}
 impl Focusable for ConfigureContextServerModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if let Some(current) = self.context_servers_to_setup.first() {
-            current.settings_editor.read(cx).focus_handle(cx)
+            match &current.configuration {
+                Configuration::NotAvailable => self.focus_handle.clone(),
+                Configuration::Required(configuration) => {
+                    configuration.settings_editor.read(cx).focus_handle(cx)
+                }
+            }
         } else {
-            cx.focus_handle()
+            self.focus_handle.clone()
         }
     }
 }

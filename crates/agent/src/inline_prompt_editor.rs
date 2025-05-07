@@ -6,7 +6,7 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
@@ -852,6 +852,7 @@ impl PromptEditor<BufferCodegen> {
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
@@ -895,6 +896,7 @@ impl PromptEditor<BufferCodegen> {
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 prompt_editor_entity,
                 codegen_buffer.as_ref().map(Entity::downgrade),
             ))));
@@ -908,6 +910,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 window,
@@ -1027,6 +1030,7 @@ impl PromptEditor<TerminalCodegen> {
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1063,6 +1067,7 @@ impl PromptEditor<TerminalCodegen> {
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 prompt_editor_entity,
                 None,
             ))));
@@ -1076,6 +1081,7 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 window,

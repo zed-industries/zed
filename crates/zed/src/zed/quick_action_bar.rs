@@ -15,7 +15,7 @@ use gpui::{
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName, IconSize,
+    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
@@ -141,7 +141,6 @@ impl Render for QuickActionBar {
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger_with_tooltip(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_selections_handle.is_deployed()),
@@ -190,7 +189,6 @@ impl Render for QuickActionBar {
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
                     IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
@@ -293,7 +291,7 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                    inline_completion_entry = inline_completion_entry.documentation_aside(DocumentationSide::Left, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }
@@ -435,7 +433,7 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(DynamicSpacing::Base04.rems(cx))
+            .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)
@@ -490,7 +488,6 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .toggle_state(self.toggled)

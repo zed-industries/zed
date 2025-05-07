@@ -52,7 +52,8 @@ use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    DetachAndPromptErr, Notifications, simple_message_notification::MessageNotification,
+    DetachAndPromptErr, Notifications, dismiss_app_notification,
+    simple_message_notification::MessageNotification,
 };
 pub use pane::*;
 pub use pane_group::*;
@@ -179,6 +180,7 @@ actions!(
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
+        SuppressNotification,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -867,6 +869,7 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
+    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -921,6 +924,7 @@ pub struct Workspace {
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
+    suppressed_notifications: HashSet<NotificationId>,
     project: Entity<Project>,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
@@ -937,7 +941,7 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
-    centered_layout: bool,
+    pub centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
@@ -1245,7 +1249,8 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
-            notifications: Default::default(),
+            notifications: Notifications::default(),
+            suppressed_notifications: HashSet::default(),
             left_dock,
             bottom_dock,
             bottom_dock_layout,
@@ -1313,7 +1318,7 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace: Option<SerializedWorkspace> =
+            let serialized_workspace =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             let workspace_location = serialized_workspace
@@ -5302,11 +5307,19 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
+                    if let Some((notification_id, _)) = workspace.notifications.pop() {
+                        workspace.suppress_notification(&notification_id, cx);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::cancel))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5476,6 +5489,16 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
+    }
+
+    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+            return;
+        }
+
+        cx.emit(Event::ClearActivityIndicator);
+        cx.propagate();
     }
 }
 
@@ -7443,6 +7466,64 @@ pub fn move_active_item(
             );
         });
     });
+}
+
+#[derive(Debug)]
+pub struct WorkspacePosition {
+    pub window_bounds: Option<WindowBounds>,
+    pub display: Option<Uuid>,
+    pub centered_layout: bool,
+}
+
+pub fn ssh_workspace_position_from_db(
+    host: String,
+    port: Option<u16>,
+    user: Option<String>,
+    paths_to_open: &[PathBuf],
+    cx: &App,
+) -> Task<Result<WorkspacePosition>> {
+    let paths = paths_to_open
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
+    cx.background_spawn(async move {
+        let serialized_ssh_project = persistence::DB
+            .get_or_create_ssh_project(host, port, paths, user)
+            .await
+            .context("fetching serialized ssh project")?;
+        let serialized_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+
+        let (window_bounds, display) = if let Some(bounds) = window_bounds_env_override() {
+            (Some(WindowBounds::Windowed(bounds)), None)
+        } else {
+            let restorable_bounds = serialized_workspace
+                .as_ref()
+                .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
+                .or_else(|| {
+                    let (display, window_bounds) = DB.last_window().log_err()?;
+                    Some((display?, window_bounds?))
+                });
+
+            if let Some((serialized_display, serialized_status)) = restorable_bounds {
+                (Some(serialized_status.0), Some(serialized_display))
+            } else {
+                (None, None)
+            }
+        };
+
+        let centered_layout = serialized_workspace
+            .as_ref()
+            .map(|w| w.centered_layout)
+            .unwrap_or(false);
+
+        Ok(WorkspacePosition {
+            window_bounds,
+            display,
+            centered_layout,
+        })
+    })
 }
 
 #[cfg(test)]

@@ -1030,7 +1030,6 @@ pub struct EditorSnapshot {
     show_gutter: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
-    show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     git_blame_gutter_max_author_length: Option<usize>,
@@ -1053,6 +1052,16 @@ pub struct GutterDimensions {
 }
 
 impl GutterDimensions {
+    fn default_with_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Self {
+        Self {
+            margin: Self::default_gutter_margin(font_id, font_size, cx),
+            ..Default::default()
+        }
+    }
+
+    fn default_gutter_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Pixels {
+        -cx.text_system().descent(font_id, font_size)
+    }
     /// The full width of the space taken up by the gutter.
     pub fn full_width(&self) -> Pixels {
         self.margin + self.width
@@ -2246,7 +2255,6 @@ impl Editor {
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
-            show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
@@ -2988,7 +2996,9 @@ impl Editor {
             _ => {}
         }
 
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        let auto_scroll = EditorSettings::get_global(cx).autoscroll_on_clicks;
+
+        self.change_selections(auto_scroll.then(Autoscroll::fit), window, cx, |s| {
             s.set_pending(pending_selection, pending_mode)
         });
     }
@@ -3008,7 +3018,6 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.selections.newest_anchor().clone();
         let position = display_map.clip_point(position, Bias::Left);
 
         let start;
@@ -3083,8 +3092,6 @@ impl Editor {
             } else {
                 if !add {
                     s.clear_disjoint();
-                } else if click_count > 1 {
-                    s.delete(newest_selection.id)
                 }
 
                 s.set_pending_anchor_range(start..end, mode);
@@ -4370,6 +4377,16 @@ impl Editor {
         self.inline_value_cache.enabled
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inline_value_inlays(&self, cx: &App) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .filter(|inlay| matches!(inlay.id, InlayId::DebuggerValue(_)))
+            .cloned()
+            .collect()
+    }
+
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
         if self.semantics_provider.is_none() || !self.mode.is_full() {
             return;
@@ -5243,20 +5260,27 @@ impl Editor {
                                     let dap_store = project.read(cx).dap_store();
                                     let mut scenarios = vec![];
                                     let resolved_tasks = resolved_tasks.as_ref()?;
-                                    let debug_adapter: SharedString = buffer
-                                        .read(cx)
-                                        .language()?
-                                        .context_provider()?
-                                        .debug_adapter()?
-                                        .into();
+                                    let buffer = buffer.read(cx);
+                                    let language = buffer.language()?;
+                                    let file = buffer.file();
+                                    let debug_adapter =
+                                        language_settings(language.name().into(), file, cx)
+                                            .debuggers
+                                            .first()
+                                            .map(SharedString::from)
+                                            .or_else(|| {
+                                                language
+                                                    .config()
+                                                    .debuggers
+                                                    .first()
+                                                    .map(SharedString::from)
+                                            })?;
+
                                     dap_store.update(cx, |this, cx| {
                                         for (_, task) in &resolved_tasks.templates {
                                             if let Some(scenario) = this
                                                 .debug_scenario_for_build_task(
-                                                    task.resolved.clone(),
-                                                    SharedString::from(
-                                                        task.original_task().label.clone(),
-                                                    ),
+                                                    task.original_task().clone(),
                                                     debug_adapter.clone(),
                                                     cx,
                                                 )
@@ -5813,34 +5837,36 @@ impl Editor {
                     .into_iter()
                     .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
                 let mut match_ranges = Vec::new();
+                let Ok(regex) = project::search::SearchQuery::text(
+                    query_text.clone(),
+                    false,
+                    false,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    false,
+                    None,
+                ) else {
+                    return Vec::default();
+                };
                 for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
                     match_ranges.extend(
-                        project::search::SearchQuery::text(
-                            query_text.clone(),
-                            false,
-                            false,
-                            false,
-                            Default::default(),
-                            Default::default(),
-                            false,
-                            None,
-                        )
-                        .unwrap()
-                        .search(&buffer_snapshot, Some(search_range.clone()))
-                        .await
-                        .into_iter()
-                        .filter_map(|match_range| {
-                            let match_start = buffer_snapshot
-                                .anchor_after(search_range.start + match_range.start);
-                            let match_end =
-                                buffer_snapshot.anchor_before(search_range.start + match_range.end);
-                            let match_anchor_range = Anchor::range_in_buffer(
-                                excerpt_id,
-                                buffer_snapshot.remote_id(),
-                                match_start..match_end,
-                            );
-                            (match_anchor_range != query_range).then_some(match_anchor_range)
-                        }),
+                        regex
+                            .search(&buffer_snapshot, Some(search_range.clone()))
+                            .await
+                            .into_iter()
+                            .filter_map(|match_range| {
+                                let match_start = buffer_snapshot
+                                    .anchor_after(search_range.start + match_range.start);
+                                let match_end = buffer_snapshot
+                                    .anchor_before(search_range.start + match_range.end);
+                                let match_anchor_range = Anchor::range_in_buffer(
+                                    excerpt_id,
+                                    buffer_snapshot.remote_id(),
+                                    match_start..match_end,
+                                );
+                                (match_anchor_range != query_range).then_some(match_anchor_range)
+                            }),
                     );
                 }
                 match_ranges
@@ -6716,69 +6742,6 @@ impl Editor {
 
     pub fn edit_prediction_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
-    }
-
-    fn render_code_actions_indicator(
-        &self,
-        _style: &EditorStyle,
-        row: DisplayRow,
-        is_active: bool,
-        breakpoint: Option<&(Anchor, Breakpoint)>,
-        cx: &mut Context<Self>,
-    ) -> Option<IconButton> {
-        let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let show_tooltip = !self.context_menu_visible();
-
-        if self.available_code_actions.is_some() {
-            Some(
-                IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(color)
-                    .toggle_state(is_active)
-                    .when(show_tooltip, |this| {
-                        this.tooltip({
-                            let focus_handle = self.focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Toggle Code Actions",
-                                    &ToggleCodeActions {
-                                        deployed_from_indicator: None,
-                                        quick_launch: false,
-                                    },
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                    })
-                    .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-                        let quick_launch = e.down.button == MouseButton::Left;
-                        window.focus(&editor.focus_handle(cx));
-                        editor.toggle_code_actions(
-                            &ToggleCodeActions {
-                                deployed_from_indicator: Some(row),
-                                quick_launch,
-                            },
-                            window,
-                            cx,
-                        );
-                    }))
-                    .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                        editor.set_breakpoint_context_menu(
-                            row,
-                            position,
-                            event.down.position,
-                            window,
-                            cx,
-                        );
-                    })),
-            )
-        } else {
-            None
-        }
     }
 
     fn clear_tasks(&mut self) {
@@ -12172,6 +12135,28 @@ impl Editor {
         }
     }
 
+    fn select_match_ranges(
+        &mut self,
+        range: Range<usize>,
+        reversed: bool,
+        replace_newest: bool,
+        auto_scroll: Option<Autoscroll>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
+        self.change_selections(auto_scroll, window, cx, |s| {
+            if replace_newest {
+                s.delete(s.newest_anchor().id);
+            }
+            if reversed {
+                s.insert_range(range.end..range.start);
+            } else {
+                s.insert_range(range);
+            }
+        });
+    }
+
     pub fn select_next_match_internal(
         &mut self,
         display_map: &DisplaySnapshot,
@@ -12180,28 +12165,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        fn select_next_match_ranges(
-            this: &mut Editor,
-            range: Range<usize>,
-            reversed: bool,
-            replace_newest: bool,
-            auto_scroll: Option<Autoscroll>,
-            window: &mut Window,
-            cx: &mut Context<Editor>,
-        ) {
-            this.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
-            this.change_selections(auto_scroll, window, cx, |s| {
-                if replace_newest {
-                    s.delete(s.newest_anchor().id);
-                }
-                if reversed {
-                    s.insert_range(range.end..range.start);
-                } else {
-                    s.insert_range(range);
-                }
-            });
-        }
-
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
@@ -12246,8 +12209,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    select_next_match_ranges(
-                        self,
+                    self.select_match_ranges(
                         next_selected_range,
                         last_selection.reversed,
                         replace_newest,
@@ -12305,8 +12267,7 @@ impl Editor {
                     selection.end = word_range.end.to_offset(display_map, Bias::Left);
                     selection.goal = SelectionGoal::None;
                     selection.reversed = false;
-                    select_next_match_ranges(
-                        self,
+                    self.select_match_ranges(
                         selection.start..selection.end,
                         selection.reversed,
                         replace_newest,
@@ -12471,17 +12432,14 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges(&[next_selected_range.clone()], false, true, cx);
-                    self.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
-                        if action.replace_newest {
-                            s.delete(s.newest_anchor().id);
-                        }
-                        if last_selection.reversed {
-                            s.insert_range(next_selected_range.end..next_selected_range.start);
-                        } else {
-                            s.insert_range(next_selected_range);
-                        }
-                    });
+                    self.select_match_ranges(
+                        next_selected_range,
+                        last_selection.reversed,
+                        action.replace_newest,
+                        Some(Autoscroll::newest()),
+                        window,
+                        cx,
+                    );
                 } else {
                     select_prev_state.done = true;
                 }
@@ -12532,6 +12490,14 @@ impl Editor {
                     selection.end = word_range.end.to_offset(&display_map, Bias::Left);
                     selection.goal = SelectionGoal::None;
                     selection.reversed = false;
+                    self.select_match_ranges(
+                        selection.start..selection.end,
+                        selection.reversed,
+                        action.replace_newest,
+                        Some(Autoscroll::newest()),
+                        window,
+                        cx,
+                    );
                 }
                 if selections.len() == 1 {
                     let selection = selections
@@ -12550,16 +12516,6 @@ impl Editor {
                 } else {
                     self.select_prev_state = None;
                 }
-
-                self.unfold_ranges(
-                    &selections.iter().map(|s| s.range()).collect::<Vec<_>>(),
-                    false,
-                    true,
-                    cx,
-                );
-                self.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
-                    s.select(selections);
-                });
             } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(SelectNextState {
                     query: AhoCorasick::new(&[selected_text.chars().rev().collect::<String>()])?,
@@ -13042,10 +12998,9 @@ impl Editor {
                 }
 
                 let mut new_range = old_range.clone();
-                let mut new_node = None;
-                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
+                while let Some((_node, containing_range)) =
+                    buffer.syntax_ancestor(new_range.clone())
                 {
-                    new_node = Some(node);
                     new_range = match containing_range {
                         MultiOrSingleBufferOffsetRange::Single(_) => break,
                         MultiOrSingleBufferOffsetRange::Multi(range) => range,
@@ -13055,17 +13010,6 @@ impl Editor {
                     {
                         break;
                     }
-                }
-
-                if let Some(node) = new_node {
-                    // Log the ancestor, to support using this action as a way to explore TreeSitter
-                    // nodes. Parent and grandparent are also logged because this operation will not
-                    // visit nodes that have the same range as their parent.
-                    log::info!("Node: {node:?}");
-                    let parent = node.parent();
-                    log::info!("Parent: {parent:?}");
-                    let grandparent = parent.and_then(|x| x.parent());
-                    log::info!("Grandparent: {grandparent:?}");
                 }
 
                 selected_larger_node |= new_range != old_range;
@@ -17791,7 +17735,7 @@ impl Editor {
         }
     }
 
-    fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
         };
@@ -20201,7 +20145,6 @@ impl EditorSnapshot {
             return None;
         }
 
-        let descent = cx.text_system().descent(font_id, font_size);
         let em_width = cx.text_system().em_width(font_id, font_size).log_err()?;
         let em_advance = cx.text_system().em_advance(font_id, font_size).log_err()?;
 
@@ -20222,10 +20165,6 @@ impl EditorSnapshot {
         } else {
             0.0.into()
         };
-
-        let show_code_actions = self
-            .show_code_actions
-            .unwrap_or(gutter_settings.code_actions);
 
         let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
@@ -20252,7 +20191,7 @@ impl EditorSnapshot {
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if !is_singleton {
             em_width * 4.0
-        } else if show_code_actions || show_runnables || show_breakpoints {
+        } else if show_runnables || show_breakpoints {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
@@ -20278,7 +20217,7 @@ impl EditorSnapshot {
             left_padding,
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
-            margin: -descent,
+            margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
             git_blame_entries_width,
         })
     }

@@ -7,8 +7,10 @@ mod buffer_codegen;
 mod context;
 mod context_picker;
 mod context_server_configuration;
+mod context_server_tool;
 mod context_store;
 mod context_strip;
+mod debug;
 mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
@@ -27,8 +29,6 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfileId, AssistantSettings};
 use client::Client;
-use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{App, actions, impl_actions};
 use language::LanguageRegistry;
@@ -44,10 +44,10 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
-pub use crate::thread_store::ThreadStore;
+pub use crate::thread_store::{TextThreadStore, ThreadStore};
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use context_store::ContextStore;
-pub use ui::{all_agent_previews, get_agent_preview};
+pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
     agent,
@@ -78,7 +78,8 @@ actions!(
         Reject,
         RejectAll,
         KeepAll,
-        Follow
+        Follow,
+        ResetTrialUpsell,
     ]
 );
 
@@ -103,8 +104,6 @@ impl ManageProfiles {
 }
 
 impl_actions!(agent, [NewThread, ManageProfiles]);
-
-const NAMESPACE: &str = "agent";
 
 /// Initializes the `agent` crate.
 pub fn init(
@@ -133,25 +132,4 @@ pub fn init(
     );
     cx.observe_new(AddContextServerModal::register).detach();
     cx.observe_new(ManageProfilesModal::register).detach();
-
-    feature_gate_agent_actions(cx);
-}
-
-fn feature_gate_agent_actions(cx: &mut App) {
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_namespace(NAMESPACE);
-    });
-
-    cx.observe_flag::<Assistant2FeatureFlag, _>(move |is_enabled, cx| {
-        if is_enabled {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                filter.show_namespace(NAMESPACE);
-            });
-        } else {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                filter.hide_namespace(NAMESPACE);
-            });
-        }
-    })
-    .detach();
 }

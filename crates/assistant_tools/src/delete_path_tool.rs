@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,7 @@ impl Tool for DeletePathTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -127,7 +128,7 @@ impl Tool for DeletePathTool {
 
             match delete {
                 Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Ok(()) => Ok(format!("Deleted {path_str}").into()),
                     Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 },
                 None => Err(anyhow!(

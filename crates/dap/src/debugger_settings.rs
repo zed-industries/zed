@@ -4,6 +4,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugPanelDockPosition {
+    Left,
+    Bottom,
+    Right,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy)]
 #[serde(default)]
 pub struct DebuggerSettings {
@@ -31,6 +39,10 @@ pub struct DebuggerSettings {
     ///
     /// Default: true
     pub format_dap_log_messages: bool,
+    /// The dock position of the debug panel
+    ///
+    /// Default: Bottom
+    pub dock: DebugPanelDockPosition,
 }
 
 impl Default for DebuggerSettings {
@@ -42,6 +54,7 @@ impl Default for DebuggerSettings {
             timeout: 2000,
             log_dap_communications: true,
             format_dap_log_messages: true,
+            dock: DebugPanelDockPosition::Bottom,
         }
     }
 }

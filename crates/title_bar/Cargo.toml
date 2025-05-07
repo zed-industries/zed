@@ -32,7 +32,6 @@ call.workspace = true
 chrono.workspace = true
 client.workspace = true
 db.workspace = true
-feature_flags.workspace = true
 gpui.workspace = true
 notifications.workspace = true
 project.workspace = true

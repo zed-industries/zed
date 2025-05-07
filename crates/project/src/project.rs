@@ -1,6 +1,7 @@
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
+pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
@@ -23,6 +24,7 @@ mod project_tests;
 mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
+use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
@@ -64,7 +66,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window, prelude::FluentBuilder,
+    SharedString, Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -182,6 +184,7 @@ pub struct Project {
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
     buffer_store: Entity<BufferStore>,
+    context_server_store: Entity<ContextServerStore>,
     image_store: Entity<ImageStore>,
     lsp_store: Entity<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -845,6 +848,7 @@ impl Project {
         ToolchainStore::init(&client);
         DapStore::init(&client, cx);
         BreakpointStore::init(&client);
+        context_server_store::init(cx);
     }
 
     pub fn local(
@@ -864,6 +868,9 @@ impl Project {
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
             let toolchain_store = cx.new(|cx| {
@@ -887,7 +894,6 @@ impl Project {
                     client.http_client(),
                     node.clone(),
                     fs.clone(),
-                    languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
@@ -965,6 +971,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                context_server_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
@@ -1024,6 +1031,9 @@ impl Project {
                 cx.new(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1109,6 +1119,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                context_server_store,
                 breakpoint_store,
                 dap_store,
                 join_project_response_message_id: 0,
@@ -1267,6 +1278,8 @@ impl Project {
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
+        let context_server_store =
+            cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx))?;
 
         let environment = cx.new(|_| ProjectEnvironment::new(None))?;
 
@@ -1360,6 +1373,7 @@ impl Project {
                 image_store,
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
+                context_server_store,
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
@@ -1590,6 +1604,10 @@ impl Project {
         self.worktree_store.clone()
     }
 
+    pub fn context_server_store(&self) -> Entity<ContextServerStore> {
+        self.context_server_store.clone()
+    }
+
     pub fn buffer_for_id(&self, remote_id: BufferId, cx: &App) -> Option<Entity<Buffer>> {
         self.buffer_store.read(cx).get(remote_id)
     }
@@ -1634,6 +1652,16 @@ impl Project {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
             environment.get_buffer_environment(&buffer, &worktree_store, cx)
+        })
+    }
+
+    pub fn directory_environment(
+        &self,
+        abs_path: Arc<Path>,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_directory_environment(abs_path, cx)
         })
     }
 
@@ -3534,53 +3562,43 @@ impl Project {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let snapshot = buffer_handle.read(cx).snapshot();
-
-        let Some(inline_value_provider) = session
+        let language_name = buffer_handle
             .read(cx)
-            .adapter_name()
-            .map(|adapter_name| DapRegistry::global(cx).adapter(&adapter_name))
-            .and_then(|adapter| adapter.inline_value_provider())
+            .language()
+            .map(|language| language.name().to_string());
+
+        let Some(inline_value_provider) = language_name
+            .and_then(|language| DapRegistry::global(cx).inline_value_provider(&language))
         else {
             return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
         };
 
-        let mut text_objects =
-            snapshot.text_object_ranges(range.end..range.end, Default::default());
-        let text_object_range = text_objects
-            .find(|(_, obj)| matches!(obj, language::TextObject::AroundFunction))
-            .map(|(range, _)| snapshot.anchor_before(range.start))
-            .unwrap_or(range.start);
+        let snapshot = buffer_handle.read(cx).snapshot();
 
-        let variable_ranges = snapshot
-            .debug_variable_ranges(
-                text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
-            )
-            .filter_map(|range| {
-                let lsp_range = language::range_to_lsp(
-                    range.range.start.to_point_utf16(&snapshot)
-                        ..range.range.end.to_point_utf16(&snapshot),
-                )
-                .ok()?;
+        let root_node = snapshot.syntax_root_ancestor(range.end).unwrap();
 
-                Some((
-                    snapshot.text_for_range(range.range).collect::<String>(),
-                    lsp_range,
-                ))
-            })
-            .collect::<Vec<_>>();
+        let row = snapshot
+            .summary_for_anchor::<text::PointUtf16>(&range.end)
+            .row as usize;
 
-        let inline_values = inline_value_provider.provide(variable_ranges);
+        let inline_value_locations = inline_value_provider.provide(
+            root_node,
+            snapshot
+                .text_for_range(Anchor::MIN..range.end)
+                .collect::<String>()
+                .as_str(),
+            row,
+        );
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |project, cx| {
                 project.dap_store().update(cx, |dap_store, cx| {
-                    dap_store.resolve_inline_values(
+                    dap_store.resolve_inline_value_locations(
                         session,
                         stack_frame_id,
                         buffer_handle,
-                        inline_values,
+                        inline_value_locations,
                         cx,
                     )
                 })

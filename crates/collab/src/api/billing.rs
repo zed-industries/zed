@@ -71,6 +71,7 @@ struct GetBillingPreferencesParams {
 
 #[derive(Debug, Serialize)]
 struct BillingPreferencesResponse {
+    trial_started_at: Option<String>,
     max_monthly_llm_usage_spending_in_cents: i32,
     model_request_overages_enabled: bool,
     model_request_overages_spend_limit_in_cents: i32,
@@ -86,9 +87,17 @@ async fn get_billing_preferences(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
+    let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
     let preferences = app.db.get_billing_preferences(user.id).await?;
 
     Ok(Json(BillingPreferencesResponse {
+        trial_started_at: billing_customer
+            .and_then(|billing_customer| billing_customer.trial_started_at)
+            .map(|trial_started_at| {
+                trial_started_at
+                    .and_utc()
+                    .to_rfc3339_opts(SecondsFormat::Millis, true)
+            }),
         max_monthly_llm_usage_spending_in_cents: preferences
             .as_ref()
             .map_or(DEFAULT_MAX_MONTHLY_SPEND.0 as i32, |preferences| {
@@ -126,6 +135,8 @@ async fn update_billing_preferences(
         .get_user_by_github_user_id(body.github_user_id)
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
+
+    let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
 
     let max_monthly_llm_usage_spending_in_cents =
         body.max_monthly_llm_usage_spending_in_cents.max(0);
@@ -182,6 +193,13 @@ async fn update_billing_preferences(
     rpc_server.refresh_llm_tokens_for_user(user.id).await;
 
     Ok(Json(BillingPreferencesResponse {
+        trial_started_at: billing_customer
+            .and_then(|billing_customer| billing_customer.trial_started_at)
+            .map(|trial_started_at| {
+                trial_started_at
+                    .and_utc()
+                    .to_rfc3339_opts(SecondsFormat::Millis, true)
+            }),
         max_monthly_llm_usage_spending_in_cents: billing_preferences
             .max_monthly_llm_usage_spending_in_cents,
         model_request_overages_enabled: billing_preferences.model_request_overages_enabled,
@@ -301,13 +319,6 @@ async fn create_billing_subscription(
             "not supported".into(),
         ))?
     };
-    let Some(llm_db) = app.llm_db.clone() else {
-        log::error!("failed to retrieve LLM database");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
 
     if app.db.has_active_billing_subscription(user.id).await? {
         return Err(Error::http(
@@ -399,16 +410,10 @@ async fn create_billing_subscription(
                 .await?
         }
         None => {
-            let default_model = llm_db.model(
-                zed_llm_client::LanguageModelProvider::Anthropic,
-                "claude-3-7-sonnet",
-            )?;
-            let stripe_model = stripe_billing
-                .register_model_for_token_based_usage(default_model)
-                .await?;
-            stripe_billing
-                .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
-                .await?
+            return Err(Error::http(
+                StatusCode::BAD_REQUEST,
+                "No product selected".into(),
+            ));
         }
     };
 
@@ -1023,29 +1028,6 @@ async fn handle_customer_subscription_event(
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
     {
-        let llm_db = app
-            .llm_db
-            .clone()
-            .ok_or_else(|| anyhow!("LLM DB not initialized"))?;
-
-        let new_period_start_at =
-            chrono::DateTime::from_timestamp(subscription.current_period_start, 0)
-                .ok_or_else(|| anyhow!("No subscription period start"))?;
-        let new_period_end_at =
-            chrono::DateTime::from_timestamp(subscription.current_period_end, 0)
-                .ok_or_else(|| anyhow!("No subscription period end"))?;
-
-        llm_db
-            .transfer_existing_subscription_usage(
-                billing_customer.user_id,
-                &existing_subscription,
-                subscription_kind,
-                subscription.status.into(),
-                new_period_start_at,
-                new_period_end_at,
-            )
-            .await?;
-
         app.db
             .update_billing_subscription(
                 existing_subscription.id,
@@ -1196,10 +1178,16 @@ struct ModelRequestUsage {
 }
 
 #[derive(Debug, Serialize)]
-struct GetCurrentUsageResponse {
+struct CurrentUsage {
     pub model_requests: UsageCounts,
     pub model_request_usage: Vec<ModelRequestUsage>,
     pub edit_predictions: UsageCounts,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct GetCurrentUsageResponse {
+    pub plan: String,
+    pub current_usage: Option<CurrentUsage>,
 }
 
 async fn get_current_usage(
@@ -1212,6 +1200,11 @@ async fn get_current_usage(
         .await?
         .ok_or_else(|| anyhow!("user not found"))?;
 
+    let feature_flags = app.db.get_user_flags(user.id).await?;
+    let has_extended_trial = feature_flags
+        .iter()
+        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+
     let Some(llm_db) = app.llm_db.clone() else {
         return Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
@@ -1219,22 +1212,8 @@ async fn get_current_usage(
         ));
     };
 
-    let empty_usage = GetCurrentUsageResponse {
-        model_requests: UsageCounts {
-            used: 0,
-            limit: Some(0),
-            remaining: Some(0),
-        },
-        model_request_usage: Vec::new(),
-        edit_predictions: UsageCounts {
-            used: 0,
-            limit: Some(0),
-            remaining: Some(0),
-        },
-    };
-
     let Some(subscription) = app.db.get_active_billing_subscription(user.id).await? else {
-        return Ok(Json(empty_usage));
+        return Ok(Json(GetCurrentUsageResponse::default()));
     };
 
     let subscription_period = maybe!({
@@ -1245,26 +1224,22 @@ async fn get_current_usage(
     });
 
     let Some((period_start_at, period_end_at)) = subscription_period else {
-        return Ok(Json(empty_usage));
+        return Ok(Json(GetCurrentUsageResponse::default()));
     };
 
     let usage = llm_db
         .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
         .await?;
-    let Some(usage) = usage else {
-        return Ok(Json(empty_usage));
-    };
 
-    let plan = match usage.plan {
-        SubscriptionKind::ZedPro => zed_llm_client::Plan::ZedPro,
-        SubscriptionKind::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-        SubscriptionKind::ZedFree => zed_llm_client::Plan::Free,
-    };
-
-    let feature_flags = app.db.get_user_flags(user.id).await?;
-    let has_extended_trial = feature_flags
-        .iter()
-        .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
+    let plan = usage
+        .as_ref()
+        .map(|usage| usage.plan.into())
+        .unwrap_or_else(|| {
+            subscription
+                .kind
+                .map(Into::into)
+                .unwrap_or(zed_llm_client::Plan::Free)
+        });
 
     let model_requests_limit = match plan.model_requests_limit() {
         zed_llm_client::UsageLimit::Limited(limit) => {
@@ -1278,9 +1253,29 @@ async fn get_current_usage(
         }
         zed_llm_client::UsageLimit::Unlimited => None,
     };
-    let edit_prediction_limit = match plan.edit_predictions_limit() {
+
+    let edit_predictions_limit = match plan.edit_predictions_limit() {
         zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
         zed_llm_client::UsageLimit::Unlimited => None,
+    };
+
+    let Some(usage) = usage else {
+        return Ok(Json(GetCurrentUsageResponse {
+            plan: plan.as_str().to_string(),
+            current_usage: Some(CurrentUsage {
+                model_requests: UsageCounts {
+                    used: 0,
+                    limit: model_requests_limit,
+                    remaining: model_requests_limit,
+                },
+                model_request_usage: Vec::new(),
+                edit_predictions: UsageCounts {
+                    used: 0,
+                    limit: edit_predictions_limit,
+                    remaining: edit_predictions_limit,
+                },
+            }),
+        }));
     };
 
     let subscription_usage_meters = llm_db
@@ -1301,17 +1296,21 @@ async fn get_current_usage(
         .collect::<Vec<_>>();
 
     Ok(Json(GetCurrentUsageResponse {
-        model_requests: UsageCounts {
-            used: usage.model_requests,
-            limit: model_requests_limit,
-            remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
-        },
-        model_request_usage,
-        edit_predictions: UsageCounts {
-            used: usage.edit_predictions,
-            limit: edit_prediction_limit,
-            remaining: edit_prediction_limit.map(|limit| (limit - usage.edit_predictions).max(0)),
-        },
+        plan: plan.as_str().to_string(),
+        current_usage: Some(CurrentUsage {
+            model_requests: UsageCounts {
+                used: usage.model_requests,
+                limit: model_requests_limit,
+                remaining: model_requests_limit.map(|limit| (limit - usage.model_requests).max(0)),
+            },
+            model_request_usage,
+            edit_predictions: UsageCounts {
+                used: usage.edit_predictions,
+                limit: edit_predictions_limit,
+                remaining: edit_predictions_limit
+                    .map(|limit| (limit - usage.edit_predictions).max(0)),
+            },
+        }),
     }))
 }
 
@@ -1387,81 +1386,6 @@ async fn find_or_create_billing_customer(
     Ok(Some(billing_customer))
 }
 
-const SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
-
-pub fn sync_llm_token_usage_with_stripe_periodically(app: Arc<AppState>) {
-    let Some(stripe_billing) = app.stripe_billing.clone() else {
-        log::warn!("failed to retrieve Stripe billing object");
-        return;
-    };
-    let Some(llm_db) = app.llm_db.clone() else {
-        log::warn!("failed to retrieve LLM database");
-        return;
-    };
-
-    let executor = app.executor.clone();
-    executor.spawn_detached({
-        let executor = executor.clone();
-        async move {
-            loop {
-                sync_token_usage_with_stripe(&app, &llm_db, &stripe_billing)
-                    .await
-                    .context("failed to sync LLM usage to Stripe")
-                    .trace_err();
-                executor
-                    .sleep(SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL)
-                    .await;
-            }
-        }
-    });
-}
-
-async fn sync_token_usage_with_stripe(
-    app: &Arc<AppState>,
-    llm_db: &Arc<LlmDatabase>,
-    stripe_billing: &Arc<StripeBilling>,
-) -> anyhow::Result<()> {
-    let events = llm_db.get_billing_events().await?;
-    let user_ids = events
-        .iter()
-        .map(|(event, _)| event.user_id)
-        .collect::<HashSet<UserId>>();
-    let stripe_subscriptions = app.db.get_active_billing_subscriptions(user_ids).await?;
-
-    for (event, model) in events {
-        let Some((stripe_db_customer, stripe_db_subscription)) =
-            stripe_subscriptions.get(&event.user_id)
-        else {
-            tracing::warn!(
-                user_id = event.user_id.0,
-                "Registered billing event for user who is not a Stripe customer. Billing events should only be created for users who are Stripe customers, so this is a mistake on our side."
-            );
-            continue;
-        };
-        let stripe_subscription_id: stripe::SubscriptionId = stripe_db_subscription
-            .stripe_subscription_id
-            .parse()
-            .context("failed to parse stripe subscription id from db")?;
-        let stripe_customer_id: stripe::CustomerId = stripe_db_customer
-            .stripe_customer_id
-            .parse()
-            .context("failed to parse stripe customer id from db")?;
-
-        let stripe_model = stripe_billing
-            .register_model_for_token_based_usage(&model)
-            .await?;
-        stripe_billing
-            .subscribe_to_model(&stripe_subscription_id, &stripe_model)
-            .await?;
-        stripe_billing
-            .bill_model_token_usage(&stripe_customer_id, &stripe_model, &event)
-            .await?;
-        llm_db.consume_billing_event(event.id).await?;
-    }
-
-    Ok(())
-}
-
 const SYNC_LLM_REQUEST_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn sync_llm_request_usage_with_stripe_periodically(app: Arc<AppState>) {
@@ -1496,9 +1420,19 @@ async fn sync_model_request_usage_with_stripe(
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
+    let staff_users = app.db.get_staff_users().await?;
+    let staff_user_ids = staff_users
+        .iter()
+        .map(|user| user.id)
+        .collect::<HashSet<UserId>>();
+
     let usage_meters = llm_db
         .get_current_subscription_usage_meters(Utc::now())
         .await?;
+    let usage_meters = usage_meters
+        .into_iter()
+        .filter(|(_, usage)| !staff_user_ids.contains(&usage.user_id))
+        .collect::<Vec<_>>();
     let user_ids = usage_meters
         .iter()
         .map(|(_, usage)| usage.user_id)

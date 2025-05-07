@@ -893,10 +893,8 @@ impl Render for ProjectDiffToolbar {
 
         h_group_xl()
             .my_neg_1()
-            .items_center()
             .py_1()
-            .pl_2()
-            .pr_1()
+            .items_center()
             .flex_wrap()
             .justify_between()
             .child(

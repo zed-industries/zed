@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, CompletionMode};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -35,9 +35,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use thiserror::Error;
+use ui::Window;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::CompletionMode;
+use zed_llm_client::CompletionRequestStatus;
 
 use crate::ThreadStore;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
@@ -267,7 +268,7 @@ impl DetailedSummaryState {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct TotalTokenUsage {
     pub total: usize,
     pub max: usize,
@@ -312,14 +313,6 @@ pub enum TokenUsageRatio {
     Exceeded,
 }
 
-fn default_completion_mode(cx: &App) -> CompletionMode {
-    if cx.is_staff() {
-        CompletionMode::Max
-    } else {
-        CompletionMode::Normal
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum QueueState {
     Sending,
@@ -336,7 +329,7 @@ pub struct Thread {
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
-    completion_mode: CompletionMode,
+    completion_mode: assistant_settings::CompletionMode,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -355,6 +348,7 @@ pub struct Thread {
     request_token_usage: Vec<TokenUsage>,
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
+    last_usage: Option<RequestUsage>,
     tool_use_limit_reached: bool,
     feedback: Option<ThreadFeedback>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
@@ -394,7 +388,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: default_completion_mode(cx),
+            completion_mode: AssistantSettings::get_global(cx).preferred_completion_mode,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -418,6 +412,7 @@ impl Thread {
             request_token_usage: Vec::new(),
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
+            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -436,6 +431,7 @@ impl Thread {
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
@@ -445,7 +441,13 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
+        let tool_use = ToolUseState::from_serialized_messages(
+            tools.clone(),
+            &serialized.messages,
+            project.clone(),
+            window,
+            cx,
+        );
         let (detailed_summary_tx, detailed_summary_rx) =
             postage::watch::channel_with(serialized.detailed_summary_state);
 
@@ -462,6 +464,10 @@ impl Thread {
                 .or_else(|| registry.default_model())
         });
 
+        let completion_mode = serialized
+            .completion_mode
+            .unwrap_or_else(|| AssistantSettings::get_global(cx).preferred_completion_mode);
+
         Self {
             id,
             updated_at: serialized.updated_at,
@@ -470,7 +476,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: default_completion_mode(cx),
+            completion_mode,
             messages: serialized
                 .messages
                 .into_iter()
@@ -526,6 +532,7 @@ impl Thread {
             request_token_usage: serialized.request_token_usage,
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
+            last_usage: None,
             tool_use_limit_reached: false,
             feedback: None,
             message_feedback: HashMap::default(),
@@ -817,6 +824,10 @@ impl Thread {
             .unwrap_or(false)
     }
 
+    pub fn last_usage(&self) -> Option<RequestUsage> {
+        self.last_usage
+    }
+
     pub fn tool_use_limit_reached(&self) -> bool {
         self.tool_use_limit_reached
     }
@@ -891,7 +902,7 @@ impl Thread {
         if !loaded_context.referenced_buffers.is_empty() {
             self.action_log.update(cx, |log, cx| {
                 for buffer in loaded_context.referenced_buffers {
-                    log.track_buffer(buffer, cx);
+                    log.buffer_read(buffer, cx);
                 }
             });
         }
@@ -991,7 +1002,7 @@ impl Thread {
         for message in &self.messages {
             text.push_str(match message.role {
                 language_model::Role::User => "User:",
-                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::Assistant => "Agent:",
                 language_model::Role::System => "System:",
             });
             text.push('\n');
@@ -1061,6 +1072,7 @@ impl Thread {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content.clone(),
+                                output: tool_result.output.clone(),
                             })
                             .collect(),
                         context: message.loaded_context.text.clone(),
@@ -1088,6 +1100,7 @@ impl Thread {
                         provider: model.provider.id().0.to_string(),
                         model: model.model.id().0.to_string(),
                     }),
+                completion_mode: Some(this.completion_mode),
             })
         })
     }
@@ -1141,7 +1154,7 @@ impl Thread {
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: None,
+            temperature: AssistantSettings::temperature_for_model(&model, cx),
         };
 
         let available_tools = self.available_tools(cx, model.clone());
@@ -1239,15 +1252,20 @@ impl Thread {
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
-            Some(self.completion_mode)
+            Some(self.completion_mode.into())
         } else {
-            Some(CompletionMode::Normal)
+            Some(CompletionMode::Normal.into())
         };
 
         request
     }
 
-    fn to_summarize_request(&self, added_user_message: String) -> LanguageModelRequest {
+    fn to_summarize_request(
+        &self,
+        model: &Arc<dyn LanguageModel>,
+        added_user_message: String,
+        cx: &App,
+    ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -1255,7 +1273,7 @@ impl Thread {
             messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: None,
+            temperature: AssistantSettings::temperature_for_model(model, cx),
         };
 
         for message in &self.messages {
@@ -1356,20 +1374,17 @@ impl Thread {
         self.last_received_chunk_at = Some(Instant::now());
 
         let task = cx.spawn(async move |thread, cx| {
-            let stream_completion_future = model.stream_completion_with_usage(request, &cx);
+            let stream_completion_future = model.stream_completion(request, &cx);
             let initial_token_usage =
                 thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage);
             let stream_completion = async {
-                let (mut events, usage) = stream_completion_future.await?;
+                let mut events = stream_completion_future.await?;
 
                 let mut stop_reason = StopReason::EndTurn;
                 let mut current_token_usage = TokenUsage::default();
 
                 thread
                     .update(cx, |_thread, cx| {
-                        if let Some(usage) = usage {
-                            cx.emit(ThreadEvent::UsageUpdated(usage));
-                        }
                         cx.emit(ThreadEvent::NewRequest);
                     })
                     .ok();
@@ -1515,27 +1530,36 @@ impl Thread {
                                     });
                                 }
                             }
-                            LanguageModelCompletionEvent::QueueUpdate(status) => {
+                            LanguageModelCompletionEvent::StatusUpdate(status_update) => {
                                 if let Some(completion) = thread
                                     .pending_completions
                                     .iter_mut()
                                     .find(|completion| completion.id == pending_completion_id)
                                 {
-                                    let queue_state = match status {
-                                        language_model::CompletionRequestStatus::Queued {
+                                    match status_update {
+                                        CompletionRequestStatus::Queued {
                                             position,
-                                        } => Some(QueueState::Queued { position }),
-                                        language_model::CompletionRequestStatus::Started => {
-                                            Some(QueueState::Started)
+                                        } => {
+                                            completion.queue_state = QueueState::Queued { position };
                                         }
-                                        language_model::CompletionRequestStatus::ToolUseLimitReached => {
-                                            thread.tool_use_limit_reached = true;
-                                            None
+                                        CompletionRequestStatus::Started => {
+                                            completion.queue_state =  QueueState::Started;
                                         }
-                                    };
+                                        CompletionRequestStatus::Failed {
+                                            code, message, request_id
+                                        } => {
+                                            return Err(anyhow!("completion request failed. request_id: {request_id}, code: {code}, message: {message}"));
+                                        }
+                                        CompletionRequestStatus::UsageUpdated {
+                                            amount, limit
+                                        } => {
+                                            let usage = RequestUsage { limit, amount: amount as i32 };
 
-                                    if let Some(queue_state) = queue_state {
-                                        completion.queue_state = queue_state;
+                                            thread.last_usage = Some(usage);
+                                        }
+                                        CompletionRequestStatus::ToolUseLimitReached => {
+                                            thread.tool_use_limit_reached = true;
+                                        }
                                     }
                                 }
                             }
@@ -1686,23 +1710,31 @@ impl Thread {
             If the conversation is about a specific subject, include it in the title. \
             Be descriptive. DO NOT speak in the first person.";
 
-        let request = self.to_summarize_request(added_user_message.into());
+        let request = self.to_summarize_request(&model.model, added_user_message.into(), cx);
 
         self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
-                let stream = model.model.stream_completion_text_with_usage(request, &cx);
-                let (mut messages, usage) = stream.await?;
-
-                if let Some(usage) = usage {
-                    this.update(cx, |_thread, cx| {
-                        cx.emit(ThreadEvent::UsageUpdated(usage));
-                    })
-                    .ok();
-                }
+                let mut messages = model.model.stream_completion(request, &cx).await?;
 
                 let mut new_summary = String::new();
-                while let Some(message) = messages.stream.next().await {
-                    let text = message?;
+                while let Some(event) = messages.next().await {
+                    let event = event?;
+                    let text = match event {
+                        LanguageModelCompletionEvent::Text(text) => text,
+                        LanguageModelCompletionEvent::StatusUpdate(
+                            CompletionRequestStatus::UsageUpdated { amount, limit },
+                        ) => {
+                            this.update(cx, |thread, _cx| {
+                                thread.last_usage = Some(RequestUsage {
+                                    limit,
+                                    amount: amount as i32,
+                                });
+                            })?;
+                            continue;
+                        }
+                        _ => continue,
+                    };
+
                     let mut lines = text.lines();
                     new_summary.extend(lines.next());
 
@@ -1764,7 +1796,7 @@ impl Thread {
              4. Any action items or next steps if any\n\
              Format it in Markdown with headings and bullet points.";
 
-        let request = self.to_summarize_request(added_user_message.into());
+        let request = self.to_summarize_request(&model, added_user_message.into(), cx);
 
         *self.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generating {
             message_id: last_message_id,
@@ -1856,7 +1888,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = self.to_completion_request(model, cx);
+        let request = self.to_completion_request(model.clone(), cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
@@ -1886,14 +1918,57 @@ impl Thread {
                         tool_use.input.clone(),
                         &messages,
                         tool,
+                        model.clone(),
                         window,
                         cx,
                     );
                 }
+            } else {
+                self.handle_hallucinated_tool_use(
+                    tool_use.id.clone(),
+                    tool_use.name.clone(),
+                    window,
+                    cx,
+                );
             }
         }
 
         pending_tool_uses
+    }
+
+    pub fn handle_hallucinated_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        hallucinated_tool_name: Arc<str>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Thread>,
+    ) {
+        let available_tools = self.tools.read(cx).enabled_tools(cx);
+
+        let tool_list = available_tools
+            .iter()
+            .map(|tool| format!("- {}: {}", tool.name(), tool.description()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let error_message = format!(
+            "The tool '{}' doesn't exist or is not enabled. Available tools:\n{}",
+            hallucinated_tool_name, tool_list
+        );
+
+        let pending_tool_use = self.tool_use.insert_tool_output(
+            tool_use_id.clone(),
+            hallucinated_tool_name,
+            Err(anyhow!("Missing tool call: {error_message}")),
+            self.configured_model.as_ref(),
+        );
+
+        cx.emit(ThreadEvent::MissingToolUse {
+            tool_use_id: tool_use_id.clone(),
+            ui_text: error_message.into(),
+        });
+
+        self.tool_finished(tool_use_id, pending_tool_use, false, window, cx);
     }
 
     pub fn receive_invalid_tool_json(
@@ -1938,10 +2013,19 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, window, cx);
+        let task = self.spawn_tool_use(
+            tool_use_id.clone(),
+            messages,
+            input,
+            tool,
+            model,
+            window,
+            cx,
+        );
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
@@ -1952,6 +2036,7 @@ impl Thread {
         messages: &[LanguageModelRequestMessage],
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
@@ -1965,6 +2050,7 @@ impl Thread {
                 messages,
                 self.project.clone(),
                 self.action_log.clone(),
+                model,
                 window,
                 cx,
             )
@@ -2297,7 +2383,7 @@ impl Thread {
                 "## {role}\n",
                 role = match message.role {
                     Role::User => "User",
-                    Role::Assistant => "Assistant",
+                    Role::Assistant => "Agent",
                     Role::System => "System",
                 }
             )?;
@@ -2543,7 +2629,6 @@ pub enum ThreadError {
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     ShowError(ThreadError),
-    UsageUpdated(RequestUsage),
     StreamedCompletion,
     ReceivedTextChunk,
     NewRequest,
@@ -2553,6 +2638,10 @@ pub enum ThreadEvent {
         tool_use_id: LanguageModelToolUseId,
         ui_text: Arc<str>,
         input: serde_json::Value,
+    },
+    MissingToolUse {
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: Arc<str>,
     },
     InvalidToolInput {
         tool_use_id: LanguageModelToolUseId,
@@ -2592,9 +2681,8 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use assistant_settings::AssistantSettings;
+    use assistant_settings::{AssistantSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
-    use context_server::ContextServerSettings;
     use editor::EditorSettings;
     use gpui::TestAppContext;
     use language_model::fake_provider::FakeLanguageModel;
@@ -3004,6 +3092,100 @@ fn main() {{
         );
     }
 
+    #[gpui::test]
+    async fn test_temperature_setting(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, _context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Both model and provider
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: Some(model.provider_id().0.to_string().into()),
+                        model: Some(model.id().0.clone()),
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, Some(0.66));
+
+        // Only model
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: None,
+                        model: Some(model.id().0.clone()),
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, Some(0.66));
+
+        // Only provider
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: Some(model.provider_id().0.to_string().into()),
+                        model: None,
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, Some(0.66));
+
+        // Same model name, different provider
+        cx.update(|cx| {
+            AssistantSettings::override_global(
+                AssistantSettings {
+                    model_parameters: vec![LanguageModelParameters {
+                        provider: Some("anthropic".into()),
+                        model: Some(model.id().0.clone()),
+                        temperature: Some(0.66),
+                    }],
+                    ..AssistantSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+        assert_eq!(request.temperature, None);
+    }
+
     fn init_test_settings(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -3016,7 +3198,6 @@ fn main() {{
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
-            ContextServerSettings::register(cx);
             EditorSettings::register(cx);
             ToolRegistry::default_global(cx);
         });

@@ -16,7 +16,7 @@ pub struct ModelContextProtocol {
 }
 
 impl ModelContextProtocol {
-    pub fn new(inner: Client) -> Self {
+    pub(crate) fn new(inner: Client) -> Self {
         Self { inner }
     }
 

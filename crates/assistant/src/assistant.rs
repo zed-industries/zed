@@ -106,7 +106,6 @@ pub fn init(
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
-    context_server::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(
@@ -164,7 +163,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
 
     fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
         language_model::SelectedModel {
-            provider: LanguageModelProviderId::from(selection.provider.clone()),
+            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
             model: LanguageModelId::from(selection.model.clone()),
         }
     }
