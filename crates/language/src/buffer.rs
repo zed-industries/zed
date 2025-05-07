@@ -1,6 +1,12 @@
+pub use crate::{
+    Grammar, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet,
+    highlight_map::{HighlightId, HighlightMap},
+    proto,
+};
 use crate::{
-    DebugVariableCapture, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
-    TextObject, TreeSitterOptions,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -10,12 +16,6 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
-};
-pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
-    proto,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
@@ -72,12 +72,6 @@ use util::{RangeExt, debug_panic, maybe};
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
-
-#[derive(Debug)]
-pub struct DebugVariableRanges {
-    pub buffer_id: BufferId,
-    pub range: Range<usize>,
-}
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
@@ -3965,79 +3959,6 @@ impl BufferSnapshot {
             });
             syntax_matches.advance();
             ranges
-        })
-    }
-
-    pub fn debug_variable_ranges(
-        &self,
-        offset_range: Range<usize>,
-    ) -> impl Iterator<Item = DebugVariableRanges> + '_ {
-        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar
-                .debug_variables_config
-                .as_ref()
-                .map(|config| &config.query)
-        });
-
-        let configs = syntax_matches
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.debug_variables_config.as_ref())
-            .collect::<Vec<_>>();
-
-        iter::from_fn(move || {
-            loop {
-                let mat = syntax_matches.peek()?;
-
-                let variable_ranges = configs[mat.grammar_index].and_then(|config| {
-                    let full_range = mat.captures.iter().fold(
-                        Range {
-                            start: usize::MAX,
-                            end: 0,
-                        },
-                        |mut acc, next| {
-                            let byte_range = next.node.byte_range();
-                            if acc.start > byte_range.start {
-                                acc.start = byte_range.start;
-                            }
-                            if acc.end < byte_range.end {
-                                acc.end = byte_range.end;
-                            }
-                            acc
-                        },
-                    );
-                    if full_range.start > full_range.end {
-                        // We did not find a full spanning range of this match.
-                        return None;
-                    }
-
-                    let captures = mat.captures.iter().filter_map(|capture| {
-                        Some((
-                            capture,
-                            config.captures.get(capture.index as usize).cloned()?,
-                        ))
-                    });
-
-                    let mut variable_range = None;
-                    for (query, capture) in captures {
-                        if let DebugVariableCapture::Variable = capture {
-                            let _ = variable_range.insert(query.node.byte_range());
-                        }
-                    }
-
-                    Some(DebugVariableRanges {
-                        buffer_id: self.remote_id(),
-                        range: variable_range?,
-                    })
-                });
-
-                syntax_matches.advance();
-                if variable_ranges.is_some() {
-                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                    return variable_ranges;
-                }
-            }
         })
     }
 
