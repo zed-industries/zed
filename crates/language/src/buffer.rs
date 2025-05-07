@@ -2857,6 +2857,7 @@ impl BufferSnapshot {
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+        let significant_indentation = config.significant_indentation;
 
         // Find the suggested indentation ranges based on the syntax tree.
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
@@ -2876,6 +2877,7 @@ impl BufferSnapshot {
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
+            let mut outdent: Option<Point> = None;
 
             let config = &indent_configs[mat.grammar_index];
             for capture in mat.captures {
@@ -2887,16 +2889,23 @@ impl BufferSnapshot {
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
-                    outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
+                    let point = Point::from_ts_point(capture.node.start_position());
+                    outdent.get_or_insert(point);
+                    outdent_positions.push(point);
                 }
             }
 
             matches.advance();
+            // in case of significant indentation expand end to outdent position
+            let end = if significant_indentation {
+                outdent.or(end)
+            } else {
+                end
+            };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row {
+                if start.row == end.row && !significant_indentation {
                     continue;
                 }
-
                 let range = start..end;
                 match indent_ranges.binary_search_by_key(&range.start, |r| r.start) {
                     Err(ix) => indent_ranges.insert(ix, range),
@@ -2932,16 +2941,20 @@ impl BufferSnapshot {
             matches.advance();
         }
 
-        outdent_positions.sort();
-        for outdent_position in outdent_positions {
-            // find the innermost indent range containing this outdent_position
-            // set its end to the outdent position
-            if let Some(range_to_truncate) = indent_ranges
-                .iter_mut()
-                .filter(|indent_range| indent_range.contains(&outdent_position))
-                .next_back()
-            {
-                range_to_truncate.end = outdent_position;
+        // we don't use outdent positions to truncate in case of significant indentation
+        // rather we use them to expand (handled above)
+        if !significant_indentation {
+            outdent_positions.sort();
+            for outdent_position in outdent_positions {
+                // find the innermost indent range containing this outdent_position
+                // set its end to the outdent position
+                if let Some(range_to_truncate) = indent_ranges
+                    .iter_mut()
+                    .filter(|indent_range| indent_range.contains(&outdent_position))
+                    .next_back()
+                {
+                    range_to_truncate.end = outdent_position;
+                }
             }
         }
 
@@ -3011,8 +3024,14 @@ impl BufferSnapshot {
                 if range.start.row == prev_row && range.end > row_start {
                     indent_from_prev_row = true;
                 }
-                if range.end > prev_row_start && range.end <= row_start {
-                    outdent_to_row = outdent_to_row.min(range.start.row);
+                if significant_indentation && self.is_line_blank(row) && range.start.row == prev_row
+                {
+                    indent_from_prev_row = true;
+                }
+                if !significant_indentation || !self.is_line_blank(row) {
+                    if range.end > prev_row_start && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row);
+                    }
                 }
             }
 
