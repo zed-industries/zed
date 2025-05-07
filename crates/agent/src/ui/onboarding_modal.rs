@@ -143,7 +143,7 @@ impl Render for AgentOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::view_blog));
 
-        let copy = "Zed natively supports agentic editing, enabling seamless collaboration between humans and AI.";
+        let copy = "Zed now natively supports agentic editing, enabling fluid collaboration between humans and AI.";
 
         base.child(Label::new(copy).color(Color::Muted)).child(
             v_flex()
