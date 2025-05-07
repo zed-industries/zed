@@ -588,7 +588,7 @@ impl TcpTransport {
                 loop {
                     match TcpStream::connect(address).await {
                         Ok(stream) => return Ok((process, stream.split())),
-                        Err(err) => {
+                        Err(_) => {
                             if let Ok(Some(_)) = process.try_status() {
                                 let output = process.output().await?;
                                 let output = if output.stderr.is_empty() {
