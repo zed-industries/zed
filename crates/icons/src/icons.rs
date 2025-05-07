@@ -94,6 +94,7 @@ pub enum IconName {
     Delete,
     Diff,
     Disconnected,
+    DocumentText,
     Download,
     Ellipsis,
     EllipsisVertical,

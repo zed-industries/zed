@@ -1546,9 +1546,9 @@ impl Thread {
                                             completion.queue_state =  QueueState::Started;
                                         }
                                         CompletionRequestStatus::Failed {
-                                            code, message
+                                            code, message, request_id
                                         } => {
-                                            return Err(anyhow!("completion request failed. code: {code}, message: {message}"));
+                                            return Err(anyhow!("completion request failed. request_id: {request_id}, code: {code}, message: {message}"));
                                         }
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
@@ -1888,7 +1888,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = self.to_completion_request(model, cx);
+        let request = self.to_completion_request(model.clone(), cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
@@ -1918,6 +1918,7 @@ impl Thread {
                         tool_use.input.clone(),
                         &messages,
                         tool,
+                        model.clone(),
                         window,
                         cx,
                     );
@@ -2012,10 +2013,19 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, window, cx);
+        let task = self.spawn_tool_use(
+            tool_use_id.clone(),
+            messages,
+            input,
+            tool,
+            model,
+            window,
+            cx,
+        );
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
@@ -2026,6 +2036,7 @@ impl Thread {
         messages: &[LanguageModelRequestMessage],
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
@@ -2039,6 +2050,7 @@ impl Thread {
                 messages,
                 self.project.clone(),
                 self.action_log.clone(),
+                model,
                 window,
                 cx,
             )

@@ -7904,6 +7904,7 @@ dependencies = [
  "partial-json-fixer",
  "project",
  "proto",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
@@ -18883,9 +18884,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.5"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe0d60001c02d0d21a4114a13bee3a905fbb9e146ada80a90435c05fda18852"
+checksum = "a23b2fd00776b0c55072f389654910ceb501eb0083d7f78905ab0e5cc86949ec"
 dependencies = [
  "anyhow",
  "serde",
