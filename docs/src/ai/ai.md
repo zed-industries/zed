@@ -32,6 +32,4 @@ Zed offers various features that integrate LLMs smoothly into the editor.
 
 ## Text Thread Interface
 
-<!-- todo! better name for this section -->
-
 - [Text Threads](./text-threads.md): Learn about an alternative text-based interface for interacting with language models.

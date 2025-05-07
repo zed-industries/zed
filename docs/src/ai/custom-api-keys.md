@@ -1,7 +1,5 @@
 # Configuring Custom API Keys
 
-<!-- todo! I think some of the content in this page is duplicated from configuration.md -->
-
 While Zed offers hosted versions of models through our various plans, we're always happy to support users wanting to supply their own API keys for LLM providers.
 
 > Using your own API keys is **_free_** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
