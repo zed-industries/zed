@@ -36,7 +36,6 @@ pub(crate) struct TestPlatform {
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
     pub text_system: Arc<dyn PlatformTextSystem>,
-    keyboard_mapper: Rc<dyn PlatformKeyboardMapper>,
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
@@ -94,7 +93,6 @@ impl TestPlatform {
         };
 
         let text_system = Arc::new(NoopTextSystem);
-        let keyboard_mapper = Rc::new(TestKeyboardMapper::new());
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
@@ -112,7 +110,6 @@ impl TestPlatform {
             #[cfg(target_os = "windows")]
             bitmap_factory,
             text_system,
-            keyboard_mapper,
         })
     }
 
@@ -227,8 +224,8 @@ impl Platform for TestPlatform {
         self.text_system.clone()
     }
 
-    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
-        self.keyboard_mapper.clone()
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        Box::new(TestKeyboardMapper::new())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {

@@ -398,7 +398,7 @@ impl TestAppContext {
     }
 
     /// Returns the current keyboard mapper for this platform.
-    pub fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+    pub fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
         self.test_platform.keyboard_mapper()
     }
 
