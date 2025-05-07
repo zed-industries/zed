@@ -35,6 +35,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use thiserror::Error;
+use ui::Window;
 use util::{ResultExt as _, TryFutureExt as _, post_inc};
 use uuid::Uuid;
 use zed_llm_client::CompletionRequestStatus;
@@ -430,6 +431,7 @@ impl Thread {
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
@@ -439,7 +441,13 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages);
+        let tool_use = ToolUseState::from_serialized_messages(
+            tools.clone(),
+            &serialized.messages,
+            project.clone(),
+            window,
+            cx,
+        );
         let (detailed_summary_tx, detailed_summary_rx) =
             postage::watch::channel_with(serialized.detailed_summary_state);
 
@@ -1064,6 +1072,7 @@ impl Thread {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content.clone(),
+                                output: tool_result.output.clone(),
                             })
                             .collect(),
                         context: message.loaded_context.text.clone(),

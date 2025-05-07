@@ -107,10 +107,9 @@ impl Tool for CopyPathTool {
 
         cx.background_spawn(async move {
             match copy_task.await {
-                Ok(_) => Ok(format!(
-                    "Copied {} to {}",
-                    input.source_path, input.destination_path
-                )),
+                Ok(_) => Ok(
+                    format!("Copied {} to {}", input.source_path, input.destination_path).into(),
+                ),
                 Err(err) => Err(anyhow!(
                     "Failed to copy {} to {}: {}",
                     input.source_path,

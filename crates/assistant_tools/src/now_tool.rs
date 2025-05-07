@@ -73,6 +73,6 @@ impl Tool for NowTool {
         };
         let text = format!("The current datetime is {now}.");
 
-        Task::ready(Ok(text)).into()
+        Task::ready(Ok(text.into())).into()
     }
 }
