@@ -47,12 +47,12 @@ impl Render for ContextMenuStory {
                     .justify_between()
                     .child(
                         right_click_menu("test2")
-                            .trigger(Label::new("TOP LEFT"))
+                            .trigger(|_| Label::new("TOP LEFT"))
                             .menu(move |window, cx| build_menu(window, cx, "top left")),
                     )
                     .child(
                         right_click_menu("test1")
-                            .trigger(Label::new("BOTTOM LEFT"))
+                            .trigger(|_| Label::new("BOTTOM LEFT"))
                             .anchor(Corner::BottomLeft)
                             .attach(Corner::TopLeft)
                             .menu(move |window, cx| build_menu(window, cx, "bottom left")),
@@ -65,13 +65,13 @@ impl Render for ContextMenuStory {
                     .justify_between()
                     .child(
                         right_click_menu("test3")
-                            .trigger(Label::new("TOP RIGHT"))
+                            .trigger(|_| Label::new("TOP RIGHT"))
                             .anchor(Corner::TopRight)
                             .menu(move |window, cx| build_menu(window, cx, "top right")),
                     )
                     .child(
                         right_click_menu("test4")
-                            .trigger(Label::new("BOTTOM RIGHT"))
+                            .trigger(|_| Label::new("BOTTOM RIGHT"))
                             .anchor(Corner::BottomRight)
                             .attach(Corner::TopRight)
                             .menu(move |window, cx| build_menu(window, cx, "bottom right")),
