@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{AnyToolCard, Tool, ToolUseStatus, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolResultOutput, ToolUseStatus, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -10,7 +10,8 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRequestMessage, LanguageModelToolResult,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
 };
-use ui::IconName;
+use project::Project;
+use ui::{IconName, Window};
 use util::truncate_lines_to_byte_limit;
 
 use crate::thread::{MessageId, PromptId, ThreadId};
@@ -54,6 +55,9 @@ impl ToolUseState {
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self {
         let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
@@ -93,12 +97,23 @@ impl ToolUseState {
                             this.tool_results.insert(
                                 tool_use_id.clone(),
                                 LanguageModelToolResult {
-                                    tool_use_id,
+                                    tool_use_id: tool_use_id.clone(),
                                     tool_name: tool_use.clone(),
                                     is_error: tool_result.is_error,
                                     content: tool_result.content.clone(),
+                                    output: tool_result.output.clone(),
                                 },
                             );
+
+                            if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
+                                if let Some(output) = tool_result.output.clone() {
+                                    if let Some(card) =
+                                        tool.deserialize_card(output, project.clone(), window, cx)
+                                    {
+                                        this.tool_result_cards.insert(tool_use_id, card);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -124,6 +139,7 @@ impl ToolUseState {
                         tool_use_id: tool_use_id.clone(),
                         tool_name: tool_use.name.clone(),
                         content,
+                        output: None,
                         is_error: true,
                     },
                 );
@@ -359,7 +375,7 @@ impl ToolUseState {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
-        output: Result<String>,
+        output: Result<ToolResultOutput>,
         configured_model: Option<&ConfiguredModel>,
     ) -> Option<PendingToolUse> {
         let metadata = self.tool_use_metadata_by_id.remove(&tool_use_id);
@@ -379,7 +395,8 @@ impl ToolUseState {
         );
 
         match output {
-            Ok(tool_result) => {
+            Ok(output) => {
+                let tool_result = output.content;
                 const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
 
                 // Protect from clearly large output
@@ -406,6 +423,7 @@ impl ToolUseState {
                         tool_name,
                         content: tool_result.into(),
                         is_error: false,
+                        output: output.output,
                     },
                 );
                 self.pending_tool_uses_by_id.remove(&tool_use_id)
@@ -418,6 +436,7 @@ impl ToolUseState {
                         tool_name,
                         content: err.to_string().into(),
                         is_error: true,
+                        output: None,
                     },
                 );
 
@@ -490,6 +509,7 @@ impl ToolUseState {
                         } else {
                             tool_result.content.clone()
                         },
+                        output: None,
                     }));
             }
         }
