@@ -1,5 +1,6 @@
 use client::telemetry::Telemetry;
 
+use client::TelemetrySettings;
 use fs::Fs;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior, ListState,
@@ -247,39 +248,62 @@ impl Walkthrough {
     fn render_data_sharing_step(
         &self,
         _window: &mut Window,
-        _cx: &mut Context<Walkthrough>,
+        cx: &mut Context<Walkthrough>,
     ) -> AnyElement {
         v_flex()
             .items_center()
             .justify_center()
-            .children([
-                CheckboxWithLabel::new(
-                    "crashes",
-                    Label::new("Send Crash Reports"),
-                    true.into(),
-                    |_, _, _| {}, // TODO
-                ),
-                CheckboxWithLabel::new(
-                    "telemetry",
-                    Label::new("Send Telemetry"),
-                    true.into(),
-                    |_, _, _| {}, // TODO
-                ),
-                // "---", // TODO: line break?
-                CheckboxWithLabel::new(
-                    "predictions",
-                    Label::new("Help Improve Edit Predictions"),
-                    false.into(),
-                    |_, _, _| {}, // TODO
-                ),
-                CheckboxWithLabel::new(
-                    "agent",
-                    Label::new("Rate Agentic Edits"),
-                    false.into(),
-                    |_, _, _| {}, // TODO
-                ),
-                // TODO: add note about how zed never shares your code/data by default
-            ])
+            .children({
+                let telemetry_settings = TelemetrySettings::get_global(cx);
+                [
+                    CheckboxWithLabel::new(
+                        "crashes",
+                        Label::new("Send Crash Reports"),
+                        telemetry_settings.diagnostics.into(),
+                        {
+                            let fs = self.fs.clone();
+                            move |state, _, cx| {
+                                let enabled = *state == ToggleState::Selected;
+                                settings::update_settings_file::<TelemetrySettings>(
+                                    fs.clone(),
+                                    cx,
+                                    move |settings, _| settings.diagnostics = Some(enabled),
+                                );
+                            }
+                        },
+                    ),
+                    CheckboxWithLabel::new(
+                        "telemetry",
+                        Label::new("Send Telemetry"),
+                        telemetry_settings.metrics.into(),
+                        {
+                            let fs = self.fs.clone();
+                            move |state, _, cx| {
+                                let fs = fs.clone();
+                                let enabled = *state == ToggleState::Selected;
+                                settings::update_settings_file::<TelemetrySettings>(
+                                    fs.clone(),
+                                    cx,
+                                    move |settings, _| settings.metrics = Some(enabled),
+                                );
+                            }
+                        },
+                    ),
+                    // "---", // TODO: line break?
+                    CheckboxWithLabel::new(
+                        "predictions",
+                        Label::new("Help Improve Edit Predictions"),
+                        ,
+                        |_, _, _| {}, // TODO
+                    ),
+                    CheckboxWithLabel::new(
+                        "agent",
+                        Label::new("Rate Agentic Edits"),
+                        false.into(),
+                        |_, _, _| {}, // TODO
+                    ), // TODO: add note about how zed never shares your code/data by default
+                ]
+            })
             .into_any()
     }
 

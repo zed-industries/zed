@@ -46,11 +46,11 @@ impl RenderOnce for TransparentTabs {
             .child(
                 h_flex()
                     .children(self.tabs.into_iter().enumerate().map(|(i, t)| {
-                        // using index was causing clashes with the content from that tab, should probably do something more robust here
+                        // using index was causing id collisions with the content from that tab...
+                        // should probably do something more robust for that
                         Button::new(i + 100, t.tab_title)
                             .toggle_state(i == selected)
-                            // .when(i==selected,
-                            // this.bg(cx.theme().colors().element_selected))
+                            // .when(i==selected, this.bg(cx.theme().colors().element_selected))
                             .selected_style(ButtonStyle::Filled)
                             .on_click({
                                 let selected = self.selected.clone();
