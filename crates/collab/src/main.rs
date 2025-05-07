@@ -8,13 +8,13 @@ use axum::{
 };
 
 use collab::api::CloudflareIpCountryHeader;
-use collab::api::billing::sync_llm_usage_with_stripe_periodically;
+use collab::api::billing::sync_llm_request_usage_with_stripe_periodically;
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
 use collab::{
-    AppState, Config, RateLimiter, Result, api::fetch_extensions_from_blob_store_periodically, db,
-    env, executor::Executor, rpc::ResultExt,
+    AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
+    executor::Executor, rpc::ResultExt,
 };
 use collab::{ServiceMode, api::billing::poll_stripe_events_periodically};
 use db::Database;
@@ -111,10 +111,6 @@ async fn main() -> Result<()> {
 
                 if mode.is_collab() {
                     state.db.purge_old_embeddings().await.trace_err();
-                    RateLimiter::save_periodically(
-                        state.rate_limiter.clone(),
-                        state.executor.clone(),
-                    );
 
                     let epoch = state
                         .db
@@ -156,7 +152,7 @@ async fn main() -> Result<()> {
 
                     if let Some(mut llm_db) = llm_db {
                         llm_db.initialize().await?;
-                        sync_llm_usage_with_stripe_periodically(state.clone());
+                        sync_llm_request_usage_with_stripe_periodically(state.clone());
                     }
 
                     app = app

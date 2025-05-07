@@ -1,4 +1,4 @@
-use agent::ThreadStore;
+use agent::{Message, MessageSegment, ThreadStore};
 use anyhow::{Context, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
@@ -27,7 +27,7 @@ use std::time::Duration;
 use unindent::Unindent as _;
 use util::ResultExt as _;
 use util::command::new_smol_command;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownCodeBlock;
 
 use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
 use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
@@ -60,7 +60,7 @@ pub struct RunOutput {
     pub response_count: usize,
     pub token_usage: TokenUsage,
     pub tool_metrics: ToolMetrics,
-    pub last_request: LanguageModelRequest,
+    pub all_messages: String,
     pub programmatic_assertions: AssertionsReport,
 }
 
@@ -218,8 +218,14 @@ impl ExampleInstance {
         });
 
         let tools = cx.new(|_| ToolWorkingSet::default());
-        let thread_store =
-            ThreadStore::load(project.clone(), tools, app_state.prompt_builder.clone(), cx);
+        let prompt_store = None;
+        let thread_store = ThreadStore::load(
+            project.clone(),
+            tools,
+            prompt_store,
+            app_state.prompt_builder.clone(),
+            cx,
+        );
         let meta = self.thread.meta();
         let this = self.clone();
 
@@ -301,21 +307,22 @@ impl ExampleInstance {
             std::fs::write(&last_diff_file_path, "")?;
 
             let thread_store = thread_store.await?;
+
+            let profile_id = meta.profile_id.clone();
+            thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
+
             let thread =
                 thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
-            let last_request = Rc::new(RefCell::new(None));
+
 
             thread.update(cx, |thread, _cx| {
                 let mut request_count = 0;
-                let last_request = Rc::clone(&last_request);
                 let previous_diff = Rc::new(RefCell::new("".to_string()));
                 let example_output_dir = this.run_directory.clone();
                 let last_diff_file_path = last_diff_file_path.clone();
                 let messages_json_file_path = example_output_dir.join("last.messages.json");
                 let this = this.clone();
                 thread.set_request_callback(move |request, response_events| {
-                    *last_request.borrow_mut() = Some(request.clone());
-
                     request_count += 1;
                     let messages_file_path = example_output_dir.join(format!("{request_count}.messages.md"));
                     let diff_file_path = example_output_dir.join(format!("{request_count}.diff"));
@@ -391,10 +398,6 @@ impl ExampleInstance {
 
             }
 
-            let Some(last_request) = last_request.borrow_mut().take() else {
-                return Err(anyhow!("No requests ran."));
-            };
-
             if let Some(diagnostics_before) = &diagnostics_before {
                 fs::write(this.run_directory.join("diagnostics_before.txt"), diagnostics_before)?;
             }
@@ -417,7 +420,7 @@ impl ExampleInstance {
                     response_count,
                     token_usage: thread.cumulative_token_usage(),
                     tool_metrics: example_cx.tool_metrics.lock().unwrap().clone(),
-                    last_request,
+                    all_messages: messages_to_markdown(thread.messages()),
                     programmatic_assertions: example_cx.assertions,
                 }
             })
@@ -520,23 +523,23 @@ impl ExampleInstance {
 
         if thread_assertions.is_empty() {
             return (
-                "No diff assertions".to_string(),
+                "No thread assertions".to_string(),
                 AssertionsReport::default(),
             );
         }
 
         let judge_thread_prompt = include_str!("judge_thread_prompt.hbs");
-        let judge_diff_prompt_name = "judge_thread_prompt";
+        let judge_thread_prompt_name = "judge_thread_prompt";
         let mut hbs = Handlebars::new();
-        hbs.register_template_string(judge_diff_prompt_name, judge_thread_prompt)
+        hbs.register_template_string(judge_thread_prompt_name, judge_thread_prompt)
             .unwrap();
 
-        let request_markdown = RequestMarkdown::new(&run_output.last_request);
+        let complete_messages = &run_output.all_messages;
         let to_prompt = |assertion: String| {
             hbs.render(
-                judge_diff_prompt_name,
+                judge_thread_prompt_name,
                 &JudgeThreadInput {
-                    messages: request_markdown.messages.clone(),
+                    messages: complete_messages.clone(),
                     assertion,
                 },
             )
@@ -567,6 +570,7 @@ impl ExampleInstance {
             let request = LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                mode: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
@@ -810,6 +814,51 @@ pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
+fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>) -> String {
+    let mut messages = String::new();
+    let mut assistant_message_number: u32 = 1;
+
+    for message in message_iter {
+        push_role(&message.role, &mut messages, &mut assistant_message_number);
+
+        for segment in &message.segments {
+            match segment {
+                MessageSegment::Text(text) => {
+                    messages.push_str(&text);
+                    messages.push_str("\n\n");
+                }
+                MessageSegment::Thinking { text, signature } => {
+                    messages.push_str("**Thinking**:\n\n");
+                    if let Some(sig) = signature {
+                        messages.push_str(&format!("Signature: {}\n\n", sig));
+                    }
+                    messages.push_str(&text);
+                    messages.push_str("\n");
+                }
+                MessageSegment::RedactedThinking(items) => {
+                    messages.push_str(&format!(
+                        "**Redacted Thinking**: {} item(s)\n\n",
+                        items.len()
+                    ));
+                }
+            }
+        }
+    }
+
+    messages
+}
+
+fn push_role(role: &Role, buf: &mut String, assistant_message_number: &mut u32) {
+    match role {
+        Role::System => buf.push_str("# ⚙️ SYSTEM\n\n"),
+        Role::User => buf.push_str("# 👤 USER\n\n"),
+        Role::Assistant => {
+            buf.push_str(&format!("# 🤖 ASSISTANT {assistant_message_number}\n\n"));
+            *assistant_message_number = *assistant_message_number + 1;
+        }
+    }
+}
+
 pub async fn send_language_model_request(
     model: Arc<dyn LanguageModel>,
     request: LanguageModelRequest,
@@ -857,7 +906,10 @@ impl RequestMarkdown {
                 write!(
                     &mut tools,
                     "{}\n",
-                    MarkdownString::code_block("json", &format!("{:#}", tool.input_schema))
+                    MarkdownCodeBlock {
+                        tag: "json",
+                        text: &format!("{:#}", tool.input_schema)
+                    }
                 )
                 .unwrap();
             }
@@ -865,14 +917,7 @@ impl RequestMarkdown {
 
         // Print the messages
         for message in &request.messages {
-            match message.role {
-                Role::System => messages.push_str("# ⚙️ SYSTEM\n\n"),
-                Role::User => messages.push_str("# 👤 USER\n\n"),
-                Role::Assistant => {
-                    messages.push_str(&format!("# 🤖 ASSISTANT {assistant_message_number}\n\n"));
-                    assistant_message_number += 1;
-                }
-            };
+            push_role(&message.role, &mut messages, &mut assistant_message_number);
 
             for content in &message.content {
                 match content {
@@ -904,7 +949,10 @@ impl RequestMarkdown {
                         ));
                         messages.push_str(&format!(
                             "{}\n",
-                            MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                            MarkdownCodeBlock {
+                                tag: "json",
+                                text: &format!("{:#}", tool_use.input)
+                            }
                         ));
                     }
                     MessageContent::ToolResult(tool_result) => {
@@ -966,12 +1014,16 @@ pub fn response_events_to_markdown(
                 ));
                 response.push_str(&format!(
                     "{}\n",
-                    MarkdownString::code_block("json", &format!("{:#}", tool_use.input))
+                    MarkdownCodeBlock {
+                        tag: "json",
+                        text: &format!("{:#}", tool_use.input)
+                    }
                 ));
             }
             Ok(
                 LanguageModelCompletionEvent::UsageUpdate(_)
-                | LanguageModelCompletionEvent::StartMessage { .. },
+                | LanguageModelCompletionEvent::StartMessage { .. }
+                | LanguageModelCompletionEvent::StatusUpdate { .. },
             ) => {}
             Err(error) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
@@ -1046,6 +1098,7 @@ impl ThreadDialog {
 
                 // Skip these
                 Ok(LanguageModelCompletionEvent::UsageUpdate(_))
+                | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
 

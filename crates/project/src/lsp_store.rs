@@ -8,6 +8,7 @@ use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
+    lsp_store,
     manifest_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ManifestTree},
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
@@ -467,10 +468,11 @@ impl LocalLspStore {
                                 adapter.process_diagnostics(&mut params, server_id, buffer);
                             }
 
-                            this.update_diagnostics(
+                            this.merge_diagnostics(
                                 server_id,
                                 params,
                                 &adapter.disk_based_diagnostic_sources,
+                                |diagnostic, cx| adapter.retain_old_diagnostic(diagnostic, cx),
                                 cx,
                             )
                             .log_err();
@@ -1187,6 +1189,11 @@ impl LocalLspStore {
         let mut project_transaction = ProjectTransaction::default();
 
         for buffer in &buffers {
+            zlog::debug!(
+                logger =>
+                "formatting buffer '{:?}'",
+                buffer.abs_path.as_ref().unwrap_or(&PathBuf::from("unknown")).display()
+            );
             // Create an empty transaction to hold all of the formatting edits.
             let formatting_transaction_id = buffer.handle.update(cx, |buffer, cx| {
                 // ensure no transactions created while formatting are
@@ -1224,6 +1231,7 @@ impl LocalLspStore {
                     return;
                 };
                 if formatting_transaction.edit_ids.is_empty() {
+                    zlog::debug!(logger => "no changes made while formatting");
                     buffer.forget_transaction(formatting_transaction_id);
                     return;
                 }
@@ -1265,8 +1273,8 @@ impl LocalLspStore {
             })
         })?;
 
-        // Apply edits to the buffer that will become part of the formatting transaction.
-        // Fails if the buffer has been edited since the start of that transaction.
+        /// Apply edits to the buffer that will become part of the formatting transaction.
+        /// Fails if the buffer has been edited since the start of that transaction.
         fn extend_formatting_transaction(
             buffer: &FormattableBuffer,
             formatting_transaction_id: text::TransactionId,
@@ -1426,7 +1434,7 @@ impl LocalLspStore {
                     };
 
                     let Some(language_server) = language_server else {
-                        log::warn!(
+                        log::debug!(
                             "No language server found to format buffer '{:?}'. Skipping",
                             buffer_path_abs.as_path().to_string_lossy()
                         );
@@ -1930,8 +1938,7 @@ impl LocalLspStore {
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let _timer = zlog::time!(logger => "format-full")
-                .warn_if_gt(std::time::Duration::from_millis(0));
+            let _timer = zlog::time!(logger => "format-full");
             language_server
                 .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
                     text_document,
@@ -1940,8 +1947,7 @@ impl LocalLspStore {
                 })
                 .await?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
-            let _timer = zlog::time!(logger => "format-range")
-                .warn_if_gt(std::time::Duration::from_millis(0));
+            let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
             language_server
@@ -3444,8 +3450,14 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
 
+        client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
+        client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
+        client.add_entity_request_handler(Self::handle_lsp_ext_clear_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::OpenDocs>);
+        client.add_entity_request_handler(
+            Self::handle_lsp_command::<lsp_ext_command::GoToParentModule>,
+        );
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::GetLspRunnables>,
         );
@@ -3518,7 +3530,7 @@ impl LspStore {
             )
             .detach();
         } else {
-            log::info!("No extension events global found. Skipping JSON schema auto-reload setup");
+            log::debug!("No extension events global found. Skipping JSON schema auto-reload setup");
         }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
@@ -3786,13 +3798,11 @@ impl LspStore {
         evt: &extension::Event,
         cx: &mut Context<Self>,
     ) {
-        #[expect(
-            irrefutable_let_patterns,
-            reason = "Make sure to handle new event types in extension properly"
-        )]
-        let extension::Event::ExtensionsInstalledChanged = evt else {
-            return;
-        };
+        match evt {
+            extension::Event::ExtensionInstalled(_)
+            | extension::Event::ConfigureExtensionRequested(_) => return,
+            extension::Event::ExtensionsInstalledChanged => {}
+        }
         if self.as_local().is_none() {
             return;
         }
@@ -6082,7 +6092,7 @@ impl LspStore {
                         content_changes,
                     },
                 )
-                .log_err();
+                .ok();
         }
 
         None
@@ -6115,7 +6125,7 @@ impl LspStore {
                             text,
                         },
                     )
-                    .log_err();
+                    .ok();
             }
         }
 
@@ -6376,10 +6386,10 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_| false, cx)
+        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_, _| false, cx)
     }
 
-    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic) -> bool + Clone>(
+    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
@@ -6412,7 +6422,7 @@ impl LspStore {
                     .get_diagnostics(server_id)
                     .into_iter()
                     .flat_map(|diag| {
-                        diag.iter().filter(|v| filter(&v.diagnostic)).map(|v| {
+                        diag.iter().filter(|v| filter(&v.diagnostic, cx)).map(|v| {
                             let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                             let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
                             DiagnosticEntry {
@@ -7017,8 +7027,8 @@ impl LspStore {
         envelope: TypedEnvelope<proto::LanguageServerIdForName>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerIdForNameResponse> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let name = &envelope.payload.name;
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
@@ -7261,6 +7271,77 @@ impl LspStore {
         })
     }
 
+    async fn handle_lsp_ext_cancel_flycheck(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspExtCancelFlycheck>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        lsp_store.update(&mut cx, |lsp_store, _| {
+            if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                server
+                    .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
+                    .context("handling lsp ext cancel flycheck")
+            } else {
+                anyhow::Ok(())
+            }
+        })??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_lsp_ext_run_flycheck(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspExtRunFlycheck>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        lsp_store.update(&mut cx, |lsp_store, cx| {
+            if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                let text_document = if envelope.payload.current_file_only {
+                    let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+                    lsp_store
+                        .buffer_store()
+                        .read(cx)
+                        .get(buffer_id)
+                        .and_then(|buffer| Some(buffer.read(cx).file()?.as_local()?.abs_path(cx)))
+                        .map(|path| make_text_document_identifier(&path))
+                        .transpose()?
+                } else {
+                    None
+                };
+                server
+                    .notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                        &lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
+                    )
+                    .context("handling lsp ext run flycheck")
+            } else {
+                anyhow::Ok(())
+            }
+        })??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_lsp_ext_clear_flycheck(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspExtClearFlycheck>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        lsp_store.update(&mut cx, |lsp_store, _| {
+            if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                server
+                    .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
+                    .context("handling lsp ext clear flycheck")
+            } else {
+                anyhow::Ok(())
+            }
+        })??;
+
+        Ok(proto::Ack {})
+    }
+
     pub fn disk_based_diagnostics_started(
         &mut self,
         language_server_id: LanguageServerId,
@@ -7391,7 +7472,7 @@ impl LspStore {
                                 new_uri: new_uri.clone(),
                             }],
                         })
-                        .log_err();
+                        .ok();
                 }
             }
             Some(())
@@ -7494,7 +7575,7 @@ impl LspStore {
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
                         &lsp::DidChangeWatchedFilesParams { changes },
                     )
-                    .log_err();
+                    .ok();
             }
             Some(())
         });
@@ -8109,7 +8190,7 @@ impl LspStore {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
-                env.get_buffer_environment(buffer.clone(), self.worktree_store.clone(), cx)
+                env.get_buffer_environment(&buffer, &self.worktree_store, cx)
             })
         } else {
             Task::ready(None).shared()
@@ -8546,12 +8627,12 @@ impl LspStore {
             language_server_id,
             params,
             disk_based_sources,
-            |_| false,
+            |_, _| false,
             cx,
         )
     }
 
-    pub fn merge_diagnostics<F: Fn(&Diagnostic) -> bool + Clone>(
+    pub fn merge_diagnostics<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
@@ -8570,6 +8651,8 @@ impl LspStore {
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostics = HashMap::default();
+
+        let adapter = self.language_server_adapter_for_id(language_server_id);
 
         // Ensure that primary diagnostics are always the most severe
         params.diagnostics.sort_by_key(|item| item.severity);
@@ -8613,7 +8696,14 @@ impl LspStore {
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
                         code: diagnostic.code.clone(),
+                        code_description: diagnostic
+                            .code_description
+                            .as_ref()
+                            .map(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                        markdown: adapter.as_ref().and_then(|adapter| {
+                            adapter.diagnostic_message_to_markdown(&diagnostic.message)
+                        }),
                         message: diagnostic.message.trim().to_string(),
                         group_id,
                         is_primary: true,
@@ -8631,7 +8721,14 @@ impl LspStore {
                                 diagnostic: Diagnostic {
                                     source: diagnostic.source.clone(),
                                     code: diagnostic.code.clone(),
+                                    code_description: diagnostic
+                                        .code_description
+                                        .as_ref()
+                                        .map(|c| c.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
+                                    markdown: adapter.as_ref().and_then(|adapter| {
+                                        adapter.diagnostic_message_to_markdown(&info.message)
+                                    }),
                                     message: info.message.trim().to_string(),
                                     group_id,
                                     is_primary: false,
@@ -9043,7 +9140,7 @@ impl LspStore {
                     if !params.changes.is_empty() {
                         server
                             .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
-                            .log_err();
+                            .ok();
                     }
                 }
             }

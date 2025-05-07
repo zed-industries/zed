@@ -5,9 +5,7 @@ use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
-use task::{
-    RevealTarget, TaskContext, TaskId, TaskModal, TaskTemplate, TaskVariables, VariableName,
-};
+use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
 use workspace::Workspace;
 
 mod modal;
@@ -65,13 +63,13 @@ pub fn init(cx: &mut App) {
                             })
                             .detach()
                         } else {
-                            if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
-                                if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                    resolved.allow_concurrent_runs = allow_concurrent_runs;
-                                }
-                                if let Some(use_new_terminal) = action.use_new_terminal {
-                                    resolved.use_new_terminal = use_new_terminal;
-                                }
+                            let resolved = &mut last_scheduled_task.resolved;
+
+                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                                resolved.allow_concurrent_runs = allow_concurrent_runs;
+                            }
+                            if let Some(use_new_terminal) = action.use_new_terminal {
+                                resolved.use_new_terminal = use_new_terminal;
                             }
 
                             workspace.schedule_resolved_task(
@@ -83,7 +81,7 @@ pub fn init(cx: &mut App) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
+                        toggle_modal(workspace, None, window, cx).detach();
                     };
                 });
         },
@@ -125,21 +123,15 @@ fn spawn_task_or_modal(
             )
             .detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => toggle_modal(
-            workspace,
-            *reveal_target,
-            TaskModal::ScriptModal,
-            window,
-            cx,
-        )
-        .detach(),
+        Spawn::ViaModal { reveal_target } => {
+            toggle_modal(workspace, *reveal_target, window, cx).detach()
+        }
     }
 }
 
 pub fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
-    task_type: TaskModal,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
@@ -162,7 +154,6 @@ pub fn toggle_modal(
                                 reveal_target: Some(target),
                             }),
                             workspace_handle,
-                            task_type,
                             window,
                             cx,
                         )

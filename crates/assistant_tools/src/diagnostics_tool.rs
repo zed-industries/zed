@@ -3,13 +3,13 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
@@ -66,11 +66,11 @@ impl Tool for DiagnosticsTool {
         if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
             .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
+                Some(path) if !path.is_empty() => Some(path),
                 _ => None,
             })
         {
-            format!("Check diagnostics for {path}")
+            format!("Check diagnostics for {}", MarkdownInlineCode(&path))
         } else {
             "Check project diagnostics".to_string()
         }
@@ -82,6 +82,7 @@ impl Tool for DiagnosticsTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -122,9 +123,9 @@ impl Tool for DiagnosticsTool {
                     }
 
                     if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string())
+                        Ok("File doesn't have errors or warnings!".to_string().into())
                     } else {
-                        Ok(output)
+                        Ok(output.into())
                     }
                 })
                 .into()
@@ -158,10 +159,12 @@ impl Tool for DiagnosticsTool {
                 });
 
                 if has_diagnostics {
-                    Task::ready(Ok(output)).into()
+                    Task::ready(Ok(output.into())).into()
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
-                        .into()
+                    Task::ready(Ok("No errors or warnings found in the project."
+                        .to_string()
+                        .into()))
+                    .into()
                 }
             }
         }

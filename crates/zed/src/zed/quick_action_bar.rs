@@ -15,7 +15,7 @@ use gpui::{
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName, IconSize,
+    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
@@ -90,6 +90,7 @@ impl Render for QuickActionBar {
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
+        let inline_values_enabled = editor_value.inline_values_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let git_blame_inline_enabled = editor_value.git_blame_inline_enabled();
@@ -140,7 +141,6 @@ impl Render for QuickActionBar {
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger_with_tooltip(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_selections_handle.is_deployed()),
@@ -189,7 +189,6 @@ impl Render for QuickActionBar {
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
                     IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
@@ -224,6 +223,28 @@ impl Render for QuickActionBar {
                                         }
                                     },
                                 );
+
+                                menu = menu.toggleable_entry(
+                                    "Inline Values",
+                                    inline_values_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleInlineValues.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_inline_values(
+                                                        &editor::actions::ToggleInlineValues,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    }
+                                );
+
                             }
 
                             if supports_inline_diagnostics {
@@ -270,7 +291,7 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                    inline_completion_entry = inline_completion_entry.documentation_aside(DocumentationSide::Left, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }
@@ -412,7 +433,7 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(DynamicSpacing::Base04.rems(cx))
+            .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)
@@ -467,7 +488,6 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .toggle_state(self.toggled)

@@ -4948,6 +4948,71 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+        ],
+        "Initial state with nothing selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("hello_from_no_selections", window, cx)
+            });
+            panel.confirm_edit(window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+            separator!("      hello_from_no_selections  <== selected  <== marked"),
+        ],
+        "A new file is created under the root directory"
+    );
+}
+
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
     let path = path.as_ref();
     panel.update(cx, |panel, cx| {
@@ -5226,7 +5291,7 @@ impl ProjectItem for TestProjectItemView {
 
     fn for_project_item(
         _: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         project_item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -5243,6 +5308,10 @@ impl ProjectItem for TestProjectItemView {
 
 impl Item for TestProjectItemView {
     type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Test".into()
+    }
 }
 
 impl EventEmitter<()> for TestProjectItemView {}

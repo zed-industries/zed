@@ -17,6 +17,7 @@ client.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
+extension.workspace = true
 extension_host.workspace = true
 fs.workspace = true
 fuzzy.workspace = true

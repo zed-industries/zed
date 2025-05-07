@@ -532,7 +532,7 @@ mod tests {
                 },
             );
             // Cause the repository to emit MergeHeadsChanged.
-            state.merge_head_shas = vec!["abc".into(), "def".into()]
+            state.refs.insert("MERGE_HEAD".into(), "123".into())
         })
         .unwrap();
 

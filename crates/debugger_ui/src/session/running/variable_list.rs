@@ -675,6 +675,7 @@ impl VariableList {
         div()
             .id(var_ref as usize)
             .group("variable_list_entry")
+            .pl_2()
             .border_1()
             .border_r_2()
             .border_color(border_color)
@@ -692,8 +693,8 @@ impl VariableList {
                 ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
                     .selectable(false)
                     .disabled(self.disabled)
-                    .indent_level(state.depth + 1)
-                    .indent_step_size(px(20.))
+                    .indent_level(state.depth)
+                    .indent_step_size(px(10.))
                     .always_show_disclosure_icon(true)
                     .toggle(state.is_expanded)
                     .on_toggle({
@@ -772,6 +773,7 @@ impl VariableList {
         div()
             .id(variable.item_id())
             .group("variable_list_entry")
+            .pl_2()
             .border_1()
             .border_r_2()
             .border_color(border_color)
@@ -791,8 +793,8 @@ impl VariableList {
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
-                .indent_level(state.depth + 1_usize)
-                .indent_step_size(px(20.))
+                .indent_level(state.depth)
+                .indent_step_size(px(10.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -929,12 +931,12 @@ impl Render for VariableList {
         self.build_entries(cx);
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
             .overflow_y_scroll()
             .size_full()
-            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))

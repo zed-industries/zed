@@ -9,10 +9,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -24,7 +24,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
@@ -321,12 +321,20 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
         let request = into_open_ai(request, &self.model, self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
-        async move { Ok(map_to_language_model_completion_events(completions.await?).boxed()) }
-            .boxed()
+        async move {
+            let mapper = OpenAiEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
+        }
+        .boxed()
     }
 }
 
@@ -364,14 +372,10 @@ pub fn into_open_ai(
                         },
                     };
 
-                    if let Some(last_assistant_message) = messages.iter_mut().rfind(|message| {
-                        matches!(message, open_ai::RequestMessage::Assistant { .. })
-                    }) {
-                        if let open_ai::RequestMessage::Assistant { tool_calls, .. } =
-                            last_assistant_message
-                        {
-                            tool_calls.push(tool_call);
-                        }
+                    if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
                             content: None,
@@ -417,112 +421,108 @@ pub fn into_open_ai(
     }
 }
 
-pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    #[derive(Default)]
-    struct RawToolCall {
-        id: String,
-        name: String,
-        arguments: String,
-    }
+pub struct OpenAiEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
 
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-        tool_calls_by_index: HashMap<usize, RawToolCall>,
-    }
-
-    futures::stream::unfold(
-        State {
-            events,
+impl OpenAiEventMapper {
+    pub fn new() -> Self {
+        Self {
             tool_calls_by_index: HashMap::default(),
-        },
-        |mut state| async move {
-            if let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => {
-                        let Some(choice) = event.choices.first() else {
-                            return Some((
-                                vec![Err(anyhow!("Response contained no choices"))],
-                                state,
-                            ));
-                        };
+        }
+    }
 
-                        let mut events = Vec::new();
-                        if let Some(content) = choice.delta.content.clone() {
-                            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                        }
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
 
-                        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-                            for tool_call in tool_calls {
-                                let entry = state
-                                    .tool_calls_by_index
-                                    .entry(tool_call.index)
-                                    .or_default();
+    pub fn map_event(
+        &mut self,
+        event: ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
 
-                                if let Some(tool_id) = tool_call.id.clone() {
-                                    entry.id = tool_id;
-                                }
+        let mut events = Vec::new();
+        if let Some(content) = choice.delta.content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
 
-                                if let Some(function) = tool_call.function.as_ref() {
-                                    if let Some(name) = function.name.clone() {
-                                        entry.name = name;
-                                    }
+        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+            for tool_call in tool_calls {
+                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                                    if let Some(arguments) = function.arguments.clone() {
-                                        entry.arguments.push_str(&arguments);
-                                    }
-                                }
-                            }
-                        }
+                if let Some(tool_id) = tool_call.id.clone() {
+                    entry.id = tool_id;
+                }
 
-                        match choice.finish_reason.as_deref() {
-                            Some("stop") => {
-                                events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                    StopReason::EndTurn,
-                                )));
-                            }
-                            Some("tool_calls") => {
-                                events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| {
-                                        maybe!({
-                                            Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id: tool_call.id.into(),
-                                                    name: tool_call.name.as_str().into(),
-                                                    is_input_complete: true,
-                                                    input: serde_json::Value::from_str(
-                                                        &tool_call.arguments,
-                                                    )?,
-                                                },
-                                            ))
-                                        })
-                                    },
-                                ));
-
-                                events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                    StopReason::ToolUse,
-                                )));
-                            }
-                            Some(stop_reason) => {
-                                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
-                                events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                    StopReason::EndTurn,
-                                )));
-                            }
-                            None => {}
-                        }
-
-                        return Some((events, state));
+                if let Some(function) = tool_call.function.as_ref() {
+                    if let Some(name) = function.name.clone() {
+                        entry.name = name;
                     }
-                    Err(err) => return Some((vec![Err(err)], state)),
+
+                    if let Some(arguments) = function.arguments.clone() {
+                        entry.arguments.push_str(&arguments);
+                    }
                 }
             }
+        }
 
-            None
-        },
-    )
-    .flat_map(futures::stream::iter)
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::Value::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.clone().into(),
+                                name: tool_call.name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone(),
+                            },
+                        )),
+                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.as_str().into(),
+                            raw_input: tool_call.arguments.into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
+        }
+
+        events
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 pub fn count_open_ai_tokens(

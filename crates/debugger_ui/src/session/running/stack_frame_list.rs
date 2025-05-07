@@ -10,6 +10,7 @@ use gpui::{
 };
 
 use language::PointUtf16;
+use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
@@ -129,13 +130,6 @@ impl StackFrameList {
             .into_iter()
             .map(|stack_frame| stack_frame.dap.clone())
             .collect()
-    }
-
-    pub fn _get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
-        self.stack_frames(cx)
-            .first()
-            .map(|stack_frame| stack_frame.dap.id)
-            .unwrap_or(0)
     }
 
     pub fn selected_stack_frame_id(&self) -> Option<StackFrameId> {
@@ -265,6 +259,7 @@ impl StackFrameList {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
+        let stack_frame_id = stack_frame.id;
         cx.spawn_in(window, async move |this, cx| {
             let (worktree, relative_path) = this
                 .update(cx, |this, cx| {
@@ -313,12 +308,22 @@ impl StackFrameList {
             .await?;
 
             this.update(cx, |this, cx| {
+                let Some(thread_id) = this.state.read_with(cx, |state, _| state.thread_id)? else {
+                    return Err(anyhow!("No selected thread ID found"));
+                };
+
                 this.workspace.update(cx, |workspace, cx| {
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 
                     breakpoint_store.update(cx, |store, cx| {
                         store.set_active_position(
-                            (this.session.read(cx).session_id(), abs_path, position),
+                            ActiveStackFrame {
+                                session_id: this.session.read(cx).session_id(),
+                                thread_id,
+                                stack_frame_id,
+                                path: abs_path,
+                                position,
+                            },
                             cx,
                         );
                     })
@@ -545,6 +550,7 @@ impl StackFrameList {
 impl Render for StackFrameList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())

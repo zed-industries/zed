@@ -293,7 +293,7 @@ async fn test_ssh_collaboration_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(&branches_b, &branches_set);
@@ -326,7 +326,7 @@ async fn test_ssh_collaboration_git_branches(
         })
     });
 
-    assert_eq!(server_branch.name, branches[2]);
+    assert_eq!(server_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -366,7 +366,7 @@ async fn test_ssh_collaboration_git_branches(
         })
     });
 
-    assert_eq!(server_branch.name, "totally-new-branch");
+    assert_eq!(server_branch.name(), "totally-new-branch");
 
     // Remove the git repository and check that all participants get the update.
     remote_fs

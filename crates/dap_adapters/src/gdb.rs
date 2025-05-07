@@ -2,9 +2,9 @@ use std::{collections::HashMap, ffi::OsStr};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use dap::StartDebuggingRequestArguments;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugTaskDefinition};
+use task::DebugRequest;
 
 use crate::*;
 
@@ -89,27 +89,5 @@ impl DebugAdapter for GdbDebugAdapter {
             connection: None,
             request_args: self.request_args(config),
         })
-    }
-
-    async fn install_binary(
-        &self,
-        _version: AdapterVersion,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        unimplemented!("GDB debug adapter cannot be installed by Zed (yet)")
-    }
-
-    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
-        unimplemented!("Fetch latest GDB version not implemented (yet)")
-    }
-
-    async fn get_installed_binary(
-        &self,
-        _: &dyn DapDelegate,
-        _: &DebugTaskDefinition,
-        _: Option<std::path::PathBuf>,
-        _: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        unimplemented!("GDB cannot be installed by Zed (yet)")
     }
 }

@@ -10,13 +10,14 @@ use crate::{
     ToolMetrics,
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
-use agent::ThreadEvent;
+use agent::{ContextLoadResult, Thread, ThreadEvent};
 use anyhow::{Result, anyhow};
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
-use gpui::{AppContext, AsyncApp, Entity};
+use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
@@ -46,6 +47,7 @@ pub struct ExampleMetadata {
     pub revision: String,
     pub language_server: Option<LanguageServer>,
     pub max_assertions: Option<usize>,
+    pub profile_id: AgentProfileId,
 }
 
 #[derive(Clone, Debug)]
@@ -115,7 +117,13 @@ impl ExampleContext {
     pub fn push_user_message(&mut self, text: impl ToString) {
         self.app
             .update_entity(&self.agent_thread, |thread, cx| {
-                thread.insert_user_message(text.to_string(), vec![], None, cx);
+                thread.insert_user_message(
+                    text.to_string(),
+                    ContextLoadResult::default(),
+                    None,
+                    Vec::new(),
+                    cx,
+                );
             })
             .unwrap();
     }
@@ -155,7 +163,11 @@ impl ExampleContext {
             if left == right {
                 Ok(())
             } else {
-                println!("{}{:#?} != {:#?}", self.log_prefix, left, right);
+                println!(
+                    "{}{}",
+                    self.log_prefix,
+                    pretty_assertions::Comparison::new(&left, &right)
+                );
                 Err(anyhow::Error::from(FailedAssertion(message.clone())))
             },
             message,
@@ -224,9 +236,11 @@ impl ExampleContext {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
                     }
                 },
-                ThreadEvent::StreamedAssistantText(_, _)
+                ThreadEvent::NewRequest
+                | ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. } => {}
+                | ThreadEvent::UsePendingTools { .. }
+                | ThreadEvent::CompletionCanceled => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,
@@ -253,6 +267,15 @@ impl ExampleContext {
                         }
                     });
                 }
+                ThreadEvent::InvalidToolInput { .. } => {
+                    println!("{log_prefix} invalid tool input");
+                }
+                ThreadEvent::MissingToolUse {
+                    tool_use_id: _,
+                    ui_text,
+                } => {
+                    println!("{log_prefix} {ui_text}");
+                }
                 ThreadEvent::ToolConfirmationNeeded => {
                     panic!(
                         "{}Bug: Tool confirmation should not be required in eval",
@@ -268,7 +291,7 @@ impl ExampleContext {
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged
-                | ThreadEvent::UsageUpdated(_) => {
+                | ThreadEvent::CancelEditing => {
                     tx.try_send(Ok(())).ok();
                     if std::env::var("ZED_EVAL_DEBUG").is_ok() {
                         println!("{}Event: {:#?}", log_prefix, event);
@@ -305,7 +328,7 @@ impl ExampleContext {
             for message in thread.messages().skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
-                    _text: message.to_string(),
+                    text: message.to_string(),
                     tool_use: thread
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()
@@ -325,8 +348,8 @@ impl ExampleContext {
     }
 
     pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
-        self.app
-            .read_entity(&self.agent_thread, |thread, cx| {
+        self.agent_thread
+            .read_with(&self.app, |thread, cx| {
                 let action_log = thread.action_log().read(cx);
                 HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
                     |(buffer, diff)| {
@@ -353,6 +376,90 @@ impl ExampleContext {
             })
             .unwrap()
     }
+
+    pub fn agent_thread(&self) -> Entity<Thread> {
+        self.agent_thread.clone()
+    }
+}
+
+impl AppContext for ExampleContext {
+    type Result<T> = anyhow::Result<T>;
+
+    fn new<T: 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
+    ) -> Self::Result<Entity<T>> {
+        self.app.new(build_entity)
+    }
+
+    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
+        self.app.reserve_entity()
+    }
+
+    fn insert_entity<T: 'static>(
+        &mut self,
+        reservation: gpui::Reservation<T>,
+        build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
+    ) -> Self::Result<Entity<T>> {
+        self.app.insert_entity(reservation, build_entity)
+    }
+
+    fn update_entity<T, R>(
+        &mut self,
+        handle: &Entity<T>,
+        update: impl FnOnce(&mut T, &mut gpui::Context<T>) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.app.update_entity(handle, update)
+    }
+
+    fn read_entity<T, R>(
+        &self,
+        handle: &Entity<T>,
+        read: impl FnOnce(&T, &App) -> R,
+    ) -> Self::Result<R>
+    where
+        T: 'static,
+    {
+        self.app.read_entity(handle, read)
+    }
+
+    fn update_window<T, F>(&mut self, window: gpui::AnyWindowHandle, f: F) -> Result<T>
+    where
+        F: FnOnce(gpui::AnyView, &mut gpui::Window, &mut App) -> T,
+    {
+        self.app.update_window(window, f)
+    }
+
+    fn read_window<T, R>(
+        &self,
+        window: &gpui::WindowHandle<T>,
+        read: impl FnOnce(Entity<T>, &App) -> R,
+    ) -> Result<R>
+    where
+        T: 'static,
+    {
+        self.app.read_window(window, read)
+    }
+
+    fn background_spawn<R>(
+        &self,
+        future: impl std::future::Future<Output = R> + Send + 'static,
+    ) -> gpui::Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.app.background_spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: gpui::Global,
+    {
+        self.app.read_global(callback)
+    }
 }
 
 #[derive(Debug)]
@@ -378,15 +485,20 @@ impl Response {
         cx.assert_some(result, format!("called `{}`", tool_name))
     }
 
+    #[allow(dead_code)]
     pub fn tool_uses(&self) -> impl Iterator<Item = &ToolUse> {
         self.messages.iter().flat_map(|msg| &msg.tool_use)
+    }
+
+    pub fn texts(&self) -> impl Iterator<Item = String> {
+        self.messages.iter().map(|message| message.text.clone())
     }
 }
 
 #[derive(Debug)]
 pub struct Message {
     _role: Role,
-    _text: String,
+    text: String,
     tool_use: Vec<ToolUse>,
 }
 
@@ -405,16 +517,16 @@ impl ToolUse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FileEdits {
-    hunks: Vec<FileEditHunk>,
+    pub hunks: Vec<FileEditHunk>,
 }
 
-#[derive(Debug)]
-struct FileEditHunk {
-    base_text: String,
-    text: String,
-    status: DiffHunkStatus,
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileEditHunk {
+    pub base_text: String,
+    pub text: String,
+    pub status: DiffHunkStatus,
 }
 
 impl FileEdits {

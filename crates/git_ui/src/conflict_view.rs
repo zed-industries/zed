@@ -14,6 +14,7 @@ use ui::{
     ActiveTheme, AnyElement, Element as _, StatefulInteractiveElement, Styled,
     StyledTypography as _, div, h_flex, rems,
 };
+use util::{debug_panic, maybe};
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
@@ -45,8 +46,9 @@ impl editor::Addon for ConflictAddon {
 
 pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mut Context<Editor>) {
     // Only show conflict UI for singletons and in the project diff.
-    if !editor.buffer().read(cx).is_singleton()
-        && !editor.buffer().read(cx).all_diff_hunks_expanded()
+    if !editor.mode().is_full()
+        || (!editor.buffer().read(cx).is_singleton()
+            && !editor.buffer().read(cx).all_diff_hunks_expanded())
     {
         return;
     }
@@ -89,12 +91,22 @@ fn excerpt_for_buffer_updated(
     cx: &mut Context<Editor>,
 ) {
     let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
+    let buffer_id = conflict_set.read(cx).snapshot().buffer_id;
+    let Some(buffer_conflicts) = editor
+        .addon_mut::<ConflictAddon>()
+        .unwrap()
+        .buffers
+        .get(&buffer_id)
+    else {
+        return;
+    };
+    let addon_conflicts_len = buffer_conflicts.block_ids.len();
     conflicts_updated(
         editor,
         conflict_set,
         &ConflictSetUpdate {
             buffer_range: None,
-            old_range: 0..conflicts_len,
+            old_range: 0..addon_conflicts_len,
             new_range: 0..conflicts_len,
         },
         cx,
@@ -174,10 +186,37 @@ fn conflicts_updated(
         return;
     };
 
+    let old_range = maybe!({
+        let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
+        let buffer_conflicts = conflict_addon.buffers.get(&buffer_id)?;
+        match buffer_conflicts.block_ids.get(event.old_range.clone()) {
+            Some(_) => Some(event.old_range.clone()),
+            None => {
+                debug_panic!(
+                    "conflicts updated event old range is invalid for buffer conflicts view (block_ids len is {:?}, old_range is {:?})",
+                    buffer_conflicts.block_ids.len(),
+                    event.old_range,
+                );
+                if event.old_range.start <= event.old_range.end {
+                    Some(
+                        event.old_range.start.min(buffer_conflicts.block_ids.len())
+                            ..event.old_range.end.min(buffer_conflicts.block_ids.len()),
+                    )
+                } else {
+                    None
+                }
+            }
+        }
+    });
+
     // Remove obsolete highlights and blocks
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-    if let Some(buffer_conflicts) = conflict_addon.buffers.get_mut(&buffer_id) {
-        let old_conflicts = buffer_conflicts.block_ids[event.old_range.clone()].to_owned();
+    if let Some((buffer_conflicts, old_range)) = conflict_addon
+        .buffers
+        .get_mut(&buffer_id)
+        .zip(old_range.clone())
+    {
+        let old_conflicts = buffer_conflicts.block_ids[old_range].to_owned();
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
@@ -258,14 +297,17 @@ fn conflicts_updated(
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
             }),
             priority: 0,
+            render_in_minimap: true,
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
 
     let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-    if let Some(buffer_conflicts) = conflict_addon.buffers.get_mut(&buffer_id) {
+    if let Some((buffer_conflicts, old_range)) =
+        conflict_addon.buffers.get_mut(&buffer_id).zip(old_range)
+    {
         buffer_conflicts.block_ids.splice(
-            event.old_range.clone(),
+            old_range,
             new_conflicts
                 .iter()
                 .map(|conflict| conflict.range.clone())
@@ -346,7 +388,7 @@ fn render_conflict_buttons(
     h_flex()
         .h(cx.line_height)
         .items_end()
-        .ml(cx.gutter_dimensions.width)
+        .ml(cx.margins.gutter.width)
         .id(cx.block_id)
         .gap_0p5()
         .child(

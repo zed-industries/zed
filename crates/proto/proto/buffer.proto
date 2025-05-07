@@ -270,6 +270,8 @@ message Diagnostic {
         Hint = 4;
     }
     optional string data = 12;
+    optional string code_description = 13;
+    optional string markdown = 14;
 }
 
 message SearchQuery {

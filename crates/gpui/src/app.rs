@@ -24,21 +24,21 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
-use http_client::HttpClient;
+use http_client::{HttpClient, Url};
 use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke,
-    LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator, current_platform, hash, init_app_menus,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
+    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator, current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -271,6 +271,7 @@ pub struct App {
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    quitting: bool,
 }
 
 impl App {
@@ -332,6 +333,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -375,6 +377,7 @@ impl App {
         self.windows.clear();
         self.window_handles.clear();
         self.flush_effects();
+        self.quitting = true;
 
         let futures = futures::future::join_all(futures);
         if self
@@ -384,6 +387,8 @@ impl App {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+
+        self.quitting = false;
     }
 
     /// Get the id of the current keyboard layout
@@ -1049,6 +1054,9 @@ impl App {
 
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        if self.quitting {
+            panic!("Can't spawn on main thread after on_app_quit")
+        };
         &self.foreground_executor
     }
 
@@ -1060,7 +1068,12 @@ impl App {
         AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+
         let mut cx = self.to_async();
+
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
     }
@@ -1859,6 +1872,9 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+
+    /// The context stack at the time
+    pub context_stack: Vec<KeyContext>,
 }
 
 struct NullHttpClient;
@@ -1874,7 +1890,7 @@ impl HttpClient for NullHttpClient {
         async move { Err(anyhow!("No HttpClient available")) }.boxed()
     }
 
-    fn proxy(&self) -> Option<&http_client::Uri> {
+    fn proxy(&self) -> Option<&Url> {
         None
     }
 

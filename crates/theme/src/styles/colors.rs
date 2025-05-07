@@ -135,6 +135,8 @@ pub struct ThemeColors {
     pub scrollbar_thumb_background: Hsla,
     /// The color of the scrollbar thumb when hovered over.
     pub scrollbar_thumb_hover_background: Hsla,
+    /// The color of the scrollbar thumb whilst being actively dragged.
+    pub scrollbar_thumb_active_background: Hsla,
     /// The border color of the scrollbar thumb.
     pub scrollbar_thumb_border: Hsla,
     /// The background color of the scrollbar track.
@@ -321,6 +323,7 @@ pub enum ThemeColorField {
     PaneGroupBorder,
     ScrollbarThumbBackground,
     ScrollbarThumbHoverBackground,
+    ScrollbarThumbActiveBackground,
     ScrollbarThumbBorder,
     ScrollbarTrackBackground,
     ScrollbarTrackBorder,
@@ -428,6 +431,9 @@ impl ThemeColors {
             ThemeColorField::PaneGroupBorder => self.pane_group_border,
             ThemeColorField::ScrollbarThumbBackground => self.scrollbar_thumb_background,
             ThemeColorField::ScrollbarThumbHoverBackground => self.scrollbar_thumb_hover_background,
+            ThemeColorField::ScrollbarThumbActiveBackground => {
+                self.scrollbar_thumb_active_background
+            }
             ThemeColorField::ScrollbarThumbBorder => self.scrollbar_thumb_border,
             ThemeColorField::ScrollbarTrackBackground => self.scrollbar_track_background,
             ThemeColorField::ScrollbarTrackBorder => self.scrollbar_track_border,

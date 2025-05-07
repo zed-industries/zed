@@ -16,7 +16,7 @@ use fs::Fs;
 use futures::{
     FutureExt, StreamExt as _,
     channel::{mpsc, oneshot},
-    future::{self, Shared, try_join_all},
+    future::{self, Shared},
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
@@ -233,11 +233,7 @@ pub struct RepositoryId(pub u64);
 pub struct MergeDetails {
     pub conflicted_paths: TreeSet<RepoPath>,
     pub message: Option<SharedString>,
-    pub apply_head: Option<CommitDetails>,
-    pub cherry_pick_head: Option<CommitDetails>,
-    pub merge_heads: Vec<CommitDetails>,
-    pub rebase_head: Option<CommitDetails>,
-    pub revert_head: Option<CommitDetails>,
+    pub heads: Vec<Option<SharedString>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1005,6 +1001,7 @@ impl GitStore {
 
                         let sha = backend
                             .head_sha()
+                            .await
                             .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
                         let provider_registry =
@@ -2695,61 +2692,58 @@ impl MergeDetails {
         status: &SumTree<StatusEntry>,
         prev_snapshot: &RepositorySnapshot,
     ) -> Result<(MergeDetails, bool)> {
-        fn sha_eq<'a>(
-            l: impl IntoIterator<Item = &'a CommitDetails>,
-            r: impl IntoIterator<Item = &'a CommitDetails>,
-        ) -> bool {
-            l.into_iter()
-                .map(|commit| &commit.sha)
-                .eq(r.into_iter().map(|commit| &commit.sha))
-        }
-
-        let merge_heads = try_join_all(
-            backend
-                .merge_head_shas()
-                .into_iter()
-                .map(|sha| backend.show(sha)),
-        )
-        .await?;
-        let cherry_pick_head = backend.show("CHERRY_PICK_HEAD".into()).await.ok();
-        let rebase_head = backend.show("REBASE_HEAD".into()).await.ok();
-        let revert_head = backend.show("REVERT_HEAD".into()).await.ok();
-        let apply_head = backend.show("APPLY_HEAD".into()).await.ok();
-        let message = backend.merge_message().await.map(SharedString::from);
-        let merge_heads_changed = !sha_eq(
-            merge_heads.as_slice(),
-            prev_snapshot.merge.merge_heads.as_slice(),
-        ) || !sha_eq(
-            cherry_pick_head.as_ref(),
-            prev_snapshot.merge.cherry_pick_head.as_ref(),
-        ) || !sha_eq(
-            apply_head.as_ref(),
-            prev_snapshot.merge.apply_head.as_ref(),
-        ) || !sha_eq(
-            rebase_head.as_ref(),
-            prev_snapshot.merge.rebase_head.as_ref(),
-        ) || !sha_eq(
-            revert_head.as_ref(),
-            prev_snapshot.merge.revert_head.as_ref(),
-        );
+        log::debug!("load merge details");
+        let message = backend.merge_message().await;
+        let heads = backend
+            .revparse_batch(vec![
+                "MERGE_HEAD".into(),
+                "CHERRY_PICK_HEAD".into(),
+                "REBASE_HEAD".into(),
+                "REVERT_HEAD".into(),
+                "APPLY_HEAD".into(),
+            ])
+            .await
+            .log_err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|opt| opt.map(SharedString::from))
+            .collect::<Vec<_>>();
+        let merge_heads_changed = heads != prev_snapshot.merge.heads;
         let conflicted_paths = if merge_heads_changed {
-            TreeSet::from_ordered_entries(
+            let current_conflicted_paths = TreeSet::from_ordered_entries(
                 status
                     .iter()
                     .filter(|entry| entry.status.is_conflicted())
                     .map(|entry| entry.repo_path.clone()),
-            )
+            );
+
+            // It can happen that we run a scan while a lengthy merge is in progress
+            // that will eventually result in conflicts, but before those conflicts
+            // are reported by `git status`. Since for the moment we only care about
+            // the merge heads state for the purposes of tracking conflicts, don't update
+            // this state until we see some conflicts.
+            if heads.iter().any(Option::is_some)
+                && !prev_snapshot.merge.heads.iter().any(Option::is_some)
+                && current_conflicted_paths.is_empty()
+            {
+                log::debug!("not updating merge heads because no conflicts found");
+                return Ok((
+                    MergeDetails {
+                        message: message.map(SharedString::from),
+                        ..prev_snapshot.merge.clone()
+                    },
+                    false,
+                ));
+            }
+
+            current_conflicted_paths
         } else {
             prev_snapshot.merge.conflicted_paths.clone()
         };
         let details = MergeDetails {
             conflicted_paths,
-            message,
-            apply_head,
-            cherry_pick_head,
-            merge_heads,
-            rebase_head,
-            revert_head,
+            message: message.map(SharedString::from),
+            heads,
         };
         Ok((details, merge_heads_changed))
     }
@@ -3796,13 +3790,9 @@ impl Repository {
 
     pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         let id = self.id;
-        self.send_job(None, move |repo, cx| async move {
+        self.send_job(None, move |repo, _| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => {
-                    let backend = backend.clone();
-                    cx.background_spawn(async move { backend.branches().await })
-                        .await
-                }
+                RepositoryState::Local { backend, .. } => backend.branches().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GitGetBranches {
@@ -4026,6 +4016,8 @@ impl Repository {
             Some(GitJobKey::ReloadGitState),
             None,
             |state, mut cx| async move {
+                log::debug!("run scheduled git status scan");
+
                 let Some(this) = this.upgrade() else {
                     return Ok(());
                 };
@@ -4464,7 +4456,7 @@ fn deserialize_blame_buffer_response(
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
-        name: branch.name.to_string(),
+        ref_name: branch.ref_name.to_string(),
         unix_timestamp: branch
             .most_recent_commit
             .as_ref()
@@ -4493,7 +4485,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     git::repository::Branch {
         is_head: proto.is_head,
-        name: proto.name.clone().into(),
+        ref_name: proto.ref_name.clone().into(),
         upstream: proto
             .upstream
             .as_ref()
@@ -4563,6 +4555,7 @@ async fn compute_snapshot(
     );
     let (merge_details, merge_heads_changed) =
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
+    log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
     if merge_heads_changed
         || branch != prev_snapshot.branch
@@ -4578,7 +4571,7 @@ async fn compute_snapshot(
     }
 
     // Useful when branch is None in detached head state
-    let head_commit = match backend.head_sha() {
+    let head_commit = match backend.head_sha().await {
         Some(head_sha) => backend.show(head_sha).await.log_err(),
         None => None,
     };

@@ -1,9 +1,10 @@
 mod connection_pool;
 
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
-use crate::llm::LlmTokenClaims;
+use crate::db::billing_subscription::SubscriptionKind;
+use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
 use crate::{
-    AppState, Config, Error, RateLimit, Result, auth,
+    AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
@@ -33,11 +34,8 @@ use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
-use http_client::HttpClient;
-use open_ai::{OPEN_AI_API_URL, OpenAiEmbeddingModel};
 use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
-use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
@@ -134,7 +132,6 @@ struct Session {
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     supermaven_client: Option<Arc<SupermavenAdminApi>>,
-    http_client: Arc<dyn HttpClient>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
@@ -182,15 +179,27 @@ impl Session {
         Ok(db.has_active_billing_subscription(user_id).await?)
     }
 
-    pub async fn current_plan(
-        &self,
-        _db: &MutexGuard<'_, DbHandle>,
-    ) -> anyhow::Result<proto::Plan> {
+    pub async fn current_plan(&self, db: &MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
         if self.is_staff() {
-            Ok(proto::Plan::ZedPro)
-        } else {
-            Ok(proto::Plan::Free)
+            return Ok(proto::Plan::ZedPro);
         }
+
+        let user_id = self.user_id();
+
+        let subscription = db.get_active_billing_subscription(user_id).await?;
+        let subscription_kind = subscription.and_then(|subscription| subscription.kind);
+
+        let plan = if let Some(subscription_kind) = subscription_kind {
+            match subscription_kind {
+                SubscriptionKind::ZedPro => proto::Plan::ZedPro,
+                SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
+                SubscriptionKind::ZedFree => proto::Plan::Free,
+            }
+        } else {
+            proto::Plan::Free
+        };
+
+        Ok(plan)
     }
 
     fn user_id(&self) -> UserId {
@@ -322,6 +331,10 @@ impl Server {
             .add_request_handler(
                 forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
             )
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtGoToParentModule>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
             .add_request_handler(
                 forward_read_only_project_request::<proto::LanguageServerIdForName>,
             )
@@ -427,29 +440,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
-            .add_message_handler(update_context)
-            .add_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    let app_state = app_state.clone();
-                    async move {
-                        count_language_model_tokens(request, response, session, &app_state.config)
-                            .await
-                    }
-                }
-            })
-            .add_request_handler(get_cached_embeddings)
-            .add_request_handler({
-                let app_state = app_state.clone();
-                move |request, response, session| {
-                    compute_embeddings(
-                        request,
-                        response,
-                        session,
-                        app_state.config.openai_api_key.clone(),
-                    )
-                }
-            });
+            .add_message_handler(update_context);
 
         Arc::new(server)
     }
@@ -778,7 +769,6 @@ impl Server {
                 peer: this.peer.clone(),
                 connection_pool: this.connection_pool.clone(),
                 app_state: this.app_state.clone(),
-                http_client,
                 geoip_country_code,
                 system_id,
                 _executor: executor.clone(),
@@ -2711,14 +2701,112 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
 }
 
-async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan(&session.db().await).await?;
+async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
+    let db = session.db().await;
+
+    let feature_flags = db.get_user_flags(user_id).await?;
+    let plan = session.current_plan(&db).await?;
+    let billing_customer = db.get_billing_customer_by_user_id(user_id).await?;
+    let billing_preferences = db.get_billing_preferences(user_id).await?;
+
+    let usage = if let Some(llm_db) = session.app_state.llm_db.clone() {
+        let subscription = db.get_active_billing_subscription(user_id).await?;
+
+        let subscription_period = crate::db::billing_subscription::Model::current_period(
+            subscription,
+            session.is_staff(),
+        );
+
+        if let Some((period_start_at, period_end_at)) = subscription_period {
+            llm_db
+                .get_subscription_usage_for_period(user_id, period_start_at, period_end_at)
+                .await?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     session
         .peer
         .send(
             session.connection_id,
-            proto::UpdateUserPlan { plan: plan.into() },
+            proto::UpdateUserPlan {
+                plan: plan.into(),
+                trial_started_at: billing_customer
+                    .and_then(|billing_customer| billing_customer.trial_started_at)
+                    .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
+                is_usage_based_billing_enabled: if session.is_staff() {
+                    Some(true)
+                } else {
+                    billing_preferences
+                        .map(|preferences| preferences.model_request_overages_enabled)
+                },
+                usage: usage.map(|usage| {
+                    let plan = match plan {
+                        proto::Plan::Free => zed_llm_client::Plan::Free,
+                        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+                    };
+
+                    let model_requests_limit = match plan.model_requests_limit() {
+                        zed_llm_client::UsageLimit::Limited(limit) => {
+                            let limit = if plan == zed_llm_client::Plan::ZedProTrial
+                                && feature_flags
+                                    .iter()
+                                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
+                            {
+                                1_000
+                            } else {
+                                limit
+                            };
+
+                            zed_llm_client::UsageLimit::Limited(limit)
+                        }
+                        zed_llm_client::UsageLimit::Unlimited => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    };
+
+                    proto::SubscriptionUsage {
+                        model_requests_usage_amount: usage.model_requests as u32,
+                        model_requests_usage_limit: Some(proto::UsageLimit {
+                            variant: Some(match model_requests_limit {
+                                zed_llm_client::UsageLimit::Limited(limit) => {
+                                    proto::usage_limit::Variant::Limited(
+                                        proto::usage_limit::Limited {
+                                            limit: limit as u32,
+                                        },
+                                    )
+                                }
+                                zed_llm_client::UsageLimit::Unlimited => {
+                                    proto::usage_limit::Variant::Unlimited(
+                                        proto::usage_limit::Unlimited {},
+                                    )
+                                }
+                            }),
+                        }),
+                        edit_predictions_usage_amount: usage.edit_predictions as u32,
+                        edit_predictions_usage_limit: Some(proto::UsageLimit {
+                            variant: Some(match plan.edit_predictions_limit() {
+                                zed_llm_client::UsageLimit::Limited(limit) => {
+                                    proto::usage_limit::Variant::Limited(
+                                        proto::usage_limit::Limited {
+                                            limit: limit as u32,
+                                        },
+                                    )
+                                }
+                                zed_llm_client::UsageLimit::Unlimited => {
+                                    proto::usage_limit::Variant::Unlimited(
+                                        proto::usage_limit::Unlimited {},
+                                    )
+                                }
+                            }),
+                        }),
+                    }
+                }),
+            },
         )
         .trace_err();
 
@@ -3695,223 +3783,6 @@ async fn acknowledge_buffer_version(
         )
         .await?;
     Ok(())
-}
-
-async fn count_language_model_tokens(
-    request: proto::CountLanguageModelTokens,
-    response: Response<proto::CountLanguageModelTokens>,
-    session: Session,
-    config: &Config,
-) -> Result<()> {
-    authorize_access_to_legacy_llm_endpoints(&session).await?;
-
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
-        proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
-        proto::Plan::Free | proto::Plan::ZedProTrial => {
-            Box::new(FreeCountLanguageModelTokensRateLimit)
-        }
-    };
-
-    session
-        .app_state
-        .rate_limiter
-        .check(&*rate_limit, session.user_id())
-        .await?;
-
-    let result = match proto::LanguageModelProvider::from_i32(request.provider) {
-        Some(proto::LanguageModelProvider::Google) => {
-            let api_key = config
-                .google_ai_api_key
-                .as_ref()
-                .context("no Google AI API key configured on the server")?;
-            google_ai::count_tokens(
-                session.http_client.as_ref(),
-                google_ai::API_URL,
-                api_key,
-                serde_json::from_str(&request.request)?,
-            )
-            .await?
-        }
-        _ => return Err(anyhow!("unsupported provider"))?,
-    };
-
-    response.send(proto::CountLanguageModelTokensResponse {
-        token_count: result.total_tokens as u32,
-    })?;
-
-    Ok(())
-}
-
-struct ZedProCountLanguageModelTokensRateLimit;
-
-impl RateLimit for ZedProCountLanguageModelTokensRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("COUNT_LANGUAGE_MODEL_TOKENS_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(600) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "zed-pro:count-language-model-tokens"
-    }
-}
-
-struct FreeCountLanguageModelTokensRateLimit;
-
-impl RateLimit for FreeCountLanguageModelTokensRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("COUNT_LANGUAGE_MODEL_TOKENS_RATE_LIMIT_PER_HOUR_FREE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(600 / 10) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "free:count-language-model-tokens"
-    }
-}
-
-struct ZedProComputeEmbeddingsRateLimit;
-
-impl RateLimit for ZedProComputeEmbeddingsRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5000) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "zed-pro:compute-embeddings"
-    }
-}
-
-struct FreeComputeEmbeddingsRateLimit;
-
-impl RateLimit for FreeComputeEmbeddingsRateLimit {
-    fn capacity(&self) -> usize {
-        std::env::var("EMBED_TEXTS_RATE_LIMIT_PER_HOUR_FREE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(5000 / 10) // Picked arbitrarily
-    }
-
-    fn refill_duration(&self) -> chrono::Duration {
-        chrono::Duration::hours(1)
-    }
-
-    fn db_name(&self) -> &'static str {
-        "free:compute-embeddings"
-    }
-}
-
-async fn compute_embeddings(
-    request: proto::ComputeEmbeddings,
-    response: Response<proto::ComputeEmbeddings>,
-    session: Session,
-    api_key: Option<Arc<str>>,
-) -> Result<()> {
-    let api_key = api_key.context("no OpenAI API key configured on the server")?;
-    authorize_access_to_legacy_llm_endpoints(&session).await?;
-
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
-        proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
-        proto::Plan::Free | proto::Plan::ZedProTrial => Box::new(FreeComputeEmbeddingsRateLimit),
-    };
-
-    session
-        .app_state
-        .rate_limiter
-        .check(&*rate_limit, session.user_id())
-        .await?;
-
-    let embeddings = match request.model.as_str() {
-        "openai/text-embedding-3-small" => {
-            open_ai::embed(
-                session.http_client.as_ref(),
-                OPEN_AI_API_URL,
-                &api_key,
-                OpenAiEmbeddingModel::TextEmbedding3Small,
-                request.texts.iter().map(|text| text.as_str()),
-            )
-            .await?
-        }
-        provider => return Err(anyhow!("unsupported embedding provider {:?}", provider))?,
-    };
-
-    let embeddings = request
-        .texts
-        .iter()
-        .map(|text| {
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(text.as_bytes());
-            let result = hasher.finalize();
-            result.to_vec()
-        })
-        .zip(
-            embeddings
-                .data
-                .into_iter()
-                .map(|embedding| embedding.embedding),
-        )
-        .collect::<HashMap<_, _>>();
-
-    let db = session.db().await;
-    db.save_embeddings(&request.model, &embeddings)
-        .await
-        .context("failed to save embeddings")
-        .trace_err();
-
-    response.send(proto::ComputeEmbeddingsResponse {
-        embeddings: embeddings
-            .into_iter()
-            .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
-            .collect(),
-    })?;
-    Ok(())
-}
-
-async fn get_cached_embeddings(
-    request: proto::GetCachedEmbeddings,
-    response: Response<proto::GetCachedEmbeddings>,
-    session: Session,
-) -> Result<()> {
-    authorize_access_to_legacy_llm_endpoints(&session).await?;
-
-    let db = session.db().await;
-    let embeddings = db.get_embeddings(&request.model, &request.digests).await?;
-
-    response.send(proto::GetCachedEmbeddingsResponse {
-        embeddings: embeddings
-            .into_iter()
-            .map(|(digest, dimensions)| proto::Embedding { digest, dimensions })
-            .collect(),
-    })?;
-    Ok(())
-}
-
-/// This is leftover from before the LLM service.
-///
-/// The endpoints protected by this check will be moved there eventually.
-async fn authorize_access_to_legacy_llm_endpoints(session: &Session) -> Result<(), Error> {
-    if session.is_staff() {
-        Ok(())
-    } else {
-        Err(anyhow!("permission denied"))?
-    }
 }
 
 /// Get a Supermaven API key for the user

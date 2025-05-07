@@ -2,13 +2,13 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
@@ -63,7 +63,7 @@ impl Tool for ListDirectoryTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::inline_code(&input.path);
+                let path = MarkdownInlineCode(&input.path);
                 format!("List the {path} directory's contents")
             }
             Err(_) => "List directory".to_string(),
@@ -76,6 +76,7 @@ impl Tool for ListDirectoryTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -102,7 +103,7 @@ impl Tool for ListDirectoryTool {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return Task::ready(Ok(output)).into();
+            return Task::ready(Ok(output.into())).into();
         }
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
@@ -134,8 +135,8 @@ impl Tool for ListDirectoryTool {
             .unwrap();
         }
         if output.is_empty() {
-            return Task::ready(Ok(format!("{} is empty.", input.path))).into();
+            return Task::ready(Ok(format!("{} is empty.", input.path).into())).into();
         }
-        Task::ready(Ok(output)).into()
+        Task::ready(Ok(output.into())).into()
     }
 }

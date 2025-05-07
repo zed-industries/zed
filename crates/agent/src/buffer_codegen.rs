@@ -1,12 +1,15 @@
-use crate::context::attach_context_to_message;
-use crate::context_store::ContextStore;
+use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
+use crate::{context::load_context, context_store::ContextStore};
 use anyhow::Result;
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
-use futures::{SinkExt, Stream, StreamExt, channel::mpsc, future::LocalBoxFuture, join};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
+use futures::{
+    SinkExt, Stream, StreamExt, TryStreamExt as _, channel::mpsc, future::LocalBoxFuture, join,
+};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
 use language_model::{
     LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
@@ -14,7 +17,9 @@ use language_model::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
+use project::Project;
 use prompt_store::PromptBuilder;
+use prompt_store::PromptStore;
 use rope::Rope;
 use smol::future::FutureExt;
 use std::{
@@ -39,6 +44,8 @@ pub struct BufferCodegen {
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
     context_store: Entity<ContextStore>,
+    project: WeakEntity<Project>,
+    prompt_store: Option<Entity<PromptStore>>,
     telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     pub is_insertion: bool,
@@ -50,6 +57,8 @@ impl BufferCodegen {
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
         context_store: Entity<ContextStore>,
+        project: WeakEntity<Project>,
+        prompt_store: Option<Entity<PromptStore>>,
         telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
@@ -60,6 +69,8 @@ impl BufferCodegen {
                 range.clone(),
                 false,
                 Some(context_store.clone()),
+                project.clone(),
+                prompt_store.clone(),
                 Some(telemetry.clone()),
                 builder.clone(),
                 cx,
@@ -75,6 +86,8 @@ impl BufferCodegen {
             range,
             initial_transaction_id,
             context_store,
+            project,
+            prompt_store,
             telemetry,
             builder,
         };
@@ -153,6 +166,8 @@ impl BufferCodegen {
                     self.range.clone(),
                     false,
                     Some(self.context_store.clone()),
+                    self.project.clone(),
+                    self.prompt_store.clone(),
                     Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
@@ -229,13 +244,14 @@ pub struct CodegenAlternative {
     generation: Task<()>,
     diff: Diff,
     context_store: Option<Entity<ContextStore>>,
+    project: WeakEntity<Project>,
+    prompt_store: Option<Entity<PromptStore>>,
     telemetry: Option<Arc<Telemetry>>,
     _subscription: gpui::Subscription,
     builder: Arc<PromptBuilder>,
     active: bool,
     edits: Vec<(Range<Anchor>, String)>,
     line_operations: Vec<LineOperation>,
-    request: Option<LanguageModelRequest>,
     elapsed_time: Option<f64>,
     completion: Option<String>,
     pub message_id: Option<String>,
@@ -249,6 +265,8 @@ impl CodegenAlternative {
         range: Range<Anchor>,
         active: bool,
         context_store: Option<Entity<ContextStore>>,
+        project: WeakEntity<Project>,
+        prompt_store: Option<Entity<PromptStore>>,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
@@ -290,6 +308,8 @@ impl CodegenAlternative {
             generation: Task::ready(()),
             diff: Diff::default(),
             context_store,
+            project,
+            prompt_store,
             telemetry,
             _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
             builder,
@@ -297,7 +317,6 @@ impl CodegenAlternative {
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
-            request: None,
             elapsed_time: None,
             completion: None,
         }
@@ -365,17 +384,20 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, cx)?;
-                self.request = Some(request.clone());
-
-                cx.spawn(async move |_, cx| model.stream_completion_text(request, &cx).await)
+                let request = self.build_request(&model, user_prompt, cx)?;
+                cx.spawn(async move |_, cx| model.stream_completion_text(request.await, &cx).await)
                     .boxed_local()
             };
         self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         Ok(())
     }
 
-    fn build_request(&self, user_prompt: String, cx: &mut App) -> Result<LanguageModelRequest> {
+    fn build_request(
+        &self,
+        model: &Arc<dyn LanguageModel>,
+        user_prompt: String,
+        cx: &mut App,
+    ) -> Result<Task<LanguageModelRequest>> {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let language = buffer.language_at(self.range.start);
         let language_name = if let Some(language) = language.as_ref() {
@@ -408,30 +430,47 @@ impl CodegenAlternative {
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
-        let mut request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: Vec::new(),
-            cache: false,
-        };
+        let context_task = self.context_store.as_ref().map(|context_store| {
+            if let Some(project) = self.project.upgrade() {
+                let context = context_store
+                    .read(cx)
+                    .context()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                load_context(context, &project, &self.prompt_store, cx)
+            } else {
+                Task::ready(ContextLoadResult::default())
+            }
+        });
 
-        if let Some(context_store) = &self.context_store {
-            attach_context_to_message(
-                &mut request_message,
-                context_store.read(cx).context().iter(),
-                cx,
-            );
-        }
+        let temperature = AssistantSettings::temperature_for_model(&model, cx);
 
-        request_message.content.push(prompt.into());
+        Ok(cx.spawn(async move |_cx| {
+            let mut request_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+            };
 
-        Ok(LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            tools: Vec::new(),
-            stop: Vec::new(),
-            temperature: None,
-            messages: vec![request_message],
-        })
+            if let Some(context_task) = context_task {
+                context_task
+                    .await
+                    .loaded_context
+                    .add_to_request_message(&mut request_message);
+            }
+
+            request_message.content.push(prompt.into());
+
+            LanguageModelRequest {
+                thread_id: None,
+                prompt_id: None,
+                mode: None,
+                tools: Vec::new(),
+                stop: Vec::new(),
+                temperature,
+                messages: vec![request_message],
+            }
+        }))
     }
 
     pub fn handle_stream(
@@ -469,7 +508,7 @@ impl CodegenAlternative {
             }
         }
 
-        let http_client = cx.http_client().clone();
+        let http_client = cx.http_client();
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
@@ -508,7 +547,9 @@ impl CodegenAlternative {
                         let mut response_latency = None;
                         let request_start = Instant::now();
                         let diff = async {
-                            let chunks = StripInvalidSpans::new(stream?.stream);
+                            let chunks = StripInvalidSpans::new(
+                                stream?.stream.map_err(|error| error.into()),
+                            );
                             futures::pin_mut!(chunks);
                             let mut diff = StreamingDiff::new(selected_text.to_string());
                             let mut line_diff = LineDiff::default();
@@ -735,7 +776,7 @@ impl CodegenAlternative {
         cx: &mut Context<CodegenAlternative>,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
-            // Avoid grouping assistant edits with user edits.
+            // Avoid grouping agent edits with user edits.
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
             buffer.edit(edits, None, cx);
@@ -744,7 +785,7 @@ impl CodegenAlternative {
 
         if let Some(transaction) = transaction {
             if let Some(first_transaction) = self.transformation_transaction_id {
-                // Group all assistant edits into the first transaction.
+                // Group all agent edits into the first transaction.
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.merge_transactions(transaction, first_transaction, cx)
                 });
@@ -1034,6 +1075,7 @@ impl Diff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
     use futures::{
         Stream,
         stream::{self},
@@ -1057,9 +1099,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_model::LanguageModelRegistry::test);
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1076,11 +1116,15 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
+                None,
+                project.downgrade(),
                 None,
                 None,
                 prompt_builder,
@@ -1125,8 +1169,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1140,11 +1183,15 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
+                None,
+                project.downgrade(),
                 None,
                 None,
                 prompt_builder,
@@ -1191,9 +1238,7 @@ mod tests {
         cx: &mut TestAppContext,
         mut rng: StdRng,
     ) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = concat!(
             "fn main() {\n",
@@ -1207,11 +1252,15 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
+                None,
+                project.downgrade(),
                 None,
                 None,
                 prompt_builder,
@@ -1255,9 +1304,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_autoindent_respects_tabs_in_selection(cx: &mut TestAppContext) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             func main() {
@@ -1274,11 +1321,15 @@ mod tests {
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 true,
+                None,
+                project.downgrade(),
                 None,
                 None,
                 prompt_builder,
@@ -1313,9 +1364,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_inactive_codegen_alternative(cx: &mut TestAppContext) {
-        cx.update(LanguageModelRegistry::test);
-        cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_settings::init);
+        init_test(cx);
 
         let text = indoc! {"
             fn main() {
@@ -1329,11 +1378,15 @@ mod tests {
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 14))
         });
         let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, vec![], cx).await;
         let codegen = cx.new(|cx| {
             CodegenAlternative::new(
                 buffer.clone(),
                 range.clone(),
                 false,
+                None,
+                project.downgrade(),
                 None,
                 None,
                 prompt_builder,
@@ -1413,6 +1466,13 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(LanguageModelRegistry::test);
+        cx.set_global(cx.update(SettingsStore::test));
+        cx.update(Project::init_settings);
+        cx.update(language_settings::init);
     }
 
     fn simulate_response_stream(

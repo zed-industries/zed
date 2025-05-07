@@ -195,6 +195,16 @@
     }
   },
   {
+    "context": "Editor && editor_agent_diff",
+    "bindings": {
+      "ctrl-y": "agent::Keep",
+      "ctrl-n": "agent::Reject",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
+    }
+  },
+  {
     "context": "AgentDiff",
     "bindings": {
       "ctrl-y": "agent::Keep",
@@ -210,9 +220,9 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPreviousMatch",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
+      "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::OpenPromptLibrary",
+      "ctrl-k l": "agent::OpenRulesLibrary",
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
@@ -227,11 +237,14 @@
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
+      "alt-enter": "editor::Newline",
+      "ctrl-k c": "assistant::CopyCode",
+      "ctrl-g": "search::SelectNextMatch",
+      "ctrl-shift-g": "search::SelectPreviousMatch",
+      "ctrl-k l": "agent::OpenRulesLibrary"
     }
   },
   {
@@ -241,13 +254,21 @@
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
-      "ctrl-alt-p": "assistant::OpenPromptLibrary",
+      "ctrl-alt-p": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
+      "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
+      "ctrl-shift-o": "agent::ToggleNavigationMenu",
+      "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
-      "ctrl-e": "agent::ChatMode",
-      "ctrl-alt-e": "agent::RemoveAllContext"
+      "ctrl-alt-e": "agent::RemoveAllContext",
+      "ctrl-shift-e": "project_panel::ToggleFocus"
+    }
+  },
+  {
+    "context": "AgentPanel > NavigationMenu",
+    "bindings": {
+      "shift-backspace": "agent::DeleteRecentlyOpenThread"
     }
   },
   {
@@ -308,9 +329,9 @@
   {
     "context": "PromptLibrary",
     "bindings": {
-      "new": "prompt_library::NewPrompt",
-      "ctrl-n": "prompt_library::NewPrompt",
-      "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
+      "new": "rules_library::NewRule",
+      "ctrl-n": "rules_library::NewRule",
+      "ctrl-shift-s": "rules_library::ToggleDefaultRule"
     }
   },
   {
@@ -520,6 +541,7 @@
       "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
+      "f10": ["app_menu::OpenApplicationMenu", "Zed"],
       "alt-1": ["workspace::ActivatePane", 0],
       "alt-2": ["workspace::ActivatePane", 1],
       "alt-3": ["workspace::ActivatePane", 2],
@@ -550,7 +572,7 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
-      "ctrl-?": "assistant::ToggleFocus",
+      "ctrl-?": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
@@ -578,6 +600,7 @@
   {
     "context": "ApplicationMenu",
     "bindings": {
+      "f10": "menu::Cancel",
       "left": "app_menu::ActivateMenuLeft",
       "right": "app_menu::ActivateMenuRight"
     }
@@ -675,7 +698,7 @@
     }
   },
   {
-    "context": "Editor && mode == full",
+    "context": "!ContextEditor > Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
@@ -951,6 +974,21 @@
     "context": "ZedPredictModal",
     "bindings": {
       "escape": "menu::Cancel"
+    }
+  },
+  {
+    "context": "ConfigureContextServerModal > Editor",
+    "bindings": {
+      "escape": "menu::Cancel",
+      "enter": "editor::Newline",
+      "ctrl-enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "Diagnostics",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
     }
   }
 ]

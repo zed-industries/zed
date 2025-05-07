@@ -592,7 +592,49 @@ List of `string` values
 
 **Options**
 
-`boolean` values
+1. Never hide the mouse cursor:
+
+```json
+"hide_mouse": "never"
+```
+
+2. Hide only when typing:
+
+```json
+"hide_mouse": "on_typing"
+```
+
+3. Hide on both typing and cursor movement:
+
+```json
+"hide_mouse": "on_typing_and_movement"
+```
+
+## Snippet Sort Order
+
+- Description: Determines how snippets are sorted relative to other completion items.
+- Setting: `snippet_sort_order`
+- Default: `inline`
+
+**Options**
+
+1. Place snippets at the top of the completion list:
+
+```json
+"snippet_sort_order": "top"
+```
+
+2. Place snippets normally without any preference:
+
+```json
+"snippet_sort_order": "inline"
+```
+
+3. Place snippets at the bottom of the completion list:
+
+```json
+"snippet_sort_order": "bottom"
+```
 
 ## Editor Scrollbar
 
@@ -992,7 +1034,8 @@ List of `string` values
 "toolbar": {
   "breadcrumbs": true,
   "quick_actions": true,
-  "selections_menu": true
+  "selections_menu": true,
+  "agent_review": true
 },
 ```
 
@@ -1995,11 +2038,23 @@ Or to set a `socks5` proxy:
 
 ## File Finder
 
+### File Icons
+
+- Description: Whether to show file icons in the file finder.
+- Setting: `file_icons`
+- Default: `true`
+
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
 - Setting: `modal_max_width`
 - Default: `small`
+
+### Skip Focus For Active In Search
+
+- Description: Determines whether the file finder should skip focus for the active file in search results.
+- Setting: `skip_focus_for_active_in_search`
+- Default: `true`
 
 ## Preferred Line Length
 
@@ -2178,7 +2233,7 @@ Examples:
 
 ## Show Whitespaces
 
-- Description: Whether or not to show render whitespace characters in the editor.
+- Description: Whether or not to render whitespace characters in the editor.
 - Setting: `show_whitespaces`
 - Default: `selection`
 
@@ -3015,14 +3070,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-## Assistant Panel
+## Agent
 
-- Description: Customize assistant panel
-- Setting: `assistant`
+- Description: Customize agent behavior
+- Setting: `agent`
 - Default:
 
 ```json
-"assistant": {
+"agent": {
   "version": "2",
   "enabled": true,
   "button": true,
@@ -3036,7 +3091,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "editor_model": {
     "provider": "zed.dev",
     "model": "claude-3-7-sonnet-latest"
-  }
+  },
+  "single_file_review": true,
 }
 ```
 

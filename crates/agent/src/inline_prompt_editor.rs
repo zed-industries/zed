@@ -1,26 +1,29 @@
-use crate::assistant_model_selector::AssistantModelSelector;
+use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
-use crate::context_picker::ContextPicker;
+use crate::context::ContextCreasesAddon;
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
+use editor::display_map::EditorMargins;
 use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
+    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedPro};
+use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
     Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window, anchored, deferred, point,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::{ModelType, ToggleModelSelector};
+use language_model_selector::ToggleModelSelector;
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
@@ -58,11 +61,13 @@ impl<T: 'static> Render for PromptEditor<T> {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
 
-        let left_gutter_width = match &self.mode {
+        const RIGHT_PADDING: Pixels = px(9.);
+
+        let (left_gutter_width, right_padding) = match &self.mode {
             PromptEditorMode::Buffer {
                 id: _,
                 codegen,
-                gutter_dimensions,
+                editor_margins,
             } => {
                 let codegen = codegen.read(cx);
 
@@ -70,13 +75,17 @@ impl<T: 'static> Render for PromptEditor<T> {
                     buttons.push(self.render_cycle_controls(&codegen, cx));
                 }
 
-                let gutter_dimensions = gutter_dimensions.lock();
+                let editor_margins = editor_margins.lock();
+                let gutter = editor_margins.gutter;
 
-                gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
+                let left_gutter_width = gutter.full_width() + (gutter.margin / 2.0);
+                let right_padding = editor_margins.right + RIGHT_PADDING;
+
+                (left_gutter_width, right_padding)
             }
             PromptEditorMode::Terminal { .. } => {
                 // Give the equivalent of the same left-padding that we're using on the right
-                Pixels::from(40.0)
+                (Pixels::from(40.0), Pixels::from(24.))
             }
         };
 
@@ -97,7 +106,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             .size_full()
             .pt_0p5()
             .pb(bottom_padding)
-            .pr_6()
+            .pr(right_padding)
             .child(
                 h_flex()
                     .items_start()
@@ -132,7 +141,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                                 let error_message = SharedString::from(error.to_string());
                                 if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                                    && cx.has_flag::<ZedPro>()
+                                    && cx.has_flag::<ZedProFeatureFlag>()
                                 {
                                     el.child(
                                         v_flex()
@@ -245,13 +254,22 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
+        let existing_creases = self.editor.update(cx, extract_message_creases);
+
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&self.mode, window, cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
+            insert_message_creases(
+                &mut editor,
+                &existing_creases,
+                &self.context_store,
+                window,
+                cx,
+            );
+
             if focus {
                 window.focus(&editor.focus_handle(cx));
             }
@@ -794,7 +812,7 @@ pub enum PromptEditorMode {
     Buffer {
         id: InlineAssistId,
         codegen: Entity<BufferCodegen>,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        editor_margins: Arc<Mutex<EditorMargins>>,
     },
     Terminal {
         id: TerminalInlineAssistId,
@@ -826,7 +844,7 @@ impl InlineAssistId {
 impl PromptEditor<BufferCodegen> {
     pub fn new_buffer(
         id: InlineAssistId,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        editor_margins: Arc<Mutex<EditorMargins>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
@@ -834,14 +852,16 @@ impl PromptEditor<BufferCodegen> {
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
+        let codegen_buffer = codegen.read(cx).buffer(cx).read(cx).as_singleton();
         let mode = PromptEditorMode::Buffer {
             id,
             codegen,
-            gutter_dimensions,
+            editor_margins,
         };
 
         let prompt_editor = cx.new(|cx| {
@@ -860,8 +880,28 @@ impl PromptEditor<BufferCodegen> {
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.register_addon(ContextCreasesAddon::new());
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
+
             editor
         });
+
+        let prompt_editor_entity = prompt_editor.downgrade();
+        prompt_editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.clone(),
+                context_store.downgrade(),
+                thread_store.clone(),
+                text_thread_store.clone(),
+                prompt_editor_entity,
+                codegen_buffer.as_ref().map(Entity::downgrade),
+            ))));
+        });
+
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
@@ -870,6 +910,7 @@ impl PromptEditor<BufferCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 window,
@@ -931,7 +972,7 @@ impl PromptEditor<BufferCodegen> {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedPro>()
+                if cx.has_flag::<ZedProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
                     && !dismissed_rate_limit_notice()
                 {
@@ -960,11 +1001,9 @@ impl PromptEditor<BufferCodegen> {
         }
     }
 
-    pub fn gutter_dimensions(&self) -> &Arc<Mutex<GutterDimensions>> {
+    pub fn editor_margins(&self) -> &Arc<Mutex<EditorMargins>> {
         match &self.mode {
-            PromptEditorMode::Buffer {
-                gutter_dimensions, ..
-            } => gutter_dimensions,
+            PromptEditorMode::Buffer { editor_margins, .. } => editor_margins,
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
@@ -991,6 +1030,7 @@ impl PromptEditor<TerminalCodegen> {
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1013,8 +1053,26 @@ impl PromptEditor<TerminalCodegen> {
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
             editor
         });
+
+        let prompt_editor_entity = prompt_editor.downgrade();
+        prompt_editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.clone(),
+                context_store.downgrade(),
+                thread_store.clone(),
+                text_thread_store.clone(),
+                prompt_editor_entity,
+                None,
+            ))));
+        });
+
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
@@ -1023,6 +1081,7 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 window,

@@ -46,7 +46,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{ResultExt, paths::home_dir, truncate_and_trailoff};
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -313,7 +313,7 @@ impl Display for TerminalError {
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
-const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
@@ -352,7 +352,6 @@ impl TerminalBuilder {
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<Option<ExitStatus>>,
-        debug_terminal: bool,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -502,7 +501,6 @@ impl TerminalBuilder {
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
             vi_mode_enabled: false,
-            debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
         };
@@ -603,9 +601,11 @@ pub struct TerminalContent {
     pub cursor_char: char,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_word: Option<HoveredWord>,
+    pub scrolled_to_top: bool,
+    pub scrolled_to_bottom: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct HoveredWord {
     pub word: String,
     pub word_match: RangeInclusive<AlacPoint>,
@@ -627,6 +627,8 @@ impl Default for TerminalContent {
             cursor_char: Default::default(),
             terminal_bounds: Default::default(),
             last_hovered_word: None,
+            scrolled_to_top: false,
+            scrolled_to_bottom: false,
         }
     }
 }
@@ -660,7 +662,6 @@ pub struct Terminal {
     python_file_line_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    debug_terminal: bool,
     is_ssh_terminal: bool,
 }
 
@@ -1211,6 +1212,14 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
+    pub fn scrolled_to_top(&self) -> bool {
+        self.last_content.scrolled_to_top
+    }
+
+    pub fn scrolled_to_bottom(&self) -> bool {
+        self.last_content.scrolled_to_bottom
+    }
+
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
         if self.last_content.terminal_bounds != new_bounds {
@@ -1219,28 +1228,16 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty.
-    fn write_to_pty(&self, input: String) {
-        self.pty_tx.notify(input.into_bytes());
+    fn write_to_pty(&self, input: impl Into<Vec<u8>>) {
+        self.pty_tx.notify(input.into());
     }
 
-    fn write_bytes_to_pty(&self, input: Vec<u8>) {
-        self.pty_tx.notify(input);
-    }
-
-    pub fn input(&mut self, input: String) {
+    pub fn input(&mut self, input: impl Into<Vec<u8>>) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
-    }
-
-    pub fn input_bytes(&mut self, input: Vec<u8>) {
-        self.events
-            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
-        self.events.push_back(InternalEvent::SetSelection(None));
-
-        self.write_bytes_to_pty(input);
     }
 
     pub fn toggle_vi_mode(&mut self) {
@@ -1420,7 +1417,16 @@ impl Terminal {
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
             last_hovered_word: last_content.last_hovered_word.clone(),
+            scrolled_to_top: content.display_offset == term.history_size(),
+            scrolled_to_bottom: content.display_offset == 0,
         }
+    }
+
+    pub fn get_content(&self) -> String {
+        let term = self.term.lock_unfair();
+        let start = AlacPoint::new(term.topmost_line(), Column(0));
+        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+        term.bounds_to_string(start, end)
     }
 
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
@@ -1855,16 +1861,13 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn debug_terminal(&self) -> bool {
-        self.debug_terminal
-    }
-
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx
-                    .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
+                return cx.spawn(async move |_| completion_receiver.recv().await.ok().flatten());
+            } else if let Ok(status) = task.completion_rx.try_recv() {
+                return Task::ready(status);
             }
         }
         Task::ready(None)

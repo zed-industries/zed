@@ -1,6 +1,8 @@
 pub mod parser;
 mod path_range;
 
+pub use path_range::{LineCol, PathWithRange};
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
@@ -215,11 +217,21 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
-        let count = s.bytes().filter(|c| c.is_ascii_punctuation()).count();
+        let count = s
+            .bytes()
+            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
+            .count();
         if count > 0 {
             let mut output = String::with_capacity(s.len() + count);
+            let mut is_newline = false;
             for c in s.chars() {
-                if c.is_ascii_punctuation() {
+                if is_newline && c == ' ' {
+                    continue;
+                }
+                is_newline = c == '\n';
+                if c == '\n' {
+                    output.push('\n')
+                } else if c.is_ascii_punctuation() {
                     output.push('\\')
                 }
                 output.push(c)
@@ -1038,7 +1050,18 @@ impl Element for MarkdownElement {
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    let html = &parsed_markdown.source[range.clone()];
+                    if html.starts_with("<!--") {
+                        builder.html_comment = true;
+                    }
+                    if html.trim_end().ends_with("-->") {
+                        builder.html_comment = false;
+                        continue;
+                    }
+                    if builder.html_comment {
+                        continue;
+                    }
+                    builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
@@ -1157,7 +1180,7 @@ fn render_copy_code_block_button(
     markdown: Entity<Markdown>,
     cx: &App,
 ) -> impl IntoElement {
-    let id = ElementId::NamedInteger("copy-markdown-code".into(), id);
+    let id = ElementId::named_usize("copy-markdown-code", id);
     let was_copied = markdown.read(cx).copied_code_blocks.contains(&id);
     IconButton::new(
         id.clone(),
@@ -1255,6 +1278,7 @@ struct MarkdownElementBuilder {
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
     current_source_index: usize,
+    html_comment: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -1282,6 +1306,7 @@ impl MarkdownElementBuilder {
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
             current_source_index: 0,
+            html_comment: false,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -1695,6 +1720,23 @@ mod tests {
             &render_markdown("\"hey\"", cx),
             vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
         );
+
+        // HTML Comments are ignored
+        assert_mappings(
+            &render_markdown(
+                "<!--\nrdoc-file=string.c\n- str.intern   -> symbol\n- str.to_sym   -> symbol\n-->\nReturns",
+                cx,
+            ),
+            vec![vec![
+                (0, 78),
+                (1, 79),
+                (2, 80),
+                (3, 81),
+                (4, 82),
+                (5, 83),
+                (6, 84),
+            ]],
+        );
     }
 
     fn render_markdown(markdown: &str, cx: &mut TestAppContext) -> RenderedText {
@@ -1715,6 +1757,15 @@ mod tests {
             |_window, _cx| MarkdownElement::new(markdown, MarkdownStyle::default()),
         );
         rendered.text
+    }
+
+    #[test]
+    fn test_escape() {
+        assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
+        assert_eq!(
+            Markdown::escape("hello\n    cool world"),
+            "hello\n\ncool world"
+        );
     }
 
     #[track_caller]

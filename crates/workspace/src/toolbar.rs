@@ -105,6 +105,7 @@ impl Render for Toolbar {
 
         v_flex()
             .group("toolbar")
+            .relative()
             .p(DynamicSpacing::Base08.rems(cx))
             .when(has_left_items || has_right_items, |this| {
                 this.gap(DynamicSpacing::Base08.rems(cx))
@@ -115,7 +116,7 @@ impl Render for Toolbar {
             .when(has_left_items || has_right_items, |this| {
                 this.child(
                     h_flex()
-                        .min_h(rems_from_px(24.))
+                        .min_h_6()
                         .justify_between()
                         .gap(DynamicSpacing::Base08.rems(cx))
                         .when(has_left_items, |this| {
@@ -130,6 +131,8 @@ impl Render for Toolbar {
                         .when(has_right_items, |this| {
                             this.child(
                                 h_flex()
+                                    .h_full()
+                                    .flex_row_reverse()
                                     .map(|el| {
                                         if has_left_items {
                                             // We're using `flex_none` here to prevent some flickering that can occur when the
