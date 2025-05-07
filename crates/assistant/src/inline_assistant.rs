@@ -72,16 +72,19 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        let workspace = cx.entity().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, window, cx)
-        });
-    })
-    .detach();
+    // Don't register now that the Agent is released.
+    if false {
+        cx.observe_new(|_, window, cx| {
+            let Some(window) = window else {
+                return;
+            };
+            let workspace = cx.entity().clone();
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                inline_assistant.register_workspace(&workspace, window, cx)
+            });
+        })
+        .detach();
+    }
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
