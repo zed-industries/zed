@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
+    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
     SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
@@ -36,6 +36,7 @@ use core_foundation::{
 };
 use ctor::ctor;
 use futures::channel::oneshot;
+use itertools::Itertools;
 use objc::{
     class,
     declare::ClassDecl,
@@ -46,7 +47,7 @@ use objc::{
 use parking_lot::Mutex;
 use ptr::null_mut;
 use std::{
-    cell::Cell,
+    cell::{Cell, LazyCell},
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -293,6 +294,19 @@ impl MacPlatform {
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
+        const DEFAULT_CONTEXT: LazyCell<Vec<KeyContext>> = LazyCell::new(|| {
+            let mut workspace_context = KeyContext::new_with_defaults();
+            workspace_context.add("Workspace");
+            let mut pane_context = KeyContext::new_with_defaults();
+            pane_context.add("Pane");
+            let mut editor_context = KeyContext::new_with_defaults();
+            editor_context.add("Editor");
+
+            pane_context.extend(&editor_context);
+            workspace_context.extend(&pane_context);
+            vec![workspace_context]
+        });
+
         unsafe {
             match item {
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
@@ -301,10 +315,14 @@ impl MacPlatform {
                     action,
                     os_action,
                 } => {
-                    let keystrokes = crate::Keymap::default_binding_from_bindings_iterator(
-                        keymap.bindings_for_action(action.as_ref()),
-                    )
-                    .map(|binding| binding.keystrokes());
+                    let keystrokes = keymap
+                        .bindings_for_action(action.as_ref())
+                        .find_or_first(|binding| {
+                            binding
+                                .predicate()
+                                .is_none_or(|predicate| predicate.eval(&DEFAULT_CONTEXT))
+                        })
+                        .map(|binding| binding.keystrokes());
 
                     let selector = match os_action {
                         Some(crate::OsAction::Cut) => selector("cut:"),
