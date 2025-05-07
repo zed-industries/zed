@@ -11,7 +11,6 @@ pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
     menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Entity<M> + 'static>>,
-    menu_is_open: bool,
     anchor: Option<Corner>,
     attach: Option<Corner>,
 }
@@ -70,7 +69,6 @@ pub fn right_click_menu<M: ManagedView>(id: impl Into<ElementId>) -> RightClickM
         id: id.into(),
         child_builder: None,
         menu_builder: None,
-        menu_is_open: false,
         anchor: None,
         attach: None,
     }
@@ -219,11 +217,8 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
 
                 if let Some(mut menu) = request_layout.menu_element.take() {
                     menu.paint(window, cx);
-                    this.menu_is_open = true;
                     return;
                 }
-
-                this.menu_is_open = false;
 
                 let Some(builder) = this.menu_builder.take() else {
                     return;
