@@ -2672,7 +2672,7 @@ impl ContextEditor {
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, _window, cx| {
                             this.last_error = None;
-                            cx.open_url(&zed_urls::account_url(cx));
+                            cx.open_url(&zed_urls::account_upgrade_url(cx));
                             cx.notify();
                         },
                     )))

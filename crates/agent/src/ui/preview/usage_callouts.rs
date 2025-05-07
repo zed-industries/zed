@@ -44,13 +44,13 @@ impl RenderOnce for UsageCallout {
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    zed_urls::account_upgrade_url(cx),
                 ),
                 Plan::ZedProTrial => (
                     "Out of trial prompts",
                     "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    zed_urls::account_upgrade_url(cx),
                 ),
                 Plan::ZedPro => (
                     "Out of included prompts",
@@ -67,7 +67,7 @@ impl RenderOnce for UsageCallout {
                         "{remaining} remaining - Upgrade to increase limit, or switch providers",
                     ),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    zed_urls::account_upgrade_url(cx),
                 ),
                 Plan::ZedProTrial => (
                     "Reaching trial limit soon",
@@ -75,7 +75,7 @@ impl RenderOnce for UsageCallout {
                         "{remaining} remaining - Upgrade to increase limit, or switch providers",
                     ),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    zed_urls::account_upgrade_url(cx),
                 ),
                 _ => return div().into_any_element(),
             }
