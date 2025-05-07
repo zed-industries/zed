@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use assistant_settings::{
-    AgentProfile, AgentProfileId, AssistantSettings, GroupedAgentProfiles, builtin_profiles,
+    AgentProfile, AgentProfileId, AssistantDockPosition, AssistantSettings, GroupedAgentProfiles,
+    builtin_profiles,
 };
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
@@ -22,7 +23,6 @@ pub struct ProfileSelector {
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
-    documentation_side: DocumentationSide,
 }
 
 impl ProfileSelector {
@@ -30,7 +30,6 @@ impl ProfileSelector {
         fs: Arc<dyn Fs>,
         thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
-        documentation_side: DocumentationSide,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
@@ -44,13 +43,7 @@ impl ProfileSelector {
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
             _subscriptions: vec![settings_subscription],
-            documentation_side,
         }
-    }
-
-    pub fn set_documentation_side(&mut self, side: DocumentationSide, cx: &mut Context<Self>) {
-        self.documentation_side = side;
-        cx.notify();
     }
 
     pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
@@ -112,7 +105,7 @@ impl ProfileSelector {
             .toggleable(IconPosition::End, profile_id == settings.default_profile);
 
         let entry = if let Some(doc_text) = documentation {
-            entry.documentation_aside(self.documentation_side, move |_| {
+            entry.documentation_aside(documentation_side(settings.dock), move |_| {
                 Label::new(doc_text).into_any_element()
             })
         } else {
@@ -188,14 +181,24 @@ impl Render for ProfileSelector {
                     )
                 }
             })
-            .anchor(if self.documentation_side == DocumentationSide::Left {
-                gpui::Corner::BottomRight
-            } else {
-                gpui::Corner::BottomLeft
-            })
+            .anchor(
+                if documentation_side(settings.dock) == DocumentationSide::Left {
+                    gpui::Corner::BottomRight
+                } else {
+                    gpui::Corner::BottomLeft
+                },
+            )
             .with_handle(self.menu_handle.clone())
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })
+    }
+}
+
+fn documentation_side(position: AssistantDockPosition) -> DocumentationSide {
+    match position {
+        AssistantDockPosition::Left => DocumentationSide::Right,
+        AssistantDockPosition::Bottom => DocumentationSide::Left,
+        AssistantDockPosition::Right => DocumentationSide::Left,
     }
 }
