@@ -521,6 +521,7 @@ impl Fs for RealFs {
                 .read(true)
                 .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0)
                 .open(path)?;
+            println!("opening with new permissions");
             Ok(Arc::new(file))
         }
         #[cfg(not(target_os = "windows"))]
