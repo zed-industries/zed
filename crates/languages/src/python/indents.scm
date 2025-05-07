@@ -1,6 +1,6 @@
 (function_definition
   ":" @start
-  (block) @indent
+  body: (block) @indent
 )
 
 (if_statement
@@ -11,10 +11,28 @@
 
 (else_clause
   ":" @start
-  (block) @indent
+  body: (block) @indent
 )
 
 (elif_clause
+  ":" @start
+  consequence: (block) @indent
+)
+
+(try_statement
+  ":" @start
+  body: (block) @indent
+  (except_clause)? @outdent
+  (else_clause)? @outdent
+  (finally_clause)? @outdent
+)
+
+(except_clause
+  ":" @start
+  (block) @indent
+)
+
+(finally_clause
   ":" @start
   (block) @indent
 )
