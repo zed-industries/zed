@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::adapters::{DebugTaskDefinition, InlineValueProvider, latest_github_release};
+use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
 use task::DebugRequest;
@@ -158,26 +158,5 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             envs: HashMap::default(),
             connection: None,
         })
-    }
-
-    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
-        Some(Box::new(CodeLldbInlineValueProvider))
-    }
-}
-
-struct CodeLldbInlineValueProvider;
-
-impl InlineValueProvider for CodeLldbInlineValueProvider {
-    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
-        variables
-            .into_iter()
-            .map(|(variable, range)| {
-                lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
-                    range,
-                    variable_name: Some(variable),
-                    case_sensitive_lookup: true,
-                })
-            })
-            .collect()
     }
 }
