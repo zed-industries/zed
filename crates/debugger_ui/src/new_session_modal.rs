@@ -381,13 +381,13 @@ impl NewSessionMode {
         Self::Attach(AttachMode::new(debugger, workspace, window, cx))
     }
 
-    // fn launch(
-    //     past_launch_config: Option<LaunchRequest>,
-    //     window: &mut Window,
-    //     cx: &mut Context<NewSessionModal>,
-    // ) -> Self {
-    //     Self::Launch(LaunchMode::new(past_launch_config, window, cx))
-    // }
+    fn launch(
+        past_launch_config: Option<LaunchRequest>,
+        window: &mut Window,
+        cx: &mut Context<NewSessionModal>,
+    ) -> Self {
+        Self::Custom(LaunchMode::new(past_launch_config, window, cx))
+    }
 
     fn has_match(&self, cx: &App) -> bool {
         match self {
@@ -631,7 +631,18 @@ impl Render for NewSessionModal {
                         NewSessionMode::Attach(_) => {
                             div().child(self.adapter_drop_down_menu(window, cx))
                         }
-                        NewSessionMode::Launch(_) => div(), // todo!(Custom button toggle)
+                        NewSessionMode::Launch(_) => div().child(
+                            Button::new("new-session-modal-custom", "Custom").on_click({
+                                let this = cx.weak_entity();
+                                move |_, window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.mode = NewSessionMode::launch(None, window, cx);
+                                        this.mode.focus_handle(cx).focus(window);
+                                    })
+                                    .ok();
+                                }
+                            }),
+                        ),
                         NewSessionMode::Custom(_) => div(), // todo!(Back to launch mode button)
                     })
                     .child(
