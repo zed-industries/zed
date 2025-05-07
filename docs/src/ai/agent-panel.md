@@ -43,6 +43,12 @@ This approach extends to collaboration with AI as well.
 
 As soon as you send a prompt to the Agent, click on the "crosshair" icon at the bottom left of the panel to follow along as it reads through your codebase and performs edits.
 
+### Get Notified {#get-notified}
+
+If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, a notification will pop up at the top right of your monitor indicating that the Agent has completed its work.
+
+You can customize the notification behavior or turn it off entirely by using the `agent.notify_when_agent_waiting` key.
+
 ### Reviewing Changes {#reviewing-changes}
 
 If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the Agent Panel surfaces the fact that edits have been applied.
