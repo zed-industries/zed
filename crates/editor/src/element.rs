@@ -5297,10 +5297,11 @@ impl EditorElement {
                             cx.theme().colors().scrollbar_thumb_border,
                             BorderStyle::Solid,
                         ));
+
+                        window.set_cursor_style(CursorStyle::Arrow, Some(&hitbox));
                     }
                 })
             }
-            window.set_cursor_style(CursorStyle::Arrow, Some(&hitbox));
         }
 
         window.on_mouse_event({
