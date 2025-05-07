@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, ContentPart, CopilotChat, ImageUrl, Model as CopilotChatModel,
+    ChatMessage, ChatMessageContent, CopilotChat, ImageUrl, Model as CopilotChatModel,
     Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
@@ -441,7 +441,6 @@ impl CopilotChatLanguageModel {
         for message in request_messages {
             match message.role {
                 Role::User => {
-                    // Handle tool results first
                     for content in &message.content {
                         if let MessageContent::ToolResult(tool_result) = content {
                             messages.push(ChatMessage::Tool {
@@ -451,7 +450,6 @@ impl CopilotChatLanguageModel {
                         }
                     }
 
-                    // Now build user message content parts
                     let mut content_parts = Vec::new();
                     let mut text_content = String::new();
 
@@ -465,29 +463,27 @@ impl CopilotChatLanguageModel {
                             MessageContent::Image(image) => {
                                 if self.model.supports_vision() {
                                     if !text_content.is_empty() {
-                                        content_parts.push(ContentPart::Text {
+                                        content_parts.push(ChatMessageContent::Text {
                                             text: std::mem::take(&mut text_content),
                                         });
                                     }
 
                                     // Add the image as an image part
-                                    content_parts.push(ContentPart::Image {
+                                    content_parts.push(ChatMessageContent::Image {
                                         image_url: ImageUrl {
                                             url: format!("data:image/png;base64,{}", image.source),
                                         },
                                     });
                                 }
                             }
-                            _ => {} // Already handled tool results and other types are ignored
+                            _ => {}
                         }
                     }
 
-                    // Add any remaining text content
                     if !text_content.is_empty() {
-                        content_parts.push(ContentPart::Text { text: text_content });
+                        content_parts.push(ChatMessageContent::Text { text: text_content });
                     }
 
-                    // Only add a user message if we have content parts
                     if !content_parts.is_empty() {
                         messages.push(ChatMessage::User {
                             content: content_parts,

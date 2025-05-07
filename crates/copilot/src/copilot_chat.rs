@@ -60,10 +60,9 @@ pub enum Model {
     Gemini25Pro,
 }
 
-// New content part types
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type")]
-pub enum ContentPart {
+pub enum ChatMessageContent {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image_url")]
@@ -73,26 +72,6 @@ pub enum ContentPart {
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct ImageUrl {
     pub url: String,
-}
-
-// Define a type that can be either a String or a Vec of ContentPart
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
-#[serde(untagged)]
-pub enum ContentType {
-    String(String),
-    Array(Vec<ContentPart>),
-}
-
-impl From<String> for ContentType {
-    fn from(s: String) -> Self {
-        ContentType::String(s)
-    }
-}
-
-impl From<Vec<ContentPart>> for ContentType {
-    fn from(parts: Vec<ContentPart>) -> Self {
-        ContentType::Array(parts)
-    }
 }
 
 impl Model {
@@ -245,7 +224,7 @@ pub enum ChatMessage {
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: Vec<ContentPart>,
+        content: Vec<ChatMessageContent>,
     },
     System {
         content: String,
