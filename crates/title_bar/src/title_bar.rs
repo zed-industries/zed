@@ -678,7 +678,7 @@ impl TitleBar {
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _cx| {
-                        menu.action(
+                        menu.link(
                             format!(
                                 "Current Plan: {}",
                                 match plan {
