@@ -625,12 +625,7 @@ impl VariableList {
             let mut editor = Editor::single_line(window, cx);
 
             let refinement = TextStyleRefinement {
-                font_size: Some(
-                    TextSize::XSmall
-                        .rems(cx)
-                        .to_pixels(window.rem_size())
-                        .into(),
-                ),
+                font_size: Some(TextSize::XSmall.rems().to_pixels(window.rem_size()).into()),
                 ..Default::default()
             };
             editor.set_text_style_refinement(refinement);
@@ -703,7 +698,7 @@ impl VariableList {
                     })
                     .child(
                         div()
-                            .text_ui(cx)
+                            .text_ui()
                             .w_full()
                             .when(self.disabled, |this| {
                                 this.text_color(Color::Disabled.color(cx))
@@ -822,7 +817,7 @@ impl VariableList {
                 .child(
                     h_flex()
                         .gap_1()
-                        .text_ui_sm(cx)
+                        .text_ui_sm()
                         .w_full()
                         .child(
                             Label::new(&dap.name).when_some(variable_name_color, |this, color| {

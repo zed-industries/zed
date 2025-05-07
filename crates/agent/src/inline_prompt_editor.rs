@@ -759,7 +759,7 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let font_size = TextSize::Default.rems(cx);
+        let font_size = TextSize::Default.rems();
         let line_height = font_size.to_pixels(window.rem_size()) * 1.3;
 
         div()

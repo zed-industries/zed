@@ -44,7 +44,7 @@ impl Render for Breadcrumbs {
             .id("breadcrumb-container")
             .flex_grow()
             .overflow_x_scroll()
-            .text_ui(cx);
+            .text_ui();
 
         let Some(active_item) = self.active_item.as_ref() else {
             return element;

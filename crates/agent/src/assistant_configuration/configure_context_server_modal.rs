@@ -515,7 +515,7 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
         font_family: Some(theme_settings.ui_font.family.clone()),
         font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
         font_features: Some(theme_settings.ui_font.features.clone()),
-        font_size: Some(TextSize::XSmall.rems(cx).into()),
+        font_size: Some(TextSize::XSmall.rems().into()),
         color: Some(colors.text_muted),
         ..Default::default()
     });

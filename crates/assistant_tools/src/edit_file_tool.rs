@@ -577,7 +577,7 @@ impl ToolCard for EditFileToolCard {
             editor.set_text_style_refinement(TextStyleRefinement {
                 font_size: Some(
                     TextSize::Small
-                        .rems(cx)
+                        .rems()
                         .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
                         .into(),
                 ),
@@ -682,7 +682,7 @@ impl ToolCard for EditFileToolCard {
                         .child(
                             div()
                                 .rounded_md()
-                                .text_ui_sm(cx)
+                                .text_ui_sm()
                                 .bg(cx.theme().colors().editor_background)
                                 .children(
                                     error_message

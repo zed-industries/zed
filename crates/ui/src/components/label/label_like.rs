@@ -213,10 +213,10 @@ impl RenderOnce for LabelLike {
 
         self.base
             .map(|this| match self.size {
-                LabelSize::Large => this.text_ui_lg(cx),
-                LabelSize::Default => this.text_ui(cx),
-                LabelSize::Small => this.text_ui_sm(cx),
-                LabelSize::XSmall => this.text_ui_xs(cx),
+                LabelSize::Large => this.text_ui_lg(),
+                LabelSize::Default => this.text_ui(),
+                LabelSize::Small => this.text_ui_sm(),
+                LabelSize::XSmall => this.text_ui_xs(),
             })
             .when(self.line_height_style == LineHeightStyle::UiLabel, |this| {
                 this.line_height(relative(1.))

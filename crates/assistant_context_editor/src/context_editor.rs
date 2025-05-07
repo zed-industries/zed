@@ -1361,7 +1361,7 @@ impl ContextEditor {
             .items_center()
             .gap_1()
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-            .text_size(TextSize::XSmall.rems(cx))
+            .text_size(TextSize::XSmall.rems())
             .text_color(colors.text_muted)
             .child("Press")
             .child(

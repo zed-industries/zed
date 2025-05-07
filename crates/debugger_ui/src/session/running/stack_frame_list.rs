@@ -488,7 +488,7 @@ impl StackFrameList {
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
                 v_flex()
-                    .text_ui_sm(cx)
+                    .text_ui_sm()
                     .truncate()
                     .text_color(cx.theme().colors().text_muted)
                     .child(format!(

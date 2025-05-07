@@ -27,8 +27,8 @@ pub trait StyledTypography: Styled + Sized {
     }
 
     /// Sets the text size using a [`TextSize`].
-    fn text_ui_size(self, size: TextSize, cx: &App) -> Self {
-        self.text_size(size.rems(cx))
+    fn text_ui_size(self, size: TextSize) -> Self {
+        self.text_size(size.rems())
     }
 
     /// The large size for UI text.
@@ -38,8 +38,8 @@ pub trait StyledTypography: Styled + Sized {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
     /// Use `text_ui` for regular-sized text.
-    fn text_ui_lg(self, cx: &App) -> Self {
-        self.text_size(TextSize::Large.rems(cx))
+    fn text_ui_lg(self) -> Self {
+        self.text_size(TextSize::Large.rems())
     }
 
     /// The default size for UI text.
@@ -49,8 +49,8 @@ pub trait StyledTypography: Styled + Sized {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
     /// Use `text_ui_sm` for smaller text.
-    fn text_ui(self, cx: &App) -> Self {
-        self.text_size(TextSize::default().rems(cx))
+    fn text_ui(self) -> Self {
+        self.text_size(TextSize::default().rems())
     }
 
     /// The small size for UI text.
@@ -60,8 +60,8 @@ pub trait StyledTypography: Styled + Sized {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
     /// Use `text_ui` for regular-sized text.
-    fn text_ui_sm(self, cx: &App) -> Self {
-        self.text_size(TextSize::Small.rems(cx))
+    fn text_ui_sm(self) -> Self {
+        self.text_size(TextSize::Small.rems())
     }
 
     /// The extra small size for UI text.
@@ -71,8 +71,8 @@ pub trait StyledTypography: Styled + Sized {
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
     /// Use `text_ui` for regular-sized text.
-    fn text_ui_xs(self, cx: &App) -> Self {
-        self.text_size(TextSize::XSmall.rems(cx))
+    fn text_ui_xs(self) -> Self {
+        self.text_size(TextSize::XSmall.rems())
     }
 
     /// The font size for buffer text.
@@ -119,29 +119,16 @@ pub enum TextSize {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     XSmall,
-
-    /// The `ui_font_size` set by the user.
-    Ui,
-    /// The `buffer_font_size` set by the user.
-    Editor,
-    // TODO: The terminal settings will need to be passed to
-    // ThemeSettings before we can enable this.
-    //// The `terminal.font_size` set by the user.
-    // Terminal,
 }
 
 impl TextSize {
     /// Returns the text size in rems.
-    pub fn rems(self, cx: &App) -> Rems {
-        let theme_settings = ThemeSettings::get_global(cx);
-
+    pub fn rems(self) -> Rems {
         match self {
             Self::Large => rems_from_px(16.),
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
-            Self::Ui => rems_from_px(theme_settings.ui_font_size(cx).into()),
-            Self::Editor => rems_from_px(theme_settings.buffer_font_size(cx).into()),
         }
     }
 }

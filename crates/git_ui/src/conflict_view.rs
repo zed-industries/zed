@@ -397,7 +397,7 @@ fn render_conflict_buttons(
                 .px_1()
                 .child("Take Ours")
                 .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
+                .text_ui_sm()
                 .hover(|this| this.bg(cx.theme().colors().element_background))
                 .cursor_pointer()
                 .on_click({
@@ -415,7 +415,7 @@ fn render_conflict_buttons(
                 .px_1()
                 .child("Take Theirs")
                 .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
+                .text_ui_sm()
                 .hover(|this| this.bg(cx.theme().colors().element_background))
                 .cursor_pointer()
                 .on_click({
@@ -439,7 +439,7 @@ fn render_conflict_buttons(
                 .px_1()
                 .child("Take Both")
                 .rounded_t(rems(0.2))
-                .text_ui_sm(cx)
+                .text_ui_sm()
                 .hover(|this| this.bg(cx.theme().colors().element_background))
                 .cursor_pointer()
                 .on_click({
