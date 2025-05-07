@@ -133,11 +133,11 @@ impl ProfileSelector {
 
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = AssistantSettings::get_global(cx);
         let profile = self
             .thread
             .read_with(cx, |thread, _cx| thread.configured_profile())
             .or_else(|| {
-                let settings = AssistantSettings::get_global(cx);
                 let profile_id = &settings.default_profile;
                 let profile = settings.profiles.get(profile_id);
                 profile.cloned()

@@ -200,12 +200,7 @@ impl MessageEditor {
         });
 
         let profile_selector = cx.new(|cx| {
-            ProfileSelector::new(
-                thread.clone(),
-                thread_store,
-                editor.focus_handle(cx),
-                cx,
-            )
+            ProfileSelector::new(thread.clone(), thread_store, editor.focus_handle(cx), cx)
         });
 
         Self {
