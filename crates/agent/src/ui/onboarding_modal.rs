@@ -1,5 +1,6 @@
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
+    linear_color_stop, linear_gradient,
 };
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -109,6 +110,34 @@ impl Render for AgentOnboardingModal {
                         Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.))
                             .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
                     ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .w(px(660.))
+                    .h(px(801.))
+                    .overflow_hidden()
+                    .bg(linear_gradient(
+                        75.,
+                        linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
+                        linear_color_stop(cx.theme().colors().panel_background, 0.45),
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .right_0()
+                    .w(px(660.))
+                    .h(px(301.))
+                    .overflow_hidden()
+                    .bg(linear_gradient(
+                        0.,
+                        linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
+                        linear_color_stop(cx.theme().colors().panel_background, 0.),
+                    )),
             )
             .child(
                 v_flex()
