@@ -1035,7 +1035,7 @@ impl Render for ConfigurationView {
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
         let subscription_text = Label::new(if is_pro {
-            "You have full access to Zed's hosted LLMs, which include models from Anthropic, OpenAI, and Google. They come with faster speeds and higher limits through Zed Pro."
+            "You have access to Zed's hosted LLMs through your Zed Pro subscription."
         } else {
             "You have basic access to models from Anthropic through the Zed AI Free plan."
         });
