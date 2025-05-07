@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    ReadFileToolInput, grep_tool::GrepToolInput,
-    streaming_edit_file_tool::StreamingEditFileToolInput,
-};
+use crate::{ReadFileToolInput, edit_file_tool::EditFileToolInput, grep_tool::GrepToolInput};
 use Role::*;
 use anyhow::anyhow;
 use client::{Client, UserStore};
@@ -69,7 +66,7 @@ fn eval_extract_handle_command_output() {
                     [tool_use(
                         "tool_2",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                             create_or_overwrite: false,
@@ -125,7 +122,7 @@ fn eval_delete_run_git_blame() {
                     [tool_use(
                         "tool_2",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                             create_or_overwrite: false,
@@ -240,7 +237,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     [tool_use(
                         "tool_4",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                             create_or_overwrite: false,
@@ -316,7 +313,7 @@ fn eval_disable_cursor_blinking() {
                     [tool_use(
                         "tool_4",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                             create_or_overwrite: false,
@@ -506,7 +503,7 @@ fn eval_from_pixels_constructor() {
                     [tool_use(
                         "tool_5",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
                             create_or_overwrite: false,
@@ -583,7 +580,7 @@ fn eval_zode() {
                         tool_use(
                             "tool_3",
                             "edit_file",
-                            StreamingEditFileToolInput {
+                            EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
                                 create_or_overwrite: true,
@@ -828,7 +825,7 @@ fn eval_add_overwrite_test() {
                         tool_use(
                             "tool_5",
                             "edit_file",
-                            StreamingEditFileToolInput {
+                            EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
                                 create_or_overwrite: false,

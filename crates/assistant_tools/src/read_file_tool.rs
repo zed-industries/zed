@@ -97,27 +97,22 @@ impl Tool for ReadFileTool {
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        else {
-            return Task::ready(Err(anyhow!("Worktree not found for project path"))).into();
-        };
-        let exists = worktree.update(cx, |worktree, cx| {
-            worktree.file_exists(&project_path.path, cx)
-        });
 
         let file_path = input.path.clone();
         cx.spawn(async move |cx| {
-            if !exists.await? {
-                return Err(anyhow!("{} not found", file_path));
-            }
-
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
+            if buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .file()
+                    .as_ref()
+                    .map_or(true, |file| !file.disk_state().exists())
+            })? {
+                return Err(anyhow!("{} not found", file_path));
+            }
 
             project.update(cx, |project, cx| {
                 project.set_agent_location(
@@ -145,9 +140,13 @@ impl Tool for ReadFileTool {
                     let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count as usize), "\n").collect::<String>().into()
+                        Itertools::intersperse(lines.take(count as usize), "\n")
+                            .collect::<String>()
+                            .into()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect::<String>().into()
+                        Itertools::intersperse(lines, "\n")
+                            .collect::<String>()
+                            .into()
                     }
                 })?;
 
@@ -184,15 +183,20 @@ impl Tool for ReadFileTool {
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
-                    let outline = outline::file_outline(project, file_path, action_log, None, cx).await?;
+                    let outline =
+                        outline::file_outline(project, file_path, action_log, None, cx).await?;
                     Ok(formatdoc! {"
-                        This file was too big to read all at once. Here is an outline of its symbols:
+                        This file was too big to read all at once.
+
+                        Here is an outline of its symbols:
 
                         {outline}
 
-                        Using the line numbers in this outline, you can call this tool again while specifying
-                        the start_line and end_line fields to see the implementations of symbols in the outline."
-                    }.into())
+                        Using the line numbers in this outline, you can call this tool again
+                        while specifying the start_line and end_line fields to see the
+                        implementations of symbols in the outline."
+                    }
+                    .into())
                 }
             }
         })
