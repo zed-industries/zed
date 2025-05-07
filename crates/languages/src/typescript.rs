@@ -341,8 +341,14 @@ impl EsLintLspAdapter {
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("eslint");
 
-    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
-        &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.cts", "eslint.config.mts"];
+    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] = &[
+        "eslint.config.js",
+        "eslint.config.mjs",
+        "eslint.config.cjs",
+        "eslint.config.ts",
+        "eslint.config.cts",
+        "eslint.config.mts"
+    ];
 
     pub fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }
