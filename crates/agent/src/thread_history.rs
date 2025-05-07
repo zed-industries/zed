@@ -250,6 +250,14 @@ impl ThreadHistory {
 
     fn matched_count(&self) -> usize {
         match &self.search_state {
+            SearchState::Empty => self.all_entries.len(),
+            SearchState::Searching { .. } => 0,
+            SearchState::Searched { matches, .. } => matches.len(),
+        }
+    }
+
+    fn list_item_count(&self) -> usize {
+        match &self.search_state {
             SearchState::Empty => self.separated_items.len(),
             SearchState::Searching { .. } => 0,
             SearchState::Searched { matches, .. } => matches.len(),
@@ -579,7 +587,7 @@ impl Render for ThreadHistory {
                             uniform_list(
                                 cx.entity().clone(),
                                 "thread-history",
-                                self.matched_count(),
+                                self.list_item_count(),
                                 Self::list_items,
                             )
                             .p_1()
