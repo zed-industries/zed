@@ -7849,7 +7849,7 @@ impl Editor {
             .px_0p5()
             .when(is_platform_style_mac, |parent| parent.gap_0p5())
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-            .text_size(TextSize::XSmall.rems(cx))
+            .text_size(TextSize::XSmall.rems())
             .child(h_flex().children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
@@ -21242,7 +21242,7 @@ struct MissingEditPredictionKeybindingTooltip;
 
 impl Render for MissingEditPredictionKeybindingTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(window, cx, |container, _, cx| {
+        ui::tooltip_container(window, cx, |container, _, _cx| {
             container
                 .flex_shrink_0()
                 .max_w_80()
@@ -21251,7 +21251,7 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                 .child(
                     v_flex()
                         .flex_1()
-                        .text_ui_sm(cx)
+                        .text_ui_sm()
                         .child(Label::new("Conflict with Accept Keybinding"))
                         .child("Your keymap currently overrides the default accept keybinding. To continue, assign one keybinding for the `editor::AcceptEditPrediction` action.")
                 )

@@ -412,7 +412,7 @@ impl Render for MarkdownCell {
                             .flex_1()
                             .p_3()
                             .font_ui(cx)
-                            .text_size(TextSize::Default.rems(cx))
+                            .text_size(TextSize::Default.rems())
                             .children(parsed.children.iter().map(|child| {
                                 div().relative().child(div().relative().child(
                                     render_markdown_block(child, &mut markdown_render_context),
@@ -733,7 +733,7 @@ impl Render for RawCell {
                             .flex_1()
                             .p_3()
                             .font_ui(cx)
-                            .text_size(TextSize::Default.rems(cx))
+                            .text_size(TextSize::Default.rems())
                             .child(self.source.clone()),
                     ),
             )

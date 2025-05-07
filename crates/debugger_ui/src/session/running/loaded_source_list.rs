@@ -64,12 +64,12 @@ impl LoadedSourceList {
             .child(
                 h_flex()
                     .gap_0p5()
-                    .text_ui_sm(cx)
+                    .text_ui_sm()
                     .when_some(source.name.clone(), |this, name| this.child(name)),
             )
             .child(
                 h_flex()
-                    .text_ui_xs(cx)
+                    .text_ui_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when_some(source.path.clone(), |this, path| this.child(path)),
             )

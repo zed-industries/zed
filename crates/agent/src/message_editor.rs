@@ -626,7 +626,7 @@ impl MessageEditor {
                             .child({
                                 let settings = ThemeSettings::get_global(cx);
                                 let font_size = TextSize::Small
-                                    .rems(cx)
+                                    .rems()
                                     .to_pixels(settings.agent_font_size(cx));
                                 let line_height = settings.buffer_line_height.value() * font_size;
 
@@ -1340,7 +1340,7 @@ impl Render for MessageEditor {
         let action_log = self.thread.read(cx).action_log();
         let changed_buffers = action_log.read(cx).changed_buffers(cx);
 
-        let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
+        let line_height = TextSize::Small.rems().to_pixels(window.rem_size()) * 1.5;
 
         v_flex()
             .size_full()

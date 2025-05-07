@@ -141,10 +141,10 @@ impl ModuleList {
             })
             .p_1()
             .hover(|s| s.bg(cx.theme().colors().element_hover))
-            .child(h_flex().gap_0p5().text_ui_sm(cx).child(module.name.clone()))
+            .child(h_flex().gap_0p5().text_ui_sm().child(module.name.clone()))
             .child(
                 h_flex()
-                    .text_ui_xs(cx)
+                    .text_ui_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when_some(module.path.clone(), |this, path| this.child(path)),
             )

@@ -169,7 +169,7 @@ impl RenderOnce for KeybindingHint {
 
         let size = self
             .size
-            .unwrap_or(TextSize::Small.rems(cx).to_pixels(window.rem_size()));
+            .unwrap_or(TextSize::Small.rems().to_pixels(window.rem_size()));
         let kb_size = size - px(2.0);
 
         let mut base = h_flex();
