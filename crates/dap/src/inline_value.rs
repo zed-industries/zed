@@ -259,7 +259,9 @@ impl InlineValueProvider for PythonInlineValueProvider {
 
             variable_names.extend(variable_names_in_scope.keys().cloned());
 
-            if matches!(node.kind(), "function_definition" | "module") {
+            if matches!(node.kind(), "function_definition" | "module")
+                && node.range().end_point.row < max_row
+            {
                 scope = VariableScope::Global;
             }
 

@@ -1823,7 +1823,7 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
     editor.update_in(cx, |editor, window, cx| {
         pretty_assertions::assert_eq!(
             r#"
-        def process_data(untyped_param, typed_param: int, another_typed: str):
+        def process_data(untyped_param: test_value, typed_param: 42: int, another_typed: world: str):
             # Local variables
             x: 10 = 10
             result: 84 = typed_param * 2
