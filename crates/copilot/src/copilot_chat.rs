@@ -60,6 +60,41 @@ pub enum Model {
     Gemini25Pro,
 }
 
+// New content part types
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(tag = "type")]
+pub enum ContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+pub struct ImageUrl {
+    pub url: String,
+}
+
+// Define a type that can be either a String or a Vec of ContentPart
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum ContentType {
+    String(String),
+    Array(Vec<ContentPart>),
+}
+
+impl From<String> for ContentType {
+    fn from(s: String) -> Self {
+        ContentType::String(s)
+    }
+}
+
+impl From<Vec<ContentPart>> for ContentType {
+    fn from(parts: Vec<ContentPart>) -> Self {
+        ContentType::Array(parts)
+    }
+}
+
 impl Model {
     pub fn default_fast() -> Self {
         Self::Claude3_7Sonnet
@@ -152,6 +187,18 @@ impl Model {
             Self::Gemini25Pro => 128_000,
         }
     }
+
+    pub fn supports_vision(&self) -> bool {
+        match self {
+            Self::Gpt4o
+            | Self::O4Mini
+            | Self::Gemini20Flash
+            | Self::Gemini25Pro
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -198,7 +245,7 @@ pub enum ChatMessage {
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: Vec<ContentPart>,
     },
     System {
         content: String,
@@ -472,7 +519,8 @@ async fn stream_completion(
         )
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat");
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Copilot-Vision-Request", "true");
 
     let is_streaming = request.stream;
 

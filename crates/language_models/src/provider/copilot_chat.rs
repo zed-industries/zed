@@ -5,8 +5,8 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
-    ResponseEvent, Tool, ToolCall,
+    ChatMessage, ContentPart, CopilotChat, ImageUrl, Model as CopilotChatModel,
+    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
@@ -439,25 +439,9 @@ impl CopilotChatLanguageModel {
         let mut tool_called = false;
         let mut messages: Vec<ChatMessage> = Vec::new();
         for message in request_messages {
-            let text_content = {
-                let mut buffer = String::new();
-                for string in message.content.iter().filter_map(|content| match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                        Some(text.as_str())
-                    }
-                    MessageContent::ToolUse(_)
-                    | MessageContent::RedactedThinking(_)
-                    | MessageContent::ToolResult(_)
-                    | MessageContent::Image(_) => None,
-                }) {
-                    buffer.push_str(string);
-                }
-
-                buffer
-            };
-
             match message.role {
                 Role::User => {
+                    // Handle tool results first
                     for content in &message.content {
                         if let MessageContent::ToolResult(tool_result) = content {
                             messages.push(ChatMessage::Tool {
@@ -467,9 +451,46 @@ impl CopilotChatLanguageModel {
                         }
                     }
 
+                    // Now build user message content parts
+                    let mut content_parts = Vec::new();
+                    let mut text_content = String::new();
+
+                    for content in &message.content {
+                        match content {
+                            MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                                if !text.is_empty() {
+                                    text_content.push_str(text);
+                                }
+                            }
+                            MessageContent::Image(image) => {
+                                if self.model.supports_vision() {
+                                    if !text_content.is_empty() {
+                                        content_parts.push(ContentPart::Text {
+                                            text: std::mem::take(&mut text_content),
+                                        });
+                                    }
+
+                                    // Add the image as an image part
+                                    content_parts.push(ContentPart::Image {
+                                        image_url: ImageUrl {
+                                            url: format!("data:image/png;base64,{}", image.source),
+                                        },
+                                    });
+                                }
+                            }
+                            _ => {} // Already handled tool results and other types are ignored
+                        }
+                    }
+
+                    // Add any remaining text content
                     if !text_content.is_empty() {
+                        content_parts.push(ContentPart::Text { text: text_content });
+                    }
+
+                    // Only add a user message if we have content parts
+                    if !content_parts.is_empty() {
                         messages.push(ChatMessage::User {
-                            content: text_content,
+                            content: content_parts,
                         });
                     }
                 }
@@ -489,6 +510,24 @@ impl CopilotChatLanguageModel {
                             });
                         }
                     }
+
+                    // Collect text content for the assistant message
+                    let text_content = {
+                        let mut buffer = String::new();
+                        for string in message.content.iter().filter_map(|content| match content {
+                            MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                                Some(text.as_str())
+                            }
+                            MessageContent::ToolUse(_)
+                            | MessageContent::RedactedThinking(_)
+                            | MessageContent::ToolResult(_)
+                            | MessageContent::Image(_) => None,
+                        }) {
+                            buffer.push_str(string);
+                        }
+
+                        buffer
+                    };
 
                     messages.push(ChatMessage::Assistant {
                         content: if text_content.is_empty() {
