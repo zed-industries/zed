@@ -692,8 +692,8 @@ impl VariableList {
                 ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
                     .selectable(false)
                     .disabled(self.disabled)
-                    .indent_level(state.depth + 1)
-                    .indent_step_size(px(20.))
+                    .indent_level(state.depth)
+                    .indent_step_size(px(10.))
                     .always_show_disclosure_icon(true)
                     .toggle(state.is_expanded)
                     .on_toggle({
@@ -791,8 +791,8 @@ impl VariableList {
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
-                .indent_level(state.depth + 1_usize)
-                .indent_step_size(px(20.))
+                .indent_level(state.depth)
+                .indent_step_size(px(10.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
