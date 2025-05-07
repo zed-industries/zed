@@ -14,11 +14,12 @@ use ui::{
 };
 use util::ResultExt as _;
 
-use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
+use crate::{ManageProfiles, Thread, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
+    thread: Entity<Thread>,
     thread_store: WeakEntity<ThreadStore>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
@@ -28,6 +29,7 @@ pub struct ProfileSelector {
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
+        thread: Entity<Thread>,
         thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
@@ -39,6 +41,7 @@ impl ProfileSelector {
         Self {
             profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
             fs,
+            thread,
             thread_store,
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
@@ -144,10 +147,15 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let supports_tools = model_registry
-            .default_model()
-            .map_or(false, |default| default.model.supports_tools());
+        let configured_model = self
+            .thread
+            .read_with(cx, |thread, _cx| thread.configured_model())
+            .or_else(|| {
+                let model_registry = LanguageModelRegistry::read_global(cx);
+                model_registry.default_model()
+            });
+        let supports_tools =
+            configured_model.map_or(false, |default| default.model.supports_tools());
 
         if supports_tools {
             let this = cx.entity().clone();
