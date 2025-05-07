@@ -1,13 +1,10 @@
-use std::sync::Arc;
-
 use assistant_settings::{
     AgentProfile, AgentProfileId, AssistantDockPosition, AssistantSettings, GroupedAgentProfiles,
     builtin_profiles,
 };
-use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{Settings as _, SettingsStore};
 use ui::{
     ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
     prelude::*,
@@ -18,7 +15,6 @@ use crate::{ManageProfiles, Thread, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
-    fs: Arc<dyn Fs>,
     thread: Entity<Thread>,
     thread_store: WeakEntity<ThreadStore>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -28,7 +24,6 @@ pub struct ProfileSelector {
 
 impl ProfileSelector {
     pub fn new(
-        fs: Arc<dyn Fs>,
         thread: Entity<Thread>,
         thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
@@ -40,7 +35,6 @@ impl ProfileSelector {
 
         Self {
             profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
-            fs,
             thread,
             thread_store,
             menu_handle: PopoverMenuHandle::default(),
@@ -116,7 +110,6 @@ impl ProfileSelector {
         };
 
         entry.handler({
-            let fs = self.fs.clone();
             let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
             let profile = profile.clone();
@@ -126,13 +119,6 @@ impl ProfileSelector {
             move |_window, cx| {
                 thread.update(cx, |thread, cx| {
                     thread.set_configured_profile(Some(profile.clone()), cx);
-                });
-
-                update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-                    let profile_id = profile_id.clone();
-                    move |settings, _cx| {
-                        settings.set_profile(profile_id.clone());
-                    }
                 });
 
                 thread_store
