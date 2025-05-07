@@ -139,14 +139,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
-    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
         #[cfg(any(feature = "wayland", feature = "x11"))]
         {
-            Box::new(super::LinuxKeyboardMapper::new())
+            Rc::new(super::LinuxKeyboardMapper::new())
         }
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
         {
-            Box::new(crate::EmptyKeyboardMapper)
+            Rc::new(crate::EmptyKeyboardMapper)
         }
     }
 

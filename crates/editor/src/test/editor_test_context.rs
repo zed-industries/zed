@@ -241,7 +241,7 @@ impl EditorTestContext {
     // so you can use it to test detailed timing
     pub fn simulate_keystroke(&mut self, keystroke_text: &str) {
         let keyboard_mapper = self.keyboard_mapper();
-        let keystroke = Keystroke::parse(keystroke_text, keyboard_mapper).unwrap();
+        let keystroke = Keystroke::parse(keystroke_text, keyboard_mapper.as_ref()).unwrap();
         self.cx.dispatch_keystroke(self.window, keystroke);
     }
 

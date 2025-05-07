@@ -541,11 +541,11 @@ mod test {
         let keyboard_mapper = cx.keyboard_mapper();
         cx.dispatch_keystroke(
             *window,
-            Keystroke::parse("a", keyboard_mapper.as_ref().as_ref()).unwrap(),
+            Keystroke::parse("a", keyboard_mapper.as_ref()).unwrap(),
         );
         cx.dispatch_keystroke(
             *window,
-            Keystroke::parse("ctrl-g", keyboard_mapper.as_ref().as_ref()).unwrap(),
+            Keystroke::parse("ctrl-g", keyboard_mapper.as_ref()).unwrap(),
         );
 
         window
