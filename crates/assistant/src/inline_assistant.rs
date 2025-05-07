@@ -17,7 +17,7 @@ use editor::{
         ToDisplayPoint,
     },
 };
-use feature_flags::{FeatureFlagAppExt as _,  ZedProFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
