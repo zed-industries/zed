@@ -52,7 +52,7 @@ pub struct AvailableModel {
     /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
-    pub supports_tools: bool,
+    pub supports_tools: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -93,8 +93,12 @@ impl State {
                     async move {
                         let name = model.name.as_str();
                         let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
-                        let ollama_model =
-                            ollama::Model::new(name, None, None, capabilities.supports_tools());
+                        let ollama_model = ollama::Model::new(
+                            name,
+                            None,
+                            None,
+                            Some(capabilities.supports_tools()),
+                        );
                         Ok(ollama_model)
                     }
                 });
@@ -317,7 +321,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        self.model.supports_tools
+        self.model.supports_tools.unwrap_or(false)
     }
 
     fn telemetry_id(&self) -> String {
