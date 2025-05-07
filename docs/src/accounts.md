@@ -5,7 +5,7 @@ Signing in to Zed is not a requirement. You can use most features you'd expect i
 ## What Features Require Signing In?
 
 1. All real-time [collaboration features](./collaboration.md).
-2. [LLM-powered features](./assistant/assistant.md), if you are using Zed as the provider of your LLM models. Alternatively, you can [bring and configure your own API keys](./assistant/configuration.md) if you'd prefer, and avoid having to sign in.
+2. [LLM-powered features](./ai/ai.md), if you are using Zed as the provider of your LLM models. Alternatively, you can [bring and configure your own API keys](./ai/configuration.md) if you'd prefer, and avoid having to sign in.
 
 ## Signing In
 
