@@ -3448,6 +3448,11 @@ pub(crate) fn open_active_thread_as_markdown(
                 .unwrap_or_else(|| "Thread".to_string());
 
             let project = workspace.project().clone();
+
+            if !project.read(cx).is_local() {
+                anyhow::bail!("failed to open active thread as markdown in remote project");
+            }
+
             let buffer = project.update(cx, |project, cx| {
                 project.create_local_buffer(&markdown, Some(markdown_language), cx)
             });
