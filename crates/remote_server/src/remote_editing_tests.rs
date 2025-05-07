@@ -1570,6 +1570,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         .await
         .unwrap();
 
+    cx.run_until_parked();
+
     let action_log = cx.new(|_| assistant_tool::ActionLog::new(project.clone()));
 
     let input = ReadFileToolInput {
@@ -1589,7 +1591,7 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         )
     });
     let output = exists_result.output.await;
-    assert_eq!(output.unwrap(), "");
+    assert_eq!(output.unwrap(), "B");
 
     let input = ReadFileToolInput {
         path: "project/c.txt".into(),
@@ -1609,6 +1611,8 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     });
     let output = does_not_exist_result.output.await;
     assert!(output.is_err());
+
+    dbg!("HERE");
 }
 
 pub async fn init_test(

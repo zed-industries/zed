@@ -817,9 +817,20 @@ impl Worktree {
                     Ok(metadata.map_or(false, |metadata| !metadata.is_dir))
                 })
             }
-            Worktree::Remote(_) => Task::ready(Err(anyhow!(
-                "remote worktrees can't yet check file existence"
-            ))),
+            Worktree::Remote(this) => {
+                let path = match this.absolutize(path) {
+                    Ok(path) => path,
+                    Err(e) => return Task::ready(Err(e)),
+                };
+                let request = this.client.request(proto::GetPathMetadata {
+                    project_id: this.project_id,
+                    path: path.to_proto(),
+                });
+                cx.background_spawn(async move {
+                    let metadata = request.await?;
+                    anyhow::Ok(metadata.exists && !metadata.is_dir)
+                })
+            }
         }
     }
 

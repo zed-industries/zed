@@ -18,8 +18,8 @@ use futures::{
     select, select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
-    SemanticVersion, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Background, BackgroundExecutor, BorrowAppContext, Context,
+    Entity, EventEmitter, Global, SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -683,6 +683,7 @@ impl SshRemoteClient {
     pub fn shutdown_processes<T: RequestMessage>(
         &self,
         shutdown_request: Option<T>,
+        executor: BackgroundExecutor,
     ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
@@ -705,7 +706,9 @@ impl SshRemoteClient {
                 // We wait 50ms instead of waiting for a response, because
                 // waiting for a response would require us to wait on the main thread
                 // which we want to avoid in an `on_app_quit` callback.
-                smol::Timer::after(Duration::from_millis(50)).await;
+                dbg!("before");
+                executor.timer(Duration::from_millis(50)).await;
+                dbg!("after");
             }
 
             // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
