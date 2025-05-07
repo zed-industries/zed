@@ -5280,7 +5280,10 @@ impl EditorElement {
                     }
 
                     let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
-                        ScrollbarThumbState::Dragging | ScrollbarThumbState::Hovered => {
+                        ScrollbarThumbState::Dragging => {
+                            cx.theme().colors().scrollbar_thumb_active_background
+                        }
+                        ScrollbarThumbState::Hovered => {
                             cx.theme().colors().scrollbar_thumb_hover_background
                         }
                         ScrollbarThumbState::Idle => cx.theme().colors().scrollbar_thumb_background,
