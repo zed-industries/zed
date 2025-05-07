@@ -31,8 +31,10 @@ auto_update.workspace = true
 call.workspace = true
 chrono.workspace = true
 client.workspace = true
+component.workspace = true
 db.workspace = true
 gpui.workspace = true
+linkme.workspace = true
 notifications.workspace = true
 project.workspace = true
 remote.workspace = true
@@ -46,9 +48,9 @@ telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

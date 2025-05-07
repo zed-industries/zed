@@ -1,12 +1,14 @@
 use gpui::{Action, Entity, Global, Render, SharedString};
-use ui::{ButtonLike, Tooltip, prelude::*};
+use ui::{ButtonLike, Tooltip, component_prelude::*, prelude::*};
 use util::ResultExt;
 
 /// Prompts the user to try newly released Zed's features
+#[derive(RegisterComponent)]
 pub struct OnboardingBanner {
     dismissed: bool,
     source: String,
     details: BannerDetails,
+    _force_show: bool, // used for previews
 }
 
 #[derive(Clone)]
@@ -43,11 +45,12 @@ impl OnboardingBanner {
                 subtitle: subtitle.or(Some(SharedString::from("Introducing:"))),
             },
             dismissed: get_dismissed(source),
+            _force_show: false,
         }
     }
 
     fn should_show(&self, _cx: &mut App) -> bool {
-        !self.dismissed
+        !self.dismissed || self._force_show
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
@@ -55,6 +58,14 @@ impl OnboardingBanner {
         persist_dismissed(&self.source, cx);
         self.dismissed = true;
         cx.notify();
+    }
+
+    /// Force the banner to show regardless of its dismissal status.
+    ///
+    /// Used for previews and testing.
+    fn _force_show(mut self, force: bool) -> Self {
+        self._force_show = force;
+        self
     }
 }
 
@@ -105,7 +116,7 @@ pub fn restore_banner(cx: &mut App) {
 
 impl Render for OnboardingBanner {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.should_show(cx) {
+        if !self.should_show(cx) && !self._force_show {
             return div();
         }
 
@@ -158,5 +169,47 @@ impl Render for OnboardingBanner {
             );
 
         div().pr_2().child(banner)
+    }
+}
+
+impl Component for OnboardingBanner {
+    fn scope() -> ComponentScope {
+        ComponentScope::Notification
+    }
+
+    fn status() -> ComponentStatus {
+        ComponentStatus::Live
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A banner shown in the title bar used for announcing new features. Clicking the banner triggers some action, such as opening a modal. Once dismissed, it won't show again for a given feature.",
+        )
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let agent_banner = cx.new(|cx| {
+            OnboardingBanner::new(
+                "Agentic Onboarding",
+                IconName::ZedAssistant,
+                "Agentic Editing",
+                None,
+                zed_actions::agent::OpenOnboardingModal.boxed_clone(),
+                cx,
+            )
+            ._force_show(true)
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .w_full()
+                .flex_none()
+                .children(vec![example_group(vec![single_example(
+                    "Agent Example",
+                    agent_banner.clone().into_any_element(),
+                )])])
+                .into_any_element(),
+        )
     }
 }
