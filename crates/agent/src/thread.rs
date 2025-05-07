@@ -1546,9 +1546,9 @@ impl Thread {
                                             completion.queue_state =  QueueState::Started;
                                         }
                                         CompletionRequestStatus::Failed {
-                                            code, message
+                                            code, message, request_id
                                         } => {
-                                            return Err(anyhow!("completion request failed. code: {code}, message: {message}"));
+                                            return Err(anyhow!("completion request failed. request_id: {request_id}, code: {code}, message: {message}"));
                                         }
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
