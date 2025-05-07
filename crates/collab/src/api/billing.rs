@@ -301,13 +301,6 @@ async fn create_billing_subscription(
             "not supported".into(),
         ))?
     };
-    let Some(llm_db) = app.llm_db.clone() else {
-        log::error!("failed to retrieve LLM database");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
 
     if app.db.has_active_billing_subscription(user.id).await? {
         return Err(Error::http(
@@ -399,16 +392,10 @@ async fn create_billing_subscription(
                 .await?
         }
         None => {
-            let default_model = llm_db.model(
-                zed_llm_client::LanguageModelProvider::Anthropic,
-                "claude-3-7-sonnet",
-            )?;
-            let stripe_model = stripe_billing
-                .register_model_for_token_based_usage(default_model)
-                .await?;
-            stripe_billing
-                .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
-                .await?
+            return Err(Error::http(
+                StatusCode::BAD_REQUEST,
+                "No product selected".into(),
+            ));
         }
     };
 
@@ -1379,81 +1366,6 @@ async fn find_or_create_billing_customer(
         .await?;
 
     Ok(Some(billing_customer))
-}
-
-const SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
-
-pub fn sync_llm_token_usage_with_stripe_periodically(app: Arc<AppState>) {
-    let Some(stripe_billing) = app.stripe_billing.clone() else {
-        log::warn!("failed to retrieve Stripe billing object");
-        return;
-    };
-    let Some(llm_db) = app.llm_db.clone() else {
-        log::warn!("failed to retrieve LLM database");
-        return;
-    };
-
-    let executor = app.executor.clone();
-    executor.spawn_detached({
-        let executor = executor.clone();
-        async move {
-            loop {
-                sync_token_usage_with_stripe(&app, &llm_db, &stripe_billing)
-                    .await
-                    .context("failed to sync LLM usage to Stripe")
-                    .trace_err();
-                executor
-                    .sleep(SYNC_LLM_TOKEN_USAGE_WITH_STRIPE_INTERVAL)
-                    .await;
-            }
-        }
-    });
-}
-
-async fn sync_token_usage_with_stripe(
-    app: &Arc<AppState>,
-    llm_db: &Arc<LlmDatabase>,
-    stripe_billing: &Arc<StripeBilling>,
-) -> anyhow::Result<()> {
-    let events = llm_db.get_billing_events().await?;
-    let user_ids = events
-        .iter()
-        .map(|(event, _)| event.user_id)
-        .collect::<HashSet<UserId>>();
-    let stripe_subscriptions = app.db.get_active_billing_subscriptions(user_ids).await?;
-
-    for (event, model) in events {
-        let Some((stripe_db_customer, stripe_db_subscription)) =
-            stripe_subscriptions.get(&event.user_id)
-        else {
-            tracing::warn!(
-                user_id = event.user_id.0,
-                "Registered billing event for user who is not a Stripe customer. Billing events should only be created for users who are Stripe customers, so this is a mistake on our side."
-            );
-            continue;
-        };
-        let stripe_subscription_id: stripe::SubscriptionId = stripe_db_subscription
-            .stripe_subscription_id
-            .parse()
-            .context("failed to parse stripe subscription id from db")?;
-        let stripe_customer_id: stripe::CustomerId = stripe_db_customer
-            .stripe_customer_id
-            .parse()
-            .context("failed to parse stripe customer id from db")?;
-
-        let stripe_model = stripe_billing
-            .register_model_for_token_based_usage(&model)
-            .await?;
-        stripe_billing
-            .subscribe_to_model(&stripe_subscription_id, &stripe_model)
-            .await?;
-        stripe_billing
-            .bill_model_token_usage(&stripe_customer_id, &stripe_model, &event)
-            .await?;
-        llm_db.consume_billing_event(event.id).await?;
-    }
-
-    Ok(())
 }
 
 const SYNC_LLM_REQUEST_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
