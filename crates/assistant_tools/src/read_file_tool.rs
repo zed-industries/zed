@@ -145,9 +145,9 @@ impl Tool for ReadFileTool {
                     let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count as usize), "\n").collect()
+                        Itertools::intersperse(lines.take(count as usize), "\n").collect::<String>().into()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect()
+                        Itertools::intersperse(lines, "\n").collect::<String>().into()
                     }
                 })?;
 
@@ -180,7 +180,7 @@ impl Tool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(result.into())
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
@@ -192,7 +192,7 @@ impl Tool for ReadFileTool {
 
                         Using the line numbers in this outline, you can call this tool again while specifying
                         the start_line and end_line fields to see the implementations of symbols in the outline."
-                    })
+                    }.into())
                 }
             }
         })

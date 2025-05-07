@@ -5,7 +5,7 @@ use crate::{
     schema::json_schema_for,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult, ToolResultOutput};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task};
 use indoc::formatdoc;

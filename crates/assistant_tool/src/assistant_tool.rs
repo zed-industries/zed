@@ -61,11 +61,25 @@ impl ToolUseStatus {
     }
 }
 
+pub struct ToolResultOutput {
+    pub content: String,
+    pub output: Option<serde_json::Value>,
+}
+
+impl From<String> for ToolResultOutput {
+    fn from(value: String) -> Self {
+        ToolResultOutput {
+            content: value,
+            output: None,
+        }
+    }
+}
+
 /// The result of running a tool, containing both the asynchronous output
 /// and an optional card view that can be rendered immediately.
 pub struct ToolResult {
     /// The asynchronous task that will eventually resolve to the tool's output
-    pub output: Task<Result<String>>,
+    pub output: Task<Result<ToolResultOutput>>,
     /// An optional view to present the output of the tool.
     pub card: Option<AnyToolCard>,
 }
@@ -128,9 +142,9 @@ impl AnyToolCard {
     }
 }
 
-impl From<Task<Result<String>>> for ToolResult {
+impl From<Task<Result<ToolResultOutput>>> for ToolResult {
     /// Convert from a task to a ToolResult with no card
-    fn from(output: Task<Result<String>>) -> Self {
+    fn from(output: Task<Result<ToolResultOutput>>) -> Self {
         Self { output, card: None }
     }
 }
@@ -188,9 +202,9 @@ pub trait Tool: 'static + Send + Sync {
         cx: &mut App,
     ) -> ToolResult;
 
-    fn card(
+    fn deserialize_card(
         self: Arc<Self>,
-        _content: Arc<str>,
+        _output: serde_json::Value,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut App,

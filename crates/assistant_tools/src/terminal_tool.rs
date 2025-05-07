@@ -178,7 +178,7 @@ impl Tool for TerminalTool {
                 let exit_status = child.wait()?;
                 let (processed_content, _) =
                     process_content(content, &input.command, Some(exit_status));
-                Ok(processed_content)
+                Ok(processed_content.into())
             });
             return ToolResult {
                 output: task,
@@ -266,7 +266,7 @@ impl Tool for TerminalTool {
                     card.elapsed_time = Some(card.start_instant.elapsed());
                 });
 
-                Ok(processed_content)
+                Ok(processed_content.into())
             }
         });
 

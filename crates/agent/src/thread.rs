@@ -1072,6 +1072,7 @@ impl Thread {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content.clone(),
+                                output: tool_result.output.clone(),
                             })
                             .collect(),
                         context: message.loaded_context.text.clone(),

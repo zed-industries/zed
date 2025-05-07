@@ -290,11 +290,12 @@ impl Tool for EditFileTool {
                 "Edited {}:\n\n```diff\n{}\n```",
                 input.path.display(),
                 diff_str
-            ))
+            )
+            .into())
         });
 
         ToolResult {
-            output: task,
+            output: task.into(),
             card: card.map(AnyToolCard::from),
         }
     }

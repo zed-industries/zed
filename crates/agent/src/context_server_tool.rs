@@ -115,7 +115,7 @@ impl Tool for ContextServerTool {
                         }
                     }
                 }
-                Ok(result)
+                Ok(result.into())
             })
             .into()
         } else {

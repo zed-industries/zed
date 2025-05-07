@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{AnyToolCard, Tool, ToolUseStatus, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolResultOutput, ToolUseStatus, ToolWorkingSet};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
@@ -101,17 +101,17 @@ impl ToolUseState {
                                     tool_name: tool_use.clone(),
                                     is_error: tool_result.is_error,
                                     content: tool_result.content.clone(),
+                                    output: tool_result.output.clone(),
                                 },
                             );
 
                             if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
-                                if let Some(card) = tool.card(
-                                    tool_result.content.clone(),
-                                    project.clone(),
-                                    window,
-                                    cx,
-                                ) {
-                                    this.tool_result_cards.insert(tool_use_id, card);
+                                if let Some(output) = tool_result.output.clone() {
+                                    if let Some(card) =
+                                        tool.deserialize_card(output, project.clone(), window, cx)
+                                    {
+                                        this.tool_result_cards.insert(tool_use_id, card);
+                                    }
                                 }
                             }
                         }
@@ -139,6 +139,7 @@ impl ToolUseState {
                         tool_use_id: tool_use_id.clone(),
                         tool_name: tool_use.name.clone(),
                         content,
+                        output: None,
                         is_error: true,
                     },
                 );
@@ -374,7 +375,7 @@ impl ToolUseState {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         tool_name: Arc<str>,
-        output: Result<String>,
+        output: Result<ToolResultOutput>,
         configured_model: Option<&ConfiguredModel>,
     ) -> Option<PendingToolUse> {
         let metadata = self.tool_use_metadata_by_id.remove(&tool_use_id);
@@ -394,7 +395,8 @@ impl ToolUseState {
         );
 
         match output {
-            Ok(tool_result) => {
+            Ok(output) => {
+                let tool_result = output.content;
                 const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
 
                 // Protect from clearly large output
@@ -421,6 +423,7 @@ impl ToolUseState {
                         tool_name,
                         content: tool_result.into(),
                         is_error: false,
+                        output: output.output,
                     },
                 );
                 self.pending_tool_uses_by_id.remove(&tool_use_id)
@@ -433,6 +436,7 @@ impl ToolUseState {
                         tool_name,
                         content: err.to_string().into(),
                         is_error: true,
+                        output: None,
                     },
                 );
 
@@ -505,6 +509,7 @@ impl ToolUseState {
                         } else {
                             tool_result.content.clone()
                         },
+                        output: None,
                     }));
             }
         }
