@@ -18,8 +18,7 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use settings::{Settings, update_settings_file};
 use ui::{
-    Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
-    Switch, SwitchColor, Tooltip, prelude::*,
+    prelude::*, scrollbar, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -593,31 +592,6 @@ impl Render for AssistantConfiguration {
                     .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_provider_configuration_section(cx)),
             )
-            .child(
-                div()
-                    .id("assistant-configuration-scrollbar")
-                    .occlude()
-                    .absolute()
-                    .right(px(3.))
-                    .top_0()
-                    .bottom_0()
-                    .pb_6()
-                    .w(px(12.))
-                    .cursor_default()
-                    .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                        cx.notify();
-                        cx.stop_propagation()
-                    }))
-                    .on_hover(|_, _window, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_any_mouse_down(|_, _window, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                        cx.notify();
-                    }))
-                    .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-            )
+            .child(scrollbar(self.scrollbar_state.clone(), window))
     }
 }
