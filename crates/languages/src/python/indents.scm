@@ -1,8 +1,20 @@
-(_ "[" "]" @end) @indent
-(_ "{" "}" @end) @indent
-(_ "(" ")" @end) @indent
+(function_definition
+  ":" @start
+  (block) @indent
+)
 
-(function_definition (block) @indent)
-(if_statement (block) @indent)
-(else_clause (block) @indent)
-(elif_clause (block) @indent)
+(if_statement
+  ":" @start
+  consequence: (block) @indent
+  alternative: (_)? @outdent
+)
+
+(else_clause
+  ":" @start
+  (block) @indent
+)
+
+(elif_clause
+  ":" @start
+  (block) @indent
+)
