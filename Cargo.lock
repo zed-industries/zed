@@ -3196,6 +3196,7 @@ dependencies = [
  "db",
  "futures 0.3.31",
  "gpui",
+ "indoc",
  "languages",
  "log",
  "notifications",
