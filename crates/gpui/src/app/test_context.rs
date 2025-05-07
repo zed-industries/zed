@@ -401,8 +401,8 @@ impl TestAppContext {
     }
 
     /// Returns the current keyboard mapper for this platform.
-    pub fn keyboard_mapper(&self) -> &dyn PlatformKeyboardMapper {
-        self.keyboard_mapper.as_ref().as_ref()
+    pub fn keyboard_mapper(&self) -> Rc<Box<dyn PlatformKeyboardMapper>> {
+        self.keyboard_mapper.clone()
     }
 
     /// simulate_keystrokes takes a space-separated list of keys to type.
