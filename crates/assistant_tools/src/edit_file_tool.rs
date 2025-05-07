@@ -1,9 +1,12 @@
 use crate::{
     replace::{replace_exact, replace_with_flexible_indent},
     schema::json_schema_for,
+    streaming_edit_file_tool::StreamingEditFileToolOutput,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus,
+};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
 use gpui::{
@@ -281,16 +284,29 @@ impl Tool for EditFileTool {
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
-                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+                    card.set_diff(
+                        project_path.path.clone(),
+                        old_text.clone(),
+                        new_text.clone(),
+                        cx,
+                    );
                 })
                 .log_err();
             }
 
-            Ok(format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                input.path.display(),
-                diff_str
-            )
+            Ok(ToolResultOutput {
+                content: format!(
+                    "Edited {}:\n\n```diff\n{}\n```",
+                    input.path.display(),
+                    diff_str
+                ),
+                output: serde_json::to_value(StreamingEditFileToolOutput {
+                    original_path: input.path,
+                    new_text,
+                    old_text,
+                })
+                .ok(),
+            }
             .into())
         });
 
@@ -298,6 +314,32 @@ impl Tool for EditFileTool {
             output: task.into(),
             card: card.map(AnyToolCard::from),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        let output = match serde_json::from_value::<StreamingEditFileToolOutput>(output) {
+            Ok(output) => output,
+            Err(_) => return None,
+        };
+
+        let card = cx.new(|cx| {
+            let mut card = EditFileToolCard::new(output.original_path.clone(), project, window, cx);
+            card.set_diff(
+                output.original_path.into(),
+                output.old_text,
+                output.new_text,
+                cx,
+            );
+            card
+        });
+
+        Some(card.into())
     }
 }
 
