@@ -432,7 +432,7 @@ fn initialize_panels(
             workspace.add_panel(git_panel, window, cx);
         })?;
 
-        let is_assistant2_enabled = true;
+        let is_assistant2_enabled = !cfg!(test);
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
             let assistant2_panel =
