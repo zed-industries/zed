@@ -526,7 +526,9 @@ impl CopilotChatLanguageModel {
                 function: copilot::copilot_chat::Function {
                     name: "noop".to_string(),
                     description: "No operation".to_string(),
-                    parameters: serde_json::json!({}),
+                    parameters: serde_json::json!({
+                        "type": "object"
+                    }),
                 },
             });
         }
