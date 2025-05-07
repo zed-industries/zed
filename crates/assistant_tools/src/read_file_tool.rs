@@ -104,7 +104,12 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Worktree not found for project path"))).into();
         };
         let exists = worktree.update(cx, |worktree, cx| {
-            worktree.file_exists(&project_path.path, cx)
+            if worktree.is_local() {
+                worktree.file_exists(&project_path.path, cx)
+            } else {
+                // Remote worktrees don't support file_exists yet.
+                Task::ready(Ok(true))
+            }
         });
 
         let file_path = input.path.clone();

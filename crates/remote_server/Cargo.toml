@@ -80,6 +80,8 @@ node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features=["test-support"] }
+assistant_tool.workspace = true
+assistant_tools.workspace = true
 unindent.workspace = true
 serde_json.workspace = true
 

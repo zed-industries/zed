@@ -44,7 +44,6 @@ use crate::find_path_tool::FindPathTool;
 use crate::grep_tool::GrepTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
-use crate::read_file_tool::ReadFileTool;
 use crate::streaming_edit_file_tool::StreamingEditFileTool;
 use crate::thinking_tool::ThinkingTool;
 
@@ -52,7 +51,7 @@ pub use create_file_tool::{CreateFileTool, CreateFileToolInput};
 pub use edit_file_tool::{EditFileTool, EditFileToolInput};
 pub use find_path_tool::FindPathToolInput;
 pub use open_tool::OpenTool;
-pub use read_file_tool::ReadFileToolInput;
+pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use streaming_edit_file_tool::StreamingEditFileToolInput;
 pub use terminal_tool::TerminalTool;
 
