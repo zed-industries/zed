@@ -3623,7 +3623,9 @@ impl Editor {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
                 let is_word_char = text.chars().next().map_or(true, |char| {
-                    let classifier = snapshot.char_classifier_at(start_anchor.to_offset(&snapshot));
+                    let classifier = snapshot
+                        .char_classifier_at(start_anchor.to_offset(&snapshot))
+                        .ignore_punctuation(true);
                     classifier.is_word(char)
                 });
 
