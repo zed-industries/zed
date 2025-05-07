@@ -433,31 +433,19 @@ fn initialize_panels(
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
-
-        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-            let assistant2_panel =
+        let agent_panel = if is_assistant2_enabled {
+            let agent_panel =
                 agent::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
-            (None, Some(assistant2_panel))
+            Some(agent_panel)
         } else {
-            let assistant_panel = assistant::AssistantPanel::load(
-                workspace_handle.clone(),
-                prompt_builder.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            (Some(assistant_panel), None)
+            None
         };
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(assistant2_panel) = assistant2_panel {
-                workspace.add_panel(assistant2_panel, window, cx);
-            }
-
-            if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, window, cx);
+            if let Some(agent_panel) = agent_panel {
+                workspace.add_panel(agent_panel, window, cx);
             }
 
             // Register the actions that are shared between `assistant` and `assistant2`.
@@ -475,15 +463,6 @@ fn initialize_panels(
                 workspace
                     .register_action(agent::AssistantPanel::toggle_focus)
                     .register_action(agent::InlineAssistant::inline_assist);
-            } else {
-                <dyn AssistantPanelDelegate>::set_global(
-                    Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
-                    cx,
-                );
-
-                workspace
-                    .register_action(assistant::AssistantPanel::toggle_focus)
-                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 
@@ -4241,10 +4220,11 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            assistant::init(
+            agent::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
                 prompt_builder.clone(),
+                app_state.languages.clone(),
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);
