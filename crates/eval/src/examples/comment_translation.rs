@@ -34,8 +34,7 @@ impl Example for CommentTranslation {
             for message in thread.messages() {
                 for tool_use in thread.tool_uses_for_message(message.id, cx) {
                     if tool_use.name == "edit_file" {
-                        let input: EditFileToolInput =
-                            serde_json::from_value(tool_use.input)?;
+                        let input: EditFileToolInput = serde_json::from_value(tool_use.input)?;
                         if input.create_or_overwrite {
                             create_or_overwrite_count += 1;
                         }
