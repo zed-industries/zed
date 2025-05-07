@@ -491,7 +491,6 @@ impl AssistantPanel {
                 thread_store.downgrade(),
                 context_store.downgrade(),
                 thread.clone(),
-                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -822,7 +821,6 @@ impl AssistantPanel {
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
                 thread,
-                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1031,7 +1029,6 @@ impl AssistantPanel {
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
                 thread,
-                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1360,10 +1357,6 @@ impl Panel for AssistantPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.set_dock_position(position, cx);
-        });
-
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
             cx,
