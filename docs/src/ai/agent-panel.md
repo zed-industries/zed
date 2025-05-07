@@ -36,6 +36,13 @@ The items in this menu work similarly to tabs, and closing them from there doesn
 
 You can also view all historical conversations with the `View All` option from within the same menu or by reaching for the {#kb agent::OpenHistory} binding.
 
+### Following the Agent {#following-the-agent}
+
+Zed is built with collaboration natively integrated into the product.
+This approach extends to collaboration with AI as well.
+
+As soon as you send a prompt to the Agent, click on the "crosshair" icon at the bottom left of the panel to follow along as it reads through your codebase and performs edits.
+
 ### Reviewing Changes {#reviewing-changes}
 
 If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the Agent Panel surfaces the fact that edits have been applied.
