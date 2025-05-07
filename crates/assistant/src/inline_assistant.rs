@@ -17,9 +17,7 @@ use editor::{
         ToDisplayPoint,
     },
 };
-use feature_flags::{
-    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedProFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
@@ -74,25 +72,19 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        let workspace = cx.entity().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, window, cx)
-        });
-
-        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
-            |is_assistant2_enabled, _workspace, _window, cx| {
-                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
-                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
-                });
-            }
+    // Don't register now that the Agent is released.
+    if false {
+        cx.observe_new(|_, window, cx| {
+            let Some(window) = window else {
+                return;
+            };
+            let workspace = cx.entity().clone();
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                inline_assistant.register_workspace(&workspace, window, cx)
+            });
         })
         .detach();
-    })
-    .detach();
+    }
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -108,7 +100,6 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
-    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -130,7 +121,6 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
-            is_assistant2_enabled: false,
         }
     }
 
@@ -199,7 +189,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = self.is_assistant2_enabled;
+        let is_assistant2_enabled = true;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
