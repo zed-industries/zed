@@ -471,68 +471,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_context_editor",
- "assistant_settings",
- "assistant_slash_command",
- "assistant_slash_commands",
- "assistant_tool",
- "async-watch",
- "client",
- "collections",
- "command_palette_hooks",
- "ctor",
- "db",
- "editor",
- "env_logger 0.11.8",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indexed_docs",
- "indoc",
- "language",
- "language_model",
- "language_model_selector",
- "languages",
- "log",
- "lsp",
- "menu",
- "multi_buffer",
- "parking_lot",
- "pretty_assertions",
- "project",
- "prompt_store",
- "proto",
- "rand 0.8.5",
- "rope",
- "rules_library",
- "schemars",
- "search",
- "serde",
- "serde_json_lenient",
- "settings",
- "smol",
- "streaming_diff",
- "telemetry",
- "telemetry_events",
- "terminal",
- "terminal_view",
- "text",
- "theme",
- "tree-sitter-md",
- "ui",
- "unindent",
- "util",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
@@ -3002,7 +2940,6 @@ name = "collab"
 version = "0.44.0"
 dependencies = [
  "anyhow",
- "assistant",
  "assistant_context_editor",
  "assistant_settings",
  "assistant_slash_command",
@@ -18702,7 +18639,6 @@ dependencies = [
  "ashpd",
  "askpass",
  "assets",
- "assistant",
  "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",

@@ -503,12 +503,6 @@ fn main() {
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        assistant::init(
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder.clone(),
-            cx,
-        );
         agent::init(
             app_state.fs.clone(),
             app_state.client.clone(),

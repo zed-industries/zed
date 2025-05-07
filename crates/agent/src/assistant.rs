@@ -114,6 +114,9 @@ pub fn init(
     cx: &mut App,
 ) {
     AssistantSettings::register(cx);
+    assistant_context_editor::init(client.clone(), cx);
+    rules_library::init(cx);
+    assistant_slash_command::init(cx);
     thread_store::init(cx);
     assistant_panel::init(cx);
     context_server_configuration::init(language_registry, cx);
