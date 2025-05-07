@@ -299,9 +299,7 @@ jobs:
         run: ./script/clippy
 
       - name: Run tests
-        uses: |
-          export DISPLAY=:99
-          ./.github/actions/run_tests
+        uses: ./.github/actions/run_tests
 
       - name: Build other binaries and features
         run: |

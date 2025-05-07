@@ -20,4 +20,6 @@ runs:
 
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      run: cargo nextest run --workspace --no-fail-fast
+      run: |
+        export DISPLAY=:99
+        cargo nextest run --workspace --no-fail-fast
