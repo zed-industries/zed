@@ -1,6 +1,12 @@
+pub use crate::{
+    Grammar, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet,
+    highlight_map::{HighlightId, HighlightMap},
+    proto,
+};
 use crate::{
-    DebugVariableCapture, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
-    TextObject, TreeSitterOptions,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -10,12 +16,6 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
-};
-pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
-    proto,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
@@ -69,15 +69,9 @@ use util::RandomCharIter;
 use util::{RangeExt, debug_panic, maybe};
 
 #[cfg(any(test, feature = "test-support"))]
-pub use {tree_sitter_rust, tree_sitter_typescript};
+pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
-
-#[derive(Debug)]
-pub struct DebugVariableRanges {
-    pub buffer_id: BufferId,
-    pub range: Range<usize>,
-}
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
@@ -3377,6 +3371,36 @@ impl BufferSnapshot {
         result
     }
 
+    /// Returns the root syntax node within the given row
+    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node> {
+        let start_offset = position.to_offset(self);
+
+        let row = self.summary_for_anchor::<text::PointUtf16>(&position).row as usize;
+
+        let layer = self
+            .syntax
+            .layers_for_range(start_offset..start_offset, &self.text, true)
+            .next()?;
+
+        let mut cursor = layer.node().walk();
+
+        // Descend to the first leaf that touches the start of the range.
+        while cursor.goto_first_child_for_byte(start_offset).is_some() {
+            if cursor.node().end_byte() == start_offset {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the root node within the same row.
+        while cursor.goto_parent() {
+            if cursor.node().start_position().row != row {
+                break;
+            }
+        }
+
+        return Some(cursor.node());
+    }
+
     /// Returns the outline for the buffer.
     ///
     /// This method allows passing an optional [`SyntaxTheme`] to
@@ -3935,79 +3959,6 @@ impl BufferSnapshot {
             });
             syntax_matches.advance();
             ranges
-        })
-    }
-
-    pub fn debug_variable_ranges(
-        &self,
-        offset_range: Range<usize>,
-    ) -> impl Iterator<Item = DebugVariableRanges> + '_ {
-        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar
-                .debug_variables_config
-                .as_ref()
-                .map(|config| &config.query)
-        });
-
-        let configs = syntax_matches
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.debug_variables_config.as_ref())
-            .collect::<Vec<_>>();
-
-        iter::from_fn(move || {
-            loop {
-                let mat = syntax_matches.peek()?;
-
-                let variable_ranges = configs[mat.grammar_index].and_then(|config| {
-                    let full_range = mat.captures.iter().fold(
-                        Range {
-                            start: usize::MAX,
-                            end: 0,
-                        },
-                        |mut acc, next| {
-                            let byte_range = next.node.byte_range();
-                            if acc.start > byte_range.start {
-                                acc.start = byte_range.start;
-                            }
-                            if acc.end < byte_range.end {
-                                acc.end = byte_range.end;
-                            }
-                            acc
-                        },
-                    );
-                    if full_range.start > full_range.end {
-                        // We did not find a full spanning range of this match.
-                        return None;
-                    }
-
-                    let captures = mat.captures.iter().filter_map(|capture| {
-                        Some((
-                            capture,
-                            config.captures.get(capture.index as usize).cloned()?,
-                        ))
-                    });
-
-                    let mut variable_range = None;
-                    for (query, capture) in captures {
-                        if let DebugVariableCapture::Variable = capture {
-                            let _ = variable_range.insert(query.node.byte_range());
-                        }
-                    }
-
-                    Some(DebugVariableRanges {
-                        buffer_id: self.remote_id(),
-                        range: variable_range?,
-                    })
-                });
-
-                syntax_matches.advance();
-                if variable_ranges.is_some() {
-                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                    return variable_ranges;
-                }
-            }
         })
     }
 

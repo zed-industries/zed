@@ -366,7 +366,7 @@ impl AssistantSettingsContent {
                                     &model,
                                     None,
                                     None,
-                                    language_model.supports_tools(),
+                                    Some(language_model.supports_tools()),
                                 )),
                                 api_url,
                             });

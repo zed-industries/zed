@@ -1044,7 +1044,6 @@ pub struct Grammar {
     pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
-    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
@@ -1145,18 +1144,6 @@ struct RunnableConfig {
     pub extra_captures: Vec<RunnableCapture>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum DebugVariableCapture {
-    Named(SharedString),
-    Variable,
-}
-
-#[derive(Debug)]
-struct DebugVariablesConfig {
-    pub query: Query,
-    pub captures: Vec<DebugVariableCapture>,
-}
-
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, OverrideEntry>,
@@ -1217,7 +1204,6 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    debug_variables_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1288,11 +1274,6 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
-        }
-        if let Some(query) = queries.debug_variables {
-            self = self
-                .with_debug_variables_query(query.as_ref())
-                .context("Error loading debug variable query")?;
         }
         Ok(self)
     }
@@ -1386,25 +1367,6 @@ impl Language {
             query,
             text_objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
-        let query = Query::new(&grammar.ts_language, source)?;
-
-        let mut captures = Vec::new();
-        for name in query.capture_names() {
-            captures.push(if *name == "debug_variable" {
-                DebugVariableCapture::Variable
-            } else {
-                DebugVariableCapture::Named(name.to_string().into())
-            });
-        }
-        grammar.debug_variables_config = Some(DebugVariablesConfig { query, captures });
-
         Ok(self)
     }
 

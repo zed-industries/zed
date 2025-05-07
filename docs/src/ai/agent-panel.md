@@ -14,7 +14,7 @@ After you've configured some LLM providers, you're ready to start working with t
 Type at the message editor and hit `enter` to submit your prompt to the LLM.
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
-You should start to see the responses stream in with indications of which [tools](/ai/tools.md) the AI is using to fulfill your prompt.
+You should start to see the responses stream in with indications of which [tools](./tools.md) the AI is using to fulfill your prompt.
 For example, if the AI chooses to perform an edit, you will see a card with the diff.
 
 ### Editing Messages {#editing-messages}
@@ -35,6 +35,19 @@ To quickly navigate through recently opened threads, use the {#kb agent::ToggleN
 The items in this menu work similarly to tabs, and closing them from there doesn't delete the thread; just takes them out of the recent list.
 
 You can also view all historical conversations with the `View All` option from within the same menu or by reaching for the {#kb agent::OpenHistory} binding.
+
+### Following the Agent {#following-the-agent}
+
+Zed is built with collaboration natively integrated into the product.
+This approach extends to collaboration with AI as well.
+
+As soon as you send a prompt to the Agent, click on the "crosshair" icon at the bottom left of the panel to follow along as it reads through your codebase and performs edits.
+
+### Get Notified {#get-notified}
+
+If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, a notification will pop up at the top right of your monitor indicating that the Agent has completed its work.
+
+You can customize the notification behavior or turn it off entirely by using the `agent.notify_when_agent_waiting` key.
 
 ### Reviewing Changes {#reviewing-changes}
 
@@ -67,14 +80,14 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](/ai/custom-api-keys.md) or through [Zed's hosted models](/ai/models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](./custom-api-keys.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 ## Using Tools {#using-tools}
 
 The new Agent Panel supports tool calling, which enables agentic collaboration with AI.
-Zed comes with [several built-in tools](/ai/tools.md) that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
+Zed comes with [several built-in tools](./tools.md) that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
 
-You can also extend the set of available tools via [MCP Servers](/ai/mcp.md).
+You can also extend the set of available tools via [MCP Servers](./mcp.md).
 
 ### Profiles {#profiles}
 
@@ -149,7 +162,7 @@ Every change we make to Zed's system prompt and tool set, needs to be backed by 
 Every time the LLM performs a weird change or investigates a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
-> See [AI Improvement](./ai-improvement.md) and [Privacy and Security](/ai/privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
+> See [AI Improvement](./ai-improvement.md) and [Privacy and Security](./privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
 > **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
 The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
