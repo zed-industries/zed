@@ -72,7 +72,9 @@ impl Tool for WebSearchTool {
             let search_task = search_task.clone();
             async move {
                 let response = search_task.await.map_err(|err| anyhow!(err))?;
-                serde_json::to_string(&response).context("Failed to serialize search results")
+                serde_json::to_string(&response)
+                    .context("Failed to serialize search results")
+                    .map(Into::into)
             }
         });
 

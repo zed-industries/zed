@@ -131,7 +131,7 @@ impl Tool for CreateFileTool {
                 .await
                 .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
-            Ok(format!("Created file {destination_path}"))
+            Ok(format!("Created file {destination_path}").into())
         })
         .into()
     }

@@ -895,6 +895,7 @@ fn tool_result(
         tool_name: name.into(),
         is_error: false,
         content: result.into(),
+        output: None,
     })
 }
 

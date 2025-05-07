@@ -122,9 +122,9 @@ impl Tool for DiagnosticsTool {
                     }
 
                     if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string())
+                        Ok("File doesn't have errors or warnings!".to_string().into())
                     } else {
-                        Ok(output)
+                        Ok(output.into())
                     }
                 })
                 .into()
@@ -158,10 +158,12 @@ impl Tool for DiagnosticsTool {
                 });
 
                 if has_diagnostics {
-                    Task::ready(Ok(output)).into()
+                    Task::ready(Ok(output.into())).into()
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
-                        .into()
+                    Task::ready(Ok("No errors or warnings found in the project."
+                        .to_string()
+                        .into()))
+                    .into()
                 }
             }
         }
