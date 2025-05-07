@@ -4,7 +4,7 @@ use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, WeakEntity, Window};
 use language::LineEnding;
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
@@ -110,6 +110,7 @@ impl Tool for TerminalTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -598,6 +599,7 @@ mod tests {
     use editor::EditorSettings;
     use fs::RealFs;
     use gpui::{BackgroundExecutor, TestAppContext};
+    use language_model::fake_provider::FakeLanguageModel;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
@@ -639,6 +641,7 @@ mod tests {
         let project: Entity<Project> =
             Project::test(fs, [tree.path().join("project").as_path()], cx).await;
         let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let input = TerminalToolInput {
             command: "cat".to_owned(),
@@ -656,6 +659,7 @@ mod tests {
                 &[],
                 project.clone(),
                 action_log.clone(),
+                model,
                 None,
                 cx,
             )
@@ -681,6 +685,7 @@ mod tests {
         let project: Entity<Project> =
             Project::test(fs, [tree.path().join("project").as_path()], cx).await;
         let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
@@ -689,6 +694,7 @@ mod tests {
                 &[],
                 project.clone(),
                 action_log.clone(),
+                model.clone(),
                 None,
                 cx,
             );

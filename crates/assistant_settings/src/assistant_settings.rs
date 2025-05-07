@@ -106,11 +106,6 @@ impl AssistantSettings {
             .and_then(|m| m.temperature)
     }
 
-    pub fn stream_edits(&self, _cx: &App) -> bool {
-        // TODO: Remove the `stream_edits` setting.
-        true
-    }
-
     pub fn are_live_diffs_enabled(&self, _cx: &App) -> bool {
         false
     }
