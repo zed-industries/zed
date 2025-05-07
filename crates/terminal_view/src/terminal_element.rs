@@ -1126,15 +1126,6 @@ impl InputHandler for TerminalInputHandler {
             self.terminal_view.update(cx, |view, view_cx| {
                 view.set_marked_text(new_text.to_string(), range, view_cx);
             });
-        } else {
-            log::warn!(
-                "replace_and_mark_text_in_range called with no marked range, text: '{}'",
-                new_text
-            );
-            // Optionally, clear marked text here:
-            // self.terminal_view.update(_cx, |view, view_cx| {
-            //     view.clear_marked_text(view_cx);
-            // }).log_err();
         }
     }
 
