@@ -1,10 +1,8 @@
 mod copy_path_tool;
 mod create_directory_tool;
-mod create_file_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_agent;
-mod edit_file_tool;
 mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
@@ -74,6 +72,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(GrepTool);
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
+    registry.register_tool(StreamingEditFileTool);
 
     register_edit_file_tool(cx);
     cx.observe_global::<SettingsStore>(register_edit_file_tool)
@@ -101,21 +100,6 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
         ToolRegistry::global(cx).register_tool(WebSearchTool);
     } else {
         ToolRegistry::global(cx).unregister_tool(WebSearchTool);
-    }
-}
-
-fn register_edit_file_tool(cx: &mut App) {
-    let registry = ToolRegistry::global(cx);
-
-    registry.unregister_tool(CreateFileTool);
-    registry.unregister_tool(EditFileTool);
-    registry.unregister_tool(StreamingEditFileTool);
-
-    if AssistantSettings::get_global(cx).stream_edits(cx) {
-        registry.register_tool(StreamingEditFileTool);
-    } else {
-        registry.register_tool(CreateFileTool);
-        registry.register_tool(EditFileTool);
     }
 }
 
