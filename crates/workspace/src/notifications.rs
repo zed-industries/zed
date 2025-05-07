@@ -811,6 +811,13 @@ pub fn show_app_notification<V: Notification + 'static>(
                         }
                     })
                     .detach();
+                    cx.subscribe(&notification, {
+                        let id = id.clone();
+                        move |workspace: &mut Workspace, _, _: &SuppressEvent, cx| {
+                            workspace.suppress_notification(&id, cx);
+                        }
+                    })
+                    .detach();
                     notification.into()
                 }
             });
