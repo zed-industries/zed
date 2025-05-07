@@ -291,12 +291,12 @@ jobs:
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: cargo clippy
-        with:
-          use-xvfb: true
         run: ./script/clippy
 
       - name: Run tests
         uses: ./.github/actions/run_tests
+        with:
+          use-xvfb: true
 
       - name: Build other binaries and features
         run: |
