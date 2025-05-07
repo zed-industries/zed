@@ -156,46 +156,47 @@ impl Render for ProfileSelector {
             .default_model()
             .map_or(false, |default| default.model.supports_tools());
 
-        let this = cx.entity().clone();
-        let focus_handle = self.focus_handle.clone();
-
-        let trigger_button = if supports_tools {
-            Button::new("profile-selector-model", selected_profile)
+        if supports_tools {
+            let this = cx.entity().clone();
+            let focus_handle = self.focus_handle.clone();
+            let trigger_button = Button::new("profile-selector-model", selected_profile)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
                 .icon(IconName::ChevronDown)
                 .icon_size(IconSize::XSmall)
                 .icon_position(IconPosition::End)
-                .icon_color(Color::Muted)
+                .icon_color(Color::Muted);
+
+            PopoverMenu::new("profile-selector")
+                .trigger_with_tooltip(trigger_button, {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Profile Menu",
+                            &ToggleProfileSelector,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .anchor(if self.documentation_side == DocumentationSide::Left {
+                    gpui::Corner::BottomRight
+                } else {
+                    gpui::Corner::BottomLeft
+                })
+                .with_handle(self.menu_handle.clone())
+                .menu(move |window, cx| {
+                    Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+                })
+                .into_any_element()
         } else {
-            Button::new("tools-not-supported-button", "No Tools")
+            Button::new("tools-not-supported-button", "Tools Unsupported")
                 .disabled(true)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
-                .tooltip(Tooltip::text("The current model does not support tools."))
-        };
-
-        PopoverMenu::new("profile-selector")
-            .trigger_with_tooltip(trigger_button, {
-                let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in(
-                        "Toggle Profile Menu",
-                        &ToggleProfileSelector,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                }
-            })
-            .anchor(if self.documentation_side == DocumentationSide::Left {
-                gpui::Corner::BottomRight
-            } else {
-                gpui::Corner::BottomLeft
-            })
-            .with_handle(self.menu_handle.clone())
-            .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
-            })
+                .tooltip(Tooltip::text("This model does not support tools."))
+                .into_any_element()
+        }
     }
 }
