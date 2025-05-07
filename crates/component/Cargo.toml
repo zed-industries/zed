@@ -16,6 +16,7 @@ collections.workspace = true
 gpui.workspace = true
 linkme.workspace = true
 parking_lot.workspace = true
+strum.workspace = true
 theme.workspace = true
 workspace-hack.workspace = true
 

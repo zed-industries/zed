@@ -800,6 +800,7 @@ impl LocalSettingsKind {
             proto::LocalSettingsKind::Settings => Self::Settings,
             proto::LocalSettingsKind::Tasks => Self::Tasks,
             proto::LocalSettingsKind::Editorconfig => Self::Editorconfig,
+            proto::LocalSettingsKind::Debug => Self::Debug,
         }
     }
 
@@ -808,6 +809,7 @@ impl LocalSettingsKind {
             Self::Settings => proto::LocalSettingsKind::Settings,
             Self::Tasks => proto::LocalSettingsKind::Tasks,
             Self::Editorconfig => proto::LocalSettingsKind::Editorconfig,
+            Self::Debug => proto::LocalSettingsKind::Debug,
         }
     }
 }

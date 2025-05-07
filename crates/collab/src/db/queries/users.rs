@@ -65,6 +65,18 @@ impl Database {
         .await
     }
 
+    /// Returns all users flagged as staff.
+    pub async fn get_staff_users(&self) -> Result<Vec<user::Model>> {
+        self.transaction(|tx| async {
+            let tx = tx;
+            Ok(user::Entity::find()
+                .filter(user::Column::Admin.eq(true))
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns a user by email address. There are no access checks here, so this should only be used internally.
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
         self.transaction(|tx| async move {

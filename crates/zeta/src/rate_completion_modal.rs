@@ -275,9 +275,9 @@ impl RateCompletionModal {
             completion,
             feedback_editor: cx.new(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
+                editor.disable_scrollbars_and_minimap(cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_line_numbers(false, cx);
-                editor.set_show_scrollbars(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);
@@ -498,10 +498,12 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_down_active(
-                                                &ThumbsDownActiveCompletion,
-                                                window, cx,
-                                            );
+                                            if this.active_completion.is_some() {
+                                                this.thumbs_down_active(
+                                                    &ThumbsDownActiveCompletion,
+                                                    window, cx,
+                                                );
+                                            }
                                         })),
                                 )
                                 .child(
@@ -517,7 +519,9 @@ impl RateCompletionModal {
                                             cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                            if this.active_completion.is_some() {
+                                                this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
+                                            }
                                         })),
                                 ),
                         ),

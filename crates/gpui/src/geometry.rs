@@ -804,7 +804,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `upper_left` - A `Point<T>` representing the top left corner of the rectangle.
+    /// * `top_left` - A `Point<T>` representing the top left corner of the rectangle.
     /// * `bottom_right` - A `Point<T>` representing the bottom right corner of the rectangle.
     ///
     /// # Returns
@@ -815,22 +815,22 @@ where
     ///
     /// ```
     /// # use gpui::{Bounds, Point};
-    /// let upper_left = Point { x: 0, y: 0 };
+    /// let top_left = Point { x: 0, y: 0 };
     /// let bottom_right = Point { x: 10, y: 10 };
-    /// let bounds = Bounds::from_corners(upper_left, bottom_right);
+    /// let bounds = Bounds::from_corners(top_left, bottom_right);
     ///
-    /// assert_eq!(bounds.origin, upper_left);
+    /// assert_eq!(bounds.origin, top_left);
     /// assert_eq!(bounds.size.width, 10);
     /// assert_eq!(bounds.size.height, 10);
     /// ```
-    pub fn from_corners(upper_left: Point<T>, bottom_right: Point<T>) -> Self {
+    pub fn from_corners(top_left: Point<T>, bottom_right: Point<T>) -> Self {
         let origin = Point {
-            x: upper_left.x.clone(),
-            y: upper_left.y.clone(),
+            x: top_left.x.clone(),
+            y: top_left.y.clone(),
         };
         let size = Size {
-            width: bottom_right.x - upper_left.x,
-            height: bottom_right.y - upper_left.y,
+            width: bottom_right.x - top_left.x,
+            height: bottom_right.y - top_left.y,
         };
         Bounds { origin, size }
     }
@@ -2622,7 +2622,6 @@ impl Pixels {
     /// Returns:
     /// * `1.0` if the value is positive
     /// * `-1.0` if the value is negative
-    /// * `0.0` if the value is zero
     pub fn signum(&self) -> f32 {
         self.0.signum()
     }

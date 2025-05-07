@@ -113,7 +113,7 @@
 (escape_sequence) @string.escape
 
 (regex) @string.regex
-(regex_flags) @keyword.regex
+(regex_flags) @keyword.operator.regex
 (number) @number
 
 ; Tokens
@@ -165,6 +165,8 @@
   "||="
   "??="
 ] @operator
+
+(regex "/" @string.regex)
 
 (ternary_expression
   [

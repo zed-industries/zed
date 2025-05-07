@@ -4,6 +4,7 @@
 
 - [Getting Started](./getting-started.md)
 - [System Requirements](./system-requirements.md)
+- [Accounts](./accounts.md)
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
@@ -36,18 +37,24 @@
 - [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
-# Assistant
+# AI
 
-- [Overview](./assistant/assistant.md)
-- [Configuration](./assistant/configuration.md)
-- [Assistant Panel](./assistant/assistant-panel.md)
-- [Contexts](./assistant/contexts.md)
-- [Inline Assistant](./assistant/inline-assistant.md)
-- [Commands](./assistant/commands.md)
-- [Prompts](./assistant/prompting.md)
-- [Context Servers](./assistant/context-servers.md)
-  - [Model Context Protocol](./assistant/model-context-protocol.md)
-- [Model Improvement](./model-improvement.md)
+- [Overview](./ai/overview.md)
+- [Agent Panel](./ai/agent-panel.md)
+  - [Tools](./ai/tools.md)
+  - [Model Temperature](./ai/temperature.md)
+- [Inline Assistant](./ai/inline-assistant.md)
+- [Edit Prediction](./ai/edit-prediction.md)
+- [Text Threads](./ai/text-threads.md)
+- [Rules](./ai/rules.md)
+- [Model Context Protocol](./ai/mcp.md)
+- [Subscription](./ai/subscription.md)
+  - [Plans and Usage](./ai/plans-and-usage.md)
+  - [Billing](./ai/billing.md)
+  - [Models](./ai/models.md)
+- [Use Your Own API Keys](./ai/custom-api-keys.md)
+- [Privacy and Security](./ai/privacy-and-security.md)
+  - [AI Improvement](./ai/ai-improvement.md)
 
 # Extensions
 
@@ -127,6 +134,7 @@
 - [Vue](./languages/vue.md)
 - [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md)
+- [Yara](./languages/yara.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 

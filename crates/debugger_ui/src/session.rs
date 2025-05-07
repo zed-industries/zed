@@ -1,36 +1,28 @@
 pub mod running;
 
+use std::sync::OnceLock;
+
 use dap::client::SessionId;
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
+use gpui::{
+    App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+};
 use project::Project;
-use project::debugger::{dap_store::DapStore, session::Session};
+use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
-use rpc::proto::{self, PeerId};
+use rpc::proto;
 use running::RunningState;
-use ui::prelude::*;
+use ui::{Indicator, prelude::*};
 use workspace::{
-    FollowableItem, ViewId, Workspace,
+    CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},
 };
 
-use crate::debugger_panel::DebugPanel;
-
-pub(crate) enum DebugSessionState {
-    Running(Entity<running::RunningState>),
-}
-
-impl DebugSessionState {
-    pub(crate) fn as_running(&self) -> Option<&Entity<running::RunningState>> {
-        match &self {
-            DebugSessionState::Running(entity) => Some(entity),
-        }
-    }
-}
+use crate::{debugger_panel::DebugPanel, persistence::SerializedLayout};
 
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
-    mode: DebugSessionState,
-    dap_store: WeakEntity<DapStore>,
+    running_state: Entity<RunningState>,
+    label: OnceLock<SharedString>,
     _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
     _workspace: WeakEntity<Workspace>,
@@ -43,69 +35,104 @@ pub enum DebugPanelItemEvent {
     Stopped { go_to_stack_frame: bool },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ThreadItem {
-    Console,
-    LoadedSource,
-    Modules,
-    Variables,
-}
-
 impl DebugSession {
     pub(crate) fn running(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         _debug_panel: WeakEntity<DebugPanel>,
+        serialized_layout: Option<SerializedLayout>,
+        dock_axis: Axis,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let mode = cx.new(|cx| RunningState::new(session.clone(), workspace.clone(), window, cx));
+        let running_state = cx.new(|cx| {
+            RunningState::new(
+                session.clone(),
+                project.clone(),
+                workspace.clone(),
+                serialized_layout,
+                dock_axis,
+                window,
+                cx,
+            )
+        });
 
         cx.new(|cx| Self {
-            _subscriptions: [cx.subscribe(&mode, |_, _, _, cx| {
+            _subscriptions: [cx.subscribe(&running_state, |_, _, _, cx| {
                 cx.notify();
             })],
             remote_id: None,
-            mode: DebugSessionState::Running(mode),
-            dap_store: project.read(cx).dap_store().downgrade(),
+            running_state,
+            label: OnceLock::new(),
             _debug_panel,
             _worktree_store: project.read(cx).worktree_store().downgrade(),
             _workspace: workspace,
         })
     }
 
-    pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
-        match &self.mode {
-            DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
-        }
+    pub(crate) fn session_id(&self, cx: &App) -> SessionId {
+        self.running_state.read(cx).session_id()
+    }
+
+    pub fn session(&self, cx: &App) -> Entity<Session> {
+        self.running_state.read(cx).session().clone()
     }
 
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
-        match &self.mode {
-            DebugSessionState::Running(state) => state.update(cx, |state, cx| state.shutdown(cx)),
+        self.running_state
+            .update(cx, |state, cx| state.shutdown(cx));
+    }
+
+    pub(crate) fn label(&self, cx: &App) -> SharedString {
+        if let Some(label) = self.label.get() {
+            return label.clone();
         }
+
+        let session = self.running_state.read(cx).session();
+
+        self.label
+            .get_or_init(|| session.read(cx).label())
+            .to_owned()
     }
 
-    pub(crate) fn mode(&self) -> &DebugSessionState {
-        &self.mode
+    pub(crate) fn running_state(&self) -> &Entity<RunningState> {
+        &self.running_state
     }
 
-    pub(crate) fn label(&self, cx: &App) -> String {
-        let session_id = match &self.mode {
-            DebugSessionState::Running(running_state) => running_state.read(cx).session_id(),
-        };
-        let Ok(Some(session)) = self
-            .dap_store
-            .read_with(cx, |store, _| store.session_by_id(session_id))
-        else {
-            return "".to_owned();
-        };
-        session
+    pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
+        let label = self.label(cx);
+
+        let is_terminated = self
+            .running_state
             .read(cx)
-            .as_local()
-            .expect("Remote Debug Sessions are not implemented yet")
-            .label()
+            .session()
+            .read(cx)
+            .is_terminated();
+        let icon = {
+            if is_terminated {
+                Some(Indicator::dot().color(Color::Error))
+            } else {
+                match self
+                    .running_state
+                    .read(cx)
+                    .thread_status(cx)
+                    .unwrap_or_default()
+                {
+                    project::debugger::session::ThreadStatus::Stopped => {
+                        Some(Indicator::dot().color(Color::Conflict))
+                    }
+                    _ => Some(Indicator::dot().color(Color::Success)),
+                }
+            }
+        };
+
+        h_flex()
+            .gap_2()
+            .when_some(icon, |this, indicator| this.child(indicator))
+            .justify_between()
+            .child(Label::new(label).when(is_terminated, |this| this.strikethrough()))
+            .into_any_element()
     }
 }
 
@@ -113,14 +140,15 @@ impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
 
 impl Focusable for DebugSession {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match &self.mode {
-            DebugSessionState::Running(running_state) => running_state.focus_handle(cx),
-        }
+        self.running_state.focus_handle(cx)
     }
 }
 
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Debugger".into()
+    }
 }
 
 impl FollowableItem for DebugSession {
@@ -164,9 +192,9 @@ impl FollowableItem for DebugSession {
         Task::ready(Ok(()))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        _leader_peer_id: Option<PeerId>,
+        _leader_id: Option<CollaboratorId>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
@@ -191,10 +219,7 @@ impl FollowableItem for DebugSession {
 
 impl Render for DebugSession {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match &self.mode {
-            DebugSessionState::Running(running_state) => {
-                running_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
-            }
-        }
+        self.running_state
+            .update(cx, |this, cx| this.render(window, cx).into_any_element())
     }
 }

@@ -31,7 +31,7 @@ use crate::{
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
@@ -49,8 +49,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -258,6 +258,7 @@ impl DisplayMap {
                         height: Some(height),
                         style,
                         priority,
+                        render_in_minimap: true,
                     }
                 }),
         );
@@ -391,7 +392,7 @@ impl DisplayMap {
         &mut self,
         crease_ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
     }
@@ -572,6 +573,21 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
+    }
+
+    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
+        let to_remove = self
+            .inlay_map
+            .current_inlays()
+            .filter_map(|inlay| {
+                if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                    Some(inlay.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.inlay_map.splice(&to_remove, Vec::new());
     }
 
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
@@ -793,10 +809,14 @@ impl DisplaySnapshot {
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = MultiBufferPoint::new(range.start.row, 0);
-        let new_end = MultiBufferPoint::new(
-            range.end.row,
-            self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
-        );
+        let new_end = if range.end.column > 0 {
+            MultiBufferPoint::new(
+                range.end.row,
+                self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+            )
+        } else {
+            range.end
+        };
 
         new_start..new_end
     }
@@ -931,16 +951,17 @@ impl DisplaySnapshot {
                 diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
             }
 
-            if let Some(severity) = chunk.diagnostic_severity {
-                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
-                    let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
-                    diagnostic_highlight.underline = Some(UnderlineStyle {
-                        color: Some(diagnostic_color),
-                        thickness: 1.0.into(),
-                        wavy: true,
-                    });
-                }
+            // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
+            if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
+                editor_style.show_underlines
+                    && (!chunk.is_unnecessary || *severity <= DiagnosticSeverity::WARNING)
+            }) {
+                let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
+                diagnostic_highlight.underline = Some(UnderlineStyle {
+                    color: Some(diagnostic_color),
+                    thickness: 1.0.into(),
+                    wavy: true,
+                });
             }
 
             if let Some(highlight_style) = highlight_style.as_mut() {
@@ -1594,6 +1615,7 @@ pub mod tests {
                                         height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
+                                        render_in_minimap: true,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1742,7 +1764,6 @@ pub mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.background_executor
@@ -1760,7 +1781,7 @@ pub mod tests {
                 editor.update(cx, |editor, _cx| editor.text_layout_details(window));
 
             let font_size = px(12.0);
-            let wrap_width = Some(px(64.));
+            let wrap_width = Some(px(96.));
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
@@ -1957,6 +1978,7 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2152,6 +2174,7 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     },
                     BlockProperties {
                         placement: BlockPlacement::Below(
@@ -2161,6 +2184,7 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     },
                 ],
                 cx,
@@ -2266,6 +2290,7 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             )
@@ -2340,6 +2365,7 @@ pub mod tests {
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2411,8 +2437,6 @@ pub mod tests {
         }
     }
 
-    // todo(linux) fails due to pixel differences in text rendering
-    #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         cx.background_executor

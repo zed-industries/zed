@@ -1,6 +1,6 @@
 use crate::{
-    Icon, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
-    h_flex, prelude::*, utils::WithRemSize, v_flex,
+    Icon, IconButtonShape, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator,
+    ListSubHeader, h_flex, prelude::*, utils::WithRemSize, v_flex,
 };
 use gpui::{
     Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -11,9 +11,13 @@ use settings::Settings;
 use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
 
+use super::Tooltip;
+
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
+    /// title, link_label, link_url
+    HeaderWithLink(SharedString, SharedString, SharedString), // This could be folded into header
     Label(SharedString),
     Entry(ContextMenuEntry),
     CustomEntry {
@@ -46,7 +50,11 @@ pub struct ContextMenuEntry {
     handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
-    documentation_aside: Option<Rc<dyn Fn(&mut App) -> AnyElement>>,
+    documentation_aside: Option<DocumentationAside>,
+    end_slot_icon: Option<IconName>,
+    end_slot_title: Option<SharedString>,
+    end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
+    show_end_slot_on_hover: bool,
 }
 
 impl ContextMenuEntry {
@@ -62,6 +70,10 @@ impl ContextMenuEntry {
             action: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }
     }
 
@@ -112,9 +124,14 @@ impl ContextMenuEntry {
 
     pub fn documentation_aside(
         mut self,
-        element: impl Fn(&mut App) -> AnyElement + 'static,
+        side: DocumentationSide,
+        render: impl Fn(&mut App) -> AnyElement + 'static,
     ) -> Self {
-        self.documentation_aside = Some(Rc::new(element));
+        self.documentation_aside = Some(DocumentationAside {
+            side,
+            render: Rc::new(render),
+        });
+
         self
     }
 }
@@ -133,9 +150,25 @@ pub struct ContextMenu {
     selected_index: Option<usize>,
     delayed: bool,
     clicked: bool,
+    end_slot_action: Option<Box<dyn Action>>,
+    key_context: SharedString,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
-    documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
+    eager: bool,
+    documentation_aside: Option<(usize, DocumentationAside)>,
+    fixed_width: Option<DefiniteLength>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum DocumentationSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone)]
+pub struct DocumentationAside {
+    side: DocumentationSide,
+    render: Rc<dyn Fn(&mut App) -> AnyElement>,
 }
 
 impl Focusable for ContextMenu {
@@ -171,9 +204,13 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
+                    eager: false,
                     documentation_aside: None,
+                    fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -210,9 +247,49 @@ impl ContextMenu {
                     selected_index: None,
                     delayed: false,
                     clicked: false,
+                    key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
+                    eager: false,
                     documentation_aside: None,
+                    fixed_width: None,
+                    end_slot_action: None,
+                },
+                window,
+                cx,
+            )
+        })
+    }
+
+    pub fn build_eager(
+        window: &mut Window,
+        cx: &mut App,
+        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            let _on_blur_subscription = cx.on_blur(
+                &focus_handle,
+                window,
+                |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
+            );
+            window.refresh();
+            f(
+                Self {
+                    builder: None,
+                    items: Default::default(),
+                    focus_handle,
+                    action_context: None,
+                    selected_index: None,
+                    delayed: false,
+                    clicked: false,
+                    key_context: "menu".into(),
+                    _on_blur_subscription,
+                    keep_open_on_confirm: false,
+                    eager: true,
+                    documentation_aside: None,
+                    fixed_width: None,
+                    end_slot_action: None,
                 },
                 window,
                 cx,
@@ -227,7 +304,7 @@ impl ContextMenu {
     ///
     /// This only works if the [`ContextMenu`] was constructed using [`ContextMenu::build_persistent`]. Otherwise it is
     /// a no-op.
-    fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn rebuild(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(builder) = self.builder.clone() else {
             return;
         };
@@ -243,13 +320,17 @@ impl ContextMenu {
                 selected_index: None,
                 delayed: false,
                 clicked: false,
+                key_context: "menu".into(),
                 _on_blur_subscription: cx.on_blur(
                     &focus_handle,
                     window,
                     |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
                 ),
                 keep_open_on_confirm: false,
+                eager: false,
                 documentation_aside: None,
+                fixed_width: None,
+                end_slot_action: None,
             },
             window,
             cx,
@@ -267,6 +348,20 @@ impl ContextMenu {
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Header(title.into()));
+        self
+    }
+
+    pub fn header_with_link(
+        mut self,
+        title: impl Into<SharedString>,
+        link_label: impl Into<SharedString>,
+        link_url: impl Into<SharedString>,
+    ) -> Self {
+        self.items.push(ContextMenuItem::HeaderWithLink(
+            title.into(),
+            link_label.into(),
+            link_url.into(),
+        ));
         self
     }
 
@@ -302,6 +397,66 @@ impl ContextMenu {
             action,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+            show_end_slot_on_hover: false,
+        }));
+        self
+    }
+
+    pub fn entry_with_end_slot(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: None,
+            icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: false,
+        }));
+        self
+    }
+
+    pub fn entry_with_end_slot_on_hover(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+        end_slot_icon: IconName,
+        end_slot_title: SharedString,
+        end_slot_handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
+            icon: None,
+            icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
+            action,
+            disabled: false,
+            documentation_aside: None,
+            end_slot_icon: Some(end_slot_icon),
+            end_slot_title: Some(end_slot_title),
+            end_slot_handler: Some(Rc::new(move |_, window, cx| end_slot_handler(window, cx))),
+            show_end_slot_on_hover: true,
         }));
         self
     }
@@ -325,6 +480,10 @@ impl ContextMenu {
             action,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -376,6 +535,10 @@ impl ContextMenu {
             icon_color: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -401,6 +564,10 @@ impl ContextMenu {
             icon_color: None,
             disabled: true,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
@@ -417,12 +584,44 @@ impl ContextMenu {
             icon_color: None,
             disabled: false,
             documentation_aside: None,
+            end_slot_icon: None,
+            end_slot_title: None,
+            end_slot_handler: None,
+            show_end_slot_on_hover: false,
         }));
         self
     }
 
-    pub fn keep_open_on_confirm(mut self) -> Self {
-        self.keep_open_on_confirm = true;
+    pub fn keep_open_on_confirm(mut self, keep_open: bool) -> Self {
+        self.keep_open_on_confirm = keep_open;
+        self
+    }
+
+    pub fn trigger_end_slot_handler(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
+            return;
+        };
+        let ContextMenuItem::Entry(entry) = entry else {
+            return;
+        };
+        let Some(handler) = entry.end_slot_handler.as_ref() else {
+            return;
+        };
+        handler(None, window, cx);
+    }
+
+    pub fn fixed_width(mut self, width: DefiniteLength) -> Self {
+        self.fixed_width = Some(width);
+        self
+    }
+
+    pub fn end_slot_action(mut self, action: Box<dyn Action>) -> Self {
+        self.end_slot_action = Some(action);
+        self
+    }
+
+    pub fn key_context(mut self, context: impl Into<SharedString>) -> Self {
+        self.key_context = context.into();
         self
     }
 
@@ -435,7 +634,10 @@ impl ContextMenu {
                 ..
             })
             | ContextMenuItem::CustomEntry { handler, .. },
-        ) = self.selected_index.and_then(|ix| self.items.get(ix))
+        ) = self
+            .selected_index
+            .and_then(|ix| self.items.get(ix))
+            .filter(|_| !self.eager)
         {
             (handler)(context, window, cx)
         }
@@ -452,24 +654,43 @@ impl ContextMenu {
         cx.emit(DismissEvent);
     }
 
-    fn select_first(&mut self, _: &SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn end_slot(&mut self, _: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(item) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
+            return;
+        };
+        let ContextMenuItem::Entry(entry) = item else {
+            return;
+        };
+        let Some(handler) = entry.end_slot_handler.as_ref() else {
+            return;
+        };
+        handler(None, window, cx);
+        self.rebuild(window, cx);
+        cx.notify();
+    }
+
+    pub fn clear_selected(&mut self) {
+        self.selected_index = None;
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.items.iter().position(|item| item.is_selectable()) {
-            self.select_index(ix);
+            self.select_index(ix, window, cx);
         }
         cx.notify();
     }
 
-    pub fn select_last(&mut self) -> Option<usize> {
+    pub fn select_last(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<usize> {
         for (ix, item) in self.items.iter().enumerate().rev() {
             if item.is_selectable() {
-                return self.select_index(ix);
+                return self.select_index(ix, window, cx);
             }
         }
         None
     }
 
-    fn handle_select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        if self.select_last().is_some() {
+    fn handle_select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut Context<Self>) {
+        if self.select_last(window, cx).is_some() {
             cx.notify();
         }
     }
@@ -482,7 +703,7 @@ impl ContextMenu {
             } else {
                 for (ix, item) in self.items.iter().enumerate().skip(next_index) {
                     if item.is_selectable() {
-                        self.select_index(ix);
+                        self.select_index(ix, window, cx);
                         cx.notify();
                         break;
                     }
@@ -505,7 +726,7 @@ impl ContextMenu {
             } else {
                 for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
                     if item.is_selectable() {
-                        self.select_index(ix);
+                        self.select_index(ix, window, cx);
                         cx.notify();
                         break;
                     }
@@ -516,7 +737,13 @@ impl ContextMenu {
         }
     }
 
-    fn select_index(&mut self, ix: usize) -> Option<usize> {
+    fn select_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let context = self.action_context.as_ref();
         self.documentation_aside = None;
         let item = self.items.get(ix)?;
         if item.is_selectable() {
@@ -524,6 +751,9 @@ impl ContextMenu {
             if let ContextMenuItem::Entry(entry) = item {
                 if let Some(callback) = &entry.documentation_aside {
                     self.documentation_aside = Some((ix, callback.clone()));
+                }
+                if self.eager && !entry.disabled {
+                    (entry.handler)(context, window, cx)
                 }
             }
         }
@@ -553,7 +783,7 @@ impl ContextMenu {
                 false
             }
         }) {
-            self.select_index(ix);
+            self.select_index(ix, window, cx);
             self.delayed = true;
             cx.notify();
             let action = dispatched.boxed_clone();
@@ -591,6 +821,25 @@ impl ContextMenu {
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
                 .inset(true)
                 .into_any_element(),
+            ContextMenuItem::HeaderWithLink(header, label, url) => {
+                let url = url.clone();
+                let link_id = ElementId::Name(format!("link-{}", url).into());
+                ListSubHeader::new(header.clone())
+                    .inset(true)
+                    .end_slot(
+                        Button::new(link_id, label.clone())
+                            .color(Color::Muted)
+                            .label_size(LabelSize::Small)
+                            .size(ButtonSize::None)
+                            .style(ButtonStyle::Transparent)
+                            .on_click(move |_, _, cx| {
+                                let url = url.clone();
+                                cx.open_url(&url);
+                            })
+                            .into_any_element(),
+                    )
+                    .into_any_element()
+            }
             ContextMenuItem::Label(label) => ListItem::new(ix)
                 .inset(true)
                 .disabled(true)
@@ -658,7 +907,12 @@ impl ContextMenu {
             action,
             disabled,
             documentation_aside,
+            end_slot_icon,
+            end_slot_title,
+            end_slot_handler,
+            show_end_slot_on_hover,
         } = entry;
+        let this = cx.weak_entity();
 
         let handler = handler.clone();
         let menu = cx.entity().downgrade();
@@ -684,7 +938,7 @@ impl ContextMenu {
                     *icon_position == IconPosition::Start && toggle.is_none(),
                     |flex| flex.child(Icon::new(*icon_name).size(*icon_size).color(icon_color)),
                 )
-                .child(Label::new(label.clone()).color(label_color))
+                .child(Label::new(label.clone()).color(label_color).truncate())
                 .when(*icon_position == IconPosition::End, |flex| {
                     flex.child(Icon::new(*icon_name).size(*icon_size).color(icon_color))
                 })
@@ -692,32 +946,26 @@ impl ContextMenu {
         } else {
             Label::new(label.clone())
                 .color(label_color)
+                .truncate()
                 .into_any_element()
         };
 
-        let documentation_aside_callback = documentation_aside.clone();
-
         div()
             .id(("context-menu-child", ix))
-            .when_some(
-                documentation_aside_callback.clone(),
-                |this, documentation_aside_callback| {
-                    this.occlude()
-                        .on_hover(cx.listener(move |menu, hovered, _, cx| {
-                            if *hovered {
-                                menu.documentation_aside =
-                                    Some((ix, documentation_aside_callback.clone()));
-                                cx.notify();
-                            } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix)
-                            {
-                                menu.documentation_aside = None;
-                                cx.notify();
-                            }
-                        }))
-                },
-            )
+            .when_some(documentation_aside.clone(), |this, documentation_aside| {
+                this.occlude()
+                    .on_hover(cx.listener(move |menu, hovered, _, cx| {
+                        if *hovered {
+                            menu.documentation_aside = Some((ix, documentation_aside.clone()));
+                        } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix) {
+                            menu.documentation_aside = None;
+                        }
+                        cx.notify();
+                    }))
+            })
             .child(
                 ListItem::new(ix)
+                    .group_name("label_container")
                     .inset(true)
                     .disabled(*disabled)
                     .toggle_state(Some(ix) == self.selected_index)
@@ -753,21 +1001,77 @@ impl ContextMenu {
                                     })
                                     .map(|binding| {
                                         div().ml_4().child(binding.disabled(*disabled)).when(
-                                            *disabled && documentation_aside_callback.is_some(),
+                                            *disabled && documentation_aside.is_some(),
                                             |parent| parent.invisible(),
                                         )
                                     })
                             }))
-                            .when(
-                                *disabled && documentation_aside_callback.is_some(),
-                                |parent| {
-                                    parent.child(
-                                        Icon::new(IconName::Info)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                },
-                            ),
+                            .when(*disabled && documentation_aside.is_some(), |parent| {
+                                parent.child(
+                                    Icon::new(IconName::Info)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            }),
+                    )
+                    .when_some(
+                        end_slot_icon
+                            .as_ref()
+                            .zip(self.end_slot_action.as_ref())
+                            .zip(end_slot_title.as_ref())
+                            .zip(end_slot_handler.as_ref()),
+                        |el, (((icon, action), title), handler)| {
+                            el.end_slot({
+                                let icon_button = IconButton::new("end-slot-icon", *icon)
+                                    .shape(IconButtonShape::Square)
+                                    .tooltip({
+                                        let action_context = self.action_context.clone();
+                                        let title = title.clone();
+                                        let action = action.boxed_clone();
+                                        move |window, cx| {
+                                            action_context
+                                                .as_ref()
+                                                .map(|focus| {
+                                                    Tooltip::for_action_in(
+                                                        title.clone(),
+                                                        &*action,
+                                                        focus,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    Tooltip::for_action(
+                                                        title.clone(),
+                                                        &*action,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                        }
+                                    })
+                                    .on_click({
+                                        let handler = handler.clone();
+                                        move |_, window, cx| {
+                                            handler(None, window, cx);
+                                            this.update(cx, |this, cx| {
+                                                this.rebuild(window, cx);
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                        }
+                                    });
+
+                                if *show_end_slot_on_hover {
+                                    div()
+                                        .visible_on_hover("label_container")
+                                        .child(icon_button)
+                                        .into_any_element()
+                                } else {
+                                    icon_button.into_any_element()
+                                }
+                            })
+                        },
                     )
                     .on_click({
                         let context = self.action_context.clone();
@@ -794,6 +1098,7 @@ impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
         match self {
             ContextMenuItem::Header(_)
+            | ContextMenuItem::HeaderWithLink(_, _, _)
             | ContextMenuItem::Separator
             | ContextMenuItem::Label { .. } => false,
             ContextMenuItem::Entry(ContextMenuEntry { disabled, .. }) => !disabled,
@@ -809,10 +1114,17 @@ impl Render for ContextMenu {
         let rem_size = window.rem_size();
         let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
 
-        let aside = self
-            .documentation_aside
-            .as_ref()
-            .map(|(_, callback)| callback.clone());
+        let aside = self.documentation_aside.clone();
+        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+            WithRemSize::new(ui_font_size)
+                .occlude()
+                .elevation_2(cx)
+                .p_2()
+                .overflow_hidden()
+                .when(is_wide_window, |this| this.max_w_96())
+                .when(!is_wide_window, |this| this.max_w_48())
+                .child((aside.render)(cx))
+        };
 
         h_flex()
             .when(is_wide_window, |this| this.flex_row())
@@ -820,15 +1132,8 @@ impl Render for ContextMenu {
             .w_full()
             .items_start()
             .gap_1()
-            .child(div().children(aside.map(|aside| {
-                WithRemSize::new(ui_font_size)
-                    .occlude()
-                    .elevation_2(cx)
-                    .p_2()
-                    .overflow_hidden()
-                    .when(is_wide_window, |this| this.max_w_96())
-                    .when(!is_wide_window, |this| this.max_w_48())
-                    .child(aside(cx))
+            .child(div().children(aside.clone().and_then(|(_, aside)| {
+                (aside.side == DocumentationSide::Left).then(|| render_aside(aside, cx))
             })))
             .child(
                 WithRemSize::new(ui_font_size)
@@ -839,21 +1144,28 @@ impl Render for ContextMenu {
                     .child(
                         v_flex()
                             .id("context-menu")
-                            .min_w(px(200.))
                             .max_h(vh(0.75, window))
-                            .flex_1()
+                            .when_some(self.fixed_width, |this, width| {
+                                this.w(width).overflow_x_hidden()
+                            })
+                            .when(self.fixed_width.is_none(), |this| {
+                                this.min_w(px(200.)).flex_1()
+                            })
                             .overflow_y_scroll()
                             .track_focus(&self.focus_handle(cx))
                             .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                                 this.cancel(&menu::Cancel, window, cx)
                             }))
-                            .key_context("menu")
+                            .key_context(self.key_context.as_ref())
                             .on_action(cx.listener(ContextMenu::select_first))
                             .on_action(cx.listener(ContextMenu::handle_select_last))
                             .on_action(cx.listener(ContextMenu::select_next))
                             .on_action(cx.listener(ContextMenu::select_previous))
                             .on_action(cx.listener(ContextMenu::confirm))
                             .on_action(cx.listener(ContextMenu::cancel))
+                            .when_some(self.end_slot_action.as_ref(), |el, action| {
+                                el.on_boxed_action(&**action, cx.listener(ContextMenu::end_slot))
+                            })
                             .when(!self.delayed, |mut el| {
                                 for item in self.items.iter() {
                                     if let ContextMenuItem::Entry(ContextMenuEntry {
@@ -879,5 +1191,8 @@ impl Render for ContextMenu {
                             ),
                     ),
             )
+            .child(div().children(aside.and_then(|(_, aside)| {
+                (aside.side == DocumentationSide::Right).then(|| render_aside(aside, cx))
+            })))
     }
 }

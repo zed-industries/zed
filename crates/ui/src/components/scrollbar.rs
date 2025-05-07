@@ -41,10 +41,6 @@ impl ScrollableHandle for UniformListScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.0.borrow().base_handle.bounds()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 impl ScrollableHandle for ListState {
@@ -73,10 +69,6 @@ impl ScrollableHandle for ListState {
 
     fn viewport(&self) -> Bounds<Pixels> {
         self.viewport_bounds()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -115,10 +107,6 @@ impl ScrollableHandle for ScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.bounds()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 #[derive(Debug)]
@@ -127,12 +115,11 @@ pub struct ContentSize {
     pub scroll_adjustment: Option<Point<Pixels>>,
 }
 
-pub trait ScrollableHandle: Debug + 'static {
+pub trait ScrollableHandle: Any + Debug {
     fn content_size(&self) -> Option<ContentSize>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
-    fn as_any(&self) -> &dyn Any;
     fn drag_started(&self) {}
     fn drag_ended(&self) {}
 }
@@ -287,10 +274,8 @@ impl Element for Scrollbar {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();
             let thumb_base_color = match self.state.thumb_state.get() {
-                // TODO: Use the active scrollbar thumb color once available in themes.
-                ThumbState::Dragging(_) | ThumbState::Hover => {
-                    colors.scrollbar_thumb_hover_background
-                }
+                ThumbState::Dragging(_) => colors.scrollbar_thumb_active_background,
+                ThumbState::Hover => colors.scrollbar_thumb_hover_background,
                 ThumbState::Inactive => colors.scrollbar_thumb_background,
             };
 

@@ -25,6 +25,17 @@ enable = false
 "/assistant.html" = "/docs/assistant/assistant.html"
 "/developing-zed.html" = "/docs/development.html"
 "/conversations.html" = "/community-links"
+"/assistant/assistant.html" = "/docs/ai/overview.html"
+"/assistant/configuration.html" = "/docs/ai/custom-api-keys.html"
+"/assistant/assistant-panel.html" = "/docs/ai/agent-panel.html"
+"/assistant/contexts.html" = "/docs/ai/text-threads.html"
+"/assistant/inline-assistant.html" = "/docs/ai/inline-assistant.html"
+"/assistant/commands.html" = "/docs/ai/text-threads.html"
+"/assistant/prompting.html" = "/docs/ai/rules.html"
+"/assistant/context-servers.html" = "/docs/ai/mcp.html"
+"/assistant/model-context-protocol.html" = "/docs/ai/mcp.html"
+"/model-improvement.html" = "/docs/ai/ai-improvement.html"
+
 
 # Our custom preprocessor for expanding commands like `{#kb action::ActionName}`,
 # and other docs-related functions.

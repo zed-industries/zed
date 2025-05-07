@@ -20,7 +20,7 @@ use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
 };
-use gpui::{App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity, actions};
+use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -47,6 +47,7 @@ use std::{
 };
 use telemetry::Telemetry;
 use thiserror::Error;
+use tokio::net::TcpStream;
 use url::Url;
 use util::{ResultExt, TryFutureExt};
 
@@ -104,6 +105,8 @@ impl Settings for ClientSettings {
         }
         Ok(result)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -129,6 +132,10 @@ impl Settings for ProxySettings {
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.string_setting("http.proxy", &mut current.proxy);
     }
 }
 
@@ -518,6 +525,18 @@ impl settings::Settings for TelemetrySettings {
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting("telemetry.telemetryLevel", &mut current.metrics, |s| {
+            Some(s == "all")
+        });
+        vscode.enum_setting("telemetry.telemetryLevel", &mut current.diagnostics, |s| {
+            Some(matches!(s, "all" | "error" | "crash"))
+        });
+        // we could translate telemetry.telemetryLevel, but just because users didn't want
+        // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
+        // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
+    }
 }
 
 impl Client {
@@ -546,7 +565,7 @@ impl Client {
 
     pub fn production(cx: &mut App) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new_uri(
+        let http = Arc::new(HttpClientWithUrl::new_url(
             cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
             cx.http_client().proxy().cloned(),
@@ -1086,7 +1105,7 @@ impl Client {
         let rpc_url = self.rpc_url(http, release_channel);
         let system_id = self.telemetry.system_id();
         let metrics_id = self.telemetry.metrics_id();
-        cx.background_spawn(async move {
+        cx.spawn(async move |cx| {
             use HttpOrHttps::*;
 
             #[derive(Debug)]
@@ -1105,7 +1124,15 @@ impl Client {
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
                 .ok_or_else(|| anyhow!("missing host in rpc url"))?;
-            let stream = connect_socks_proxy_stream(proxy.as_ref(), rpc_host).await?;
+
+            let stream = {
+                let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
+                let _guard = handle.enter();
+                match proxy {
+                    Some(proxy) => connect_socks_proxy_stream(&proxy, rpc_host).await?,
+                    None => Box::new(TcpStream::connect(rpc_host).await?),
+                }
+            };
 
             log::info!("connected to rpc endpoint {}", rpc_url);
 
@@ -1144,30 +1171,19 @@ impl Client {
                 request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
             }
 
-            match url_scheme {
-                Https => {
-                    let (stream, _) =
-                        async_tungstenite::async_tls::client_async_tls_with_connector(
-                            request,
-                            stream,
-                            Some(http_client_tls::tls_config().into()),
-                        )
-                        .await?;
-                    Ok(Connection::new(
-                        stream
-                            .map_err(|error| anyhow!(error))
-                            .sink_map_err(|error| anyhow!(error)),
-                    ))
-                }
-                Http => {
-                    let (stream, _) = async_tungstenite::client_async(request, stream).await?;
-                    Ok(Connection::new(
-                        stream
-                            .map_err(|error| anyhow!(error))
-                            .sink_map_err(|error| anyhow!(error)),
-                    ))
-                }
-            }
+            let (stream, _) = async_tungstenite::tokio::client_async_tls_with_connector_and_config(
+                request,
+                stream,
+                Some(Arc::new(http_client_tls::tls_config()).into()),
+                None,
+            )
+            .await?;
+
+            Ok(Connection::new(
+                stream
+                    .map_err(|error| anyhow!(error))
+                    .sink_map_err(|error| anyhow!(error)),
+            ))
         })
     }
 
@@ -1639,7 +1655,7 @@ mod tests {
     use crate::test::FakeServer;
 
     use clock::FakeSystemClock;
-    use gpui::{BackgroundExecutor, TestAppContext};
+    use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
     use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;

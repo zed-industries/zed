@@ -508,7 +508,6 @@ enum DapStackPresentationHint {
     Subtle = 2;
     StackUnknown = 3;
 }
-
 message DapModule {
     DapModuleId id = 1;
     string name = 2;
@@ -522,9 +521,95 @@ message DapModule {
     optional string address_range = 10;
 }
 
+message DebugTaskDefinition {
+    string adapter = 1;
+    string label = 2;
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 3;
+        DebugAttachRequest debug_attach_request = 4;
+    }
+    optional string initialize_args = 5;
+    optional TcpHost tcp_connection = 6;
+    optional bool stop_on_entry = 7;
+}
+
+message TcpHost {
+    optional uint32 port = 1;
+    optional string host = 2;
+    optional uint64 timeout = 3;
+}
+
+message DebugLaunchRequest {
+    string program = 1;
+    optional string cwd = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+}
+
+message DebugAttachRequest {
+    uint32 process_id = 1;
+}
+
 message DapModuleId {
     oneof id {
         uint32 number = 1;
         string string = 2;
     }
+}
+
+message GetDebugAdapterBinary {
+    uint64 project_id = 1;
+    uint64 session_id = 3;
+    DebugTaskDefinition definition = 2;
+}
+
+message DebugAdapterBinary {
+    string command = 1;
+    repeated string arguments = 2;
+    map<string, string> envs = 3;
+    optional string cwd = 4;
+    optional TcpHost connection = 5;
+    string configuration = 7;
+    LaunchType launch_type = 8;
+    enum LaunchType {
+        Attach = 0;
+        Launch = 1;
+    }
+}
+
+message RunDebugLocators {
+    uint64 project_id = 1;
+    SpawnInTerminal build_command = 2;
+    string locator = 3;
+}
+
+message DebugRequest {
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 1;
+        DebugAttachRequest debug_attach_request = 2;
+    }
+}
+
+message DebugScenario {
+    string label = 1;
+    string adapter = 2;
+    reserved 3;
+    DebugRequest request = 4;
+    optional TcpHost connection = 5;
+    optional bool stop_on_entry = 6;
+    optional string configuration = 7;
+}
+
+message SpawnInTerminal {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
+}
+
+message LogToDebugConsole {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    string message = 3;
 }

@@ -704,8 +704,15 @@ impl LanguageServer {
                             }),
                             insert_replace_support: Some(true),
                             label_details_support: Some(true),
+                            insert_text_mode_support: Some(InsertTextModeSupport {
+                                value_set: vec![
+                                    InsertTextMode::AS_IS,
+                                    InsertTextMode::ADJUST_INDENTATION,
+                                ],
+                            }),
                             ..Default::default()
                         }),
+                        insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
                             item_defaults: Some(vec![
                                 "commitCharacters".to_owned(),
@@ -1157,7 +1164,7 @@ impl LanguageServer {
                             id: NumberOrString::Number(id),
                         },
                     )
-                    .log_err();
+                    .ok();
                 }
             });
 
@@ -1227,7 +1234,7 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
     /// Add new workspace folder to the list.
@@ -1257,7 +1264,7 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
@@ -1286,7 +1293,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
 
@@ -1304,14 +1311,14 @@ impl LanguageServer {
         self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
             text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
         })
-        .log_err();
+        .ok();
     }
 
     pub fn unregister_buffer(&self, uri: Url) {
         self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
-        .log_err();
+        .ok();
     }
 }
 

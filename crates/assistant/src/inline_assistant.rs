@@ -9,20 +9,17 @@ use client::{ErrorExt, telemetry::Telemetry};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
-    ToOffset as _, ToPoint,
+    EditorStyle, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
-        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
-        ToDisplayPoint,
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
+        RenderBlock, ToDisplayPoint,
     },
 };
-use feature_flags::{
-    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
-};
+use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use futures::{
-    SinkExt, Stream, StreamExt,
+    SinkExt, Stream, StreamExt, TryStreamExt as _,
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
     join,
@@ -74,25 +71,19 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        let workspace = cx.entity().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, window, cx)
-        });
-
-        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
-            |is_assistant2_enabled, _workspace, _window, cx| {
-                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
-                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
-                });
-            }
+    // Don't register now that the Agent is released.
+    if false {
+        cx.observe_new(|_, window, cx| {
+            let Some(window) = window else {
+                return;
+            };
+            let workspace = cx.entity().clone();
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                inline_assistant.register_workspace(&workspace, window, cx)
+            });
         })
         .detach();
-    })
-    .detach();
+    }
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -108,7 +99,6 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
-    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -130,7 +120,6 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
-            is_assistant2_enabled: false,
         }
     }
 
@@ -199,7 +188,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = self.is_assistant2_enabled;
+        let is_assistant2_enabled = true;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
@@ -348,11 +337,11 @@ impl InlineAssistant {
                 )
             });
 
-            let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+            let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
             let prompt_editor = cx.new(|cx| {
                 PromptEditor::new(
                     assist_id,
-                    gutter_dimensions.clone(),
+                    editor_margins,
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
@@ -457,11 +446,11 @@ impl InlineAssistant {
             )
         });
 
-        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+        let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new(
                 assist_id,
-                gutter_dimensions.clone(),
+                editor_margins,
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen.clone(),
@@ -530,6 +519,7 @@ impl InlineAssistant {
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
+                render_in_minimap: false,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -544,6 +534,7 @@ impl InlineAssistant {
                         .into_any_element()
                 }),
                 priority: 0,
+                render_in_minimap: false,
             },
         ];
 
@@ -1226,7 +1217,7 @@ impl InlineAssistant {
                 editor.highlight_rows::<InlineAssist>(
                     row_range,
                     cx.theme().status().info_background,
-                    false,
+                    Default::default(),
                     cx,
                 );
             }
@@ -1281,17 +1272,17 @@ impl InlineAssistant {
 
                     enum DeletedLines {}
                     let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+                    editor.disable_scrollbars_and_minimap(cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
-                    editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
-                        false,
+                        Default::default(),
                         cx,
                     );
                     editor
@@ -1309,11 +1300,12 @@ impl InlineAssistant {
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.window.line_height())
-                            .pl(cx.gutter_dimensions.full_width())
+                            .pl(cx.margins.gutter.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
                     }),
                     priority: 0,
+                    render_in_minimap: false,
                 });
             }
 
@@ -1420,7 +1412,7 @@ impl InlineAssistGroup {
 fn build_assist_editor_renderer(editor: &Entity<PromptEditor>) -> RenderBlock {
     let editor = editor.clone();
     Arc::new(move |cx: &mut BlockContext| {
-        *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
+        *editor.read(cx).editor_margins.lock() = *cx.margins;
         editor.clone().into_any_element()
     })
 }
@@ -1460,7 +1452,7 @@ struct PromptEditor {
     editor: Entity<Editor>,
     language_model_selector: Entity<LanguageModelSelector>,
     edited_since_done: bool,
-    gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+    editor_margins: Arc<Mutex<EditorMargins>>,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
     pending_prompt: String,
@@ -1484,7 +1476,8 @@ impl EventEmitter<PromptEditorEvent> for PromptEditor {}
 
 impl Render for PromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let gutter_dimensions = *self.gutter_dimensions.lock();
+        let editor_margins = *self.editor_margins.lock();
+        let gutter_dimensions = editor_margins.gutter;
         let codegen = self.codegen.read(cx);
 
         let mut buttons = Vec::new();
@@ -1609,6 +1602,7 @@ impl Render for PromptEditor {
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()
+            .pr(editor_margins.right)
             .py(window.line_height() / 2.5)
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
@@ -1652,7 +1646,7 @@ impl Render for PromptEditor {
 
                         let error_message = SharedString::from(error.to_string());
                         if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                            && cx.has_flag::<ZedPro>()
+                            && cx.has_flag::<ZedProFeatureFlag>()
                         {
                             el.child(
                                 v_flex()
@@ -1691,7 +1685,7 @@ impl Render for PromptEditor {
             .child(
                 h_flex()
                     .gap_2()
-                    .pr_6()
+                    .pr(px(9.))
                     .children(self.render_token_count(cx))
                     .children(buttons),
             )
@@ -1709,7 +1703,7 @@ impl PromptEditor {
 
     fn new(
         id: InlineAssistId,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        editor_margins: Arc<Mutex<EditorMargins>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<Codegen>,
@@ -1759,6 +1753,7 @@ impl PromptEditor {
             language_model_selector: cx.new(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
+                    |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
                         update_settings_file::<AssistantSettings>(
                             fs.clone(),
@@ -1771,7 +1766,7 @@ impl PromptEditor {
                 )
             }),
             edited_since_done: false,
-            gutter_dimensions,
+            editor_margins,
             prompt_history,
             prompt_history_ix: None,
             pending_prompt: String::new(),
@@ -1814,10 +1809,6 @@ impl PromptEditor {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(
-                Self::placeholder_text(self.codegen.read(cx), window, cx),
-                cx,
-            );
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
@@ -1965,7 +1956,7 @@ impl PromptEditor {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedPro>()
+                if cx.has_flag::<ZedProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
                     && !dismissed_rate_limit_notice()
                 {
@@ -2487,7 +2478,7 @@ impl InlineAssist {
                     .read(cx)
                     .active_context(cx)?
                     .read(cx)
-                    .to_completion_request(RequestType::Chat, cx),
+                    .to_completion_request(None, RequestType::Chat, cx),
             )
         } else {
             None
@@ -2873,7 +2864,8 @@ impl CodegenAlternative {
         if let Some(ConfiguredModel { model, .. }) =
             LanguageModelRegistry::read_global(cx).inline_assistant_model()
         {
-            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
+            let request =
+                self.build_request(&model, user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
                     let total_count = model.count_tokens(request.clone(), cx);
@@ -2918,7 +2910,8 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
+                let request =
+                    self.build_request(&model, user_prompt, assistant_panel_context, cx)?;
                 self.request = Some(request.clone());
 
                 cx.spawn(async move |_, cx| model.stream_completion_text(request, &cx).await)
@@ -2930,6 +2923,7 @@ impl CodegenAlternative {
 
     fn build_request(
         &self,
+        model: &Arc<dyn LanguageModel>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
@@ -2978,10 +2972,13 @@ impl CodegenAlternative {
         });
 
         Ok(LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: None,
+            temperature: AssistantSettings::temperature_for_model(&model, cx),
         })
     }
 
@@ -3020,7 +3017,7 @@ impl CodegenAlternative {
             }
         }
 
-        let http_client = cx.http_client().clone();
+        let http_client = cx.http_client();
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
@@ -3053,7 +3050,8 @@ impl CodegenAlternative {
                         let mut response_latency = None;
                         let request_start = Instant::now();
                         let diff = async {
-                            let chunks = StripInvalidSpans::new(stream?.stream);
+                            let chunks =
+                                StripInvalidSpans::new(stream?.stream.map_err(|e| e.into()));
                             futures::pin_mut!(chunks);
                             let mut diff = StreamingDiff::new(selected_text.to_string());
                             let mut line_diff = LineDiff::default();

@@ -1,7 +1,7 @@
 use assets::Assets;
 use gpui::{Application, Entity, KeyBinding, StyleRefinement, WindowOptions, prelude::*, rgb};
 use language::{LanguageRegistry, language_settings::AllLanguageSettings};
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -20,7 +20,6 @@ function a(b: T) {
 
 }
 ```
-
 
 Remember, markdown processors may have slight differences and extensions, so always refer to the specific documentation or guides relevant to your platform or editor for the best practices and additional features.
 "#;
@@ -47,54 +46,7 @@ pub fn main() {
 
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|cx| {
-                let markdown_style = MarkdownStyle {
-                    base_text_style: gpui::TextStyle {
-                        font_family: "Zed Plex Sans".into(),
-                        color: cx.theme().colors().terminal_ansi_black,
-                        ..Default::default()
-                    },
-                    code_block: StyleRefinement::default()
-                        .font_family("Zed Plex Mono")
-                        .m(rems(1.))
-                        .bg(rgb(0xAAAAAAA)),
-                    inline_code: gpui::TextStyleRefinement {
-                        font_family: Some("Zed Mono".into()),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        background_color: Some(cx.theme().colors().editor_background),
-                        ..Default::default()
-                    },
-                    rule_color: Color::Muted.color(cx),
-                    block_quote_border_color: Color::Muted.color(cx),
-                    block_quote: gpui::TextStyleRefinement {
-                        color: Some(Color::Muted.color(cx)),
-                        ..Default::default()
-                    },
-                    link: gpui::TextStyleRefinement {
-                        color: Some(Color::Accent.color(cx)),
-                        underline: Some(gpui::UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(Color::Accent.color(cx)),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    syntax: cx.theme().syntax().clone(),
-                    selection_background_color: {
-                        let mut selection = cx.theme().players().local().selection;
-                        selection.fade_out(0.7);
-                        selection
-                    },
-                    ..Default::default()
-                };
-
-                MarkdownExample::new(
-                    MARKDOWN_EXAMPLE.into(),
-                    markdown_style,
-                    language_registry,
-                    cx,
-                )
-            })
+            cx.new(|cx| MarkdownExample::new(MARKDOWN_EXAMPLE.into(), language_registry, cx))
         })
         .unwrap();
     });
@@ -105,16 +57,10 @@ struct MarkdownExample {
 }
 
 impl MarkdownExample {
-    pub fn new(
-        text: SharedString,
-        style: MarkdownStyle,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
+    pub fn new(text: SharedString, language_registry: Arc<LanguageRegistry>, cx: &mut App) -> Self {
         let markdown = cx.new(|cx| {
             Markdown::new(
                 text,
-                style,
                 Some(language_registry),
                 Some("TypeScript".to_string()),
                 cx,
@@ -125,7 +71,47 @@ impl MarkdownExample {
 }
 
 impl Render for MarkdownExample {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let markdown_style = MarkdownStyle {
+            base_text_style: gpui::TextStyle {
+                font_family: "Zed Plex Sans".into(),
+                color: cx.theme().colors().terminal_ansi_black,
+                ..Default::default()
+            },
+            code_block: StyleRefinement::default()
+                .font_family("Zed Plex Mono")
+                .m(rems(1.))
+                .bg(rgb(0xAAAAAAA)),
+            inline_code: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                color: Some(cx.theme().colors().editor_foreground),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            rule_color: Color::Muted.color(cx),
+            block_quote_border_color: Color::Muted.color(cx),
+            block_quote: gpui::TextStyleRefinement {
+                color: Some(Color::Muted.color(cx)),
+                ..Default::default()
+            },
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(Color::Accent.color(cx)),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: {
+                let mut selection = cx.theme().players().local().selection;
+                selection.fade_out(0.7);
+                selection
+            },
+            ..Default::default()
+        };
+
         div()
             .id("markdown-example")
             .debug_selector(|| "foo".into())
@@ -134,6 +120,6 @@ impl Render for MarkdownExample {
             .size_full()
             .p_4()
             .overflow_y_scroll()
-            .child(self.markdown.clone())
+            .child(MarkdownElement::new(self.markdown.clone(), markdown_style))
     }
 }

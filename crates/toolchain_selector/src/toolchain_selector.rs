@@ -50,6 +50,7 @@ impl ToolchainSelector {
 
         let language_name = buffer.read(cx).language()?.name();
         let worktree_id = buffer.read(cx).file()?.worktree_id(cx);
+        let relative_path: Arc<Path> = Arc::from(buffer.read(cx).file()?.path().parent()?);
         let worktree_root_path = project
             .read(cx)
             .worktree_for_id(worktree_id, cx)?
@@ -58,8 +59,9 @@ impl ToolchainSelector {
         let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
         cx.spawn_in(window, async move |workspace, cx| {
+            let as_str = relative_path.to_string_lossy().into_owned();
             let active_toolchain = workspace::WORKSPACE_DB
-                .toolchain(workspace_id, worktree_id, language_name.clone())
+                .toolchain(workspace_id, worktree_id, as_str, language_name.clone())
                 .await
                 .ok()
                 .flatten();
@@ -72,6 +74,7 @@ impl ToolchainSelector {
                             active_toolchain,
                             worktree_id,
                             worktree_root_path,
+                            relative_path,
                             language_name,
                             window,
                             cx,
@@ -91,6 +94,7 @@ impl ToolchainSelector {
         active_toolchain: Option<Toolchain>,
         worktree_id: WorktreeId,
         worktree_root: Arc<Path>,
+        relative_path: Arc<Path>,
         language_name: LanguageName,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -104,6 +108,7 @@ impl ToolchainSelector {
                 worktree_id,
                 worktree_root,
                 project,
+                relative_path,
                 language_name,
                 window,
                 cx,
@@ -137,6 +142,7 @@ pub struct ToolchainSelectorDelegate {
     workspace: WeakEntity<Workspace>,
     worktree_id: WorktreeId,
     worktree_abs_path_root: Arc<Path>,
+    relative_path: Arc<Path>,
     placeholder_text: Arc<str>,
     _fetch_candidates_task: Task<Option<()>>,
 }
@@ -149,6 +155,7 @@ impl ToolchainSelectorDelegate {
         worktree_id: WorktreeId,
         worktree_abs_path_root: Arc<Path>,
         project: Entity<Project>,
+        relative_path: Arc<Path>,
         language_name: LanguageName,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -162,17 +169,26 @@ impl ToolchainSelectorDelegate {
                     })
                     .ok()?
                     .await?;
-                let placeholder_text = format!("Select a {}…", term.to_lowercase()).into();
+                let relative_path = this
+                    .update(cx, |this, _| this.delegate.relative_path.clone())
+                    .ok()?;
+                let placeholder_text = format!(
+                    "Select a {} for `{}`…",
+                    term.to_lowercase(),
+                    relative_path.to_string_lossy()
+                )
+                .into();
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.placeholder_text = placeholder_text;
                     this.refresh_placeholder(window, cx);
                 });
+
                 let available_toolchains = project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
                             ProjectPath {
                                 worktree_id,
-                                path: Arc::from("".as_ref()),
+                                path: relative_path.clone(),
                             },
                             language_name,
                             cx,
@@ -211,6 +227,7 @@ impl ToolchainSelectorDelegate {
             worktree_id,
             worktree_abs_path_root,
             placeholder_text,
+            relative_path,
             _fetch_candidates_task,
         }
     }
@@ -246,19 +263,18 @@ impl PickerDelegate for ToolchainSelectorDelegate {
             {
                 let workspace = self.workspace.clone();
                 let worktree_id = self.worktree_id;
+                let path = self.relative_path.clone();
+                let relative_path = self.relative_path.to_string_lossy().into_owned();
                 cx.spawn_in(window, async move |_, cx| {
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, "".to_owned(), toolchain.clone())
+                        .set_toolchain(workspace_id, worktree_id, relative_path, toolchain.clone())
                         .await
                         .log_err();
                     workspace
                         .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {
                                 this.activate_toolchain(
-                                    ProjectPath {
-                                        worktree_id,
-                                        path: Arc::from("".as_ref()),
-                                    },
+                                    ProjectPath { worktree_id, path },
                                     toolchain,
                                     cx,
                                 )

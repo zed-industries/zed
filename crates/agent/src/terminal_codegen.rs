@@ -32,7 +32,7 @@ impl TerminalCodegen {
         }
     }
 
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
+    pub fn start(&mut self, prompt_task: Task<LanguageModelRequest>, cx: &mut Context<Self>) {
         let Some(ConfiguredModel { model, .. }) =
             LanguageModelRegistry::read_global(cx).inline_assistant_model()
         else {
@@ -45,6 +45,7 @@ impl TerminalCodegen {
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(async move |this, cx| {
+            let prompt = prompt_task.await;
             let model_telemetry_id = model.telemetry_id();
             let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;

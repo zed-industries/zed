@@ -5,6 +5,18 @@ first_line_pattern = '^#!.*\bpython[0-9.]*\b'
 line_comments = ["# "]
 autoclose_before = ";:.,=}])>"
 brackets = [
+    { start = "f\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "f'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "b\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "b'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "u\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "u'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "r\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "r'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "rb\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "rb'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "t\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "t'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
     { start = "\"\"\"", end = "\"\"\"", close = true, newline = false, not_in = ["string"] },
     { start = "'''", end = "'''", close = true, newline = false, not_in = ["string"] },
     { start = "{", end = "}", close = true, newline = true },
@@ -15,5 +27,7 @@ brackets = [
 ]
 
 auto_indent_using_last_non_empty_line = false
-increase_indent_pattern = "^[^#].*:\\s*$"
+debuggers = ["Debugpy"]
+significant_indentation = true
+increase_indent_pattern = "^\\s*(try)\\b.*:"
 decrease_indent_pattern = "^\\s*(else|elif|except|finally)\\b.*:"
