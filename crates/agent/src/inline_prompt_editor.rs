@@ -11,9 +11,9 @@ use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
+use editor::display_map::EditorMargins;
 use editor::{
-    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle,
-    GutterDimensions, MultiBuffer,
+    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
@@ -61,11 +61,13 @@ impl<T: 'static> Render for PromptEditor<T> {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
 
-        let left_gutter_width = match &self.mode {
+        const RIGHT_PADDING: Pixels = px(9.);
+
+        let (left_gutter_width, right_padding) = match &self.mode {
             PromptEditorMode::Buffer {
                 id: _,
                 codegen,
-                gutter_dimensions,
+                editor_margins,
             } => {
                 let codegen = codegen.read(cx);
 
@@ -73,13 +75,17 @@ impl<T: 'static> Render for PromptEditor<T> {
                     buttons.push(self.render_cycle_controls(&codegen, cx));
                 }
 
-                let gutter_dimensions = gutter_dimensions.lock();
+                let editor_margins = editor_margins.lock();
+                let gutter = editor_margins.gutter;
 
-                gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0)
+                let left_gutter_width = gutter.full_width() + (gutter.margin / 2.0);
+                let right_padding = editor_margins.right + RIGHT_PADDING;
+
+                (left_gutter_width, right_padding)
             }
             PromptEditorMode::Terminal { .. } => {
                 // Give the equivalent of the same left-padding that we're using on the right
-                Pixels::from(40.0)
+                (Pixels::from(40.0), Pixels::from(24.))
             }
         };
 
@@ -100,7 +106,7 @@ impl<T: 'static> Render for PromptEditor<T> {
             .size_full()
             .pt_0p5()
             .pb(bottom_padding)
-            .pr_6()
+            .pr(right_padding)
             .child(
                 h_flex()
                     .items_start()
@@ -806,7 +812,7 @@ pub enum PromptEditorMode {
     Buffer {
         id: InlineAssistId,
         codegen: Entity<BufferCodegen>,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        editor_margins: Arc<Mutex<EditorMargins>>,
     },
     Terminal {
         id: TerminalInlineAssistId,
@@ -838,7 +844,7 @@ impl InlineAssistId {
 impl PromptEditor<BufferCodegen> {
     pub fn new_buffer(
         id: InlineAssistId,
-        gutter_dimensions: Arc<Mutex<GutterDimensions>>,
+        editor_margins: Arc<Mutex<EditorMargins>>,
         prompt_history: VecDeque<String>,
         prompt_buffer: Entity<MultiBuffer>,
         codegen: Entity<BufferCodegen>,
@@ -855,7 +861,7 @@ impl PromptEditor<BufferCodegen> {
         let mode = PromptEditorMode::Buffer {
             id,
             codegen,
-            gutter_dimensions,
+            editor_margins,
         };
 
         let prompt_editor = cx.new(|cx| {
@@ -995,11 +1001,9 @@ impl PromptEditor<BufferCodegen> {
         }
     }
 
-    pub fn gutter_dimensions(&self) -> &Arc<Mutex<GutterDimensions>> {
+    pub fn editor_margins(&self) -> &Arc<Mutex<EditorMargins>> {
         match &self.mode {
-            PromptEditorMode::Buffer {
-                gutter_dimensions, ..
-            } => gutter_dimensions,
+            PromptEditorMode::Buffer { editor_margins, .. } => editor_margins,
             PromptEditorMode::Terminal { .. } => unreachable!(),
         }
     }
