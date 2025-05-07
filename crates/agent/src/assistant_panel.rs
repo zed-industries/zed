@@ -39,6 +39,7 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
 use theme::ThemeSettings;
 use time::UtcOffset;
+use ui::utils::WithRemSize;
 use ui::{
     Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
     ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
@@ -46,7 +47,7 @@ use ui::{
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
-use zed_actions::agent::OpenConfiguration;
+use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 use zed_llm_client::UsageLimit;
@@ -59,6 +60,7 @@ use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
 use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
+use crate::ui::AgentOnboardingModal;
 use crate::{
     AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
     Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -145,6 +147,13 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
+                .register_action(|workspace, _: &OpenOnboardingModal, window, cx| {
+                    AgentOnboardingModal::toggle(workspace, window, cx)
+                })
+                .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
+                    window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
+                    window.refresh();
+                })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
                     set_trial_upsell_dismissed(false, cx);
                 });
@@ -169,7 +178,21 @@ enum ActiveView {
     Configuration,
 }
 
+enum WhichFontSize {
+    AgentFont,
+    BufferFont,
+    None,
+}
+
 impl ActiveView {
+    pub fn which_font_size_used(&self) -> WhichFontSize {
+        match self {
+            ActiveView::Thread { .. } | ActiveView::History => WhichFontSize::AgentFont,
+            ActiveView::PromptEditor { .. } => WhichFontSize::BufferFont,
+            ActiveView::Configuration => WhichFontSize::None,
+        }
+    }
+
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
         let summary = thread.read(cx).summary_or_default();
 
@@ -487,6 +510,7 @@ impl AssistantPanel {
                 thread_store.clone(),
                 context_store.clone(),
                 [RecentEntry::Thread(thread_id, thread.clone())],
+                window,
                 cx,
             )
         });
@@ -741,9 +765,9 @@ impl AssistantPanel {
         });
 
         if let Some(other_thread_id) = action.from_thread_id.clone() {
-            let other_thread_task = self
-                .thread_store
-                .update(cx, |this, cx| this.open_thread(&other_thread_id, cx));
+            let other_thread_task = self.thread_store.update(cx, |this, cx| {
+                this.open_thread(&other_thread_id, window, cx)
+            });
 
             cx.spawn({
                 let context_store = context_store.clone();
@@ -944,7 +968,7 @@ impl AssistantPanel {
     ) -> Task<Result<()>> {
         let open_thread_task = self
             .thread_store
-            .update(cx, |this, cx| this.open_thread(thread_id, cx));
+            .update(cx, |this, cx| this.open_thread(thread_id, window, cx));
         cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
@@ -1064,7 +1088,7 @@ impl AssistantPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.adjust_font_size(action.persist, px(1.0), cx);
+        self.handle_font_size_action(action.persist, px(1.0), cx);
     }
 
     pub fn decrease_font_size(
@@ -1073,21 +1097,36 @@ impl AssistantPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.adjust_font_size(action.persist, px(-1.0), cx);
+        self.handle_font_size_action(action.persist, px(-1.0), cx);
     }
 
-    fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
-        if persist {
-            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, cx| {
-                let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
-                let _ = settings
-                    .agent_font_size
-                    .insert(theme::clamp_font_size(agent_font_size).0);
-            });
-        } else {
-            theme::adjust_agent_font_size(cx, |size| {
-                *size += delta;
-            });
+    fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
+                if persist {
+                    update_settings_file::<ThemeSettings>(
+                        self.fs.clone(),
+                        cx,
+                        move |settings, cx| {
+                            let agent_font_size =
+                                ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                            let _ = settings
+                                .agent_font_size
+                                .insert(theme::clamp_font_size(agent_font_size).0);
+                        },
+                    );
+                } else {
+                    theme::adjust_agent_font_size(cx, |size| {
+                        *size += delta;
+                    });
+                }
+            }
+            WhichFontSize::BufferFont => {
+                // Prompt editor uses the buffer font size, so allow the action to propagate to the
+                // default handler that changes that font size.
+                cx.propagate();
+            }
+            WhichFontSize::None => {}
         }
     }
 
@@ -2552,6 +2591,46 @@ impl AssistantPanel {
             .into_any()
     }
 
+    fn render_prompt_editor(
+        &self,
+        context_editor: &Entity<ContextEditor>,
+        buffer_search_bar: &Entity<BufferSearchBar>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut registrar = buffer_search::DivRegistrar::new(
+            |this, _, _cx| match &this.active_view {
+                ActiveView::PromptEditor {
+                    buffer_search_bar, ..
+                } => Some(buffer_search_bar.clone()),
+                _ => None,
+            },
+            cx,
+        );
+        BufferSearchBar::register(&mut registrar);
+        registrar
+            .into_div()
+            .size_full()
+            .relative()
+            .map(|parent| {
+                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
+                    if buffer_search_bar.is_dismissed() {
+                        return parent;
+                    }
+                    parent.child(
+                        div()
+                            .p(DynamicSpacing::Base08.rems(cx))
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(buffer_search_bar.render(window, cx)),
+                    )
+                })
+            })
+            .child(context_editor.clone())
+            .child(self.render_drag_target(cx))
+    }
+
     fn render_drag_target(&self, cx: &Context<Self>) -> Div {
         let is_local = self.project.read(cx).is_local();
         div()
@@ -2675,6 +2754,41 @@ impl AssistantPanel {
 
 impl Render for AssistantPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = match &self.active_view {
+            ActiveView::Thread { .. } => v_flex()
+                .relative()
+                .justify_between()
+                .size_full()
+                .child(self.render_active_thread_or_empty_state(window, cx))
+                .children(self.render_tool_use_limit_reached(cx))
+                .child(h_flex().child(self.message_editor.clone()))
+                .children(self.render_last_error(cx))
+                .child(self.render_drag_target(cx))
+                .into_any(),
+            ActiveView::History => self.history.clone().into_any_element(),
+            ActiveView::PromptEditor {
+                context_editor,
+                buffer_search_bar,
+                ..
+            } => self
+                .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
+                .into_any(),
+            ActiveView::Configuration => v_flex()
+                .size_full()
+                .children(self.configuration.clone())
+                .into_any(),
+        };
+
+        let content = match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                    .size_full()
+                    .child(content)
+                    .into_any()
+            }
+            _ => content,
+        };
+
         v_flex()
             .key_context(self.key_context())
             .justify_between()
@@ -2700,60 +2814,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
-            .map(|parent| match &self.active_view {
-                ActiveView::Thread { .. } => parent.child(
-                    v_flex()
-                        .relative()
-                        .justify_between()
-                        .size_full()
-                        .child(self.render_active_thread_or_empty_state(window, cx))
-                        .children(self.render_tool_use_limit_reached(cx))
-                        .child(h_flex().child(self.message_editor.clone()))
-                        .children(self.render_last_error(cx))
-                        .child(self.render_drag_target(cx)),
-                ),
-                ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor {
-                    context_editor,
-                    buffer_search_bar,
-                    ..
-                } => {
-                    let mut registrar = buffer_search::DivRegistrar::new(
-                        |this, _, _cx| match &this.active_view {
-                            ActiveView::PromptEditor {
-                                buffer_search_bar, ..
-                            } => Some(buffer_search_bar.clone()),
-                            _ => None,
-                        },
-                        cx,
-                    );
-                    BufferSearchBar::register(&mut registrar);
-                    parent.child(
-                        registrar
-                            .into_div()
-                            .size_full()
-                            .relative()
-                            .map(|parent| {
-                                buffer_search_bar.update(cx, |buffer_search_bar, cx| {
-                                    if buffer_search_bar.is_dismissed() {
-                                        return parent;
-                                    }
-                                    parent.child(
-                                        div()
-                                            .p(DynamicSpacing::Base08.rems(cx))
-                                            .border_b_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .bg(cx.theme().colors().editor_background)
-                                            .child(buffer_search_bar.render(window, cx)),
-                                    )
-                                })
-                            })
-                            .child(context_editor.clone())
-                            .child(self.render_drag_target(cx)),
-                    )
-                }
-                ActiveView::Configuration => parent.children(self.configuration.clone()),
-            })
+            .child(content)
     }
 }
 

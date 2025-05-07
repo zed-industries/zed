@@ -18,7 +18,6 @@ use editor::{
     scroll::Autoscroll,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
-use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
@@ -2395,19 +2394,11 @@ impl ContextEditor {
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, window, cx| {
-                                    if cx.has_flag::<Assistant2FeatureFlag>() {
-                                        focus_handle.dispatch_action(
-                                            &zed_actions::agent::OpenConfiguration,
-                                            window,
-                                            cx,
-                                        );
-                                    } else {
-                                        focus_handle.dispatch_action(
-                                            &zed_actions::assistant::ShowConfiguration,
-                                            window,
-                                            cx,
-                                        );
-                                    };
+                                    focus_handle.dispatch_action(
+                                        &zed_actions::agent::OpenConfiguration,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }),
                     )

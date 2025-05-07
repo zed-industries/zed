@@ -44,9 +44,10 @@ use task::{
 use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
-    DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div,
+    h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -1420,11 +1421,7 @@ impl RunningState {
         });
     }
 
-    #[expect(
-        unused,
-        reason = "Support for disconnecting a client is not wired through yet"
-    )]
-    pub fn disconnect_client(&self, cx: &mut Context<Self>) {
+    pub fn detach_client(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.disconnect_client(cx);
         });
@@ -1442,6 +1439,7 @@ impl RunningState {
         cx: &mut Context<'_, RunningState>,
     ) -> DropdownMenu {
         let state = cx.entity();
+        let session_terminated = self.session.read(cx).is_terminated();
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
         let selected_thread_name = threads
             .iter()
@@ -1464,6 +1462,7 @@ impl RunningState {
                 this
             }),
         )
+        .disabled(session_terminated)
     }
 
     fn default_pane_layout(

@@ -98,7 +98,7 @@ impl Tool for FindPathTool {
             sender.send(paginated_matches.to_vec()).log_err();
 
             if matches.is_empty() {
-                Ok("No matches found".to_string())
+                Ok("No matches found".to_string().into())
             } else {
                 let mut message = format!("Found {} total matches.", matches.len());
                 if matches.len() > RESULTS_PER_PAGE {
@@ -113,7 +113,7 @@ impl Tool for FindPathTool {
                 for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
-                Ok(message)
+                Ok(message.into())
             }
         });
 

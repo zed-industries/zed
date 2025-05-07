@@ -127,7 +127,7 @@ impl Tool for DeletePathTool {
 
             match delete {
                 Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Ok(()) => Ok(format!("Deleted {path_str}").into()),
                     Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 },
                 None => Err(anyhow!(

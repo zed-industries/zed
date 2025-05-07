@@ -24,7 +24,7 @@ actions!(
     [
         Start,
         Continue,
-        Disconnect,
+        Detach,
         Pause,
         Restart,
         StepInto,
@@ -34,7 +34,6 @@ actions!(
         Stop,
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
-        CreateDebuggingSession,
         FocusConsole,
         FocusVariables,
         FocusBreakpointList,
@@ -145,38 +144,6 @@ pub fn init(cx: &mut App) {
                                 store.shutdown_sessions(cx).detach();
                             })
                         })
-                    },
-                )
-                .register_action(
-                    |workspace: &mut Workspace, _: &CreateDebuggingSession, window, cx| {
-                        if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                            let weak_panel = debug_panel.downgrade();
-                            let weak_workspace = cx.weak_entity();
-
-                            cx.spawn_in(window, async move |this, cx| {
-                                let task_contexts = this
-                                    .update_in(cx, |workspace, window, cx| {
-                                        tasks_ui::task_contexts(workspace, window, cx)
-                                    })?
-                                    .await;
-                                this.update_in(cx, |workspace, window, cx| {
-                                    workspace.toggle_modal(window, cx, |window, cx| {
-                                        NewSessionModal::new(
-                                            debug_panel.read(cx).past_debug_definition.clone(),
-                                            weak_panel,
-                                            weak_workspace,
-                                            None,
-                                            task_contexts,
-                                            window,
-                                            cx,
-                                        )
-                                    });
-                                })?;
-
-                                Result::<_, anyhow::Error>::Ok(())
-                            })
-                            .detach();
-                        }
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {

@@ -88,7 +88,7 @@ impl Tool for CreateDirectoryTool {
                 .await
                 .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
 
-            Ok(format!("Created directory {destination_path}"))
+            Ok(format!("Created directory {destination_path}").into())
         })
         .into()
     }

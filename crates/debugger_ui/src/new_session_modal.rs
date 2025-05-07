@@ -629,9 +629,7 @@ impl Render for NewSessionModal {
                             ),
                     )
                     .justify_between()
-                    .when(!matches!(self.mode, NewSessionMode::Scenario(_)), |this| {
-                        this.children(self.adapter_drop_down_menu(window, cx))
-                    })
+                    .children(self.adapter_drop_down_menu(window, cx))
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
@@ -644,7 +642,15 @@ impl Render for NewSessionModal {
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
                     .w_full()
-                    .child(self.debug_config_drop_down_menu(window, cx))
+                    .child(
+                        matches!(self.mode, NewSessionMode::Scenario(_))
+                            .not()
+                            .then(|| {
+                                self.debug_config_drop_down_menu(window, cx)
+                                    .into_any_element()
+                            })
+                            .unwrap_or_else(|| v_flex().w_full().into_any_element()),
+                    )
                     .child(
                         h_flex()
                             .justify_end()

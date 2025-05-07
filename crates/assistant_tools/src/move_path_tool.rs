@@ -117,10 +117,9 @@ impl Tool for MovePathTool {
 
         cx.background_spawn(async move {
             match rename_task.await {
-                Ok(_) => Ok(format!(
-                    "Moved {} to {}",
-                    input.source_path, input.destination_path
-                )),
+                Ok(_) => {
+                    Ok(format!("Moved {} to {}", input.source_path, input.destination_path).into())
+                }
                 Err(err) => Err(anyhow!(
                     "Failed to move {} to {}: {}",
                     input.source_path,
