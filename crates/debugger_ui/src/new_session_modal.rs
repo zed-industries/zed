@@ -37,7 +37,6 @@ pub(super) struct NewSessionModal {
     workspace: Entity<Workspace>,
     debug_panel: WeakEntity<DebugPanel>,
     mode: NewSessionMode,
-    stop_on_entry: ToggleState,
     initialize_args: Option<serde_json::Value>,
     debugger: Option<DebugAdapterName>,
     last_selected_profile_name: Option<SharedString>,
@@ -100,9 +99,6 @@ impl NewSessionModal {
             debugger,
             debug_panel,
             mode: NewSessionMode::attach(None, workspace.clone(), window, cx),
-            stop_on_entry: stop_on_entry
-                .map(Into::into)
-                .unwrap_or(ToggleState::Unselected),
             last_selected_profile_name: None,
             initialize_args: None,
         }
@@ -111,16 +107,20 @@ impl NewSessionModal {
     fn debug_config(&self, cx: &App, debugger: &str) -> Option<DebugScenario> {
         let request = self.mode.debug_task(cx)?;
         let label = suggested_label(&request, debugger);
+
+        let stop_on_entry = if let NewSessionMode::Custom(custom) = &self.mode {
+            Some(custom.read(cx).stop_on_entry.selected())
+        } else {
+            None
+        };
+
         Some(DebugScenario {
             adapter: debugger.to_owned().into(),
             label,
             request: Some(request),
             initialize_args: self.initialize_args.clone(),
             tcp_connection: None,
-            stop_on_entry: match self.stop_on_entry {
-                ToggleState::Selected => Some(true),
-                _ => None,
-            },
+            stop_on_entry,
             build: None,
         })
     }
@@ -327,7 +327,7 @@ static SELECT_SCENARIO_LABEL: SharedString = SharedString::new_static("Select Pr
 #[derive(Clone)]
 enum NewSessionMode {
     Launch(Entity<Picker<DebugScenarioDelegate>>),
-    Custom(Entity<LaunchMode>),
+    Custom(Entity<CustomMode>),
     Attach(Entity<AttachMode>),
 }
 
@@ -381,12 +381,12 @@ impl NewSessionMode {
         Self::Attach(AttachMode::new(debugger, workspace, window, cx))
     }
 
-    fn launch(
+    fn custom(
         past_launch_config: Option<LaunchRequest>,
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Self {
-        Self::Custom(LaunchMode::new(past_launch_config, window, cx))
+        Self::Custom(CustomMode::new(past_launch_config, window, cx))
     }
 
     fn has_match(&self, cx: &App) -> bool {
@@ -636,7 +636,7 @@ impl Render for NewSessionModal {
                                 let this = cx.weak_entity();
                                 move |_, window, cx| {
                                     this.update(cx, |this, cx| {
-                                        this.mode = NewSessionMode::launch(None, window, cx);
+                                        this.mode = NewSessionMode::custom(None, window, cx);
                                         this.mode.focus_handle(cx).focus(window);
                                     })
                                     .ok();
@@ -646,47 +646,25 @@ impl Render for NewSessionModal {
                         NewSessionMode::Custom(_) => div(), // todo!(Back to launch mode button)
                     })
                     .child(
-                        h_flex()
-                            .justify_end()
-                            .when(matches!(self.mode, NewSessionMode::Launch(_)), |this| {
-                                // let weak = cx.weak_entity();
-                                // this.child(
-                                //     CheckboxWithLabel::new(
-                                //         "debugger-stop-on-entry",
-                                //         Label::new("Stop on Entry").size(ui::LabelSize::Small),
-                                //         self.stop_on_entry,
-                                //         move |state, _, cx| {
-                                //             weak.update(cx, |this, _| {
-                                //                 this.stop_on_entry = *state;
-                                //             })
-                                //             .ok();
-                                //         },
-                                //     )
-                                //     .checkbox_position(ui::IconPosition::End),
-                                // )
-                                this
-                            })
-                            .child(
-                                Button::new("debugger-spawn", "Start")
-                                    .on_click(cx.listener(|this, _, window, cx| match &this.mode {
-                                        NewSessionMode::Launch(picker) => {
-                                            picker.update(cx, |picker, cx| {
-                                                picker.delegate.confirm(true, window, cx)
-                                            })
-                                        }
-                                        _ => this.start_new_session(window, cx),
-                                    }))
-                                    .disabled(match self.mode {
-                                        NewSessionMode::Launch(_) => !self.mode.has_match(cx),
-                                        NewSessionMode::Attach(_) => {
-                                            self.debugger.is_none() || !self.mode.has_match(cx)
-                                        }
-                                        NewSessionMode::Custom(ref custom) => {
-                                            self.debugger.is_none()
-                                                || custom.read(cx).program.read(cx).is_empty(cx)
-                                        }
-                                    }),
-                            ),
+                        Button::new("debugger-spawn", "Start")
+                            .on_click(cx.listener(|this, _, window, cx| match &this.mode {
+                                NewSessionMode::Launch(picker) => {
+                                    picker.update(cx, |picker, cx| {
+                                        picker.delegate.confirm(true, window, cx)
+                                    })
+                                }
+                                _ => this.start_new_session(window, cx),
+                            }))
+                            .disabled(match self.mode {
+                                NewSessionMode::Launch(_) => !self.mode.has_match(cx),
+                                NewSessionMode::Attach(_) => {
+                                    self.debugger.is_none() || !self.mode.has_match(cx)
+                                }
+                                NewSessionMode::Custom(ref custom) => {
+                                    self.debugger.is_none()
+                                        || custom.read(cx).program.read(cx).is_empty(cx)
+                                }
+                            }),
                     ),
             )
     }
@@ -701,8 +679,8 @@ impl Focusable for NewSessionModal {
 
 impl ModalView for NewSessionModal {}
 
-impl RenderOnce for LaunchMode {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+impl Render for CustomMode {
+    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
         v_flex()
             .p_2()
             .w_full()
@@ -724,6 +702,23 @@ impl RenderOnce for LaunchMode {
                 ),
             )
             .child(render_editor(&self.cwd, window, cx))
+            .child(
+                CheckboxWithLabel::new(
+                    "debugger-stop-on-entry",
+                    Label::new("Stop on Entry").size(ui::LabelSize::Small),
+                    self.stop_on_entry,
+                    {
+                        let this = cx.weak_entity();
+                        move |state, _, cx| {
+                            this.update(cx, |this, _| {
+                                this.stop_on_entry = *state;
+                            })
+                            .ok();
+                        }
+                    },
+                )
+                .checkbox_position(ui::IconPosition::End),
+            )
     }
 }
 
@@ -739,12 +734,13 @@ impl RenderOnce for AttachMode {
 use std::rc::Rc;
 
 #[derive(Clone)]
-pub(super) struct LaunchMode {
+pub(super) struct CustomMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
+    stop_on_entry: ToggleState,
 }
 
-impl LaunchMode {
+impl CustomMode {
     pub(super) fn new(
         past_launch_config: Option<LaunchRequest>,
         window: &mut Window,
@@ -769,7 +765,11 @@ impl LaunchMode {
                 this.set_text(past_cwd.to_string_lossy(), window, cx);
             };
         });
-        cx.new(|_| Self { program, cwd })
+        cx.new(|_| Self {
+            program,
+            cwd,
+            stop_on_entry: ToggleState::Unselected,
+        })
     }
 
     pub(super) fn debug_task(&self, cx: &App) -> task::LaunchRequest {
