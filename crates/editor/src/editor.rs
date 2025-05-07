@@ -56,7 +56,7 @@ use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
-use clock::ReplicaId;
+use clock::{AGENT_REPLICA_ID, ReplicaId};
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
@@ -201,7 +201,7 @@ use ui::{
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
-    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
     ViewId, Workspace, WorkspaceId, WorkspaceSettings,
     item::{ItemHandle, PreviewTabsSettings},
@@ -517,6 +517,7 @@ pub enum SoftWrap {
 #[derive(Clone)]
 pub struct EditorStyle {
     pub background: Hsla,
+    pub horizontal_padding: Pixels,
     pub local_player: PlayerColor,
     pub text: TextStyle,
     pub scrollbar_width: Pixels,
@@ -531,6 +532,7 @@ impl Default for EditorStyle {
     fn default() -> Self {
         Self {
             background: Hsla::default(),
+            horizontal_padding: Pixels::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
             scrollbar_width: Pixels::default(),
@@ -914,7 +916,7 @@ pub struct Editor {
     input_enabled: bool,
     use_modal_editing: bool,
     read_only: bool,
-    leader_peer_id: Option<PeerId>,
+    leader_id: Option<CollaboratorId>,
     remote_id: Option<ViewId>,
     pub hover_state: HoverState,
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
@@ -981,6 +983,8 @@ pub struct Editor {
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
+    /// Whether we are temporarily displaying a diff other than git's
+    temporary_diff_override: bool,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1057,10 +1061,10 @@ pub struct RemoteSelection {
     pub replica_id: ReplicaId,
     pub selection: Selection<Anchor>,
     pub cursor_shape: CursorShape,
-    pub peer_id: PeerId,
+    pub collaborator_id: CollaboratorId,
     pub line_mode: bool,
-    pub participant_index: Option<ParticipantIndex>,
     pub user_name: Option<SharedString>,
+    pub color: PlayerColor,
 }
 
 #[derive(Clone, Debug)]
@@ -1626,7 +1630,8 @@ impl Editor {
         let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
             load_uncommitted_diff = Some(
-                get_uncommitted_diff_for_buffer(
+                update_uncommitted_diff_for_buffer(
+                    cx.entity(),
                     &project,
                     buffer.read(cx).all_buffers(),
                     buffer.clone(),
@@ -1720,7 +1725,7 @@ impl Editor {
             use_auto_surround: true,
             auto_replace_emoji_shortcode: false,
             jsx_tag_auto_close_enabled_in_any_buffer: false,
-            leader_peer_id: None,
+            leader_id: None,
             remote_id: None,
             hover_state: Default::default(),
             pending_mouse_down: None,
@@ -1802,6 +1807,7 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
+            temporary_diff_override: false,
             mouse_cursor_hidden: false,
             hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
@@ -1941,7 +1947,7 @@ impl Editor {
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(window))
     }
 
-    fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+    pub fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
         self.key_context_internal(self.has_active_inline_completion(), window, cx)
     }
 
@@ -2171,8 +2177,8 @@ impl Editor {
         });
     }
 
-    pub fn leader_peer_id(&self) -> Option<PeerId> {
-        self.leader_peer_id
+    pub fn leader_id(&self) -> Option<CollaboratorId> {
+        self.leader_id
     }
 
     pub fn buffer(&self) -> &Entity<MultiBuffer> {
@@ -2513,7 +2519,7 @@ impl Editor {
             }
         }
 
-        if self.focus_handle.is_focused(window) && self.leader_peer_id.is_none() {
+        if self.focus_handle.is_focused(window) && self.leader_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors(),
@@ -2946,7 +2952,9 @@ impl Editor {
             _ => {}
         }
 
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        let auto_scroll = EditorSettings::get_global(cx).autoscroll_on_clicks;
+
+        self.change_selections(auto_scroll.then(Autoscroll::fit), window, cx, |s| {
             s.set_pending(pending_selection, pending_mode)
         });
     }
@@ -2966,7 +2974,6 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.selections.newest_anchor().clone();
         let position = display_map.clip_point(position, Bias::Left);
 
         let start;
@@ -3041,8 +3048,6 @@ impl Editor {
             } else {
                 if !add {
                     s.clear_disjoint();
-                } else if click_count > 1 {
-                    s.delete(newest_selection.id)
                 }
 
                 s.set_pending_anchor_range(start..end, mode);
@@ -5211,20 +5216,27 @@ impl Editor {
                                     let dap_store = project.read(cx).dap_store();
                                     let mut scenarios = vec![];
                                     let resolved_tasks = resolved_tasks.as_ref()?;
-                                    let debug_adapter: SharedString = buffer
-                                        .read(cx)
-                                        .language()?
-                                        .context_provider()?
-                                        .debug_adapter()?
-                                        .into();
+                                    let buffer = buffer.read(cx);
+                                    let language = buffer.language()?;
+                                    let file = buffer.file();
+                                    let debug_adapter =
+                                        language_settings(language.name().into(), file, cx)
+                                            .debuggers
+                                            .first()
+                                            .map(SharedString::from)
+                                            .or_else(|| {
+                                                language
+                                                    .config()
+                                                    .debuggers
+                                                    .first()
+                                                    .map(SharedString::from)
+                                            })?;
+
                                     dap_store.update(cx, |this, cx| {
                                         for (_, task) in &resolved_tasks.templates {
                                             if let Some(scenario) = this
                                                 .debug_scenario_for_build_task(
-                                                    task.resolved.clone(),
-                                                    SharedString::from(
-                                                        task.original_task().label.clone(),
-                                                    ),
+                                                    task.original_task().clone(),
                                                     debug_adapter.clone(),
                                                     cx,
                                                 )
@@ -5781,34 +5793,36 @@ impl Editor {
                     .into_iter()
                     .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty());
                 let mut match_ranges = Vec::new();
+                let Ok(regex) = project::search::SearchQuery::text(
+                    query_text.clone(),
+                    false,
+                    false,
+                    false,
+                    Default::default(),
+                    Default::default(),
+                    false,
+                    None,
+                ) else {
+                    return Vec::default();
+                };
                 for (buffer_snapshot, search_range, excerpt_id) in buffer_ranges {
                     match_ranges.extend(
-                        project::search::SearchQuery::text(
-                            query_text.clone(),
-                            false,
-                            false,
-                            false,
-                            Default::default(),
-                            Default::default(),
-                            false,
-                            None,
-                        )
-                        .unwrap()
-                        .search(&buffer_snapshot, Some(search_range.clone()))
-                        .await
-                        .into_iter()
-                        .filter_map(|match_range| {
-                            let match_start = buffer_snapshot
-                                .anchor_after(search_range.start + match_range.start);
-                            let match_end =
-                                buffer_snapshot.anchor_before(search_range.start + match_range.end);
-                            let match_anchor_range = Anchor::range_in_buffer(
-                                excerpt_id,
-                                buffer_snapshot.remote_id(),
-                                match_start..match_end,
-                            );
-                            (match_anchor_range != query_range).then_some(match_anchor_range)
-                        }),
+                        regex
+                            .search(&buffer_snapshot, Some(search_range.clone()))
+                            .await
+                            .into_iter()
+                            .filter_map(|match_range| {
+                                let match_start = buffer_snapshot
+                                    .anchor_after(search_range.start + match_range.start);
+                                let match_end = buffer_snapshot
+                                    .anchor_before(search_range.start + match_range.end);
+                                let match_anchor_range = Anchor::range_in_buffer(
+                                    excerpt_id,
+                                    buffer_snapshot.remote_id(),
+                                    match_start..match_end,
+                                );
+                                (match_anchor_range != query_range).then_some(match_anchor_range)
+                            }),
                     );
                 }
                 match_ranges
@@ -12133,6 +12147,28 @@ impl Editor {
         }
     }
 
+    fn select_match_ranges(
+        &mut self,
+        range: Range<usize>,
+        reversed: bool,
+        replace_newest: bool,
+        auto_scroll: Option<Autoscroll>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
+        self.change_selections(auto_scroll, window, cx, |s| {
+            if replace_newest {
+                s.delete(s.newest_anchor().id);
+            }
+            if reversed {
+                s.insert_range(range.end..range.start);
+            } else {
+                s.insert_range(range);
+            }
+        });
+    }
+
     pub fn select_next_match_internal(
         &mut self,
         display_map: &DisplaySnapshot,
@@ -12141,28 +12177,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        fn select_next_match_ranges(
-            this: &mut Editor,
-            range: Range<usize>,
-            reversed: bool,
-            replace_newest: bool,
-            auto_scroll: Option<Autoscroll>,
-            window: &mut Window,
-            cx: &mut Context<Editor>,
-        ) {
-            this.unfold_ranges(&[range.clone()], false, auto_scroll.is_some(), cx);
-            this.change_selections(auto_scroll, window, cx, |s| {
-                if replace_newest {
-                    s.delete(s.newest_anchor().id);
-                }
-                if reversed {
-                    s.insert_range(range.end..range.start);
-                } else {
-                    s.insert_range(range);
-                }
-            });
-        }
-
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
@@ -12207,8 +12221,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    select_next_match_ranges(
-                        self,
+                    self.select_match_ranges(
                         next_selected_range,
                         last_selection.reversed,
                         replace_newest,
@@ -12266,8 +12279,7 @@ impl Editor {
                     selection.end = word_range.end.to_offset(display_map, Bias::Left);
                     selection.goal = SelectionGoal::None;
                     selection.reversed = false;
-                    select_next_match_ranges(
-                        self,
+                    self.select_match_ranges(
                         selection.start..selection.end,
                         selection.reversed,
                         replace_newest,
@@ -12432,17 +12444,14 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges(&[next_selected_range.clone()], false, true, cx);
-                    self.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
-                        if action.replace_newest {
-                            s.delete(s.newest_anchor().id);
-                        }
-                        if last_selection.reversed {
-                            s.insert_range(next_selected_range.end..next_selected_range.start);
-                        } else {
-                            s.insert_range(next_selected_range);
-                        }
-                    });
+                    self.select_match_ranges(
+                        next_selected_range,
+                        last_selection.reversed,
+                        action.replace_newest,
+                        Some(Autoscroll::newest()),
+                        window,
+                        cx,
+                    );
                 } else {
                     select_prev_state.done = true;
                 }
@@ -12493,6 +12502,14 @@ impl Editor {
                     selection.end = word_range.end.to_offset(&display_map, Bias::Left);
                     selection.goal = SelectionGoal::None;
                     selection.reversed = false;
+                    self.select_match_ranges(
+                        selection.start..selection.end,
+                        selection.reversed,
+                        action.replace_newest,
+                        Some(Autoscroll::newest()),
+                        window,
+                        cx,
+                    );
                 }
                 if selections.len() == 1 {
                     let selection = selections
@@ -12511,16 +12528,6 @@ impl Editor {
                 } else {
                     self.select_prev_state = None;
                 }
-
-                self.unfold_ranges(
-                    &selections.iter().map(|s| s.range()).collect::<Vec<_>>(),
-                    false,
-                    true,
-                    cx,
-                );
-                self.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
-                    s.select(selections);
-                });
             } else if let Some(selected_text) = selected_text {
                 self.select_prev_state = Some(SelectNextState {
                     query: AhoCorasick::new(&[selected_text.chars().rev().collect::<String>()])?,
@@ -13003,10 +13010,9 @@ impl Editor {
                 }
 
                 let mut new_range = old_range.clone();
-                let mut new_node = None;
-                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
+                while let Some((_node, containing_range)) =
+                    buffer.syntax_ancestor(new_range.clone())
                 {
-                    new_node = Some(node);
                     new_range = match containing_range {
                         MultiOrSingleBufferOffsetRange::Single(_) => break,
                         MultiOrSingleBufferOffsetRange::Multi(range) => range,
@@ -13016,17 +13022,6 @@ impl Editor {
                     {
                         break;
                     }
-                }
-
-                if let Some(node) = new_node {
-                    // Log the ancestor, to support using this action as a way to explore TreeSitter
-                    // nodes. Parent and grandparent are also logged because this operation will not
-                    // visit nodes that have the same range as their parent.
-                    log::info!("Node: {node:?}");
-                    let parent = node.parent();
-                    log::info!("Parent: {parent:?}");
-                    let grandparent = parent.and_then(|x| x.parent());
-                    log::info!("Grandparent: {grandparent:?}");
                 }
 
                 selected_larger_node |= new_range != old_range;
@@ -13659,7 +13654,7 @@ impl Editor {
         self.refresh_inline_completion(false, true, window, cx);
     }
 
-    fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
@@ -16249,9 +16244,9 @@ impl Editor {
         &mut self,
         ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
         self.display_map
-            .update(cx, |map, cx| map.remove_creases(ids, cx));
+            .update(cx, |map, cx| map.remove_creases(ids, cx))
     }
 
     pub fn longest_row(&self, cx: &mut App) -> DisplayRow {
@@ -17830,7 +17825,8 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_diff_for_buffer(
+                        update_uncommitted_diff_for_buffer(
+                            cx.entity(),
                             project,
                             [buffer.clone()],
                             self.buffer.clone(),
@@ -17904,6 +17900,32 @@ impl Editor {
             }
             _ => {}
         };
+    }
+
+    pub fn start_temporary_diff_override(&mut self) {
+        self.load_diff_task.take();
+        self.temporary_diff_override = true;
+    }
+
+    pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
+        self.temporary_diff_override = false;
+        self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_all_diff_hunks_collapsed(cx);
+        });
+
+        if let Some(project) = self.project.clone() {
+            self.load_diff_task = Some(
+                update_uncommitted_diff_for_buffer(
+                    cx.entity(),
+                    &project,
+                    self.buffer.read(cx).all_buffers(),
+                    self.buffer.clone(),
+                    cx,
+                )
+                .shared(),
+            );
+        }
     }
 
     fn on_display_map_changed(
@@ -18469,7 +18491,7 @@ impl Editor {
             self.show_cursor_names(window, cx);
             self.buffer.update(cx, |buffer, cx| {
                 buffer.finalize_last_transaction(cx);
-                if self.leader_peer_id.is_none() {
+                if self.leader_id.is_none() {
                     buffer.set_active_selections(
                         &self.selections.disjoint_anchors(),
                         self.selections.line_mode,
@@ -18885,7 +18907,8 @@ fn insert_extra_newline_tree_sitter(buffer: &MultiBufferSnapshot, range: Range<u
             .all(|c| c.is_whitespace() && c != '\n')
 }
 
-fn get_uncommitted_diff_for_buffer(
+fn update_uncommitted_diff_for_buffer(
+    editor: Entity<Editor>,
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
@@ -18901,6 +18924,13 @@ fn get_uncommitted_diff_for_buffer(
     });
     cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
+        if editor
+            .read_with(cx, |editor, _cx| editor.temporary_diff_override)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
         buffer
             .update(cx, |buffer, cx| {
                 for diff in diffs.into_iter().flatten() {
@@ -19899,18 +19929,34 @@ impl EditorSnapshot {
         self.buffer_snapshot
             .selections_in_range(range, false)
             .filter_map(move |(replica_id, line_mode, cursor_shape, selection)| {
-                let collaborator = collaborators_by_replica_id.get(&replica_id)?;
-                let participant_index = participant_indices.get(&collaborator.user_id).copied();
-                let user_name = participant_names.get(&collaborator.user_id).cloned();
-                Some(RemoteSelection {
-                    replica_id,
-                    selection,
-                    cursor_shape,
-                    line_mode,
-                    participant_index,
-                    peer_id: collaborator.peer_id,
-                    user_name,
-                })
+                if replica_id == AGENT_REPLICA_ID {
+                    Some(RemoteSelection {
+                        replica_id,
+                        selection,
+                        cursor_shape,
+                        line_mode,
+                        collaborator_id: CollaboratorId::Agent,
+                        user_name: Some("Agent".into()),
+                        color: cx.theme().players().agent(),
+                    })
+                } else {
+                    let collaborator = collaborators_by_replica_id.get(&replica_id)?;
+                    let participant_index = participant_indices.get(&collaborator.user_id).copied();
+                    let user_name = participant_names.get(&collaborator.user_id).cloned();
+                    Some(RemoteSelection {
+                        replica_id,
+                        selection,
+                        cursor_shape,
+                        line_mode,
+                        collaborator_id: CollaboratorId::PeerId(collaborator.peer_id),
+                        user_name,
+                        color: if let Some(index) = participant_index {
+                            cx.theme().players().color_for_participant(index.0)
+                        } else {
+                            cx.theme().players().absent()
+                        },
+                    })
+                }
             })
     }
 
@@ -20307,6 +20353,7 @@ impl Render for Editor {
             &cx.entity(),
             EditorStyle {
                 background,
+                horizontal_padding: Pixels::default(),
                 local_player: cx.theme().players().local(),
                 text: text_style,
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,

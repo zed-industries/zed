@@ -8,13 +8,14 @@ use std::{sync::Arc, time::Duration};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
-use context_server::manager::{ContextServer, ContextServerManager, ContextServerStatus};
+use context_server::ContextServerId;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyView, App, Entity, EventEmitter, FocusHandle,
     Focusable, ScrollHandle, Subscription, pulsating_between,
 };
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
+use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use settings::{Settings, update_settings_file};
 use ui::{
     Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
@@ -33,8 +34,8 @@ pub struct AssistantConfiguration {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
-    context_server_manager: Entity<ContextServerManager>,
-    expanded_context_server_tools: HashMap<Arc<str>, bool>,
+    context_server_store: Entity<ContextServerStore>,
+    expanded_context_server_tools: HashMap<ContextServerId, bool>,
     tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
@@ -44,7 +45,7 @@ pub struct AssistantConfiguration {
 impl AssistantConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
-        context_server_manager: Entity<ContextServerManager>,
+        context_server_store: Entity<ContextServerStore>,
         tools: Entity<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -75,7 +76,7 @@ impl AssistantConfiguration {
             fs,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
-            context_server_manager,
+            context_server_store,
             expanded_context_server_tools: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
@@ -214,47 +215,91 @@ impl AssistantConfiguration {
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
-        const HEADING: &str = "Allow running editing tools without asking for confirmation";
+        h_flex()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new("Allow running editing tools without asking for confirmation"))
+                    .child(
+                        Label::new(
+                            "The agent can perform potentially destructive actions without asking for your confirmation.",
+                        )
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Switch::new(
+                    "always-allow-tool-actions-switch",
+                    always_allow_tool_actions.into(),
+                )
+                .color(SwitchColor::Accent)
+                .on_click({
+                    let fs = self.fs.clone();
+                    move |state, _window, cx| {
+                        let allow = state == &ToggleState::Selected;
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| {
+                                settings.set_always_allow_tool_actions(allow);
+                            },
+                        );
+                    }
+                }),
+            )
+    }
 
+    fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let single_file_review = AssistantSettings::get_global(cx).single_file_review;
+
+        h_flex()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new("Enable single-file agent reviews"))
+                    .child(
+                        Label::new(
+                            "Agent edits are also displayed in single-file editors for review.",
+                        )
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Switch::new("single-file-review-switch", single_file_review.into())
+                    .color(SwitchColor::Accent)
+                    .on_click({
+                        let fs = self.fs.clone();
+                        move |state, _window, cx| {
+                            let allow = state == &ToggleState::Selected;
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| {
+                                    settings.set_single_file_review(allow);
+                                },
+                            );
+                        }
+                    }),
+            )
+    }
+
+    fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
-            .gap_2()
+            .gap_2p5()
             .flex_1()
             .child(Headline::new("General Settings"))
-            .child(
-                h_flex()
-                    .gap_4()
-                    .justify_between()
-                    .flex_wrap()
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .max_w_5_6()
-                            .child(Label::new(HEADING))
-                            .child(Label::new("When enabled, the agent can perform potentially destructive actions without asking for your confirmation.").color(Color::Muted)),
-                    )
-                    .child(
-                        Switch::new(
-                            "always-allow-tool-actions-switch",
-                            always_allow_tool_actions.into(),
-                        )
-                        .color(SwitchColor::Accent)
-                        .on_click({
-                            let fs = self.fs.clone();
-                            move |state, _window, cx| {
-                                let allow = state == &ToggleState::Selected;
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _| {
-                                        settings.set_always_allow_tool_actions(allow);
-                                    },
-                                );
-                            }
-                        }),
-                    ),
-            )
+            .child(self.render_command_permission(cx))
+            .child(self.render_single_file_review(cx))
     }
 
     fn render_context_servers_section(
@@ -262,7 +307,7 @@ impl AssistantConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let context_servers = self.context_server_manager.read(cx).all_servers().clone();
+        let context_server_ids = self.context_server_store.read(cx).all_server_ids().clone();
 
         const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
 
@@ -278,9 +323,9 @@ impl AssistantConfiguration {
                     .child(Label::new(SUBHEADING).color(Color::Muted)),
             )
             .children(
-                context_servers
-                    .into_iter()
-                    .map(|context_server| self.render_context_server(context_server, window, cx)),
+                context_server_ids.into_iter().map(|context_server_id| {
+                    self.render_context_server(context_server_id, window, cx)
+                }),
             )
             .child(
                 h_flex()
@@ -330,19 +375,20 @@ impl AssistantConfiguration {
 
     fn render_context_server(
         &self,
-        context_server: Arc<ContextServer>,
+        context_server_id: ContextServerId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl use<> + IntoElement {
         let tools_by_source = self.tools.read(cx).tools_by_source(cx);
         let server_status = self
-            .context_server_manager
+            .context_server_store
             .read(cx)
-            .status_for_server(&context_server.id());
+            .status_for_server(&context_server_id)
+            .unwrap_or(ContextServerStatus::Stopped);
 
-        let is_running = matches!(server_status, Some(ContextServerStatus::Running));
+        let is_running = matches!(server_status, ContextServerStatus::Running);
 
-        let error = if let Some(ContextServerStatus::Error(error)) = server_status.clone() {
+        let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
         } else {
             None
@@ -350,13 +396,13 @@ impl AssistantConfiguration {
 
         let are_tools_expanded = self
             .expanded_context_server_tools
-            .get(&context_server.id())
+            .get(&context_server_id)
             .copied()
             .unwrap_or_default();
 
         let tools = tools_by_source
             .get(&ToolSource::ContextServer {
-                id: context_server.id().into(),
+                id: context_server_id.0.clone().into(),
             })
             .map_or([].as_slice(), |tools| tools.as_slice());
         let tool_count = tools.len();
@@ -364,7 +410,7 @@ impl AssistantConfiguration {
         let border_color = cx.theme().colors().border.opacity(0.6);
 
         v_flex()
-            .id(SharedString::from(context_server.id()))
+            .id(SharedString::from(context_server_id.0.clone()))
             .border_1()
             .rounded_md()
             .border_color(border_color)
@@ -388,7 +434,7 @@ impl AssistantConfiguration {
                                 )
                                 .disabled(tool_count == 0)
                                 .on_click(cx.listener({
-                                    let context_server_id = context_server.id();
+                                    let context_server_id = context_server_id.clone();
                                     move |this, _event, _window, _cx| {
                                         let is_open = this
                                             .expanded_context_server_tools
@@ -400,14 +446,14 @@ impl AssistantConfiguration {
                                 })),
                             )
                             .child(match server_status {
-                                Some(ContextServerStatus::Starting) => {
+                                ContextServerStatus::Starting => {
                                     let color = Color::Success.color(cx);
                                     Indicator::dot()
                                         .color(Color::Success)
                                         .with_animation(
                                             SharedString::from(format!(
                                                 "{}-starting",
-                                                context_server.id(),
+                                                context_server_id.0.clone(),
                                             )),
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
@@ -418,15 +464,17 @@ impl AssistantConfiguration {
                                         )
                                         .into_any_element()
                                 }
-                                Some(ContextServerStatus::Running) => {
+                                ContextServerStatus::Running => {
                                     Indicator::dot().color(Color::Success).into_any_element()
                                 }
-                                Some(ContextServerStatus::Error(_)) => {
+                                ContextServerStatus::Error(_) => {
                                     Indicator::dot().color(Color::Error).into_any_element()
                                 }
-                                None => Indicator::dot().color(Color::Muted).into_any_element(),
+                                ContextServerStatus::Stopped => {
+                                    Indicator::dot().color(Color::Muted).into_any_element()
+                                }
                             })
-                            .child(Label::new(context_server.id()).ml_0p5())
+                            .child(Label::new(context_server_id.0.clone()).ml_0p5())
                             .when(is_running, |this| {
                                 this.child(
                                     Label::new(if tool_count == 1 {
@@ -443,32 +491,22 @@ impl AssistantConfiguration {
                         Switch::new("context-server-switch", is_running.into())
                             .color(SwitchColor::Accent)
                             .on_click({
-                                let context_server_manager = self.context_server_manager.clone();
-                                let context_server = context_server.clone();
+                                let context_server_manager = self.context_server_store.clone();
+                                let context_server_id = context_server_id.clone();
                                 move |state, _window, cx| match state {
                                     ToggleState::Unselected | ToggleState::Indeterminate => {
                                         context_server_manager.update(cx, |this, cx| {
-                                            this.stop_server(context_server.clone(), cx).log_err();
+                                            this.stop_server(&context_server_id, cx).log_err();
                                         });
                                     }
                                     ToggleState::Selected => {
-                                        cx.spawn({
-                                            let context_server_manager =
-                                                context_server_manager.clone();
-                                            let context_server = context_server.clone();
-                                            async move |cx| {
-                                                if let Some(start_server_task) =
-                                                    context_server_manager
-                                                        .update(cx, |this, cx| {
-                                                            this.start_server(context_server, cx)
-                                                        })
-                                                        .log_err()
-                                                {
-                                                    start_server_task.await.log_err();
-                                                }
+                                        context_server_manager.update(cx, |this, cx| {
+                                            if let Some(server) =
+                                                this.get_server(&context_server_id)
+                                            {
+                                                this.start_server(server, cx).log_err();
                                             }
                                         })
-                                        .detach();
                                     }
                                 }
                             }),
@@ -549,7 +587,7 @@ impl Render for AssistantConfiguration {
                     .track_scroll(&self.scroll_handle)
                     .size_full()
                     .overflow_y_scroll()
-                    .child(self.render_command_permission(cx))
+                    .child(self.render_general_settings_section(cx))
                     .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_context_servers_section(window, cx))
                     .child(Divider::horizontal().color(DividerColor::Border))

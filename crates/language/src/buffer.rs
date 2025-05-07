@@ -19,8 +19,8 @@ pub use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
-use clock::Lamport;
 pub use clock::ReplicaId;
+use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -2132,6 +2132,31 @@ impl Buffer {
         }
     }
 
+    pub fn set_agent_selections(
+        &mut self,
+        selections: Arc<[Selection<Anchor>]>,
+        line_mode: bool,
+        cursor_shape: CursorShape,
+        cx: &mut Context<Self>,
+    ) {
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.remote_selections.insert(
+            AGENT_REPLICA_ID,
+            SelectionSet {
+                selections: selections.clone(),
+                lamport_timestamp,
+                line_mode,
+                cursor_shape,
+            },
+        );
+        self.non_text_state_update_count += 1;
+        cx.notify();
+    }
+
+    pub fn remove_agent_selections(&mut self, cx: &mut Context<Self>) {
+        self.set_agent_selections(Arc::default(), false, Default::default(), cx);
+    }
+
     /// Replaces the buffer's entire text.
     pub fn set_text<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
     where
@@ -3282,11 +3307,19 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range,
-            // and if the range is non-empty, extends beyond the start.
+            // Descend to the first leaf that touches the start of the range.
+            //
+            // If the range is non-empty and the current node ends exactly at the start,
+            // move to the next sibling to find a node that extends beyond the start.
+            //
+            // If the range is empty and the current node starts after the range position,
+            // move to the previous sibling to find the node that contains the position.
             while cursor.goto_first_child_for_byte(range.start).is_some() {
                 if !range.is_empty() && cursor.node().end_byte() == range.start {
                     cursor.goto_next_sibling();
+                }
+                if range.is_empty() && cursor.node().start_byte() > range.start {
+                    cursor.goto_previous_sibling();
                 }
             }
 

@@ -19,6 +19,7 @@ use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
     MessageContent, Role,
 };
+use project::{AgentLocation, Project};
 use serde::Serialize;
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
@@ -59,17 +60,20 @@ pub struct EditAgentOutput {
 pub struct EditAgent {
     model: Arc<dyn LanguageModel>,
     action_log: Entity<ActionLog>,
+    project: Entity<Project>,
     templates: Arc<Templates>,
 }
 
 impl EditAgent {
     pub fn new(
         model: Arc<dyn LanguageModel>,
+        project: Entity<Project>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
     ) -> Self {
         EditAgent {
             model,
+            project,
             action_log,
             templates,
         }
@@ -97,7 +101,7 @@ impl EditAgent {
             .render(&this.templates)?;
             let new_chunks = this.request(previous_messages, prompt, cx).await?;
 
-            let (output, mut inner_events) = this.replace_text_with_chunks(buffer, new_chunks, cx);
+            let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
             while let Some(event) = inner_events.next().await {
                 events_tx.unbounded_send(event).ok();
             }
@@ -106,7 +110,7 @@ impl EditAgent {
         (output, events_rx)
     }
 
-    fn replace_text_with_chunks(
+    fn overwrite_with_chunks(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
@@ -118,37 +122,72 @@ impl EditAgent {
         let (output_events_tx, output_events_rx) = mpsc::unbounded();
         let this = self.clone();
         let task = cx.spawn(async move |cx| {
-            // Ensure the buffer is tracked by the action log.
             this.action_log
-                .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
-
-            cx.update(|cx| {
-                buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
-                this.action_log
-                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-            })?;
-
-            let mut raw_edits = String::new();
-            pin_mut!(edit_chunks);
-            while let Some(chunk) = edit_chunks.next().await {
-                let chunk = chunk?;
-                raw_edits.push_str(&chunk);
-                cx.update(|cx| {
-                    buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
-                    this.action_log
-                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                })?;
-                output_events_tx
-                    .unbounded_send(EditAgentOutputEvent::Edited)
-                    .ok();
-            }
-
-            Ok(EditAgentOutput {
-                _raw_edits: raw_edits,
-                _parser_metrics: EditParserMetrics::default(),
-            })
+                .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
+            let output = this
+                .overwrite_with_chunks_internal(buffer, edit_chunks, output_events_tx, cx)
+                .await;
+            this.project
+                .update(cx, |project, cx| project.set_agent_location(None, cx))?;
+            output
         });
         (task, output_events_rx)
+    }
+
+    async fn overwrite_with_chunks_internal(
+        &self,
+        buffer: Entity<Buffer>,
+        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        output_events_tx: mpsc::UnboundedSender<EditAgentOutputEvent>,
+        cx: &mut AsyncApp,
+    ) -> Result<EditAgentOutput> {
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+            self.action_log.update(cx, |log, cx| {
+                log.buffer_edited(buffer.clone(), cx);
+            });
+            self.project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: language::Anchor::MAX,
+                    }),
+                    cx,
+                )
+            });
+            output_events_tx
+                .unbounded_send(EditAgentOutputEvent::Edited)
+                .ok();
+        })?;
+
+        let mut raw_edits = String::new();
+        pin_mut!(edit_chunks);
+        while let Some(chunk) = edit_chunks.next().await {
+            let chunk = chunk?;
+            raw_edits.push_str(&chunk);
+            cx.update(|cx| {
+                buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
+                self.action_log
+                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::MAX,
+                        }),
+                        cx,
+                    )
+                });
+            })?;
+            output_events_tx
+                .unbounded_send(EditAgentOutputEvent::Edited)
+                .ok();
+        }
+
+        Ok(EditAgentOutput {
+            _raw_edits: raw_edits,
+            _parser_metrics: EditParserMetrics::default(),
+        })
     }
 
     pub fn edit(
@@ -161,6 +200,18 @@ impl EditAgent {
         Task<Result<EditAgentOutput>>,
         mpsc::UnboundedReceiver<EditAgentOutputEvent>,
     ) {
+        self.project
+            .update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: language::Anchor::MIN,
+                    }),
+                    cx,
+                );
+            })
+            .ok();
+
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
         let output = cx.spawn(async move |cx| {
@@ -194,28 +245,36 @@ impl EditAgent {
         let (output_events_tx, output_events_rx) = mpsc::unbounded();
         let this = self.clone();
         let task = cx.spawn(async move |mut cx| {
-            this.apply_edits_internal(buffer, edit_chunks, output_events_tx, &mut cx)
-                .await
+            this.action_log
+                .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
+            let output = this
+                .apply_edit_chunks_internal(buffer, edit_chunks, output_events_tx, &mut cx)
+                .await;
+            this.project
+                .update(cx, |project, cx| project.set_agent_location(None, cx))?;
+            output
         });
         (task, output_events_rx)
     }
 
-    async fn apply_edits_internal(
+    async fn apply_edit_chunks_internal(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
         output_events: mpsc::UnboundedSender<EditAgentOutputEvent>,
         cx: &mut AsyncApp,
     ) -> Result<EditAgentOutput> {
-        // Ensure the buffer is tracked by the action log.
-        self.action_log
-            .update(cx, |log, cx| log.track_buffer(buffer.clone(), cx))?;
-
         let (output, mut edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         while let Some(edit_event) = edit_events.next().await {
             let EditParserEvent::OldText(old_text_query) = edit_event? else {
                 continue;
             };
+
+            // Skip edits with an empty old text.
+            if old_text_query.is_empty() {
+                continue;
+            }
+
             let old_text_query = SharedString::from(old_text_query);
 
             let (edits_tx, edits_rx) = mpsc::unbounded();
@@ -275,14 +334,15 @@ impl EditAgent {
                         match op {
                             CharOperation::Insert { text } => {
                                 let edit_start = snapshot.anchor_after(edit_start);
-                                edits_tx.unbounded_send((edit_start..edit_start, text))?;
+                                edits_tx
+                                    .unbounded_send((edit_start..edit_start, Arc::from(text)))?;
                             }
                             CharOperation::Delete { bytes } => {
                                 let edit_end = edit_start + bytes;
                                 let edit_range = snapshot.anchor_after(edit_start)
                                     ..snapshot.anchor_before(edit_end);
                                 edit_start = edit_end;
-                                edits_tx.unbounded_send((edit_range, String::new()))?;
+                                edits_tx.unbounded_send((edit_range, Arc::from("")))?;
                             }
                             CharOperation::Keep { bytes } => edit_start += bytes,
                         }
@@ -296,13 +356,35 @@ impl EditAgent {
             // TODO: group all edits into one transaction
             let mut edits_rx = edits_rx.ready_chunks(32);
             while let Some(edits) = edits_rx.next().await {
+                if edits.is_empty() {
+                    continue;
+                }
+
                 // Edit the buffer and report edits to the action log as part of the
                 // same effect cycle, otherwise the edit will be reported as if the
                 // user made it.
                 cx.update(|cx| {
-                    buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+                    let max_edit_end = buffer.update(cx, |buffer, cx| {
+                        buffer.edit(edits.iter().cloned(), None, cx);
+                        let max_edit_end = buffer
+                            .summaries_for_anchors::<Point, _>(
+                                edits.iter().map(|(range, _)| &range.end),
+                            )
+                            .max()
+                            .unwrap();
+                        buffer.anchor_before(max_edit_end)
+                    });
                     self.action_log
-                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx))
+                        .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                    self.project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position: max_edit_end,
+                            }),
+                            cx,
+                        );
+                    });
                 })?;
                 output_events
                     .unbounded_send(EditAgentOutputEvent::Edited)
@@ -576,14 +658,16 @@ impl EditAgent {
 }
 
 fn fuzzy_eq(left: &str, right: &str) -> bool {
+    const THRESHOLD: f64 = 0.8;
+
     let min_levenshtein = left.len().abs_diff(right.len());
     let min_normalized_levenshtein =
-        1. - (min_levenshtein as f32 / cmp::max(left.len(), right.len()) as f32);
-    if min_normalized_levenshtein < 0.8 {
+        1. - (min_levenshtein as f64 / cmp::max(left.len(), right.len()) as f64);
+    if min_normalized_levenshtein < THRESHOLD {
         return false;
     }
 
-    strsim::normalized_levenshtein(left, right) >= 0.8
+    strsim::normalized_levenshtein(left, right) >= THRESHOLD
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -657,12 +741,48 @@ mod tests {
     use gpui::{App, AppContext, TestAppContext};
     use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
-    use project::Project;
+    use project::{AgentLocation, Project};
     use rand::prelude::*;
     use rand::rngs::StdRng;
     use std::cmp;
     use unindent::Unindent;
     use util::test::{generate_marked_text, marked_text_ranges};
+
+    #[gpui::test(iterations = 100)]
+    async fn test_empty_old_text(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! {"
+                    abc
+                    def
+                    ghi
+                "},
+                cx,
+            )
+        });
+        let raw_edits = simulate_llm_output(
+            indoc! {"
+                <old_text></old_text>
+                <new_text>jkl</new_text>
+                <old_text>def</old_text>
+                <new_text>DEF</new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        let (apply, _events) =
+            agent.apply_edit_chunks(buffer.clone(), raw_edits, &mut cx.to_async());
+        apply.await.unwrap();
+        pretty_assertions::assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            indoc! {"
+                abc
+                DEF
+                ghi
+            "}
+        );
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_indentation(cx: &mut TestAppContext, mut rng: StdRng) {
@@ -775,8 +895,11 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_events(cx: &mut TestAppContext) {
+    async fn test_edit_events(cx: &mut TestAppContext) {
         let agent = init_test(cx).await;
+        let project = agent
+            .action_log
+            .read_with(cx, |log, _| log.project().clone());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         let (apply, mut events) = agent.apply_edit_chunks(
@@ -792,6 +915,10 @@ mod tests {
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abc\ndef\nghi"
         );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            None
+        );
 
         chunks_tx.unbounded_send("bc</old_text>").unwrap();
         cx.run_until_parked();
@@ -799,6 +926,10 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abc\ndef\nghi"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            None
         );
 
         chunks_tx.unbounded_send("<new_text>abX").unwrap();
@@ -808,6 +939,13 @@ mod tests {
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXc\ndef\nghi"
         );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)))
+            })
+        );
 
         chunks_tx.unbounded_send("cY").unwrap();
         cx.run_until_parked();
@@ -815,6 +953,13 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
         );
 
         chunks_tx.unbounded_send("</new_text>").unwrap();
@@ -824,6 +969,13 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
         );
 
         chunks_tx.unbounded_send("ucinated old</old_text>").unwrap();
@@ -839,6 +991,13 @@ mod tests {
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi"
         );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
+        );
 
         chunks_tx.unbounded_send("hallucinated new</new_").unwrap();
         chunks_tx.unbounded_send("text>").unwrap();
@@ -847,6 +1006,13 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
         );
 
         chunks_tx.unbounded_send("<old_text>gh").unwrap();
@@ -857,6 +1023,13 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nghi"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 5)))
+            })
         );
 
         chunks_tx.unbounded_send("GHI</new_text>").unwrap();
@@ -869,6 +1042,13 @@ mod tests {
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abXcY\ndef\nGHI"
         );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
+            })
+        );
 
         drop(chunks_tx);
         apply.await.unwrap();
@@ -877,16 +1057,108 @@ mod tests {
             "abXcY\ndef\nGHI"
         );
         assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            None
+        );
+    }
 
-        fn drain_events(
-            stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
-        ) -> Vec<EditAgentOutputEvent> {
-            let mut events = Vec::new();
-            while let Ok(Some(event)) = stream.try_next() {
-                events.push(event);
-            }
-            events
-        }
+    #[gpui::test]
+    async fn test_overwrite_events(cx: &mut TestAppContext) {
+        let agent = init_test(cx).await;
+        let project = agent
+            .action_log
+            .read_with(cx, |log, _| log.project().clone());
+        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        let (apply, mut events) = agent.overwrite_with_chunks(
+            buffer.clone(),
+            chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
+            &mut cx.to_async(),
+        );
+
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            ""
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        chunks_tx.unbounded_send("jkl\n").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\n"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        chunks_tx.unbounded_send("mno\n").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\nmno\n"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        chunks_tx.unbounded_send("pqr").unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            drain_events(&mut events),
+            vec![EditAgentOutputEvent::Edited]
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\nmno\npqr"
+        );
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
+        );
+
+        drop(chunks_tx);
+        apply.await.unwrap();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            "jkl\nmno\npqr"
+        );
+        assert_eq!(drain_events(&mut events), vec![]);
+        assert_eq!(
+            project.read_with(cx, |project, _| project.agent_location()),
+            None
+        );
     }
 
     #[gpui::test]
@@ -1173,7 +1445,17 @@ mod tests {
         cx.update(Project::init_settings);
         let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let action_log = cx.new(|_| ActionLog::new(project));
-        EditAgent::new(model, action_log, Templates::new())
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        EditAgent::new(model, project, action_log, Templates::new())
+    }
+
+    fn drain_events(
+        stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
+    ) -> Vec<EditAgentOutputEvent> {
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = stream.try_next() {
+            events.push(event);
+        }
+        events
     }
 }

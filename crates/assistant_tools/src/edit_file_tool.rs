@@ -1,28 +1,33 @@
 use crate::{
     replace::{replace_exact, replace_with_flexible_indent},
     schema::json_schema_for,
+    streaming_edit_file_tool::StreamingEditFileToolOutput,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus,
+};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MultiBuffer, PathKey};
+use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, WeakEntity, pulsating_between,
+    Task, TextStyle, WeakEntity, pulsating_between,
 };
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
     language_settings::SoftWrap,
 };
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, Window, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
@@ -151,7 +156,7 @@ impl Tool for EditFileTool {
         });
 
         let card_clone = card.clone();
-        let task = cx.spawn(async move |cx: &mut AsyncApp| {
+        let task: Task<Result<ToolResultOutput, _>> = cx.spawn(async move |cx: &mut AsyncApp| {
             let project_path = project.read_with(cx, |project, cx| {
                 project
                     .find_project_path(&input.path, cx)
@@ -163,6 +168,19 @@ impl Tool for EditFileTool {
                     project.open_buffer(project_path.clone(), cx)
                 })?
                 .await?;
+
+            // Set the agent's location to the top of the file
+            project
+                .update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::MIN,
+                        }),
+                        cx,
+                    );
+                })
+                .ok();
 
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
@@ -224,8 +242,8 @@ impl Tool for EditFileTool {
             };
 
             let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.track_buffer(buffer.clone(), cx));
-
+                action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+                let base_version = diff.base_version.clone();
                 let snapshot = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, cx);
@@ -233,6 +251,21 @@ impl Tool for EditFileTool {
                     buffer.snapshot()
                 });
                 action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+
+                // Set the agent's location to the position of the first edit
+                if let Some(first_edit) = snapshot.edits_since::<usize>(&base_version).next() {
+                    let position = snapshot.anchor_before(first_edit.new.start);
+                    project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position,
+                            }),
+                            cx,
+                        );
+                    })
+                }
+
                 snapshot
             })?;
 
@@ -251,22 +284,61 @@ impl Tool for EditFileTool {
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
-                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+                    card.set_diff(
+                        project_path.path.clone(),
+                        old_text.clone(),
+                        new_text.clone(),
+                        cx,
+                    );
                 })
                 .log_err();
             }
 
-            Ok(format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                input.path.display(),
-                diff_str
-            ))
+            Ok(ToolResultOutput {
+                content: format!(
+                    "Edited {}:\n\n```diff\n{}\n```",
+                    input.path.display(),
+                    diff_str
+                ),
+                output: serde_json::to_value(StreamingEditFileToolOutput {
+                    original_path: input.path,
+                    new_text,
+                    old_text,
+                })
+                .ok(),
+            })
         });
 
         ToolResult {
             output: task,
             card: card.map(AnyToolCard::from),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        let output = match serde_json::from_value::<StreamingEditFileToolOutput>(output) {
+            Ok(output) => output,
+            Err(_) => return None,
+        };
+
+        let card = cx.new(|cx| {
+            let mut card = EditFileToolCard::new(output.original_path.clone(), project, window, cx);
+            card.set_diff(
+                output.original_path.into(),
+                output.old_text,
+                output.new_text,
+                cx,
+            );
+            card
+        });
+
+        Some(card.into())
     }
 }
 
@@ -304,6 +376,7 @@ impl EditFileToolCard {
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_scrollbars(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_read_only(true);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -350,14 +423,13 @@ impl EditFileToolCard {
                         .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                         .collect::<Vec<_>>();
                     multibuffer.clear(cx);
-                    let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
+                    multibuffer.set_excerpts_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer,
                         diff_hunk_ranges,
                         editor::DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     );
-                    debug_assert!(is_newly_added);
                     multibuffer.add_diff(buffer_diff, cx);
                     let end = multibuffer.len(cx);
                     Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
@@ -515,7 +587,33 @@ impl ToolCard for EditFileToolCard {
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
                 .unwrap_or_default();
 
-            let element = editor.render(window, cx);
+            let settings = ThemeSettings::get_global(cx);
+            let element = EditorElement::new(
+                &cx.entity(),
+                EditorStyle {
+                    background: cx.theme().colors().editor_background,
+                    horizontal_padding: rems(0.25).to_pixels(window.rem_size()),
+                    local_player: cx.theme().players().local(),
+                    text: TextStyle {
+                        color: cx.theme().colors().editor_foreground,
+                        font_family: settings.buffer_font.family.clone(),
+                        font_features: settings.buffer_font.features.clone(),
+                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                        font_size: TextSize::Small
+                            .rems(cx)
+                            .to_pixels(settings.agent_font_size(cx))
+                            .into(),
+                        font_weight: settings.buffer_font.weight,
+                        line_height: relative(settings.buffer_line_height.value()),
+                        ..Default::default()
+                    },
+                    scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
+                    syntax: cx.theme().syntax().clone(),
+                    status: cx.theme().status().clone(),
+                    ..Default::default()
+                },
+            );
+
             (element.into_any_element(), line_height)
         });
 
@@ -525,18 +623,18 @@ impl ToolCard for EditFileToolCard {
             (IconName::ChevronDown, "Expand Code Block")
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .w_full()
-            .h_2_5()
-            .rounded_b_lg()
-            .bg(gpui::linear_gradient(
-                0.,
-                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-            ));
+        let gradient_overlay =
+            div()
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h_2_5()
+                .bg(gpui::linear_gradient(
+                    0.,
+                    gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                    gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+                ));
 
         let border_color = cx.theme().colors().border.opacity(0.6);
 
@@ -554,8 +652,9 @@ impl ToolCard for EditFileToolCard {
 
             let mut container = v_flex()
                 .p_3()
-                .gap_1p5()
+                .gap_1()
                 .border_t_1()
+                .rounded_md()
                 .border_color(border_color)
                 .bg(cx.theme().colors().editor_background);
 
@@ -570,7 +669,7 @@ impl ToolCard for EditFileToolCard {
                     _ => div().w_1_2(),
                 }
                 .id("loading_div")
-                .h_2()
+                .h_1()
                 .rounded_full()
                 .bg(cx.theme().colors().element_active)
                 .with_animation(
@@ -592,7 +691,7 @@ impl ToolCard for EditFileToolCard {
             .border_1()
             .when(failed, |card| card.border_dashed())
             .border_color(border_color)
-            .rounded_lg()
+            .rounded_md()
             .overflow_hidden()
             .child(codeblock_header)
             .when(failed && self.error_expanded, |card| {
@@ -640,22 +739,22 @@ impl ToolCard for EditFileToolCard {
                             .border_t_1()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .child(div().pl_1().child(editor))
+                            .child(editor)
                             .when(
                                 !self.full_height_expanded && is_collapsible,
                                 |editor_container| editor_container.child(gradient_overlay),
                             ),
                     )
-                    .when(is_collapsible, |editor_container| {
-                        editor_container.child(
+                    .when(is_collapsible, |card| {
+                        card.child(
                             h_flex()
                                 .id(("expand-button", self.editor_unique_id))
                                 .flex_none()
                                 .cursor_pointer()
                                 .h_5()
                                 .justify_center()
-                                .rounded_b_md()
                                 .border_t_1()
+                                .rounded_b_md()
                                 .border_color(border_color)
                                 .bg(cx.theme().colors().editor_background)
                                 .hover(|style| {
@@ -736,9 +835,16 @@ async fn build_buffer_diff(
         })?
         .await;
 
+    let secondary_diff = cx.new(|cx| {
+        let mut diff = BufferDiff::new(&buffer, cx);
+        diff.set_snapshot(diff_snapshot.clone(), &buffer, cx);
+        diff
+    })?;
+
     cx.new(|cx| {
         let mut diff = BufferDiff::new(&buffer.text, cx);
-        diff.set_snapshot(diff_snapshot, &buffer.text, cx);
+        diff.set_snapshot(diff_snapshot, &buffer, cx);
+        diff.set_secondary_diff(secondary_diff);
         diff
     })
 }

@@ -5,7 +5,7 @@ use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp, SelectAll},
 };
 use fs::Fs;
@@ -261,7 +261,7 @@ impl TerminalInlineAssistant {
                         .read(cx)
                         .active_context(cx)?
                         .read(cx)
-                        .to_completion_request(RequestType::Chat, cx),
+                        .to_completion_request(None, RequestType::Chat, cx),
                 )
             })
         } else {
@@ -730,6 +730,11 @@ impl PromptEditor {
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text(Self::placeholder_text(window, cx), cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: None,
+            });
             editor
         });
 

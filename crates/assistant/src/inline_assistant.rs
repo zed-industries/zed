@@ -17,9 +17,7 @@ use editor::{
         ToDisplayPoint,
     },
 };
-use feature_flags::{
-    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedProFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use futures::{
     SinkExt, Stream, StreamExt, TryStreamExt as _,
@@ -74,25 +72,19 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        let workspace = cx.entity().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, window, cx)
-        });
-
-        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
-            |is_assistant2_enabled, _workspace, _window, cx| {
-                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
-                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
-                });
-            }
+    // Don't register now that the Agent is released.
+    if false {
+        cx.observe_new(|_, window, cx| {
+            let Some(window) = window else {
+                return;
+            };
+            let workspace = cx.entity().clone();
+            InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                inline_assistant.register_workspace(&workspace, window, cx)
+            });
         })
         .detach();
-    })
-    .detach();
+    }
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -108,7 +100,6 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
-    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -130,7 +121,6 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
-            is_assistant2_enabled: false,
         }
     }
 
@@ -199,7 +189,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = self.is_assistant2_enabled;
+        let is_assistant2_enabled = true;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
@@ -1815,10 +1805,6 @@ impl PromptEditor {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(
-                Self::placeholder_text(self.codegen.read(cx), window, cx),
-                cx,
-            );
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
@@ -2488,7 +2474,7 @@ impl InlineAssist {
                     .read(cx)
                     .active_context(cx)?
                     .read(cx)
-                    .to_completion_request(RequestType::Chat, cx),
+                    .to_completion_request(None, RequestType::Chat, cx),
             )
         } else {
             None
@@ -2874,7 +2860,8 @@ impl CodegenAlternative {
         if let Some(ConfiguredModel { model, .. }) =
             LanguageModelRegistry::read_global(cx).inline_assistant_model()
         {
-            let request = self.build_request(user_prompt, assistant_panel_context.clone(), cx);
+            let request =
+                self.build_request(&model, user_prompt, assistant_panel_context.clone(), cx);
             match request {
                 Ok(request) => {
                     let total_count = model.count_tokens(request.clone(), cx);
@@ -2919,7 +2906,8 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
+                let request =
+                    self.build_request(&model, user_prompt, assistant_panel_context, cx)?;
                 self.request = Some(request.clone());
 
                 cx.spawn(async move |_, cx| model.stream_completion_text(request, &cx).await)
@@ -2931,6 +2919,7 @@ impl CodegenAlternative {
 
     fn build_request(
         &self,
+        model: &Arc<dyn LanguageModel>,
         user_prompt: String,
         assistant_panel_context: Option<LanguageModelRequest>,
         cx: &App,
@@ -2985,7 +2974,7 @@ impl CodegenAlternative {
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: None,
+            temperature: AssistantSettings::temperature_for_model(&model, cx),
         })
     }
 

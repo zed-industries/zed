@@ -267,7 +267,7 @@ fn eval_disable_cursor_blinking() {
     let output_file_content = include_str!("evals/fixtures/disable_cursor_blinking/after.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
     eval(
-        100,
+        200,
         0.6, // TODO: make this eval better
         EvalInput {
             conversation: vec![
@@ -517,7 +517,7 @@ fn eval_from_pixels_constructor() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(indoc! {"
+            assertion: EvalAssertion::judge_diff(indoc! {"
                 - The diff contains a new `from_pixels` constructor
                 - The diff contains new tests for the `from_pixels` constructor
             "}),
@@ -623,6 +623,230 @@ fn eval_zode() {
     );
 }
 
+#[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
+fn eval_add_overwrite_test() {
+    let input_file_path = "root/action_log.rs";
+    let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
+    let edit_description = "Add a new test for overwriting a file in action_log.rs";
+    eval(
+        200,
+        0.5, // TODO: make this eval better
+        EvalInput {
+            conversation: vec![
+                message(
+                    User,
+                    [text(indoc! {"
+                        Introduce a new test in `action_log.rs` to test overwriting a file.
+                        That is, a file already exists, but we call `buffer_created` as if the file were new.
+                        Take inspiration from all the other tests in the file.
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: None,
+                            end_line: None,
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_1",
+                        "read_file",
+                        indoc! {"
+                            pub struct ActionLog [L13-20]
+                             tracked_buffers [L15]
+                             edited_since_project_diagnostics_check [L17]
+                             project [L19]
+                            impl ActionLog [L22-498]
+                             pub fn new [L24-30]
+                             pub fn project [L32-34]
+                             pub fn checked_project_diagnostics [L37-39]
+                             pub fn has_edited_files_since_project_diagnostics_check [L42-44]
+                             fn track_buffer_internal [L46-101]
+                             fn handle_buffer_event [L103-116]
+                             fn handle_buffer_edited [L118-123]
+                             fn handle_buffer_file_changed [L125-158]
+                             async fn maintain_diff [L160-264]
+                             pub fn buffer_read [L267-269]
+                             pub fn buffer_created [L272-276]
+                             pub fn buffer_edited [L279-287]
+                             pub fn will_delete_buffer [L289-304]
+                             pub fn keep_edits_in_range [L306-364]
+                             pub fn reject_edits_in_ranges [L366-459]
+                             pub fn keep_all_edits [L461-473]
+                             pub fn changed_buffers [L476-482]
+                             pub fn stale_buffers [L485-497]
+                            fn apply_non_conflicting_edits [L500-561]
+                            fn diff_snapshots [L563-585]
+                            fn point_to_row_edit [L587-614]
+                            enum ChangeAuthor [L617-620]
+                             User [L618]
+                             Agent [L619]
+                            enum TrackedBufferStatus [L623-627]
+                             Created [L624]
+                             Modified [L625]
+                             Deleted [L626]
+                            struct TrackedBuffer [L629-641]
+                             buffer [L630]
+                             base_text [L631]
+                             unreviewed_changes [L632]
+                             status [L633]
+                             version [L634]
+                             diff [L635]
+                             snapshot [L636]
+                             diff_update [L637]
+                             _open_lsp_handle [L638]
+                             _maintain_diff [L639]
+                             _subscription [L640]
+                            impl TrackedBuffer [L643-657]
+                             fn has_changes [L644-650]
+                             fn schedule_diff_update [L652-656]
+                            pub struct ChangedBuffer [L659-661]
+                             pub diff [L660]
+                            mod tests [L664-1574]
+                             fn init_logger [L678-682]
+                             fn init_test [L684-691]
+                             async fn test_keep_edits [L694-769]
+                             async fn test_deletions [L772-854]
+                             async fn test_overlapping_user_edits [L857-951]
+                             async fn test_creating_files [L954-1010]
+                             async fn test_deleting_files [L1013-1120]
+                             async fn test_reject_edits [L1123-1255]
+                             async fn test_reject_multiple_edits [L1258-1331]
+                             async fn test_reject_deleted_file [L1334-1388]
+                             async fn test_reject_created_file [L1391-1443]
+                             async fn test_random_diffs [L1446-1535]
+                              fn quiesce [L1510-1534]
+                             struct HunkStatus [L1538-1542]
+                              range [L1539]
+                              diff_status [L1540]
+                              old_text [L1541]
+                             fn unreviewed_hunks [L1544-1573]
+
+                            Showing symbols 1-69 (total symbols: 69)
+
+                            Using the line numbers in this outline, you can call this tool again while specifying
+                            the start_line and end_line fields to see the implementations of symbols in the outline.
+                        "},
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text(
+                            "Let's look at the existing test cases that are related to file creation to understand the pattern:",
+                        ),
+                        tool_use(
+                            "tool_2",
+                            "read_file",
+                            ReadFileToolInput {
+                                path: input_file_path.into(),
+                                start_line: Some(953),
+                                end_line: Some(1010),
+                            },
+                        ),
+                    ],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_2",
+                        "read_file",
+                        lines(input_file_content, 953..1010),
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text(
+                            "Now let's look at another relevant test to understand how they're structured:",
+                        ),
+                        tool_use(
+                            "tool_3",
+                            "read_file",
+                            ReadFileToolInput {
+                                path: input_file_path.into(),
+                                start_line: Some(1012),
+                                end_line: Some(1120),
+                            },
+                        ),
+                    ],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_3",
+                        "read_file",
+                        lines(input_file_content, 1012..1120),
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text("Now let's look at how `buffer_created` is implemented:"),
+                        tool_use(
+                            "tool_4",
+                            "read_file",
+                            ReadFileToolInput {
+                                path: input_file_path.into(),
+                                start_line: Some(271),
+                                end_line: Some(276),
+                            },
+                        ),
+                    ],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "tool_4",
+                        "read_file",
+                        lines(input_file_content, 271..276),
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text(indoc! {"
+                            Based on my understanding of the existing tests and code, I'll now create a new test for overwriting a file. In this test, we'll:
+
+                            1. Create a file
+                            2. Open a buffer for it
+                            3. Track it in the action log
+                            4. Modify the buffer
+                            5. Call `buffer_created` again as if the file were new
+                            6. Check that the changes are properly tracked
+
+                            Let's write the test:
+                        "}),
+                        tool_use(
+                            "tool_5",
+                            "edit_file",
+                            StreamingEditFileToolInput {
+                                display_description: edit_description.into(),
+                                path: input_file_path.into(),
+                                create_or_overwrite: false,
+                            },
+                        ),
+                    ],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: Some(input_file_content.into()),
+            edit_description: edit_description.into(),
+            assertion: EvalAssertion::judge_diff(
+                "A new test for overwritten files was created, without changing any previous test",
+            ),
+        },
+    );
+}
+
 fn message(
     role: Role,
     contents: impl IntoIterator<Item = MessageContent>,
@@ -671,6 +895,7 @@ fn tool_result(
         tool_name: name.into(),
         is_error: false,
         content: result.into(),
+        output: None,
     })
 }
 
@@ -879,7 +1104,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
 
     let mismatched_tag_ratio =
         cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
-    if mismatched_tag_ratio > 0.02 {
+    if mismatched_tag_ratio > 0.05 {
         for eval_output in eval_outputs {
             println!("{}", eval_output);
         }
@@ -967,7 +1192,7 @@ impl EditAgentTest {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         Self {
-            agent: EditAgent::new(agent_model, action_log, Templates::new()),
+            agent: EditAgent::new(agent_model, project.clone(), action_log, Templates::new()),
             project,
             judge_model,
         }

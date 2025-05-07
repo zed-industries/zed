@@ -1,16 +1,18 @@
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
+use futures::StreamExt;
 use gpui::AsyncApp;
 use task::DebugRequest;
+use util::fs::remove_matching;
 
 use crate::*;
 
 #[derive(Default)]
 pub(crate) struct CodeLldbDebugAdapter {
-    last_known_version: OnceLock<String>,
+    path_to_codelldb: OnceLock<String>,
 }
 
 impl CodeLldbDebugAdapter {
@@ -54,29 +56,6 @@ impl CodeLldbDebugAdapter {
             configuration,
         }
     }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for CodeLldbDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    async fn install_binary(
-        &self,
-        version: AdapterVersion,
-        delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::Vsix,
-            delegate,
-        )
-        .await?;
-
-        Ok(())
-    }
 
     async fn fetch_latest_adapter_version(
         &self,
@@ -107,7 +86,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             }
         };
         let asset_name = format!("codelldb-{platform}-{arch}.vsix");
-        let _ = self.last_known_version.set(release.tag_name.clone());
         let ret = AdapterVersion {
             tag_name: release.tag_name,
             url: release
@@ -121,28 +99,56 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
         Ok(ret)
     }
+}
 
-    async fn get_installed_binary(
+#[async_trait(?Send)]
+impl DebugAdapter for CodeLldbDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
         &self,
-        _: &dyn DapDelegate,
+        delegate: &dyn DapDelegate,
         config: &DebugTaskDefinition,
-        _: Option<PathBuf>,
+        user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let Some(version) = self.last_known_version.get() else {
-            bail!("Could not determine latest CodeLLDB version");
-        };
-        let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-        let version_path = adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version));
+        let mut command = user_installed_path
+            .map(|p| p.to_string_lossy().to_string())
+            .or(self.path_to_codelldb.get().cloned());
 
-        let adapter_dir = version_path.join("extension").join("adapter");
-        let command = adapter_dir.join("codelldb");
-        let command = command
-            .to_str()
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| anyhow!("Adapter path is expected to be valid UTF-8"))?;
+        if command.is_none() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
+            let version_path =
+                if let Ok(version) = self.fetch_latest_adapter_version(delegate).await {
+                    adapters::download_adapter_from_github(
+                        self.name(),
+                        version.clone(),
+                        adapters::DownloadedFileType::Vsix,
+                        delegate,
+                    )
+                    .await?;
+                    let version_path =
+                        adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
+                    remove_matching(&adapter_path, |entry| entry != version_path).await;
+                    version_path
+                } else {
+                    let mut paths = delegate.fs().read_dir(&adapter_path).await?;
+                    paths
+                        .next()
+                        .await
+                        .ok_or_else(|| anyhow!("No adapter found"))??
+                };
+            let adapter_dir = version_path.join("extension").join("adapter");
+            let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
+            self.path_to_codelldb.set(path.clone()).ok();
+            command = Some(path);
+        };
+
         Ok(DebugAdapterBinary {
-            command,
+            command: command.unwrap(),
             cwd: None,
             arguments: vec![
                 "--settings".into(),

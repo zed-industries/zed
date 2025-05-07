@@ -6,8 +6,9 @@ use gpui::{AnyWindowHandle, App, Entity, Task};
 
 use indoc::formatdoc;
 use itertools::Itertools;
+use language::{Anchor, Point};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -35,11 +36,11 @@ pub struct ReadFileToolInput {
 
     /// Optional line number to start reading on (1-based index)
     #[serde(default)]
-    pub start_line: Option<usize>,
+    pub start_line: Option<u32>,
 
     /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
-    pub end_line: Option<usize>,
+    pub end_line: Option<u32>,
 }
 
 pub struct ReadFileTool;
@@ -109,7 +110,7 @@ impl Tool for ReadFileTool {
         let file_path = input.path.clone();
         cx.spawn(async move |cx| {
             if !exists.await? {
-                return Err(anyhow!("{} not found", file_path))
+                return Err(anyhow!("{} not found", file_path));
             }
 
             let buffer = cx
@@ -118,24 +119,53 @@ impl Tool for ReadFileTool {
                 })?
                 .await?;
 
+            project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: Anchor::MIN,
+                    }),
+                    cx,
+                );
+            })?;
+
             // Check if specific line ranges are provided
             if input.start_line.is_some() || input.end_line.is_some() {
+                let mut anchor = None;
                 let result = buffer.read_with(cx, |buffer, _cx| {
                     let text = buffer.text();
                     // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
                     let start = input.start_line.unwrap_or(1).max(1);
-                    let lines = text.split('\n').skip(start - 1);
+                    let start_row = start - 1;
+                    if start_row <= buffer.max_point().row {
+                        let column = buffer.line_indent_for_row(start_row).raw_len();
+                        anchor = Some(buffer.anchor_before(Point::new(start_row, column)));
+                    }
+
+                    let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count), "\n").collect()
+                        Itertools::intersperse(lines.take(count as usize), "\n").collect::<String>().into()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect()
+                        Itertools::intersperse(lines, "\n").collect::<String>().into()
                     }
                 })?;
 
                 action_log.update(cx, |log, cx| {
-                    log.track_buffer(buffer, cx);
+                    log.buffer_read(buffer.clone(), cx);
                 })?;
+
+                if let Some(anchor) = anchor {
+                    project.update(cx, |project, cx| {
+                        project.set_agent_location(
+                            Some(AgentLocation {
+                                buffer: buffer.downgrade(),
+                                position: anchor,
+                            }),
+                            cx,
+                        );
+                    })?;
+                }
 
                 Ok(result)
             } else {
@@ -147,10 +177,10 @@ impl Tool for ReadFileTool {
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
-                        log.track_buffer(buffer, cx);
+                        log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(result.into())
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
@@ -162,10 +192,11 @@ impl Tool for ReadFileTool {
 
                         Using the line numbers in this outline, you can call this tool again while specifying
                         the start_line and end_line fields to see the implementations of symbols in the outline."
-                    })
+                    }.into())
                 }
             }
-        }).into()
+        })
+        .into()
     }
 }
 
@@ -227,7 +258,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content");
+        assert_eq!(result.unwrap().content, "This is a small file content");
     }
 
     #[gpui::test]
@@ -327,7 +358,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+        assert_eq!(result.unwrap().content, "Line 2\nLine 3\nLine 4");
     }
 
     #[gpui::test]
@@ -358,7 +389,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+        assert_eq!(result.unwrap().content, "Line 1\nLine 2");
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -373,7 +404,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1");
+        assert_eq!(result.unwrap().content, "Line 1");
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -388,7 +419,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3");
+        assert_eq!(result.unwrap().content, "Line 3");
     }
 
     fn init_test(cx: &mut TestAppContext) {

@@ -5,7 +5,7 @@ use crate::{
     schema::json_schema_for,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult};
+use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolResult, ToolResultOutput};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task};
 use indoc::formatdoc;
@@ -61,7 +61,17 @@ pub struct StreamingEditFileToolInput {
 
     /// If true, this tool will recreate the file from scratch.
     /// If false, this tool will produce granular edits to an existing file.
+    ///
+    /// When a file already exists or you just created it, always prefer editing
+    /// it as opposed to recreating it from scratch.
     pub create_or_overwrite: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct StreamingEditFileToolOutput {
+    pub original_path: PathBuf,
+    pub new_text: String,
+    pub old_text: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -170,7 +180,7 @@ impl Tool for StreamingEditFileTool {
                 .update(|cx| LanguageModelRegistry::read_global(cx).default_model())?
                 .context("default model not set")?
                 .model;
-            let edit_agent = EditAgent::new(model, action_log, Templates::new());
+            let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {
@@ -245,6 +255,12 @@ impl Tool for StreamingEditFileTool {
             });
             let (new_text, diff) = futures::join!(new_text, diff);
 
+            let output = StreamingEditFileToolOutput {
+                original_path: project_path.path.to_path_buf(),
+                new_text: new_text.clone(),
+                old_text: old_text.clone(),
+            };
+
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
                     card.set_diff(project_path.path.clone(), old_text, new_text, cx);
@@ -261,10 +277,13 @@ impl Tool for StreamingEditFileTool {
                         I can perform the requested edits.
                     "}))
                 } else {
-                    Ok("No edits were made.".to_string())
+                    Ok("No edits were made.".to_string().into())
                 }
             } else {
-                Ok(format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff))
+                Ok(ToolResultOutput {
+                    content: format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff),
+                    output: serde_json::to_value(output).ok(),
+                })
             }
         });
 
@@ -272,6 +291,32 @@ impl Tool for StreamingEditFileTool {
             output: task,
             card: card.map(AnyToolCard::from),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        let output = match serde_json::from_value::<StreamingEditFileToolOutput>(output) {
+            Ok(output) => output,
+            Err(_) => return None,
+        };
+
+        let card = cx.new(|cx| {
+            let mut card = EditFileToolCard::new(output.original_path.clone(), project, window, cx);
+            card.set_diff(
+                output.original_path.into(),
+                output.old_text,
+                output.new_text,
+                cx,
+            );
+            card
+        });
+
+        Some(card.into())
     }
 }
 

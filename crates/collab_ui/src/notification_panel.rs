@@ -22,7 +22,9 @@ use ui::{
     Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
+use workspace::notifications::{
+    Notification as WorkspaceNotification, NotificationId, SuppressEvent,
+};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -823,6 +825,11 @@ impl Render for NotificationToast {
                 IconButton::new("close", IconName::Close)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
+            .child(
+                IconButton::new("suppress", IconName::XCircle)
+                    .tooltip(Tooltip::text("Do not show until restart"))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SuppressEvent))),
+            )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.focus_notification_panel(window, cx);
                 cx.emit(DismissEvent);
@@ -831,3 +838,4 @@ impl Render for NotificationToast {
 }
 
 impl EventEmitter<DismissEvent> for NotificationToast {}
+impl EventEmitter<SuppressEvent> for NotificationToast {}

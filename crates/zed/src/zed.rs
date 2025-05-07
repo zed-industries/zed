@@ -19,7 +19,7 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -53,7 +53,6 @@ use settings::{
 };
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
-use std::time::Duration;
 use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
@@ -373,9 +372,6 @@ fn initialize_panels(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let assistant2_feature_flag =
-        cx.wait_for_flag_or_timeout::<feature_flags::Assistant2FeatureFlag>(Duration::from_secs(5));
-
     let prompt_builder = prompt_builder.clone();
 
     cx.spawn_in(window, async move |workspace_handle, cx| {
@@ -436,11 +432,7 @@ fn initialize_panels(
             workspace.add_panel(git_panel, window, cx);
         })?;
 
-        let is_assistant2_enabled = if cfg!(test) {
-            false
-        } else {
-            assistant2_feature_flag.await
-        };
+        let is_assistant2_enabled = !cfg!(test);
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
             let assistant2_panel =
@@ -915,7 +907,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let agent_diff_toolbar = cx.new(|_cx| AgentDiffToolbar::new());
+            let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
         })
     });

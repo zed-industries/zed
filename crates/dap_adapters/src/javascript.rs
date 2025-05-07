@@ -1,13 +1,16 @@
 use adapters::latest_github_release;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
+use util::ResultExt;
 
 use crate::*;
 
-#[derive(Debug)]
-pub(crate) struct JsDebugAdapter;
+#[derive(Debug, Default)]
+pub(crate) struct JsDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
@@ -46,13 +49,6 @@ impl JsDebugAdapter {
             configuration: args,
             request: config.request.to_dap(),
         }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for JsDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
     async fn fetch_latest_adapter_version(
@@ -130,20 +126,35 @@ impl DebugAdapter for JsDebugAdapter {
             request_args: self.request_args(config),
         })
     }
+}
 
-    async fn install_binary(
+#[async_trait(?Send)]
+impl DebugAdapter for JsDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
         &self,
-        version: AdapterVersion,
         delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::GzipTar,
-            delegate,
-        )
-        .await?;
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version,
+                    adapters::DownloadedFileType::GzipTar,
+                    delegate,
+                )
+                .await?;
+            }
+        }
 
-        return Ok(());
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
     }
 }
