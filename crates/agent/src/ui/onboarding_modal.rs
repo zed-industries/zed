@@ -92,10 +92,10 @@ impl Render for AgentOnboardingModal {
                     .top_0()
                     .right(px(-1.0))
                     .w(px(441.))
-                    .h(px(167.))
+                    .h(px(240.))
                     .child(
-                        Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(167.))
-                            .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1))),
+                        Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(240.))
+                            .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.05))),
                     ),
             )
             .child(
@@ -109,6 +109,23 @@ impl Render for AgentOnboardingModal {
                         Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.))
                             .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
                     ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .bg(gpui::linear_gradient(
+                        175.,
+                        gpui::linear_color_stop(
+                            cx.theme().colors().elevated_surface_background,
+                            0.,
+                        ),
+                        gpui::linear_color_stop(
+                            cx.theme().colors().elevated_surface_background.opacity(0.),
+                            0.8,
+                        ),
+                    )),
             )
             .child(
                 v_flex()
