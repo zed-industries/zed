@@ -170,7 +170,7 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
-    pub const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -2407,52 +2407,6 @@ impl EditorElement {
             .collect();
 
         elements
-    }
-
-    fn layout_code_actions_indicator(
-        &self,
-        line_height: Pixels,
-        newest_selection_head: DisplayPoint,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        breakpoint_points: &mut HashMap<DisplayRow, (Anchor, Breakpoint)>,
-        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let mut active = false;
-        let mut button = None;
-        let row = newest_selection_head.row();
-        self.editor.update(cx, |editor, cx| {
-            if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
-                deployed_from_indicator,
-                ..
-            })) = editor.context_menu.borrow().as_ref()
-            {
-                active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
-            };
-
-            let breakpoint = breakpoint_points.get(&row);
-            button = editor.render_code_actions_indicator(&self.style, row, active, breakpoint, cx);
-        });
-
-        let button = button?;
-        breakpoint_points.remove(&row);
-
-        let button = prepaint_gutter_button(
-            button,
-            row,
-            line_height,
-            gutter_dimensions,
-            scroll_pixel_position,
-            gutter_hitbox,
-            display_hunks,
-            window,
-            cx,
-        );
-
-        Some(button)
     }
 
     fn calculate_relative_line_numbers(
@@ -4857,10 +4811,6 @@ impl EditorElement {
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
             }
-
-            if let Some(indicator) = layout.code_actions_indicator.as_mut() {
-                indicator.paint(window, cx);
-            }
         });
     }
 
@@ -6831,28 +6781,13 @@ impl Element for EditorElement {
                             self.max_line_number_width(&snapshot, window, cx),
                             cx,
                         )
-                        .unwrap_or_default();
-                    let hitbox = window.insert_hitbox(bounds, false);
-                    let gutter_hitbox =
-                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
-                    let text_hitbox = window.insert_hitbox(
-                        Bounds {
-                            origin: gutter_hitbox.top_right()
-                                + point(style.horizontal_padding, Pixels::default()),
-                            size: size(
-                                bounds.size.width
-                                    - gutter_dimensions.width
-                                    - 2. * style.horizontal_padding,
-                                bounds.size.height,
-                            ),
-                        },
-                        false,
-                    );
+                        .unwrap_or_else(|| {
+                            GutterDimensions::default_with_margin(font_id, font_size, cx)
+                        });
+                    let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let editor_width = text_hitbox.size.width
-                        - gutter_dimensions.margin
-                        - em_width
-                        - style.scrollbar_width;
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -6888,13 +6823,24 @@ impl Element for EditorElement {
                         .map(|(guide, active)| (self.column_pixels(*guide, window, cx), *active))
                         .collect::<SmallVec<[_; 2]>>();
 
+                    let hitbox = window.insert_hitbox(bounds, false);
+                    let gutter_hitbox =
+                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    let text_hitbox = window.insert_hitbox(
+                        Bounds {
+                            origin: gutter_hitbox.top_right(),
+                            size: size(text_width, bounds.size.height),
+                        },
+                        false,
+                    );
+
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
                     let content_offset = point(gutter_dimensions.margin, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
                     let editor_text_bounds =
-                        Bounds::from_corners(content_origin, text_hitbox.bounds.bottom_right());
+                        Bounds::from_corners(content_origin, bounds.bottom_right());
 
                     let height_in_lines = editor_text_bounds.size.height / line_height;
 
@@ -7545,7 +7491,6 @@ impl Element for EditorElement {
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
-                    let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let newest_selection_point =
                             newest_selection_head.to_point(&snapshot.display_snapshot);
@@ -7564,52 +7509,6 @@ impl Element for EditorElement {
                                 window,
                                 cx,
                             );
-
-                            let show_code_actions = snapshot
-                                .show_code_actions
-                                .unwrap_or(gutter_settings.code_actions);
-                            if show_code_actions {
-                                let newest_selection_point =
-                                    newest_selection_head.to_point(&snapshot.display_snapshot);
-                                if !snapshot
-                                    .is_line_folded(MultiBufferRow(newest_selection_point.row))
-                                {
-                                    let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
-                                    );
-                                    if let Some((buffer, range)) = buffer {
-                                        let buffer_id = buffer.remote_id();
-                                        let row = range.start.row;
-                                        let has_test_indicator = self
-                                            .editor
-                                            .read(cx)
-                                            .tasks
-                                            .contains_key(&(buffer_id, row));
-
-                                        let has_expand_indicator = row_infos
-                                            .get(
-                                                (newest_selection_head.row() - start_row).0
-                                                    as usize,
-                                            )
-                                            .is_some_and(|row_info| row_info.expand_info.is_some());
-
-                                        if !has_test_indicator && !has_expand_indicator {
-                                            code_actions_indicator = self
-                                                .layout_code_actions_indicator(
-                                                    line_height,
-                                                    newest_selection_head,
-                                                    scroll_pixel_position,
-                                                    &gutter_dimensions,
-                                                    &gutter_hitbox,
-                                                    &mut breakpoint_rows,
-                                                    &display_hunks,
-                                                    window,
-                                                    cx,
-                                                );
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
@@ -7818,7 +7717,6 @@ impl Element for EditorElement {
                         mouse_context_menu,
                         test_indicators,
                         breakpoints,
-                        code_actions_indicator,
                         crease_toggles,
                         crease_trailers,
                         tab_invisible,
@@ -7989,7 +7887,6 @@ pub struct EditorLayout {
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
-    code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
@@ -8745,7 +8642,7 @@ fn compute_auto_height_layout(
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot
         .gutter_dimensions(font_id, font_size, max_line_number_width, cx)
-        .unwrap_or_default();
+        .unwrap_or_else(|| GutterDimensions::default_with_margin(font_id, font_size, cx));
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;

@@ -52,7 +52,8 @@ use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    DetachAndPromptErr, Notifications, simple_message_notification::MessageNotification,
+    DetachAndPromptErr, Notifications, dismiss_app_notification,
+    simple_message_notification::MessageNotification,
 };
 pub use pane::*;
 pub use pane_group::*;
@@ -179,6 +180,7 @@ actions!(
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
+        SuppressNotification,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -867,6 +869,7 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
+    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -921,6 +924,7 @@ pub struct Workspace {
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
+    suppressed_notifications: HashSet<NotificationId>,
     project: Entity<Project>,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
@@ -1245,7 +1249,8 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
-            notifications: Default::default(),
+            notifications: Notifications::default(),
+            suppressed_notifications: HashSet::default(),
             left_dock,
             bottom_dock,
             bottom_dock_layout,
@@ -5302,11 +5307,19 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
+                    if let Some((notification_id, _)) = workspace.notifications.pop() {
+                        workspace.suppress_notification(&notification_id, cx);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::cancel))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5476,6 +5489,16 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
+    }
+
+    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+            return;
+        }
+
+        cx.emit(Event::ClearActivityIndicator);
+        cx.propagate();
     }
 }
 

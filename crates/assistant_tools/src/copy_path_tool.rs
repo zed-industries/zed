@@ -3,8 +3,8 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
+use language_model::{LanguageModel, LanguageModelRequestMessage};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,7 @@ impl Tool for CopyPathTool {
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -107,10 +108,9 @@ impl Tool for CopyPathTool {
 
         cx.background_spawn(async move {
             match copy_task.await {
-                Ok(_) => Ok(format!(
-                    "Copied {} to {}",
-                    input.source_path, input.destination_path
-                )),
+                Ok(_) => Ok(
+                    format!("Copied {} to {}", input.source_path, input.destination_path).into(),
+                ),
                 Err(err) => Err(anyhow!(
                     "Failed to copy {} to {}: {}",
                     input.source_path,

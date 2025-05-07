@@ -517,7 +517,6 @@ pub enum SoftWrap {
 #[derive(Clone)]
 pub struct EditorStyle {
     pub background: Hsla,
-    pub horizontal_padding: Pixels,
     pub local_player: PlayerColor,
     pub text: TextStyle,
     pub scrollbar_width: Pixels,
@@ -532,7 +531,6 @@ impl Default for EditorStyle {
     fn default() -> Self {
         Self {
             background: Hsla::default(),
-            horizontal_padding: Pixels::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
             scrollbar_width: Pixels::default(),
@@ -1020,7 +1018,6 @@ pub struct EditorSnapshot {
     show_gutter: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
-    show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     git_blame_gutter_max_author_length: Option<usize>,
@@ -1043,6 +1040,16 @@ pub struct GutterDimensions {
 }
 
 impl GutterDimensions {
+    fn default_with_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Self {
+        Self {
+            margin: Self::default_gutter_margin(font_id, font_size, cx),
+            ..Default::default()
+        }
+    }
+
+    fn default_gutter_margin(font_id: FontId, font_size: Pixels, cx: &App) -> Pixels {
+        -cx.text_system().descent(font_id, font_size)
+    }
     /// The full width of the space taken up by the gutter.
     pub fn full_width(&self) -> Pixels {
         self.margin + self.width
@@ -2212,7 +2219,6 @@ impl Editor {
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
-            show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
@@ -3625,7 +3631,9 @@ impl Editor {
                 let start_anchor = snapshot.anchor_before(selection.start);
 
                 let is_word_char = text.chars().next().map_or(true, |char| {
-                    let classifier = snapshot.char_classifier_at(start_anchor.to_offset(&snapshot));
+                    let classifier = snapshot
+                        .char_classifier_at(start_anchor.to_offset(&snapshot))
+                        .ignore_punctuation(true);
                     classifier.is_word(char)
                 });
 
@@ -4331,6 +4339,16 @@ impl Editor {
 
     pub fn inline_values_enabled(&self) -> bool {
         self.inline_value_cache.enabled
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inline_value_inlays(&self, cx: &App) -> Vec<Inlay> {
+        self.display_map
+            .read(cx)
+            .current_inlays()
+            .filter(|inlay| matches!(inlay.id, InlayId::DebuggerValue(_)))
+            .cloned()
+            .collect()
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
@@ -5206,20 +5224,27 @@ impl Editor {
                                     let dap_store = project.read(cx).dap_store();
                                     let mut scenarios = vec![];
                                     let resolved_tasks = resolved_tasks.as_ref()?;
-                                    let debug_adapter: SharedString = buffer
-                                        .read(cx)
-                                        .language()?
-                                        .context_provider()?
-                                        .debug_adapter()?
-                                        .into();
+                                    let buffer = buffer.read(cx);
+                                    let language = buffer.language()?;
+                                    let file = buffer.file();
+                                    let debug_adapter =
+                                        language_settings(language.name().into(), file, cx)
+                                            .debuggers
+                                            .first()
+                                            .map(SharedString::from)
+                                            .or_else(|| {
+                                                language
+                                                    .config()
+                                                    .debuggers
+                                                    .first()
+                                                    .map(SharedString::from)
+                                            })?;
+
                                     dap_store.update(cx, |this, cx| {
                                         for (_, task) in &resolved_tasks.templates {
                                             if let Some(scenario) = this
                                                 .debug_scenario_for_build_task(
-                                                    task.resolved.clone(),
-                                                    SharedString::from(
-                                                        task.original_task().label.clone(),
-                                                    ),
+                                                    task.original_task().clone(),
                                                     debug_adapter.clone(),
                                                     cx,
                                                 )
@@ -6681,69 +6706,6 @@ impl Editor {
 
     pub fn edit_prediction_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
-    }
-
-    fn render_code_actions_indicator(
-        &self,
-        _style: &EditorStyle,
-        row: DisplayRow,
-        is_active: bool,
-        breakpoint: Option<&(Anchor, Breakpoint)>,
-        cx: &mut Context<Self>,
-    ) -> Option<IconButton> {
-        let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let show_tooltip = !self.context_menu_visible();
-
-        if self.available_code_actions.is_some() {
-            Some(
-                IconButton::new("code_actions_indicator", ui::IconName::Bolt)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(color)
-                    .toggle_state(is_active)
-                    .when(show_tooltip, |this| {
-                        this.tooltip({
-                            let focus_handle = self.focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Toggle Code Actions",
-                                    &ToggleCodeActions {
-                                        deployed_from_indicator: None,
-                                        quick_launch: false,
-                                    },
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                    })
-                    .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-                        let quick_launch = e.down.button == MouseButton::Left;
-                        window.focus(&editor.focus_handle(cx));
-                        editor.toggle_code_actions(
-                            &ToggleCodeActions {
-                                deployed_from_indicator: Some(row),
-                                quick_launch,
-                            },
-                            window,
-                            cx,
-                        );
-                    }))
-                    .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                        editor.set_breakpoint_context_menu(
-                            row,
-                            position,
-                            event.down.position,
-                            window,
-                            cx,
-                        );
-                    })),
-            )
-        } else {
-            None
-        }
     }
 
     fn clear_tasks(&mut self) {
@@ -17658,7 +17620,7 @@ impl Editor {
         }
     }
 
-    fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh_inline_values(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
         };
@@ -20054,7 +20016,6 @@ impl EditorSnapshot {
             return None;
         }
 
-        let descent = cx.text_system().descent(font_id, font_size);
         let em_width = cx.text_system().em_width(font_id, font_size).log_err()?;
         let em_advance = cx.text_system().em_advance(font_id, font_size).log_err()?;
 
@@ -20075,10 +20036,6 @@ impl EditorSnapshot {
         } else {
             0.0.into()
         };
-
-        let show_code_actions = self
-            .show_code_actions
-            .unwrap_or(gutter_settings.code_actions);
 
         let show_runnables = self.show_runnables.unwrap_or(gutter_settings.runnables);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
@@ -20105,7 +20062,7 @@ impl EditorSnapshot {
         let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
         left_padding += if !is_singleton {
             em_width * 4.0
-        } else if show_code_actions || show_runnables || show_breakpoints {
+        } else if show_runnables || show_breakpoints {
             em_width * 3.0
         } else if show_git_gutter && show_line_numbers {
             em_width * 2.0
@@ -20131,7 +20088,7 @@ impl EditorSnapshot {
             left_padding,
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
-            margin: -descent,
+            margin: GutterDimensions::default_gutter_margin(font_id, font_size, cx),
             git_blame_entries_width,
         })
     }
@@ -20336,7 +20293,6 @@ impl Render for Editor {
             &cx.entity(),
             EditorStyle {
                 background,
-                horizontal_padding: Pixels::default(),
                 local_player: cx.theme().players().local(),
                 text: text_style,
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,

@@ -103,14 +103,14 @@ impl DebugSession {
     pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
         let label = self.label(cx);
 
+        let is_terminated = self
+            .running_state
+            .read(cx)
+            .session()
+            .read(cx)
+            .is_terminated();
         let icon = {
-            if self
-                .running_state
-                .read(cx)
-                .session()
-                .read(cx)
-                .is_terminated()
-            {
+            if is_terminated {
                 Some(Indicator::dot().color(Color::Error))
             } else {
                 match self
@@ -131,7 +131,7 @@ impl DebugSession {
             .gap_2()
             .when_some(icon, |this, indicator| this.child(indicator))
             .justify_between()
-            .child(Label::new(label))
+            .child(Label::new(label).when(is_terminated, |this| this.strikethrough()))
             .into_any_element()
     }
 }

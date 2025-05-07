@@ -8,7 +8,7 @@ use gpui::{Entity, Task, prelude::*};
 use serde::{Deserialize, Serialize};
 use smol::future::FutureExt;
 use std::time::Duration;
-use ui::{App, SharedString};
+use ui::{App, SharedString, Window};
 use util::ResultExt as _;
 
 use crate::{
@@ -82,6 +82,7 @@ impl HistoryStore {
         thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context_editor::ContextStore>,
         initial_recent_entries: impl IntoIterator<Item = RecentEntry>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
@@ -89,55 +90,62 @@ impl HistoryStore {
             cx.observe(&context_store, |_, _, cx| cx.notify()),
         ];
 
-        cx.spawn({
-            let thread_store = thread_store.downgrade();
-            let context_store = context_store.downgrade();
-            async move |this, cx| {
-                let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
-                let contents = cx
-                    .background_spawn(async move { std::fs::read_to_string(path) })
-                    .await
-                    .context("reading persisted agent panel navigation history")?;
-                let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(&contents)
-                    .context("deserializing persisted agent panel navigation history")?
-                    .into_iter()
-                    .take(MAX_RECENTLY_OPENED_ENTRIES)
-                    .map(|serialized| match serialized {
-                        SerializedRecentEntry::Thread(id) => thread_store
-                            .update(cx, |thread_store, cx| {
-                                let thread_id = ThreadId::from(id.as_str());
-                                thread_store
-                                    .open_thread(&thread_id, cx)
-                                    .map_ok(|thread| RecentEntry::Thread(thread_id, thread))
-                                    .boxed()
-                            })
-                            .unwrap_or_else(|_| async { Err(anyhow!("no thread store")) }.boxed()),
-                        SerializedRecentEntry::Context(id) => context_store
-                            .update(cx, |context_store, cx| {
-                                context_store
-                                    .open_local_context(Path::new(&id).into(), cx)
-                                    .map_ok(RecentEntry::Context)
-                                    .boxed()
-                            })
-                            .unwrap_or_else(|_| async { Err(anyhow!("no context store")) }.boxed()),
-                    });
-                let entries = join_all(entries)
-                    .await
-                    .into_iter()
-                    .filter_map(|result| result.log_err())
-                    .collect::<VecDeque<_>>();
+        window
+            .spawn(cx, {
+                let thread_store = thread_store.downgrade();
+                let context_store = context_store.downgrade();
+                let this = cx.weak_entity();
+                async move |cx| {
+                    let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
+                    let contents = cx
+                        .background_spawn(async move { std::fs::read_to_string(path) })
+                        .await
+                        .ok()?;
+                    let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(&contents)
+                        .context("deserializing persisted agent panel navigation history")
+                        .log_err()?
+                        .into_iter()
+                        .take(MAX_RECENTLY_OPENED_ENTRIES)
+                        .map(|serialized| match serialized {
+                            SerializedRecentEntry::Thread(id) => thread_store
+                                .update_in(cx, |thread_store, window, cx| {
+                                    let thread_id = ThreadId::from(id.as_str());
+                                    thread_store
+                                        .open_thread(&thread_id, window, cx)
+                                        .map_ok(|thread| RecentEntry::Thread(thread_id, thread))
+                                        .boxed()
+                                })
+                                .unwrap_or_else(|_| {
+                                    async { Err(anyhow!("no thread store")) }.boxed()
+                                }),
+                            SerializedRecentEntry::Context(id) => context_store
+                                .update(cx, |context_store, cx| {
+                                    context_store
+                                        .open_local_context(Path::new(&id).into(), cx)
+                                        .map_ok(RecentEntry::Context)
+                                        .boxed()
+                                })
+                                .unwrap_or_else(|_| {
+                                    async { Err(anyhow!("no context store")) }.boxed()
+                                }),
+                        });
+                    let entries = join_all(entries)
+                        .await
+                        .into_iter()
+                        .filter_map(|result| result.log_err())
+                        .collect::<VecDeque<_>>();
 
-                this.update(cx, |this, _| {
-                    this.recently_opened_entries.extend(entries);
-                    this.recently_opened_entries
-                        .truncate(MAX_RECENTLY_OPENED_ENTRIES);
-                })
-                .ok();
+                    this.update(cx, |this, _| {
+                        this.recently_opened_entries.extend(entries);
+                        this.recently_opened_entries
+                            .truncate(MAX_RECENTLY_OPENED_ENTRIES);
+                    })
+                    .ok();
 
-                anyhow::Ok(())
-            }
-        })
-        .detach_and_log_err(cx);
+                    Some(())
+                }
+            })
+            .detach();
 
         Self {
             thread_store,

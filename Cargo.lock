@@ -62,7 +62,6 @@ dependencies = [
  "chrono",
  "client",
  "collections",
- "command_palette_hooks",
  "component",
  "context_server",
  "convert_case 0.8.0",
@@ -547,7 +546,6 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -595,8 +593,8 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "collections",
  "deepseek",
- "feature_flags",
  "fs",
  "gpui",
  "indexmap",
@@ -608,9 +606,11 @@ dependencies = [
  "paths",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "settings",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -3004,6 +3004,7 @@ dependencies = [
  "anyhow",
  "assistant",
  "assistant_context_editor",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",
@@ -4067,7 +4068,6 @@ dependencies = [
  "http_client",
  "language",
  "log",
- "lsp-types",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -4103,7 +4103,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
- "lsp-types",
  "paths",
  "serde",
  "serde_json",
@@ -4248,6 +4247,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "dap",
+ "dap_adapters",
  "db",
  "debugger_tools",
  "editor",
@@ -7796,6 +7796,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -7903,6 +7904,7 @@ dependencies = [
  "partial-json-fixer",
  "project",
  "proto",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
@@ -15084,7 +15086,6 @@ dependencies = [
  "client",
  "collections",
  "db",
- "feature_flags",
  "gpui",
  "http_client",
  "notifications",
@@ -18157,6 +18158,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "node_runtime",
  "parking_lot",
  "postage",
@@ -18692,7 +18694,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.186.0"
+version = "0.187.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18882,9 +18884,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.5"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe0d60001c02d0d21a4114a13bee3a905fbb9e146ada80a90435c05fda18852"
+checksum = "a23b2fd00776b0c55072f389654910ceb501eb0083d7f78905ab0e5cc86949ec"
 dependencies = [
  "anyhow",
  "serde",

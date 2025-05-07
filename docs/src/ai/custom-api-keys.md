@@ -1,24 +1,21 @@
-# Configuring the Assistant
+# Configuring Custom API Keys
 
-Here's a bird's-eye view of all the configuration options available in Zed's Assistant:
+While Zed offers hosted versions of models through our various plans, we're always happy to support users wanting to supply their own API keys for LLM providers.
 
-- Configure LLM Providers
-  - [Zed AI (Configured by default when signed in)](#zed-ai)
-  - [Anthropic](#anthropic)
-  - [GitHub Copilot Chat](#github-copilot-chat)
-  - [Google AI](#google-ai)
-  - [Ollama](#ollama)
-  - [OpenAI](#openai)
-  - [DeepSeek](#deepseek)
-  - [LM Studio](#lmstudio)
-- Advanced configuration options
-  - [Configuring Endpoints](#custom-endpoint)
-  - [Configuring Timeouts](#provider-timeout)
-  - [Configuring Models](#default-model)
-  - [Configuring Feature-specific Models](#feature-specific-models)
-  - [Configuring Alternative Models for Inline Assists](#alternative-assists)
-- [Common Panel Settings](#common-panel-settings)
-- [General Configuration Example](#general-example)
+> Using your own API keys is **_free_** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
+
+## Supported LLM Providers
+
+| Provider                                        | Tool Use Supported |
+| ----------------------------------------------- | ------------------ |
+| [Anthropic](#anthropic)                         | ✅                 |
+| [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
+| [Google AI](#google-ai)                         | ✅                 |
+| [Ollama](#ollama)                               | ✅                 |
+| [OpenAI](#openai)                               | ✅                 |
+| [DeepSeek](#deepseek)                           | 🚫                 |
+| [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
+| [LM Studio](#lmstudio)                          | 🚫                 |
 
 ## Providers {#providers}
 
@@ -26,13 +23,11 @@ To access the Assistant configuration view, run `assistant: show configuration` 
 
 Below you can find all the supported providers available so far.
 
-### Zed AI {#zed-ai}
-
-A hosted service providing convenient and performant support for AI-enabled coding in Zed, powered by Anthropic's Claude 3.5 Sonnet and accessible just by signing in.
-
 ### Anthropic {#anthropic}
 
-You can use Claude 3.5 Sonnet via [Zed AI](#zed-ai) for free. To use other Anthropic models you will need to configure it by providing your own API key.
+> 🔨Supports tool use
+
+You can use Anthropic models with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
 1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
 2. Make sure that your Anthropic account has credits
@@ -89,9 +84,14 @@ by changing the mode in of your models configuration to `thinking`, for example:
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
+> 🔨Supports tool use in some cases.
+> See [here](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset
+
 You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
 ### Google AI {#google-ai}
+
+> 🔨Supports tool use
 
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
 
@@ -126,6 +126,8 @@ By default Zed will use `stable` versions of models, but you can use specific ve
 Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Ollama {#ollama}
+
+> 🔨Supports tool use
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
@@ -174,6 +176,8 @@ You may also optionally specify a value for `keep_alive` for each available mode
 
 ### OpenAI {#openai}
 
+> 🔨Supports tool use
+
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
 3. Open the configuration view (`assistant: show configuration`) and navigate to the OpenAI section
@@ -214,6 +218,8 @@ You must provide the model's Context Window in the `max_tokens` parameter, this 
 
 ### DeepSeek {#deepseek}
 
+> 🚫 Does not support tool use 🚫
+
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
 2. Open the configuration view (`assistant: show configuration`) and navigate to the DeepSeek section
 3. Enter your DeepSeek API key
@@ -251,7 +257,7 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 
 Custom models will be listed in the model dropdown in the assistant panel. You can also modify the `api_url` to use a custom endpoint if needed.
 
-### OpenAI API Compatible
+### OpenAI API Compatible{#openai-api-compatible}
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
@@ -277,6 +283,8 @@ Example configuration for using X.ai Grok with Zed:
 
 ### LM Studio {#lmstudio}
 
+> 🚫 Does not support tool use 🚫
+
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
 
@@ -293,150 +301,3 @@ Example configuration for using X.ai Grok with Zed:
    ```
 
 Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.
-
-## Advanced Configuration {#advanced-configuration}
-
-### Custom Endpoints {#custom-endpoint}
-
-You can use a custom API endpoint for different providers, as long as it's compatible with the providers API structure.
-
-To do so, add the following to your Zed `settings.json`:
-
-```json
-{
-  "language_models": {
-    "some-provider": {
-      "api_url": "http://localhost:11434"
-    }
-  }
-}
-```
-
-Where `some-provider` can be any of the following values: `anthropic`, `google`, `ollama`, `openai`.
-
-### Configuring Models {#default-model}
-
-Zed's hosted LLM service sets `claude-3-7-sonnet-latest` as the default model.
-However, you can change it either via the model dropdown in the Assistant Panel's bottom-left corner or by manually editing the `default_model` object in your settings:
-
-```json
-{
-  "assistant": {
-    "version": "2",
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "gpt-4o"
-    }
-  }
-}
-```
-
-#### Feature-specific Models {#feature-specific-models}
-
-> Currently only available in [Preview](https://zed.dev/releases/preview).
-
-Zed allows you to configure different models for specific features.
-This provides flexibility to use more powerful models for certain tasks while using faster or more efficient models for others.
-
-If a feature-specific model is not set, it will fall back to using the default model, which is the one you set on the Agent Panel.
-
-You can configure the following feature-specific models:
-
-- Thread summary model: Used for generating thread summaries
-- Inline assistant model: Used for the inline assistant feature
-- Commit message model: Used for generating Git commit messages
-
-Example configuration:
-
-```json
-{
-  "assistant": {
-    "version": "2",
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "claude-3-7-sonnet"
-    },
-    "inline_assistant_model": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet"
-    },
-    "commit_message_model": {
-      "provider": "openai",
-      "model": "gpt-4o-mini"
-    },
-    "thread_summary_model": {
-      "provider": "google",
-      "model": "gemini-2.0-flash"
-    }
-  }
-}
-```
-
-### Configuring Alternative Models for Inline Assists {#alternative-assists}
-
-You can configure additional models that will be used to perform inline assists in parallel. When you do this,
-the inline assist UI will surface controls to cycle between the alternatives generated by each model. The models
-you specify here are always used in _addition_ to your default model. For example, the following configuration
-will generate two outputs for every assist. One with Claude 3.5 Sonnet, and one with GPT-4o.
-
-```json
-{
-  "assistant": {
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "claude-3-5-sonnet"
-    },
-    "inline_alternatives": [
-      {
-        "provider": "zed.dev",
-        "model": "gpt-4o"
-      }
-    ],
-    "version": "2"
-  }
-}
-```
-
-## Common Panel Settings {#common-panel-settings}
-
-| key            | type    | default | description                                                                           |
-| -------------- | ------- | ------- | ------------------------------------------------------------------------------------- |
-| enabled        | boolean | true    | Setting this to `false` will completely disable the assistant                         |
-| button         | boolean | true    | Show the assistant icon in the status bar                                             |
-| dock           | string  | "right" | The default dock position for the assistant panel. Can be ["left", "right", "bottom"] |
-| default_height | string  | null    | The pixel height of the assistant panel when docked to the bottom                     |
-| default_width  | string  | null    | The pixel width of the assistant panel when docked to the left or right               |
-
-## General Configuration Example {#general-example}
-
-```json
-{
-  "assistant": {
-    "enabled": true,
-    "default_model": {
-      "provider": "zed.dev",
-      "model": "claude-3-7-sonnet"
-    },
-    "editor_model": {
-      "provider": "openai",
-      "model": "gpt-4o"
-    },
-    "inline_assistant_model": {
-      "provider": "anthropic",
-      "model": "claude-3-5-sonnet"
-    },
-    "commit_message_model": {
-      "provider": "openai",
-      "model": "gpt-4o-mini"
-    },
-    "thread_summary_model": {
-      "provider": "google",
-      "model": "gemini-1.5-flash"
-    },
-    "version": "2",
-    "button": true,
-    "default_width": 480,
-    "dock": "right"
-  }
-}
-```

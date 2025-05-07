@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
 
+use crate::TaskTemplate;
+
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct TcpArgumentsTemplate {
@@ -171,6 +173,18 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum BuildTaskDefinition {
+    ByName(SharedString),
+    Template {
+        #[serde(flatten)]
+        task_template: TaskTemplate,
+        #[serde(skip)]
+        locator_name: Option<SharedString>,
+    },
+}
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -180,7 +194,7 @@ pub struct DebugScenario {
     pub label: SharedString,
     /// A task to run prior to spawning the debuggee.
     #[serde(default)]
-    pub build: Option<SharedString>,
+    pub build: Option<BuildTaskDefinition>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization

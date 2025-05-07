@@ -261,7 +261,7 @@ impl TerminalInlineAssistant {
                         .read(cx)
                         .active_context(cx)?
                         .read(cx)
-                        .to_completion_request(RequestType::Chat, cx),
+                        .to_completion_request(None, RequestType::Chat, cx),
                 )
             })
         } else {

@@ -237,11 +237,14 @@
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
-      "ctrl-alt-/": "agent::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
+      "alt-enter": "editor::Newline",
+      "ctrl-k c": "assistant::CopyCode",
+      "ctrl-g": "search::SelectNextMatch",
+      "ctrl-shift-g": "search::SelectPreviousMatch",
+      "ctrl-k l": "agent::OpenRulesLibrary"
     }
   },
   {
@@ -258,7 +261,8 @@
       "ctrl-shift-o": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
-      "ctrl-alt-e": "agent::RemoveAllContext"
+      "ctrl-alt-e": "agent::RemoveAllContext",
+      "ctrl-shift-e": "project_panel::ToggleFocus"
     }
   },
   {
