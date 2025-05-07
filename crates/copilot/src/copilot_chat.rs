@@ -170,11 +170,14 @@ impl Model {
     pub fn supports_vision(&self) -> bool {
         match self {
             Self::Gpt4o
+            | Self::Gpt4_1
+            | Self::O3
             | Self::O4Mini
             | Self::Gemini20Flash
             | Self::Gemini25Pro
             | Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet => true,
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking => true,
             _ => false,
         }
     }
