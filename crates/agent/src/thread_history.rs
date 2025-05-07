@@ -246,7 +246,7 @@ impl ThreadHistory {
 
     fn matched_count(&self) -> usize {
         match &self.search_state {
-            SearchState::Empty => self.all_entries.len(),
+            SearchState::Empty => self.separated_items.len(),
             SearchState::Searching { .. } => 0,
             SearchState::Searched { matches, .. } => matches.len(),
         }
