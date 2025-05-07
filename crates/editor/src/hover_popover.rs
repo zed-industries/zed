@@ -22,7 +22,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbar, ScrollbarState, prelude::*, theme_is_transparent};
+use ui::{prelude::*, scrollbar, theme_is_transparent, Scrollbar, ScrollbarState};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -902,7 +902,7 @@ impl InfoPopover {
                                 .on_url_click(open_markdown_url),
                         ),
                 )
-                .child(self.render_vertical_scrollbar(cx))
+                .child(scrollbar(self.scrollbar_state.clone(), window))
             })
             .into_any_element()
     }
@@ -917,38 +917,6 @@ impl InfoPopover {
         self.scroll_handle.set_offset(current);
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("info-popover-vertical-scroll")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
-    }
 }
 
 pub struct DiagnosticPopover {

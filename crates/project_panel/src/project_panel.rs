@@ -488,7 +488,7 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone()).with_autohide()
                     .parent_entity(&cx.entity()),
                 horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
                     .parent_entity(&cx.entity()),
