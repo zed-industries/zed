@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::Result;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use anyhow::{Context as _, anyhow};
-use chrono::{Datelike, Utc};
+use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
 use stripe::PriceId;
@@ -20,17 +20,6 @@ struct StripeBillingState {
     meters_by_event_name: HashMap<String, StripeMeter>,
     price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
     prices_by_lookup_key: HashMap<String, stripe::Price>,
-}
-
-pub struct StripeModelTokenPrices {
-    input_tokens_price: StripeBillingPrice,
-    input_cache_creation_tokens_price: StripeBillingPrice,
-    input_cache_read_tokens_price: StripeBillingPrice,
-    output_tokens_price: StripeBillingPrice,
-}
-
-struct StripeBillingPrice {
-    id: stripe::PriceId,
 }
 
 impl StripeBilling {
@@ -146,67 +135,6 @@ impl StripeBilling {
         Ok(())
     }
 
-    pub async fn subscribe_to_model(
-        &self,
-        subscription_id: &stripe::SubscriptionId,
-        model: &StripeModelTokenPrices,
-    ) -> Result<()> {
-        let subscription =
-            stripe::Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
-
-        let mut items = Vec::new();
-
-        if !subscription_contains_price(&subscription, &model.input_tokens_price.id) {
-            items.push(stripe::UpdateSubscriptionItems {
-                price: Some(model.input_tokens_price.id.to_string()),
-                ..Default::default()
-            });
-        }
-
-        if !subscription_contains_price(&subscription, &model.input_cache_creation_tokens_price.id)
-        {
-            items.push(stripe::UpdateSubscriptionItems {
-                price: Some(model.input_cache_creation_tokens_price.id.to_string()),
-                ..Default::default()
-            });
-        }
-
-        if !subscription_contains_price(&subscription, &model.input_cache_read_tokens_price.id) {
-            items.push(stripe::UpdateSubscriptionItems {
-                price: Some(model.input_cache_read_tokens_price.id.to_string()),
-                ..Default::default()
-            });
-        }
-
-        if !subscription_contains_price(&subscription, &model.output_tokens_price.id) {
-            items.push(stripe::UpdateSubscriptionItems {
-                price: Some(model.output_tokens_price.id.to_string()),
-                ..Default::default()
-            });
-        }
-
-        if !items.is_empty() {
-            items.extend(subscription.items.data.iter().map(|item| {
-                stripe::UpdateSubscriptionItems {
-                    id: Some(item.id.to_string()),
-                    ..Default::default()
-                }
-            }));
-
-            stripe::Subscription::update(
-                &self.client,
-                subscription_id,
-                stripe::UpdateSubscription {
-                    items: Some(items),
-                    ..Default::default()
-                },
-            )
-            .await?;
-        }
-
-        Ok(())
-    }
-
     pub async fn bill_model_request_usage(
         &self,
         customer_id: &stripe::CustomerId,
@@ -231,47 +159,6 @@ impl StripeBilling {
         .await?;
 
         Ok(())
-    }
-
-    pub async fn checkout(
-        &self,
-        customer_id: stripe::CustomerId,
-        github_login: &str,
-        model: &StripeModelTokenPrices,
-        success_url: &str,
-    ) -> Result<String> {
-        let first_of_next_month = Utc::now()
-            .checked_add_months(chrono::Months::new(1))
-            .unwrap()
-            .with_day(1)
-            .unwrap();
-
-        let mut params = stripe::CreateCheckoutSession::new();
-        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
-        params.customer = Some(customer_id);
-        params.client_reference_id = Some(github_login);
-        params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
-            billing_cycle_anchor: Some(first_of_next_month.timestamp()),
-            ..Default::default()
-        });
-        params.line_items = Some(
-            [
-                &model.input_tokens_price.id,
-                &model.input_cache_creation_tokens_price.id,
-                &model.input_cache_read_tokens_price.id,
-                &model.output_tokens_price.id,
-            ]
-            .into_iter()
-            .map(|price_id| stripe::CreateCheckoutSessionLineItems {
-                price: Some(price_id.to_string()),
-                ..Default::default()
-            })
-            .collect(),
-        );
-        params.success_url = Some(success_url);
-
-        let session = stripe::CheckoutSession::create(&self.client, params).await?;
-        Ok(session.url.context("no checkout session URL")?)
     }
 
     pub async fn checkout_with_zed_pro(
