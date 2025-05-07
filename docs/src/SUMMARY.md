@@ -39,7 +39,7 @@
 
 # AI
 
-- [Overview](./ai/ai.md)
+- [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
   - [Model Temperature](./ai/temperature.md)
