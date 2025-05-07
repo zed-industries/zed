@@ -869,6 +869,7 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
+    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -5496,6 +5497,7 @@ impl Workspace {
             return;
         }
 
+        cx.emit(Event::ClearActivityIndicator);
         cx.propagate();
     }
 }

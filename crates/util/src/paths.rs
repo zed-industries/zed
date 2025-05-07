@@ -180,8 +180,6 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
         |
         \:+(\d+)\:*()$       # filename:row
-        |
-        \:*()()$             # filename:
     )";
 
 /// A representation of a path-like string with optional row and column numbers.
@@ -259,7 +257,7 @@ impl PathWithPosition {
     ///     column: None,
     /// });
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
-    ///     path: PathBuf::from("test_file.rs"),
+    ///     path: PathBuf::from("test_file.rs::"),
     ///     row: None,
     ///     column: None,
     /// });
@@ -323,11 +321,45 @@ impl PathWithPosition {
                     column,
                 }
             }
-            None => Self {
-                path: Path::new(s).to_path_buf(),
-                row: None,
-                column: None,
-            },
+            None => {
+                // The `ROW_COL_CAPTURE_REGEX` deals with separated digits only,
+                // but in reality there could be `foo/bar.py:22:in` inputs which we want to match too.
+                // The regex mentioned is not very extendable with "digit or random string" checks, so do this here instead.
+                let delimiter = ':';
+                let mut path_parts = s
+                    .rsplitn(3, delimiter)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .fuse();
+                let mut path_string = path_parts.next().expect("rsplitn should have the rest of the string as its last parameter that we reversed").to_owned();
+                let mut row = None;
+                let mut column = None;
+                if let Some(maybe_row) = path_parts.next() {
+                    if let Ok(parsed_row) = maybe_row.parse::<u32>() {
+                        row = Some(parsed_row);
+                        if let Some(parsed_column) = path_parts
+                            .next()
+                            .and_then(|maybe_col| maybe_col.parse::<u32>().ok())
+                        {
+                            column = Some(parsed_column);
+                        }
+                    } else {
+                        path_string.push(delimiter);
+                        path_string.push_str(maybe_row);
+                    }
+                }
+                for split in path_parts {
+                    path_string.push(delimiter);
+                    path_string.push_str(split);
+                }
+
+                Self {
+                    path: PathBuf::from(path_string),
+                    row,
+                    column,
+                }
+            }
         }
     }
 
@@ -571,7 +603,7 @@ mod tests {
         // Test POSIX filename edge cases
         // Read more at https://en.wikipedia.org/wiki/Filename
         assert_eq!(
-            PathWithPosition::parse_str(" test_file"),
+            PathWithPosition::parse_str("test_file"),
             PathWithPosition {
                 path: PathBuf::from("test_file"),
                 row: None,
@@ -610,7 +642,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: PathBuf::from("test_file.rs"),
+                path: PathBuf::from("test_file.rs:"),
                 row: None,
                 column: None
             }
@@ -647,6 +679,23 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "windows"))]
     fn path_with_position_parse_posix_path_with_suffix() {
+        assert_eq!(
+            PathWithPosition::parse_str("foo/bar:34:in"),
+            PathWithPosition {
+                path: PathBuf::from("foo/bar"),
+                row: Some(34),
+                column: None,
+            }
+        );
+        assert_eq!(
+            PathWithPosition::parse_str("foo/bar.rs:1902:::15:"),
+            PathWithPosition {
+                path: PathBuf::from("foo/bar.rs:1902"),
+                row: Some(15),
+                column: None
+            }
+        );
+
         assert_eq!(
             PathWithPosition::parse_str("app-editors:zed-0.143.6:20240710-201212.log:34:"),
             PathWithPosition {

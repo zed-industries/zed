@@ -18,6 +18,7 @@ use gpui::IntoElement;
 use gpui::Window;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use icons::IconName;
+use language_model::LanguageModel;
 use language_model::LanguageModelRequestMessage;
 use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
@@ -208,6 +209,7 @@ pub trait Tool: 'static + Send + Sync {
         messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult;

@@ -889,7 +889,7 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(
+                        .trigger(move |is_active| {
                             IconButton::new(name, icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
@@ -899,10 +899,12 @@ impl Render for PanelButtons {
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action(tooltip.clone(), &*action, window, cx)
-                                }),
-                        ),
+                                .when(!is_active, |this| {
+                                    this.tooltip(move |window, cx| {
+                                        Tooltip::for_action(tooltip.clone(), &*action, window, cx)
+                                    })
+                                })
+                        }),
                 )
             })
             .collect();
