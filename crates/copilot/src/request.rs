@@ -14,14 +14,14 @@ impl lsp::request::Request for CheckStatus {
     const METHOD: &'static str = "checkStatus";
 }
 
-pub enum SignInInitiate {}
+pub enum SignIn {}
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SignInInitiateParams {}
+pub struct SignInParams {}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status")]
-pub enum SignInInitiateResult {
+pub enum SignInResult {
     AlreadySignedIn { user: String },
     PromptUserDeviceFlow(PromptUserDeviceFlow),
 }
@@ -33,10 +33,10 @@ pub struct PromptUserDeviceFlow {
     pub verification_uri: String,
 }
 
-impl lsp::request::Request for SignInInitiate {
-    type Params = SignInInitiateParams;
-    type Result = SignInInitiateResult;
-    const METHOD: &'static str = "signInInitiate";
+impl lsp::request::Request for SignIn {
+    type Params = SignInParams;
+    type Result = SignInResult;
+    const METHOD: &'static str = "signIn";
 }
 
 pub enum SignInConfirm {}
@@ -167,26 +167,18 @@ impl lsp::notification::Notification for StatusNotification {
     const METHOD: &'static str = "statusNotification";
 }
 
-pub enum SetEditorInfo {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SetEditorInfoParams {
-    pub editor_info: EditorInfo,
-    pub editor_plugin_info: EditorPluginInfo,
-}
-
-impl lsp::request::Request for SetEditorInfo {
-    type Params = SetEditorInfoParams;
-    type Result = String;
-    const METHOD: &'static str = "setEditorInfo";
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorInfo {
     pub name: String,
     pub version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitializationOptions {
+    pub editor_info: EditorInfo,
+    pub editor_plugin_info: EditorPluginInfo,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -506,7 +506,7 @@ impl Copilot {
                 settings: Default::default(),
             };
 
-            let editor_info = request::SetEditorInfoParams {
+            let initialization_options = request::InitializationOptions {
                 editor_info: request::EditorInfo {
                     name: "zed".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
@@ -516,12 +516,12 @@ impl Copilot {
                     version: "0.0.1".into(),
                 },
             };
-            let editor_info_json = serde_json::to_value(&editor_info)?;
+            let init_options_json = serde_json::to_value(&initialization_options)?;
 
             let server = cx
                 .update(|cx| {
                     let mut params = server.default_initialize_params(cx);
-                    params.initialization_options = Some(editor_info_json);
+                    params.initialization_options = Some(init_options_json);
                     server.initialize(params, configuration.into(), cx)
                 })?
                 .await?;
@@ -530,10 +530,6 @@ impl Copilot {
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
                 })
-                .await?;
-
-            server
-                .request::<request::SetEditorInfo>(editor_info)
                 .await?;
 
             anyhow::Ok((server, status))
@@ -577,15 +573,13 @@ impl Copilot {
                         .spawn(async move |this, cx| {
                             let sign_in = async {
                                 let sign_in = lsp
-                                    .request::<request::SignInInitiate>(
-                                        request::SignInInitiateParams {},
-                                    )
+                                    .request::<request::SignIn>(request::SignInParams {})
                                     .await?;
                                 match sign_in {
-                                    request::SignInInitiateResult::AlreadySignedIn { user } => {
+                                    request::SignInResult::AlreadySignedIn { user } => {
                                         Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
-                                    request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
+                                    request::SignInResult::PromptUserDeviceFlow(flow) => {
                                         this.update(cx, |this, cx| {
                                             if let CopilotServer::Running(RunningCopilotServer {
                                                 sign_in_status: status,
@@ -1207,8 +1201,8 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
-        lsp.set_request_handler::<request::SignInInitiate, _, _>(|_, _| async {
-            Ok(request::SignInInitiateResult::AlreadySignedIn {
+        lsp.set_request_handler::<request::SignIn, _, _>(|_, _| async {
+            Ok(request::SignInResult::AlreadySignedIn {
                 user: "user-1".into(),
             })
         });
