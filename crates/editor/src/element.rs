@@ -7155,14 +7155,15 @@ impl Element for EditorElement {
                             .read_with(cx, |editor, _| editor.show_scrollbars))
                     .then_some(style.scrollbar_width)
                     .unwrap_or_default();
+                    let minimap_setting_width = px(settings.minimap.width as f32);
                     let minimap_width = self
                         .editor
                         .read_with(cx, |editor, _| editor.minimap().is_some())
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Never => None,
-                            ShowMinimap::Always => Some(MinimapLayout::MINIMAP_WIDTH),
+                            ShowMinimap::Always => Some(minimap_setting_width),
                             ShowMinimap::Auto => {
-                                scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH)
+                                scrollbars_shown.then_some(minimap_setting_width)
                             }
                         })
                         .flatten()
@@ -8715,7 +8716,6 @@ struct MinimapLayout {
 }
 
 impl MinimapLayout {
-    const MINIMAP_WIDTH: Pixels = px(100.);
     /// Calculates the scroll top offset the minimap editor has to have based on the
     /// current scroll progress.
     fn calculate_minimap_top_offset(
