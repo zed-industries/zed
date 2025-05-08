@@ -8766,3 +8766,89 @@ fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Sta
         .map(|status| (status.path().unwrap().to_string(), status.status()))
         .collect()
 }
+
+#[gpui::test]
+async fn test_find_project_path_abs(
+    background_executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    // find_project_path should work with absolute paths
+    init_test(cx);
+
+    let fs = FakeFs::new(background_executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project1": {
+                "file1.txt": "content1",
+                "subdir": {
+                    "file2.txt": "content2"
+                }
+            },
+            "project2": {
+                "file3.txt": "content3"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root/project1").as_ref(),
+            path!("/root/project2").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    // Make sure the worktrees are fully initialized
+    for worktree in project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>()) {
+        worktree
+            .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+    }
+    cx.run_until_parked();
+
+    let (project1_abs_path, project1_id, project2_abs_path, project2_id) =
+        project.read_with(cx, |project, cx| {
+            let worktrees: Vec<_> = project.worktrees(cx).collect();
+            let abs_path1 = worktrees[0].read(cx).abs_path().to_path_buf();
+            let id1 = worktrees[0].read(cx).id();
+            let abs_path2 = worktrees[1].read(cx).abs_path().to_path_buf();
+            let id2 = worktrees[1].read(cx).id();
+            (abs_path1, id1, abs_path2, id2)
+        });
+
+    project.update(cx, |project, cx| {
+        let abs_path = project1_abs_path.join("file1.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project1_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("file1.txt"));
+
+        let abs_path = project1_abs_path.join("subdir").join("file2.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project1_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("subdir/file2.txt"));
+
+        let abs_path = project2_abs_path.join("file3.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project2_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("file3.txt"));
+
+        let abs_path = project1_abs_path.join("nonexistent.txt");
+        let found_path = project.find_project_path(abs_path, cx);
+        assert!(
+            found_path.is_some(),
+            "Should find project path for nonexistent file in worktree"
+        );
+
+        // Test with an absolute path outside any worktree
+        let abs_path = Path::new("/some/other/path");
+        let found_path = project.find_project_path(abs_path, cx);
+        assert!(
+            found_path.is_none(),
+            "Should not find project path for path outside any worktree"
+        );
+    });
+}
