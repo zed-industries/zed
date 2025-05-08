@@ -1,10 +1,10 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, RequestFrameOptions, ScaledPixels, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
+    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
     platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
@@ -886,6 +886,16 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn capslock(&self) -> Capslock {
+        unsafe {
+            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+
+            Capslock {
+                on: modifiers.contains(NSEventModifierFlags::NSAlphaShiftKeyMask),
+            }
+        }
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
@@ -1495,13 +1505,17 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 lock.synthetic_drag_counter += 1;
             }
 
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
+            }) => {
                 // Only raise modifiers changed event when they have actually changed
                 if let Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: prev_modifiers,
+                    capslock: prev_capslock,
                 })) = &lock.previous_modifiers_changed_event
                 {
-                    if prev_modifiers == modifiers {
+                    if prev_modifiers == modifiers && prev_capslock == capslock {
                         return;
                     }
                 }

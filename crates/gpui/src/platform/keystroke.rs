@@ -529,3 +529,11 @@ impl Modifiers {
             && (other.function || !self.function)
     }
 }
+
+/// The state of the capslock key at some point in time
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash, JsonSchema)]
+pub struct Capslock {
+    /// The capslock key is on
+    #[serde(default)]
+    pub on: bool,
+}

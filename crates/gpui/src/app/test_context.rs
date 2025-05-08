@@ -1,7 +1,7 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, DrawPhase, Drawable, Element,
-    Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
+    Element, Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
@@ -771,7 +771,18 @@ impl VisualTestContext {
 
     /// Simulate a modifiers changed event
     pub fn simulate_modifiers_change(&mut self, modifiers: Modifiers) {
-        self.simulate_event(ModifiersChangedEvent { modifiers })
+        self.simulate_event(ModifiersChangedEvent {
+            modifiers,
+            capslock: Capslock { on: false },
+        })
+    }
+
+    /// Simulate a capslock changed event
+    pub fn simulate_capslock_change(&mut self, on: bool) {
+        self.simulate_event(ModifiersChangedEvent {
+            modifiers: Modifiers::none(),
+            capslock: Capslock { on },
+        })
     }
 
     /// Simulates the user resizing the window to the new size.
