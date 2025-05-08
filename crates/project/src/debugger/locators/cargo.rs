@@ -136,17 +136,13 @@ impl DapLocator for CargoLocator {
 
         let mut test_name = None;
         if is_test {
-            if let Some(package_index) = build_config
+            test_name = build_config
                 .args
                 .iter()
-                .position(|arg| arg == "-p" || arg == "--package")
-            {
-                test_name = build_config
-                    .args
-                    .get(package_index + 2)
-                    .filter(|name| !name.starts_with("--"))
-                    .cloned();
-            }
+                .rev()
+                .take_while(|name| "--" != name.as_str())
+                .find(|name| !name.starts_with("-"))
+                .cloned();
         }
         let executable = {
             if let Some(ref name) = test_name {
