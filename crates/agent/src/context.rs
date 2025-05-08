@@ -830,23 +830,20 @@ pub fn load_context(
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
 ) -> Task<ContextLoadResult> {
-    let mut load_tasks = Vec::new();
-
-    for context in contexts.iter().cloned() {
-        match context {
-            AgentContextHandle::File(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::Directory(context) => {
-                load_tasks.push(context.load(project.clone(), cx))
-            }
-            AgentContextHandle::Symbol(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::Selection(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::FetchedUrl(context) => load_tasks.push(context.load()),
-            AgentContextHandle::Thread(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::TextThread(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::Rules(context) => load_tasks.push(context.load(prompt_store, cx)),
-            AgentContextHandle::Image(context) => load_tasks.push(context.load(cx)),
-        }
-    }
+    let load_tasks: Vec<_> = contexts
+        .into_iter()
+        .map(|context| match context {
+            AgentContextHandle::File(context) => context.load(cx),
+            AgentContextHandle::Directory(context) => context.load(project.clone(), cx),
+            AgentContextHandle::Symbol(context) => context.load(cx),
+            AgentContextHandle::Selection(context) => context.load(cx),
+            AgentContextHandle::FetchedUrl(context) => context.load(),
+            AgentContextHandle::Thread(context) => context.load(cx),
+            AgentContextHandle::TextThread(context) => context.load(cx),
+            AgentContextHandle::Rules(context) => context.load(prompt_store, cx),
+            AgentContextHandle::Image(context) => context.load(cx),
+        })
+        .collect();
 
     cx.background_spawn(async move {
         let load_results = future::join_all(load_tasks).await;
