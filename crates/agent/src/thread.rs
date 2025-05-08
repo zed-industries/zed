@@ -1227,6 +1227,7 @@ impl Thread {
             }));
         }
 
+        let mut message_ix_to_cache = None;
         for message in &self.messages {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
@@ -1263,19 +1264,57 @@ impl Thread {
                 };
             }
 
-            self.tool_use
-                .attach_tool_uses(message.id, &mut request_message);
+            let mut cache_message = true;
+            let mut tool_results_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+            };
+            for (tool_use, tool_result) in self.tool_use.tool_results(message.id) {
+                if let Some(tool_result) = tool_result {
+                    request_message
+                        .content
+                        .push(MessageContent::ToolUse(tool_use.clone()));
+                    tool_results_message
+                        .content
+                        .push(MessageContent::ToolResult(LanguageModelToolResult {
+                            tool_use_id: tool_use.id.clone(),
+                            tool_name: tool_result.tool_name.clone(),
+                            is_error: tool_result.is_error,
+                            content: if tool_result.content.is_empty() {
+                                // Surprisingly, the API fails if we return an empty string here.
+                                // It thinks we are sending a tool use without a tool result.
+                                "<Tool returned an empty string>".into()
+                            } else {
+                                tool_result.content.clone()
+                            },
+                            output: None,
+                        }));
+                } else {
+                    cache_message = false;
+                    log::debug!(
+                        "skipped tool use {:?} because it is still pending",
+                        tool_use
+                    );
+                }
+            }
 
+            if cache_message {
+                message_ix_to_cache = Some(request.messages.len());
+            }
             request.messages.push(request_message);
 
-            if let Some(tool_results_message) = self.tool_use.tool_results_message(message.id) {
+            if !tool_results_message.content.is_empty() {
+                if cache_message {
+                    message_ix_to_cache = Some(request.messages.len());
+                }
                 request.messages.push(tool_results_message);
             }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
-        if let Some(last) = request.messages.last_mut() {
-            last.cache = true;
+        if let Some(message_ix_to_cache) = message_ix_to_cache {
+            request.messages[message_ix_to_cache].cache = true;
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
