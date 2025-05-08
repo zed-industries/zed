@@ -917,7 +917,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             MiddleOfLine { display_lines } => (
-                middle_of_line(map, *display_lines, point),
+                middle_of_line(map, *display_lines, point, times),
                 SelectionGoal::None,
             ),
             EndOfLine { display_lines } => (
@@ -1974,19 +1974,19 @@ pub(crate) fn middle_of_line(
     map: &DisplaySnapshot,
     display_lines: bool,
     point: DisplayPoint,
+    times: usize,
 ) -> DisplayPoint {
+    let percent: f64 = if times >= 100 || times == 1 { 0.50 } else { times as f64 / 100. };
     if display_lines {
         map.clip_point(
-            DisplayPoint::new(point.row(), map.line_len(point.row()) / 2),
+            DisplayPoint::new(point.row(), (map.line_len(point.row()) as f64 * percent) as u32),
             Bias::Left,
         )
     } else {
-        let mut mid = map.prev_line_boundary(point.to_point(map)).1;
-        let end = map.next_line_boundary(point.to_point(map)).1;
-        *mid.column_mut() += (end.column() - mid.column()) / 2;
-        *mid.row_mut() += (end.row() - mid.row()).0 / 2;
+        let mut buffer_point = point.to_point(map);
+        buffer_point.column = (map.buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)) as f64 * percent) as u32;
 
-        map.clip_point(mid, Bias::Left)
+        map.clip_point(buffer_point.to_display_point(map), Bias::Left)
     }
 }
 
