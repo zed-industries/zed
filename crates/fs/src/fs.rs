@@ -546,7 +546,17 @@ impl Fs for RealFs {
                 NamedTempFile::new()
             }?;
             tmp_file.write_all(data.as_bytes())?;
-            tmp_file.persist(path)?;
+
+            let result = tmp_file.persist(&path);
+            if cfg!(target_os = "windows") {
+                if let Err(persist_err) = &result {
+                    if persist_err.error.raw_os_error() == Some(5) {
+                        return std::fs::write(&path, data.as_bytes()).map_err(Into::into);
+                    }
+                }
+            }
+            result?;
+
             Ok::<(), anyhow::Error>(())
         })
         .await?;
