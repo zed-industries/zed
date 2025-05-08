@@ -1015,9 +1015,13 @@ impl DebugPanel {
                         workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
                     if !fs.is_file(path).await {
+                        let content =
+                            serde_json::to_string_pretty(&serde_json::Value::Array(vec![
+                                serialized_scenario,
+                            ]))?;
+
                         fs.create_file(path, Default::default()).await?;
-                        fs.save(path, &language::Rope::new(), Default::default())
-                            .await?;
+                        fs.save(path, &content.into(), Default::default()).await?;
                     } else {
                         let content = fs.load(path).await?;
                         let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&content)?;
