@@ -2,7 +2,7 @@ use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -1035,48 +1035,56 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ZED_AI_URL: &str = "https://zed.dev/ai";
+        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
 
         let is_connected = !self.state.read(cx).is_signed_out();
-        let plan = self.state.read(cx).user_store.read(cx).current_plan();
+        let user_store = self.state.read(cx).user_store.read(cx);
+        let plan = user_store.current_plan();
+        let subscription_period = user_store.subscription_period();
+        let eligible_for_trial = user_store.trial_started_at().is_none();
         let has_accepted_terms = self.state.read(cx).has_accepted_terms_of_service(cx);
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
-        let subscription_text = Label::new(if is_pro {
-            "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+        let subscription_text = match (plan, subscription_period) {
+            (Some(proto::Plan::ZedPro), Some(_)) => {
+                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+            }
+            (Some(proto::Plan::ZedProTrial), Some(_)) => {
+                "You have access to Zed's hosted LLMs through your Zed Pro trial."
+            }
+            (Some(proto::Plan::Free), Some(_)) => {
+                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
+            }
+            _ => {
+                if eligible_for_trial {
+                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
+                } else {
+                    "Subscribe for access to Zed's hosted LLMs."
+                }
+            }
+        };
+        let manage_subscription_buttons = if is_pro {
+            h_flex().child(
+                Button::new("manage_settings", "Manage Subscription")
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
+            )
         } else {
-            "You have basic access to models from Anthropic through the Zed AI Free plan."
-        });
-        let manage_subscription_button = if is_pro {
-            Some(
-                h_flex().child(
-                    Button::new("manage_settings", "Manage Subscription")
-                        .style(ButtonStyle::Tinted(TintColor::Accent))
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("learn_more", "Learn more")
+                        .style(ButtonStyle::Subtle)
+                        .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_PRICING_URL))),
+                )
+                .child(
+                    Button::new("upgrade", "Upgrade")
+                        .style(ButtonStyle::Subtle)
+                        .color(Color::Accent)
                         .on_click(
                             cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
                         ),
-                ),
-            )
-        } else if cx.has_flag::<ZedProFeatureFlag>() {
-            Some(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("learn_more", "Learn more")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_AI_URL))),
-                    )
-                    .child(
-                        Button::new("upgrade", "Upgrade")
-                            .style(ButtonStyle::Subtle)
-                            .color(Color::Accent)
-                            .on_click(
-                                cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                            ),
-                    ),
-            )
-        } else {
-            None
+                )
         };
 
         if is_connected {
@@ -1090,7 +1098,7 @@ impl Render for ConfigurationView {
                 ))
                 .when(has_accepted_terms, |this| {
                     this.child(subscription_text)
-                        .children(manage_subscription_button)
+                        .child(manage_subscription_buttons)
                 })
         } else {
             v_flex()
