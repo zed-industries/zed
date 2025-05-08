@@ -252,7 +252,6 @@ impl AssistantSettingsContent {
                     commit_message_model: None,
                     thread_summary_model: None,
                     inline_alternatives: None,
-                    enable_experimental_live_diffs: None,
                     default_profile: None,
                     profiles: None,
                     always_allow_tool_actions: None,
@@ -283,7 +282,6 @@ impl AssistantSettingsContent {
                 commit_message_model: None,
                 thread_summary_model: None,
                 inline_alternatives: None,
-                enable_experimental_live_diffs: None,
                 default_profile: None,
                 profiles: None,
                 always_allow_tool_actions: None,
@@ -565,7 +563,6 @@ impl Default for VersionedAssistantSettingsContent {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: None,
-            enable_experimental_live_diffs: None,
             default_profile: None,
             profiles: None,
             always_allow_tool_actions: None,
@@ -610,10 +607,6 @@ pub struct AssistantSettingsContentV2 {
     thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
-    /// Enable experimental live diffs in the assistant panel.
-    ///
-    /// Default: false
-    enable_experimental_live_diffs: Option<bool>,
     /// The default profile to use in the Agent.
     ///
     /// Default: write
@@ -985,7 +978,6 @@ mod tests {
                                 dock: None,
                                 default_width: None,
                                 default_height: None,
-                                enable_experimental_live_diffs: None,
                                 default_profile: None,
                                 profiles: None,
                                 always_allow_tool_actions: None,
