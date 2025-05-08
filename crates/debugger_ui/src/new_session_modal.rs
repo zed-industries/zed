@@ -38,6 +38,7 @@ pub(super) struct NewSessionModal {
     mode: NewSessionMode,
     launch_picker: Entity<Picker<DebugScenarioDelegate>>,
     attach_mode: Entity<AttachMode>,
+    custom_mode: Entity<CustomMode>,
     debugger: Option<DebugAdapterName>,
     last_selected_profile_name: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
@@ -84,12 +85,15 @@ impl NewSessionModal {
                 .modal(false)
             });
 
+            let custom_mode = CustomMode::new(None, window, cx);
+
             Self {
                 _subscriptions: vec![cx.subscribe(&launch_picker, |_, _, _, cx| {
                     cx.emit(DismissEvent);
                 })],
                 launch_picker,
                 attach_mode,
+                custom_mode,
                 debugger: None,
                 mode: NewSessionMode::Launch,
                 last_selected_profile_name: None,
@@ -99,12 +103,35 @@ impl NewSessionModal {
         });
     }
 
+    fn render_mode(&self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
+        match self.mode {
+            NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
+                this.clone().render(window, cx).into_any_element()
+            }),
+            NewSessionMode::Custom => self.custom_mode.update(cx, |this, cx| {
+                this.clone().render(window, cx).into_any_element()
+            }),
+            NewSessionMode::Launch => v_flex()
+                .w(rems(34.))
+                .child(self.launch_picker.clone())
+                .into_any_element(),
+        }
+    }
+
     fn debug_config(&self, cx: &App, debugger: &str) -> Option<DebugScenario> {
-        let request = self.mode.debug_task(cx)?;
+        let request = match self.mode {
+            NewSessionMode::Custom => Some(DebugRequest::Launch(
+                self.custom_mode.read(cx).debug_task(cx),
+            )),
+            NewSessionMode::Attach => {
+                Some(DebugRequest::Attach(self.attach_mode.read(cx).debug_task()))
+            }
+            _ => None,
+        }?;
         let label = suggested_label(&request, debugger);
 
-        let stop_on_entry = if let NewSessionMode::Custom(custom) = &self.mode {
-            Some(custom.read(cx).stop_on_entry.selected())
+        let stop_on_entry = if let NewSessionMode::Custom = &self.mode {
+            Some(self.custom_mode.read(cx).stop_on_entry.selected())
         } else {
             None
         };
@@ -326,27 +353,9 @@ static SELECT_SCENARIO_LABEL: SharedString = SharedString::new_static("Select Pr
 
 #[derive(Clone)]
 enum NewSessionMode {
-    Custom(Entity<CustomMode>),
+    Custom,
     Attach,
     Launch,
-}
-
-impl NewSessionMode {
-    fn debug_task(&self, cx: &App) -> Option<DebugRequest> {
-        match self {
-            NewSessionMode::Attach => None,
-            NewSessionMode::Custom(entity) => Some(entity.read(cx).debug_task(cx).into()),
-            NewSessionMode::Launch => None,
-        }
-    }
-
-    fn custom(
-        past_launch_config: Option<LaunchRequest>,
-        window: &mut Window,
-        cx: &mut Context<NewSessionModal>,
-    ) -> Self {
-        Self::Custom(CustomMode::new(past_launch_config, window, cx))
-    }
 }
 
 impl std::fmt::Display for NewSessionMode {
@@ -354,7 +363,7 @@ impl std::fmt::Display for NewSessionMode {
         let mode = match self {
             NewSessionMode::Launch => "Launch".to_owned(),
             NewSessionMode::Attach => "Attach".to_owned(),
-            NewSessionMode::Custom(_) => "Custom".to_owned(),
+            NewSessionMode::Custom => "Custom".to_owned(),
         };
 
         write!(f, "{}", mode)
@@ -363,32 +372,7 @@ impl std::fmt::Display for NewSessionMode {
 
 impl Focusable for NewSessionMode {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match &self {
-            NewSessionMode::Attach => cx.focus_handle(),
-            NewSessionMode::Launch => cx.focus_handle(),
-            NewSessionMode::Custom(entity) => entity.read(cx).program.focus_handle(cx),
-        }
-    }
-}
-
-impl RenderOnce for NewSessionMode {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
-        match self {
-            NewSessionMode::Attach =>
-            //entity.update(cx, |this, cx| {
-            // this.clone().render(window, cx).into_any_element()
-            {
-                div().into_any_element()
-            }
-            // }),
-            NewSessionMode::Custom(entity) => entity.update(cx, |this, cx| {
-                this.clone().render(window, cx).into_any_element()
-            }),
-            NewSessionMode::Launch => v_flex()
-                .w(rems(34.))
-                // .child(entity.clone())
-                .into_any_element(),
-        }
+        cx.focus_handle()
     }
 }
 
@@ -515,7 +499,7 @@ impl Render for NewSessionModal {
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
-            .child(v_flex().child(self.mode.clone().render(window, cx)))
+            .child(v_flex().child(self.render_mode(window, cx)))
             .child(
                 h_flex()
                     .justify_between()
@@ -533,14 +517,14 @@ impl Render for NewSessionModal {
                                 let this = cx.weak_entity();
                                 move |_, window, cx| {
                                     this.update(cx, |this, cx| {
-                                        this.mode = NewSessionMode::custom(None, window, cx);
+                                        this.mode = NewSessionMode::Custom;
                                         this.mode.focus_handle(cx).focus(window);
                                     })
                                     .ok();
                                 }
                             }),
                         ),
-                        NewSessionMode::Custom(_) => div(), // todo!(Back to launch mode button)
+                        NewSessionMode::Custom => div(), // todo!(Back to launch mode button)
                     })
                     .child(
                         Button::new("debugger-spawn", "Start")
@@ -569,9 +553,9 @@ impl Render for NewSessionModal {
                                             .match_count()
                                             == 0
                                 }
-                                NewSessionMode::Custom(ref custom) => {
+                                NewSessionMode::Custom => {
                                     self.debugger.is_none()
-                                        || custom.read(cx).program.read(cx).is_empty(cx)
+                                        || self.custom_mode.read(cx).program.read(cx).is_empty(cx)
                                 }
                             }),
                     ),
