@@ -10,13 +10,16 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 
 use futures::stream::BoxStream;
+use mistral::Model as MistralModel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
@@ -25,8 +28,15 @@ use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
+use std::collections::HashMap;
+use std::pin::Pin;
+
 const PROVIDER_ID: &str = "mistral";
 const PROVIDER_NAME: &str = "Mistral";
+
+// Add constants for finish reasons
+const FINISH_REASON_STOP: &str = "stop";
+const FINISH_REASON_TOOL_CALLS: &str = "tool_calls";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
@@ -297,9 +307,15 @@ impl LanguageModel for MistralLanguageModel {
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
-
     fn supports_tools(&self) -> bool {
-        false
+        match self.model {
+            MistralModel::CodestralLatest
+            | MistralModel::MistralLargeLatest
+            | MistralModel::MistralSmallLatest
+            | MistralModel::OpenCodestralMamba
+            | MistralModel::OpenMistralNemo => true,
+            _ => false,
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -359,26 +375,8 @@ impl LanguageModel for MistralLanguageModel {
 
         async move {
             let stream = stream.await?;
-            Ok(stream
-                .map(|result| {
-                    result
-                        .and_then(|response| {
-                            response
-                                .choices
-                                .first()
-                                .ok_or_else(|| anyhow!("Empty response"))
-                                .map(|choice| {
-                                    choice
-                                        .delta
-                                        .content
-                                        .clone()
-                                        .unwrap_or_default()
-                                        .map(LanguageModelCompletionEvent::Text)
-                                })
-                        })
-                        .map_err(LanguageModelCompletionError::Other)
-                })
-                .boxed())
+            let mapper = MistralEventMapper::new();
+            Ok(mapper.map_stream(stream).boxed())
         }
         .boxed()
     }
@@ -389,33 +387,73 @@ pub fn into_mistral(
     model: String,
     max_output_tokens: Option<u32>,
 ) -> mistral::Request {
-    let len = request.messages.len();
-    let merged_messages =
-        request
-            .messages
-            .into_iter()
-            .fold(Vec::with_capacity(len), |mut acc, msg| {
-                let role = msg.role;
-                let content = msg.string_contents();
+    let stream = true;
 
-                acc.push(match role {
-                    Role::User => mistral::RequestMessage::User { content },
-                    Role::Assistant => mistral::RequestMessage::Assistant {
-                        content: Some(content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => mistral::RequestMessage::System { content },
-                });
-                acc
-            });
+    let mut messages = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                    .push(match message.role {
+                        Role::User => mistral::RequestMessage::User { content: text },
+                        Role::Assistant => mistral::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => mistral::RequestMessage::System { content: text },
+                    }),
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(_) => {}
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = mistral::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: mistral::ToolCallContent::Function {
+                            function: mistral::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(mistral::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(mistral::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    messages.push(mistral::RequestMessage::Tool {
+                        content: tool_result.content.to_string(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
 
     mistral::Request {
         model,
-        messages: merged_messages,
-        stream: true,
+        messages,
+        stream,
         max_tokens: max_output_tokens,
         temperature: request.temperature,
         response_format: None,
+        tool_choice: if request.tools.is_empty() {
+            None
+        } else {
+            Some(mistral::ToolChoice::Auto)
+        },
+        parallel_tool_calls: if !request.tools.is_empty() {
+            Some(false) // Disable parallel tool calls like in OpenAI implementation
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -428,6 +466,133 @@ pub fn into_mistral(
             })
             .collect(),
     }
+}
+
+pub struct MistralEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
+
+impl MistralEventMapper {
+    pub fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + futures::Stream<Item = Result<mistral::StreamResponse>>>>,
+    ) -> impl futures::Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: mistral::StreamResponse,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
+
+        let mut events = Vec::new();
+        if let Some(content) = choice.delta.content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+            for tool_call in tool_calls {
+                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                if let Some(tool_id) = tool_call.id.clone() {
+                    entry.id = tool_id;
+                }
+
+                if let Some(function) = tool_call.function.as_ref() {
+                    if let Some(name) = function.name.clone() {
+                        entry.name = name;
+                    }
+
+                    if let Some(arguments) = function.arguments.clone() {
+                        entry.arguments.push_str(&arguments);
+                    }
+                }
+            }
+        }
+
+        // Process finish reason if present
+        if let Some(finish_reason) = choice.finish_reason.as_deref() {
+            match finish_reason {
+                FINISH_REASON_STOP => {
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+                FINISH_REASON_TOOL_CALLS => {
+                    // Process tool calls and add events for each one
+                    events.extend(self.process_tool_calls());
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+                }
+                unexpected => {
+                    log::error!("Unexpected Mistral stop_reason: {unexpected:?}");
+                    events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+                }
+            }
+        }
+
+        events
+    }
+
+    /// Process collected tool calls and convert them to LanguageModelCompletionEvents
+    fn process_tool_calls(
+        &mut self,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut results = Vec::new();
+
+        // Use drain to process and remove all tool calls
+        for (_, tool_call) in self.tool_calls_by_index.drain() {
+            // Validate the tool call has required fields
+            if tool_call.id.is_empty() || tool_call.name.is_empty() {
+                results.push(Err(LanguageModelCompletionError::Other(anyhow!(
+                    "Received incomplete tool call: missing id or name"
+                ))));
+                continue;
+            }
+
+            // Parse the arguments JSON
+            match serde_json::Value::from_str(&tool_call.arguments) {
+                Ok(input) => results.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                    LanguageModelToolUse {
+                        id: tool_call.id.into(),
+                        name: tool_call.name.into(),
+                        is_input_complete: true,
+                        input,
+                        raw_input: tool_call.arguments,
+                    },
+                ))),
+                Err(error) => results.push(Err(LanguageModelCompletionError::BadInputJson {
+                    id: tool_call.id.into(),
+                    tool_name: tool_call.name.into(),
+                    raw_input: tool_call.arguments.into(),
+                    json_parse_error: error.to_string(),
+                })),
+            }
+        }
+
+        results
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 struct ConfigurationView {
