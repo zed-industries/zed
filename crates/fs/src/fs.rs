@@ -547,7 +547,7 @@ impl Fs for RealFs {
             }?;
             tmp_file.write_all(data.as_bytes())?;
 
-            let result = tmp_file.persist(&path);
+            let result = // tmp_file.persist(&path);
             if cfg!(target_os = "windows") {
                 // If file handle is already in used we receive error:
                 //
@@ -564,6 +564,7 @@ impl Fs for RealFs {
             }
             result?;
 
+            persist(path.as_path(), tmp_file.path())?;
             Ok::<(), anyhow::Error>(())
         })
         .await?;
@@ -2484,6 +2485,25 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })
     .await
+}
+
+#[cfg(target_os = "windows")]
+fn persist<P: AsRef<Path>>(replaced_file: P, replacement_file: P) -> windows::core::Result<()> {
+    use windows::{
+        Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
+        core::HSTRING,
+    };
+
+    unsafe {
+        ReplaceFileW(
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            None,
+            REPLACE_FILE_FLAGS::default(),
+            None,
+            None,
+        )
+    }
 }
 
 #[cfg(test)]
