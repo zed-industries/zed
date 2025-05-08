@@ -431,6 +431,7 @@ actions!(
         ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,
+        ToggleMinimap,
         SwapSelectionEnds,
         SetMark,
         ToggleRelativeLineNumbers,
