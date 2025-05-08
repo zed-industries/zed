@@ -831,7 +831,7 @@ impl ActiveThread {
         self.thread.read(cx).summary()
     }
 
-    pub fn regenerate_summary<'a>(&self, cx: &mut App) {
+    pub fn regenerate_summary(&self, cx: &mut App) {
         self.thread.update(cx, |thread, cx| thread.summarize(cx))
     }
 
