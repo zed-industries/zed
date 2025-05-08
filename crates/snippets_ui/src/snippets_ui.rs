@@ -6,7 +6,7 @@ use gpui::{
     WeakEntity, Window, actions,
 };
 use language::{LanguageMatcher, LanguageName, LanguageRegistry};
-use paths::config_dir;
+use paths::snippets_dir;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use std::{borrow::Borrow, collections::HashSet, fs, path::Path, sync::Arc};
@@ -76,8 +76,8 @@ fn open_folder(
     _: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    fs::create_dir_all(config_dir().join("snippets")).notify_err(workspace, cx);
-    cx.open_with_system(config_dir().join("snippets").borrow());
+    fs::create_dir_all(snippets_dir()).notify_err(workspace, cx);
+    cx.open_with_system(snippets_dir().borrow());
 }
 
 pub struct ScopeSelector {
@@ -143,7 +143,7 @@ impl ScopeSelectorDelegate {
 
         let mut existing_scopes = HashSet::new();
 
-        if let Some(read_dir) = fs::read_dir(config_dir().join("snippets")).log_err() {
+        if let Some(read_dir) = fs::read_dir(snippets_dir()).log_err() {
             for entry in read_dir {
                 if let Some(entry) = entry.log_err() {
                     let path = entry.path();
@@ -236,9 +236,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace
                             .open_abs_path(
-                                config_dir()
-                                    .join("snippets")
-                                    .join(scope_file_name.with_extension()),
+                                snippets_dir().join(scope_file_name.with_extension()),
                                 OpenOptions {
                                     visible: Some(OpenVisible::None),
                                     ..Default::default()

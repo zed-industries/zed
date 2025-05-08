@@ -141,15 +141,13 @@ struct GlobalSnippetWatcher(Entity<SnippetProvider>);
 
 impl GlobalSnippetWatcher {
     fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Self {
-        let global_snippets_dir = paths::config_dir().join("snippets");
+        let global_snippets_dir = paths::snippets_dir();
         let provider = cx.new(|_cx| SnippetProvider {
             fs,
             snippets: Default::default(),
             watch_tasks: vec![],
         });
-        provider.update(cx, |this, cx| {
-            this.watch_directory(&global_snippets_dir, cx)
-        });
+        provider.update(cx, |this, cx| this.watch_directory(global_snippets_dir, cx));
         Self(provider)
     }
 }
