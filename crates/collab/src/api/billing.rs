@@ -429,6 +429,8 @@ enum ManageSubscriptionIntent {
     ///
     /// This will open the Stripe billing portal without putting the user in a specific flow.
     ManageSubscription,
+    /// The user intends to update their payment method.
+    UpdatePaymentMethod,
     /// The user intends to upgrade to Zed Pro.
     UpgradeToPro,
     /// The user intends to cancel their subscription.
@@ -589,6 +591,17 @@ async fn manage_billing_subscription(
                 ..Default::default()
             })
         }
+        ManageSubscriptionIntent::UpdatePaymentMethod => Some(CreateBillingPortalSessionFlowData {
+            type_: CreateBillingPortalSessionFlowDataType::PaymentMethodUpdate,
+            after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
+                type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
+                redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
+                    return_url: format!("{}/account", app.config.zed_dot_dev_url()),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
         ManageSubscriptionIntent::Cancel => Some(CreateBillingPortalSessionFlowData {
             type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
             after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
