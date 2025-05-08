@@ -591,26 +591,6 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct InvokedSlashCommandId(clock::Lamport);
 
-#[derive(Clone, Debug)]
-pub struct XmlTag {
-    pub kind: XmlTagKind,
-    pub range: Range<text::Anchor>,
-    pub is_open_tag: bool,
-}
-
-#[derive(Copy, Clone, Debug, strum::EnumString, PartialEq, Eq, strum::AsRefStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum XmlTagKind {
-    Patch,
-    Title,
-    Edit,
-    Path,
-    Description,
-    OldText,
-    NewText,
-    Operation,
-}
-
 pub struct AssistantContext {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -650,12 +630,6 @@ trait ContextAnnotation {
 impl ContextAnnotation for ParsedSlashCommand {
     fn range(&self) -> &Range<language::Anchor> {
         &self.source_range
-    }
-}
-
-impl ContextAnnotation for XmlTag {
-    fn range(&self) -> &Range<language::Anchor> {
-        &self.range
     }
 }
 

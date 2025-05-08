@@ -513,7 +513,6 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "strum 0.27.1",
  "telemetry_events",
  "text",
  "theme",
