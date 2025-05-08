@@ -2956,6 +2956,7 @@ mod tests {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&file_to_be_replaced)
             .unwrap();
         file.write_all(b"Hello").unwrap();
