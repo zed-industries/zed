@@ -135,14 +135,14 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_config(&self, cx: &App, debugger: &str) -> Option<DebugScenario> {
+    fn debug_scenario(&self, cx: &App, debugger: &str) -> Option<DebugScenario> {
         let request = match self.mode {
             NewSessionMode::Custom => Some(DebugRequest::Launch(
-                self.custom_mode.read(cx).debug_task(cx),
+                self.custom_mode.read(cx).debug_request(cx),
             )),
-            NewSessionMode::Attach => {
-                Some(DebugRequest::Attach(self.attach_mode.read(cx).debug_task()))
-            }
+            NewSessionMode::Attach => Some(DebugRequest::Attach(
+                self.attach_mode.read(cx).debug_request(),
+            )),
             _ => None,
         }?;
         let label = suggested_label(&request, debugger);
@@ -178,7 +178,7 @@ impl NewSessionModal {
             return;
         }
 
-        let Some(config) = self.debug_config(cx, debugger) else {
+        let Some(config) = self.debug_scenario(cx, debugger) else {
             log::error!("debug config not found in mode: {}", self.mode);
             return;
         };
@@ -554,7 +554,7 @@ impl CustomMode {
         })
     }
 
-    pub(super) fn debug_task(&self, cx: &App) -> task::LaunchRequest {
+    pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
         let path = self.cwd.read(cx).text(cx);
         task::LaunchRequest {
             program: self.program.read(cx).text(cx),
@@ -646,7 +646,7 @@ impl AttachMode {
             attach_picker,
         })
     }
-    pub(super) fn debug_task(&self) -> task::AttachRequest {
+    pub(super) fn debug_request(&self) -> task::AttachRequest {
         task::AttachRequest { process_id: None }
     }
 }
