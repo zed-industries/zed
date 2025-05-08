@@ -2501,8 +2501,8 @@ fn persist<P: AsRef<Path>>(replaced_file: P, replacement_file: P) -> windows::co
     if !replaced_file.as_ref().exists() {
         unsafe {
             MoveFileW(
-                &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
                 &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+                &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
             )
         }
     } else {
@@ -2961,5 +2961,18 @@ mod tests {
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "World");
+    }
+
+    #[gpui::test]
+    async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
+        let fs = RealFs {
+            git_binary_path: None,
+            executor,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file_to_be_replaced = temp_dir.path().join("file.txt");
+        smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "Hello");
     }
 }
