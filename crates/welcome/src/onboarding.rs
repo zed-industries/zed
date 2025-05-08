@@ -1,13 +1,14 @@
+use anyhow::anyhow;
 use editor::Editor;
 use gpui::{
-    AnyElement, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ListAlignment,
-    ListState, SharedString, Task, UniformListScrollHandle, WeakEntity, div,
+    AnyElement, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    SharedString, Task, UniformListScrollHandle, WeakEntity, canvas, div,
 };
 use language::LanguageRegistry;
 use persistence::WALKTHROUGH_DB;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use std::sync::Arc;
-use ui::{Button, ButtonStyle, Color, TabBar, TabPosition, Tooltip, prelude::*};
+use ui::prelude::*;
 use util::ResultExt;
 
 use workspace::{
@@ -62,6 +63,7 @@ pub struct OnboardingWalkthrough {
     weak_handle: WeakEntity<Workspace>,
     nav_picker: Entity<Picker<OnboardingNavDelegate>>,
     nav_scroll_handle: UniformListScrollHandle,
+    last_bounds: Option<Bounds<Pixels>>,
 }
 
 impl OnboardingWalkthrough {
@@ -85,6 +87,7 @@ impl OnboardingWalkthrough {
             weak_handle,
             nav_picker,
             nav_scroll_handle: UniformListScrollHandle::new(),
+            last_bounds: None,
         };
 
         Ok(welcome)
@@ -164,23 +167,49 @@ impl OnboardingWalkthrough {
 impl Render for OnboardingWalkthrough {
     fn render(
         &mut self,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        h_flex().debug_below().h_full().w_full().child(
-            h_flex()
-                .w_full()
-                .max_w(px(800.))
-                .h_full()
-                .gap_6()
-                .child(self.render_navigation(window, cx))
-                .child(
-                    div()
-                        .flex_1()
+        let this = cx.entity();
+        canvas(
+            move |bounds, window, cx| {
+                this.update(cx, |this, cx| {
+                    this.last_bounds = Some(dbg!(bounds));
+
+                    let mut elements = h_flex()
+                        .debug_below()
                         .h_full()
-                        .child(self.render_active_page(window, cx)),
-                ),
+                        .w_full()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .max_w(px(800.))
+                                .h_full()
+                                .gap_6()
+                                .child(this.render_navigation(window, cx))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .h_full()
+                                        .child(this.render_active_page(window, cx)),
+                                ),
+                        )
+                        .into_any();
+
+                    elements.prepaint_as_root(
+                        bounds.origin,
+                        bounds.size.map(Into::into),
+                        window,
+                        cx,
+                    );
+                    elements
+                })
+            },
+            |_, mut elements, window, cx| {
+                elements.paint(window, cx);
+            },
         )
+        .size_full()
     }
 }
 
@@ -386,7 +415,7 @@ impl SerializableItem for OnboardingWalkthrough {
     }
 
     fn deserialize(
-        _project: Entity<project::Project>,
+        project: Entity<project::Project>,
         workspace: WeakEntity<Workspace>,
         workspace_id: WorkspaceId,
         item_id: workspace::ItemId,
@@ -394,17 +423,19 @@ impl SerializableItem for OnboardingWalkthrough {
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         // todo!("update")
-        // let has_walkthrough = WALKTHROUGH_DB.get_walkthrough(item_id, workspace_id);
-        // window.spawn(cx, async move |cx| {
-        //     has_walkthrough?;
-        //     workspace.update_in(cx, |workspace, window, cx| {
-        //         let weak_handle = cx.entity().downgrade();
-        //         let language_registry = self.language_registry.clone();
-        //         OnboardingWalkthrough::new(weak_handle, language_registry, window, cx)
-        //     })
-        // })
+        let has_walkthrough = WALKTHROUGH_DB.get_walkthrough(item_id, workspace_id);
+        let language_registry = project.read(cx).languages().clone();
 
-        todo!("update")
+        let weak_handle = workspace.clone();
+        if has_walkthrough.is_ok() {
+            Task::ready(Ok(cx.new(|cx| {
+                // todo!{"can we do this more safely?"}
+                OnboardingWalkthrough::new(weak_handle, language_registry, window, cx)
+                    .expect("failed to create onboarding walkthrough")
+            })))
+        } else {
+            Task::ready(Err(anyhow!("No walkthrough for itemID {}", item_id)))
+        }
     }
 
     fn serialize(

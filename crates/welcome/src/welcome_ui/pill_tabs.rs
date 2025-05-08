@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use gpui::Entity;
+use gpui::{Entity, StyleRefinement};
 use ui::{Divider, IntoElement, RenderOnce, component_prelude::Documented, prelude::*};
 
 /// The tabs in the Zed walkthrough
@@ -16,7 +16,7 @@ struct Tab {
 }
 
 impl PillTabs {
-    pub fn new(selected: Entity<usize> ) -> Self {
+    pub fn new(selected: Entity<usize>) -> Self {
         Self {
             selected,
             tabs: Vec::new(),
@@ -42,6 +42,7 @@ impl RenderOnce for PillTabs {
     fn render(mut self, window: &mut ui::Window, cx: &mut ui::App) -> impl IntoElement {
         let content = self.tabs[*self.selected.read(cx)].content.take().unwrap();
         let selected = *self.selected.read(cx);
+
         div()
             .h_full()
             .child(
@@ -68,11 +69,7 @@ impl RenderOnce for PillTabs {
                     .justify_center(),
             )
             .child(Divider::horizontal())
-            .child(
-                div()
-                    .size_full()
-                    .child((content)(window, cx)),
-            )
+            .child(div().size_full().child((content)(window, cx)))
     }
 }
 
