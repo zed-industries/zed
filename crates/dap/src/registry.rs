@@ -16,7 +16,12 @@ use std::{collections::BTreeMap, sync::Arc};
 pub trait DapLocator: Send + Sync {
     fn name(&self) -> SharedString;
     /// Determines whether this locator can generate debug target for given task.
-    fn create_scenario(&self, build_config: &TaskTemplate, adapter: &str) -> Option<DebugScenario>;
+    fn create_scenario(
+        &self,
+        build_config: &TaskTemplate,
+        resolved_label: &str,
+        adapter: DebugAdapterName,
+    ) -> Option<DebugScenario>;
 
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest>;
 }

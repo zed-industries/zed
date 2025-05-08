@@ -1,7 +1,8 @@
 use crate::{SuppressNotification, Toast, Workspace};
 use gpui::{
-    AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task, svg,
+    AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle,
+    Task, svg,
 };
 use parking_lot::Mutex;
 use std::ops::Deref;
@@ -263,6 +264,13 @@ impl Render for LanguageServerPrompt {
             PromptLevel::Critical => (IconName::XCircle, Color::Error),
         };
 
+        let suppress = window.modifiers().shift;
+        let (close_id, close_icon) = if suppress {
+            ("suppress", IconName::Minimize)
+        } else {
+            ("close", IconName::Close)
+        };
+
         div()
             .id("language_server_prompt_notification")
             .group("language_server_prompt_notification")
@@ -272,6 +280,7 @@ impl Render for LanguageServerPrompt {
             .elevation_3(cx)
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .child(
                 v_flex()
                     .p_3()
@@ -290,20 +299,6 @@ impl Render for LanguageServerPrompt {
                                 h_flex()
                                     .gap_2()
                                     .child(
-                                        IconButton::new("suppress", IconName::SquareMinus)
-                                            .tooltip(|window, cx| {
-                                                Tooltip::for_action(
-                                                    "Do not show until restart",
-                                                    &SuppressNotification,
-                                                    window,
-                                                    cx,
-                                                )
-                                            })
-                                            .on_click(
-                                                cx.listener(|_, _, _, cx| cx.emit(SuppressEvent)),
-                                            ),
-                                    )
-                                    .child(
                                         IconButton::new("copy", IconName::Copy)
                                             .on_click({
                                                 let message = request.message.clone();
@@ -316,18 +311,33 @@ impl Render for LanguageServerPrompt {
                                             .tooltip(Tooltip::text("Copy Description")),
                                     )
                                     .child(
-                                        IconButton::new("close", IconName::Close)
-                                            .tooltip(|window, cx| {
-                                                Tooltip::for_action(
-                                                    "Close",
-                                                    &menu::Cancel,
-                                                    window,
-                                                    cx,
-                                                )
+                                        IconButton::new(close_id, close_icon)
+                                            .tooltip(move |window, cx| {
+                                                if suppress {
+                                                    Tooltip::for_action(
+                                                        "Suppress.\nClose with click.",
+                                                        &SuppressNotification,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                } else {
+                                                    Tooltip::for_action(
+                                                        "Close.\nSuppress with shift-click.",
+                                                        &menu::Cancel,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
                                             })
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.emit(gpui::DismissEvent)
-                                            })),
+                                            .on_click(cx.listener(
+                                                move |_, _: &ClickEvent, _, cx| {
+                                                    if suppress {
+                                                        cx.emit(SuppressEvent);
+                                                    } else {
+                                                        cx.emit(DismissEvent);
+                                                    }
+                                                },
+                                            )),
                                     ),
                             ),
                     )
@@ -416,9 +426,8 @@ impl Render for ErrorMessagePrompt {
                                     }),
                             )
                             .child(
-                                ui::IconButton::new("close", ui::IconName::Close).on_click(
-                                    cx.listener(|_, _, _, cx| cx.emit(gpui::DismissEvent)),
-                                ),
+                                ui::IconButton::new("close", ui::IconName::Close)
+                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                             ),
                     )
                     .child(
@@ -456,8 +465,8 @@ pub mod simple_message_notification {
     use std::sync::Arc;
 
     use gpui::{
-        AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
-        SharedString, Styled, div,
+        AnyElement, ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement,
+        Render, SharedString, Styled, div,
     };
     use ui::{Tooltip, prelude::*};
 
@@ -637,6 +646,14 @@ pub mod simple_message_notification {
 
     impl Render for MessageNotification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let show_suppress_button = self.show_suppress_button;
+            let suppress = show_suppress_button && window.modifiers().shift;
+            let (close_id, close_icon) = if suppress {
+                ("suppress", IconName::Minimize)
+            } else {
+                ("close", IconName::Close)
+            };
+
             v_flex()
                 .occlude()
                 .p_3()
@@ -655,42 +672,43 @@ pub mod simple_message_notification {
                                 })
                                 .child(div().max_w_96().child((self.build_content)(window, cx))),
                         )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .when(self.show_suppress_button, |this| {
-                                    this.child(
-                                        IconButton::new("suppress", IconName::SquareMinus)
-                                            .tooltip(|window, cx| {
+                        .when(self.show_close_button, |this| {
+                            this.on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
+                                .child(
+                                    IconButton::new(close_id, close_icon)
+                                        .tooltip(move |window, cx| {
+                                            if suppress {
                                                 Tooltip::for_action(
-                                                    "Do not show until restart",
+                                                    "Suppress.\nClose with click.",
                                                     &SuppressNotification,
                                                     window,
                                                     cx,
                                                 )
-                                            })
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.emit(SuppressEvent);
-                                            })),
-                                    )
-                                })
-                                .when(self.show_close_button, |this| {
-                                    this.child(
-                                        IconButton::new("close", IconName::Close)
-                                            .tooltip(|window, cx| {
+                                            } else if show_suppress_button {
                                                 Tooltip::for_action(
-                                                    "Close",
+                                                    "Close.\nSuppress with shift-click.",
                                                     &menu::Cancel,
                                                     window,
                                                     cx,
                                                 )
-                                            })
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.dismiss(cx)),
-                                            ),
-                                    )
-                                }),
-                        ),
+                                            } else {
+                                                Tooltip::for_action(
+                                                    "Close.",
+                                                    &menu::Cancel,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                            if suppress {
+                                                cx.emit(SuppressEvent);
+                                            } else {
+                                                cx.emit(DismissEvent);
+                                            }
+                                        })),
+                                )
+                        }),
                 )
                 .child(
                     h_flex()
