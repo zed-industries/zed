@@ -6,7 +6,6 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant",
     "crates/assistant_context_editor",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
@@ -214,7 +213,6 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant = { path = "crates/assistant" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
@@ -610,7 +608,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.7.5"
+zed_llm_client = "0.8.0"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]

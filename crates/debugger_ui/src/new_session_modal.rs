@@ -1,9 +1,12 @@
 use std::{
     borrow::Cow,
+    cmp::Reverse,
     ops::Not,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
+use collections::{HashMap, HashSet};
 use dap::{
     DapRegistry, DebugRequest,
     adapters::{DebugAdapterName, DebugTaskDefinition},
@@ -15,10 +18,9 @@ use gpui::{
     Subscription, TextStyle, WeakEntity,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskSourceKind, task_store::TaskStore};
+use project::{TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
 use task::{DebugScenario, LaunchRequest};
-use tasks_ui::task_contexts;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -32,7 +34,6 @@ use workspace::{ModalView, Workspace};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
-#[derive(Clone)]
 pub(super) struct NewSessionModal {
     workspace: WeakEntity<Workspace>,
     debug_panel: WeakEntity<DebugPanel>,
@@ -41,6 +42,7 @@ pub(super) struct NewSessionModal {
     initialize_args: Option<serde_json::Value>,
     debugger: Option<DebugAdapterName>,
     last_selected_profile_name: Option<SharedString>,
+    task_contexts: Arc<TaskContexts>,
 }
 
 fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
@@ -67,6 +69,7 @@ impl NewSessionModal {
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         task_store: Option<Entity<TaskStore>>,
+        task_contexts: TaskContexts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -105,6 +108,7 @@ impl NewSessionModal {
                 .unwrap_or(ToggleState::Unselected),
             last_selected_profile_name: None,
             initialize_args: None,
+            task_contexts: Arc::new(task_contexts),
         }
     }
 
@@ -145,22 +149,10 @@ impl NewSessionModal {
         };
 
         let debug_panel = self.debug_panel.clone();
-        let workspace = self.workspace.clone();
+        let task_contexts = self.task_contexts.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let task_contexts = workspace
-                .update_in(cx, |this, window, cx| task_contexts(this, window, cx))?
-                .await;
+            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
             let worktree_id = task_contexts.worktree();
-            let task_context = task_contexts
-                .active_item_context
-                .map(|(_, _, context)| context)
-                .or_else(|| {
-                    task_contexts
-                        .active_worktree_context
-                        .map(|(_, context)| context)
-                })
-                .unwrap_or_default();
-
             debug_panel.update_in(cx, |debug_panel, window, cx| {
                 debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
             })?;
@@ -198,14 +190,27 @@ impl NewSessionModal {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ui::DropdownMenu {
+    ) -> Option<ui::DropdownMenu> {
         let workspace = self.workspace.clone();
+        let language_registry = self
+            .workspace
+            .update(cx, |this, _| this.app_state().languages.clone())
+            .ok()?;
         let weak = cx.weak_entity();
         let label = self
             .debugger
             .as_ref()
             .map(|d| d.0.clone())
             .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
+        let active_buffer_language_name =
+            self.task_contexts
+                .active_item_context
+                .as_ref()
+                .and_then(|item| {
+                    item.1
+                        .as_ref()
+                        .and_then(|location| location.buffer.read(cx).language()?.name().into())
+                });
         DropdownMenu::new(
             "dap-adapter-picker",
             label,
@@ -224,17 +229,50 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_adapters = workspace
+                let available_languages = language_registry.language_names();
+                let mut debugger_to_languages = HashMap::default();
+                for language in available_languages {
+                    let Some(language) =
+                        language_registry.available_language_for_name(language.as_str())
+                    else {
+                        continue;
+                    };
+
+                    language.config().debuggers.iter().for_each(|adapter| {
+                        debugger_to_languages
+                            .entry(adapter.clone())
+                            .or_insert_with(HashSet::default)
+                            .insert(language.name());
+                    });
+                }
+                let mut available_adapters = workspace
                     .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
                     .ok()
                     .unwrap_or_default();
 
-                for adapter in available_adapters {
+                available_adapters.sort_by_key(|name| {
+                    let languages_for_debugger = debugger_to_languages.get(name.as_ref());
+                    let languages_count =
+                        languages_for_debugger.map_or(0, |languages| languages.len());
+                    let contains_language_of_active_buffer = languages_for_debugger
+                        .zip(active_buffer_language_name.as_ref())
+                        .map_or(false, |(languages, active_buffer_language)| {
+                            languages.contains(active_buffer_language)
+                        });
+
+                    (
+                        Reverse(contains_language_of_active_buffer),
+                        Reverse(languages_count),
+                    )
+                });
+
+                for adapter in available_adapters.into_iter() {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
                 }
                 menu
             }),
         )
+        .into()
     }
 
     fn debug_config_drop_down_menu(
@@ -591,7 +629,7 @@ impl Render for NewSessionModal {
                             ),
                     )
                     .justify_between()
-                    .child(self.adapter_drop_down_menu(window, cx))
+                    .children(self.adapter_drop_down_menu(window, cx))
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
@@ -604,7 +642,15 @@ impl Render for NewSessionModal {
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
                     .w_full()
-                    .child(self.debug_config_drop_down_menu(window, cx))
+                    .child(
+                        matches!(self.mode, NewSessionMode::Scenario(_))
+                            .not()
+                            .then(|| {
+                                self.debug_config_drop_down_menu(window, cx)
+                                    .into_any_element()
+                            })
+                            .unwrap_or_else(|| v_flex().w_full().into_any_element()),
+                    )
                     .child(
                         h_flex()
                             .justify_end()

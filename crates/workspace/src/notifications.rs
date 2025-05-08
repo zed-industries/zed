@@ -1,4 +1,4 @@
-use crate::{Toast, Workspace};
+use crate::{SuppressNotification, Toast, Workspace};
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, Render, ScrollHandle, Task, svg,
@@ -290,8 +290,15 @@ impl Render for LanguageServerPrompt {
                                 h_flex()
                                     .gap_2()
                                     .child(
-                                        IconButton::new("suppress", IconName::XCircle)
-                                            .tooltip(Tooltip::text("Do not show until restart"))
+                                        IconButton::new("suppress", IconName::SquareMinus)
+                                            .tooltip(|window, cx| {
+                                                Tooltip::for_action(
+                                                    "Do not show until restart",
+                                                    &SuppressNotification,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                             .on_click(
                                                 cx.listener(|_, _, _, cx| cx.emit(SuppressEvent)),
                                             ),
@@ -308,9 +315,20 @@ impl Render for LanguageServerPrompt {
                                             })
                                             .tooltip(Tooltip::text("Copy Description")),
                                     )
-                                    .child(IconButton::new("close", IconName::Close).on_click(
-                                        cx.listener(|_, _, _, cx| cx.emit(gpui::DismissEvent)),
-                                    )),
+                                    .child(
+                                        IconButton::new("close", IconName::Close)
+                                            .tooltip(|window, cx| {
+                                                Tooltip::for_action(
+                                                    "Close",
+                                                    &menu::Cancel,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                cx.emit(gpui::DismissEvent)
+                                            })),
+                                    ),
                             ),
                     )
                     .child(Label::new(request.message.to_string()).size(LabelSize::Small))
@@ -442,6 +460,8 @@ pub mod simple_message_notification {
         SharedString, Styled, div,
     };
     use ui::{Tooltip, prelude::*};
+
+    use crate::SuppressNotification;
 
     use super::{Notification, SuppressEvent};
 
@@ -640,8 +660,15 @@ pub mod simple_message_notification {
                                 .gap_2()
                                 .when(self.show_suppress_button, |this| {
                                     this.child(
-                                        IconButton::new("suppress", IconName::XCircle)
-                                            .tooltip(Tooltip::text("Do not show until restart"))
+                                        IconButton::new("suppress", IconName::SquareMinus)
+                                            .tooltip(|window, cx| {
+                                                Tooltip::for_action(
+                                                    "Do not show until restart",
+                                                    &SuppressNotification,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 cx.emit(SuppressEvent);
                                             })),
@@ -649,9 +676,18 @@ pub mod simple_message_notification {
                                 })
                                 .when(self.show_close_button, |this| {
                                     this.child(
-                                        IconButton::new("close", IconName::Close).on_click(
-                                            cx.listener(|this, _, _, cx| this.dismiss(cx)),
-                                        ),
+                                        IconButton::new("close", IconName::Close)
+                                            .tooltip(|window, cx| {
+                                                Tooltip::for_action(
+                                                    "Close",
+                                                    &menu::Cancel,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| this.dismiss(cx)),
+                                            ),
                                     )
                                 }),
                         ),
@@ -772,6 +808,13 @@ pub fn show_app_notification<V: Notification + 'static>(
                         let id = id.clone();
                         move |_, _, _: &DismissEvent, cx| {
                             dismiss_app_notification(&id, cx);
+                        }
+                    })
+                    .detach();
+                    cx.subscribe(&notification, {
+                        let id = id.clone();
+                        move |workspace: &mut Workspace, _, _: &SuppressEvent, cx| {
+                            workspace.suppress_notification(&id, cx);
                         }
                     })
                     .detach();

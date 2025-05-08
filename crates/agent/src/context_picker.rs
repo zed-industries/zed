@@ -36,7 +36,7 @@ use ui::{
 use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::AssistantPanel;
+use crate::AgentPanel;
 use crate::context::RULES_ICON;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
@@ -425,9 +425,9 @@ impl ContextPicker {
                         render_thread_context_entry(&view_thread, context_store.clone(), cx)
                             .into_any()
                     },
-                    move |_window, cx| {
+                    move |window, cx| {
                         context_picker.update(cx, |this, cx| {
-                            this.add_recent_thread(thread.clone(), cx)
+                            this.add_recent_thread(thread.clone(), window, cx)
                                 .detach_and_log_err(cx);
                         })
                     },
@@ -459,6 +459,7 @@ impl ContextPicker {
     fn add_recent_thread(
         &self,
         entry: ThreadContextEntry,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
@@ -476,7 +477,7 @@ impl ContextPicker {
                 };
 
                 let open_thread_task =
-                    thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
+                    thread_store.update(cx, |this, cx| this.open_thread(&id, window, cx));
                 cx.spawn(async move |this, cx| {
                     let thread = open_thread_task.await?;
                     context_store.update(cx, |context_store, cx| {
@@ -647,7 +648,7 @@ fn recent_context_picker_entries(
     let current_threads = context_store.read(cx).thread_ids();
 
     let active_thread_id = workspace
-        .panel::<AssistantPanel>(cx)
+        .panel::<AgentPanel>(cx)
         .and_then(|panel| Some(panel.read(cx).active_thread()?.read(cx).id()));
 
     if let Some((thread_store, text_thread_store)) = thread_store

@@ -4,7 +4,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,12 +50,13 @@ impl Tool for ThinkingTool {
         _messages: &[LanguageModelRequestMessage],
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         _cx: &mut App,
     ) -> ToolResult {
         // This tool just "thinks out loud" and doesn't perform any actions.
         Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
-            Ok(_input) => Ok("Finished thinking.".to_string()),
+            Ok(_input) => Ok("Finished thinking.".to_string().into()),
             Err(err) => Err(anyhow!(err)),
         })
         .into()

@@ -15,9 +15,9 @@ use persistence::TERMINAL_DB;
 use project::{Entry, Metadata, Project, search::SearchQuery, terminals::TerminalKind};
 use schemars::JsonSchema;
 use terminal::{
-    Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
-    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState, TaskStatus,
-    Terminal, TerminalBounds, ToggleViMode,
+    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp,
+    ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState,
+    TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     alacritty_terminal::{
         index::Point,
         term::{TermMode, search::RegexSearch},
@@ -112,7 +112,7 @@ pub struct TerminalView {
     cwd_serialized: bool,
     blinking_paused: bool,
     blink_epoch: usize,
-    hover_target_tooltip: Option<String>,
+    hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
     show_breadcrumbs: bool,
@@ -124,6 +124,12 @@ pub struct TerminalView {
     hide_scrollbar_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
+}
+
+#[derive(Debug)]
+struct HoverTarget {
+    tooltip: String,
+    hovered_word: HoveredWord,
 }
 
 impl EventEmitter<Event> for TerminalView {}
@@ -196,7 +202,7 @@ impl TerminalView {
             blinking_terminal_enabled: false,
             blinking_paused: false,
             blink_epoch: 0,
-            hover_target_tooltip: None,
+            hover: None,
             hover_tooltip_update: Task::ready(()),
             embedded,
             workspace_id,
@@ -881,54 +887,79 @@ fn subscribe_for_terminal_events(
                 }
 
                 Event::NewNavigationTarget(maybe_navigation_target) => {
-                    match maybe_navigation_target.as_ref() {
-                        None => {
-                            terminal_view.hover_target_tooltip = None;
-                            terminal_view.hover_tooltip_update = Task::ready(());
-                        }
-                        Some(MaybeNavigationTarget::Url(url)) => {
-                            terminal_view.hover_target_tooltip = Some(url.clone());
-                            terminal_view.hover_tooltip_update = Task::ready(());
-                        }
-                        Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
-                            let valid_files_to_open_task = possible_open_target(
-                                &workspace,
-                                &path_like_target.terminal_dir,
-                                &path_like_target.maybe_path,
-                                cx,
-                            );
-
-                            terminal_view.hover_tooltip_update =
-                                cx.spawn(async move |terminal_view, cx| {
-                                    let file_to_open = valid_files_to_open_task.await;
-                                    terminal_view
-                                        .update(cx, |terminal_view, _| match file_to_open {
-                                            Some(
-                                                OpenTarget::File(path, _)
-                                                | OpenTarget::Worktree(path, _),
-                                            ) => {
-                                                terminal_view.hover_target_tooltip =
-                                                    Some(path.to_string(|path| {
-                                                        path.to_string_lossy().to_string()
-                                                    }));
-                                            }
-                                            None => {
-                                                terminal_view.hover_target_tooltip = None;
-                                            }
-                                        })
-                                        .ok();
+                    match maybe_navigation_target
+                        .as_ref()
+                        .zip(terminal.read(cx).last_content.last_hovered_word.as_ref())
+                    {
+                        Some((MaybeNavigationTarget::Url(url), hovered_word)) => {
+                            if Some(hovered_word)
+                                != terminal_view
+                                    .hover
+                                    .as_ref()
+                                    .map(|hover| &hover.hovered_word)
+                            {
+                                terminal_view.hover = Some(HoverTarget {
+                                    tooltip: url.clone(),
+                                    hovered_word: hovered_word.clone(),
                                 });
+                                terminal_view.hover_tooltip_update = Task::ready(());
+                                cx.notify();
+                            }
+                        }
+                        Some((MaybeNavigationTarget::PathLike(path_like_target), hovered_word)) => {
+                            if Some(hovered_word)
+                                != terminal_view
+                                    .hover
+                                    .as_ref()
+                                    .map(|hover| &hover.hovered_word)
+                            {
+                                let valid_files_to_open_task = possible_open_target(
+                                    &workspace,
+                                    &path_like_target.terminal_dir,
+                                    &path_like_target.maybe_path,
+                                    cx,
+                                );
+                                let hovered_word = hovered_word.clone();
+
+                                terminal_view.hover = None;
+                                terminal_view.hover_tooltip_update =
+                                    cx.spawn(async move |terminal_view, cx| {
+                                        let file_to_open = valid_files_to_open_task.await;
+                                        terminal_view
+                                            .update(cx, |terminal_view, _| match file_to_open {
+                                                Some(
+                                                    OpenTarget::File(path, _)
+                                                    | OpenTarget::Worktree(path, _),
+                                                ) => {
+                                                    terminal_view.hover = Some(HoverTarget {
+                                                        tooltip: path.to_string(|path| {
+                                                            path.to_string_lossy().to_string()
+                                                        }),
+                                                        hovered_word,
+                                                    });
+                                                }
+                                                None => {
+                                                    terminal_view.hover = None;
+                                                }
+                                            })
+                                            .ok();
+                                    });
+                                cx.notify();
+                            }
+                        }
+                        None => {
+                            terminal_view.hover = None;
+                            terminal_view.hover_tooltip_update = Task::ready(());
+                            cx.notify();
                         }
                     }
-
-                    cx.notify()
                 }
 
                 Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                     MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
                     MaybeNavigationTarget::PathLike(path_like_target) => {
-                        if terminal_view.hover_target_tooltip.is_none() {
+                        if terminal_view.hover.is_none() {
                             return;
                         }
                         let task_workspace = workspace.clone();

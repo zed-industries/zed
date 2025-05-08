@@ -730,29 +730,38 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
-                let (last_hovered_word, hover_target) = self.terminal.update(cx, |terminal, cx| {
-                    terminal.set_size(dimensions);
-                    terminal.sync(window, cx);
+                let (last_hovered_word, hover_tooltip) =
+                    self.terminal.update(cx, |terminal, cx| {
+                        terminal.set_size(dimensions);
+                        terminal.sync(window, cx);
 
-                    if window.modifiers().secondary()
-                        && bounds.contains(&window.mouse_position())
-                        && self.terminal_view.read(cx).hover_target_tooltip.is_some()
-                    {
-                        let hover_target = self.terminal_view.read(cx).hover_target_tooltip.clone();
-                        let last_hovered_word = terminal.last_content.last_hovered_word.clone();
-                        (last_hovered_word, hover_target)
-                    } else {
-                        (None, None)
-                    }
-                });
+                        if window.modifiers().secondary()
+                            && bounds.contains(&window.mouse_position())
+                            && self.terminal_view.read(cx).hover.is_some()
+                        {
+                            let registered_hover = self.terminal_view.read(cx).hover.as_ref();
+                            if terminal.last_content.last_hovered_word.as_ref()
+                                == registered_hover.map(|hover| &hover.hovered_word)
+                            {
+                                (
+                                    terminal.last_content.last_hovered_word.clone(),
+                                    registered_hover.map(|hover| hover.tooltip.clone()),
+                                )
+                            } else {
+                                (None, None)
+                            }
+                        } else {
+                            (None, None)
+                        }
+                    });
 
                 let scroll_top = self.terminal_view.read(cx).scroll_top;
-                let hyperlink_tooltip = hover_target.as_ref().map(|hover_target| {
+                let hyperlink_tooltip = hover_tooltip.map(|hover_tooltip| {
                     let offset = bounds.origin + point(gutter, px(0.)) - point(px(0.), scroll_top);
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
-                        .tooltip(Tooltip::text(hover_target.clone()))
+                        .tooltip(Tooltip::text(hover_tooltip))
                         .into_any_element();
                     element.prepaint_as_root(offset, bounds.size.into(), window, cx);
                     element
@@ -922,7 +931,7 @@ impl Element for TerminalElement {
             self.register_mouse_listeners(layout.mode, &layout.hitbox, window);
             if window.modifiers().secondary()
                 && bounds.contains(&window.mouse_position())
-                && self.terminal_view.read(cx).hover_target_tooltip.is_some()
+                && self.terminal_view.read(cx).hover.is_some()
             {
                 window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(&layout.hitbox));
             } else {
