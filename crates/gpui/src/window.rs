@@ -4071,6 +4071,8 @@ pub enum ElementId {
     NamedInteger(SharedString, u64),
     /// A path
     Path(Arc<std::path::Path>),
+    /// A source location
+    Location(core::panic::Location<'static>)
 }
 
 impl ElementId {
@@ -4090,6 +4092,7 @@ impl Display for ElementId {
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
+            ElementId::Location(location) => write!(f, "{}:{}:{}", location.file(), location.line(), location.column())?,
         }
 
         Ok(())
@@ -4171,6 +4174,12 @@ impl From<(&'static str, u64)> for ElementId {
 impl From<Uuid> for ElementId {
     fn from(value: Uuid) -> Self {
         Self::Uuid(value)
+    }
+}
+
+impl From<core::panic::Location<'static>> for ElementId {
+    fn from(value: core::panic::Location<'static>) -> Self {
+        Self::Location(value)
     }
 }
 

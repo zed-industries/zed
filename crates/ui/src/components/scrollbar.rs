@@ -3,10 +3,36 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
     Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, ListState,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, ListState, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
-    Size, Style, UniformListScrollHandle, Window, point, quad,
+    Size, Stateful, Style, UniformListScrollHandle, Window, point, quad,
 };
+
+#[track_caller]
+pub fn scrollbar(state: ScrollbarState, window: &mut Window) -> Stateful<Div> {
+    let id = window.current_view();
+    let location = core::panic::Location::caller();
+    div()
+        .id(*location)
+        .occlude()
+        .absolute()
+        .right_1()
+        .top_0()
+        .bottom_0()
+        .pb_6()
+        .w_3()
+        .h_full()
+        .cursor_default()
+        .on_mouse_move(move |_, _window, cx| {
+            cx.notify(id);
+            cx.stop_propagation()
+        })
+        .on_hover(|_, _window, cx| cx.stop_propagation())
+        .on_any_mouse_down(|_, _window, cx| cx.stop_propagation())
+        .on_scroll_wheel(move |_, _window, cx| cx.notify(id))
+        .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .children(Scrollbar::vertical(state.clone()))
+}
 
 pub struct Scrollbar {
     thumb: Range<f32>,

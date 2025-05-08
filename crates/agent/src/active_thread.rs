@@ -44,8 +44,7 @@ use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, IconButton, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState, TextSize,
-    Tooltip, prelude::*,
+    prelude::*, scrollbar, Disclosure, IconButton, KeyBinding, PopoverMenuHandle, ScrollbarState, TextSize, Tooltip
 };
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
@@ -3327,43 +3326,12 @@ impl ActiveThread {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, window: &mut Window) -> Option<Stateful<Div>> {
         if !self.show_scrollbar && !self.scrollbar_state.is_dragging() {
             return None;
         }
 
-        Some(
-            div()
-                .occlude()
-                .id("active-thread-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
+        Some(scrollbar(self.scrollbar_state.clone(), window))
     }
 
     fn hide_scrollbar_later(&mut self, cx: &mut Context<Self>) {
@@ -3391,7 +3359,7 @@ pub enum ActiveThreadEvent {
 impl EventEmitter<ActiveThreadEvent> for ActiveThread {}
 
 impl Render for ActiveThread {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .relative()
@@ -3412,7 +3380,7 @@ impl Render for ActiveThread {
                 }),
             )
             .child(list(self.list_state.clone()).flex_grow())
-            .when_some(self.render_vertical_scrollbar(cx), |this, scrollbar| {
+            .when_some(self.render_vertical_scrollbar(window), |this, scrollbar| {
                 this.child(scrollbar)
             })
     }
