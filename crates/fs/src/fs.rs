@@ -2499,28 +2499,22 @@ fn atomic_replace<P: AsRef<Path>>(
     replacement_file: P,
 ) -> windows::core::Result<()> {
     use windows::{
-        Win32::Storage::FileSystem::{MoveFileW, REPLACE_FILE_FLAGS, ReplaceFileW},
+        Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
         core::HSTRING,
     };
 
-    if !replaced_file.as_ref().exists() {
-        unsafe {
-            MoveFileW(
-                &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
-                &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-            )
-        }
-    } else {
-        unsafe {
-            ReplaceFileW(
-                &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-                &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
-                None,
-                REPLACE_FILE_FLAGS::default(),
-                None,
-                None,
-            )
-        }
+    // If the file does not exist, create it.
+    let _ = std::fs::File::create_new(replaced_file.as_ref());
+
+    unsafe {
+        ReplaceFileW(
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            None,
+            REPLACE_FILE_FLAGS::default(),
+            None,
+            None,
+        )
     }
 }
 
