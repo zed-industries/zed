@@ -14,8 +14,9 @@ use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
-    ModelRequestLimitReachedError, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
@@ -683,6 +684,14 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Anthropic(_) => true,
             CloudModel::Google(_) => true,
             CloudModel::OpenAi(_) => true,
+        }
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
         }
     }
 

@@ -12,7 +12,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -295,6 +295,14 @@ impl LanguageModel for OpenAiLanguageModel {
         true
     }
 
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -417,7 +425,11 @@ pub fn into_open_ai(
                 },
             })
             .collect(),
-        tool_choice: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
+            LanguageModelToolChoice::None => open_ai::ToolChoice::None,
+        }),
     }
 }
 

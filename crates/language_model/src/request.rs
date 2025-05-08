@@ -203,6 +203,13 @@ pub struct LanguageModelRequestTool {
     pub input_schema: serde_json::Value,
 }
 
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelToolChoice {
+    Auto,
+    Any,
+    None,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
@@ -210,6 +217,7 @@ pub struct LanguageModelRequest {
     pub mode: Option<CompletionMode>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
+    pub tool_choice: Option<LanguageModelToolChoice>,
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
 }
