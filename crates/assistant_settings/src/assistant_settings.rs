@@ -85,7 +85,6 @@ pub struct AssistantSettings {
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
-    pub enable_experimental_live_diffs: bool,
     pub default_profile: AgentProfileId,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
@@ -104,10 +103,6 @@ impl AssistantSettings {
             .iter()
             .rfind(|setting| setting.matches(model))
             .and_then(|m| m.temperature)
-    }
-
-    pub fn are_live_diffs_enabled(&self, _cx: &App) -> bool {
-        false
     }
 
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
@@ -845,10 +840,6 @@ impl Settings for AssistantSettings {
                 .thread_summary_model
                 .or(settings.thread_summary_model.take());
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
-            merge(
-                &mut settings.enable_experimental_live_diffs,
-                value.enable_experimental_live_diffs,
-            );
             merge(
                 &mut settings.always_allow_tool_actions,
                 value.always_allow_tool_actions,

@@ -122,14 +122,6 @@ impl MessageStatus {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestType {
-    /// Request a normal chat response from the model.
-    Chat,
-    /// Add a preamble to the message, which tells the model to return a structured response that suggests edits.
-    SuggestEdits,
-}
-
 #[derive(Clone, Debug)]
 pub enum ContextOperation {
     InsertMessage {
@@ -1277,7 +1269,7 @@ impl AssistantContext {
         let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
-        let request = self.to_completion_request(Some(&model.model), RequestType::Chat, cx);
+        let request = self.to_completion_request(Some(&model.model), cx);
         let debounce = self.token_count.is_some();
         self.pending_token_count = cx.spawn(async move |this, cx| {
             async move {
@@ -1423,7 +1415,7 @@ impl AssistantContext {
         }
 
         let request = {
-            let mut req = self.to_completion_request(Some(&model), RequestType::Chat, cx);
+            let mut req = self.to_completion_request(Some(&model), cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -2303,11 +2295,7 @@ impl AssistantContext {
         })
     }
 
-    pub fn assist(
-        &mut self,
-        request_type: RequestType,
-        cx: &mut Context<Self>,
-    ) -> Option<MessageAnchor> {
+    pub fn assist(&mut self, cx: &mut Context<Self>) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let model = model_registry.default_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
@@ -2322,7 +2310,7 @@ impl AssistantContext {
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let request = self.to_completion_request(Some(&model), request_type, cx);
+        let request = self.to_completion_request(Some(&model), cx);
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2563,7 +2551,6 @@ impl AssistantContext {
     pub fn to_completion_request(
         &self,
         model: Option<&Arc<dyn LanguageModel>>,
-        request_type: RequestType,
         cx: &App,
     ) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
@@ -2641,25 +2628,6 @@ impl AssistantContext {
 
             if !request_message.contents_empty() {
                 completion_request.messages.push(request_message);
-            }
-        }
-
-        if let RequestType::SuggestEdits = request_type {
-            if let Ok(preamble) = self.prompt_builder.generate_suggest_edits_prompt() {
-                let last_elem_index = completion_request.messages.len();
-
-                completion_request
-                    .messages
-                    .push(LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::Text(preamble)],
-                        cache: false,
-                    });
-
-                // The preamble message should be sent right before the last actual user message.
-                completion_request
-                    .messages
-                    .swap(last_elem_index, last_elem_index.saturating_sub(1));
             }
         }
 
@@ -2985,7 +2953,7 @@ impl AssistantContext {
                 return;
             }
 
-            let mut request = self.to_completion_request(Some(&model.model), RequestType::Chat, cx);
+            let mut request = self.to_completion_request(Some(&model.model), cx);
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![

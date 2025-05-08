@@ -76,7 +76,7 @@ use workspace::{
 use crate::{
     AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
+    MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus,
 };
 use crate::{
     ThoughtProcessOutputSection, slash_command::SlashCommandCompletionProvider,
@@ -90,7 +90,6 @@ actions!(
         ConfirmCommand,
         CopyCode,
         CycleMessageRole,
-        Edit,
         InsertIntoEditor,
         QuoteSelection,
         Split,
@@ -126,7 +125,6 @@ type MessageHeader = MessageMetadata;
 
 #[derive(Clone)]
 enum AssistError {
-    FileRequired,
     PaymentRequired,
     MaxMonthlySpendReached,
     Message(SharedString),
@@ -370,14 +368,7 @@ impl ContextEditor {
         if self.sending_disabled(cx) {
             return;
         }
-        self.send_to_model(RequestType::Chat, window, cx);
-    }
-
-    fn edit(&mut self, _: &Edit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sending_disabled(cx) {
-            return;
-        }
-        self.send_to_model(RequestType::SuggestEdits, window, cx);
+        self.send_to_model(window, cx);
     }
 
     fn focus_active_patch(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -395,12 +386,7 @@ impl ContextEditor {
         false
     }
 
-    fn send_to_model(
-        &mut self,
-        request_type: RequestType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let provider = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.provider);
@@ -419,13 +405,7 @@ impl ContextEditor {
 
         self.last_error = None;
 
-        if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
-            self.last_error = Some(AssistError::FileRequired);
-            cx.notify();
-        } else if let Some(user_message) = self
-            .context
-            .update(cx, |context, cx| context.assist(request_type, cx))
-        {
+        if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
             let new_selection = {
                 let cursor = user_message
                     .start
@@ -2451,13 +2431,7 @@ impl ContextEditor {
                 button.tooltip(move |_, _| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new(
-                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
-                    "Chat"
-                } else {
-                    "Send"
-                },
-            ))
+            .child(Label::new("Send"))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
                     .map(|binding| binding.into_any_element()),
@@ -2479,50 +2453,6 @@ impl ContextEditor {
                 .as_ref()
                 .map_or(false, |model| model.provider.must_accept_terms(cx));
         has_configuration_error || needs_to_accept_terms
-    }
-
-    fn render_edit_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx).clone();
-
-        let (style, tooltip) = match token_state(&self.context, cx) {
-            Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Error),
-                Some(Tooltip::text("Token limit reached")(window, cx)),
-            ),
-            Some(TokenState::HasMoreTokens {
-                over_warn_threshold,
-                ..
-            }) => {
-                let (style, tooltip) = if over_warn_threshold {
-                    (
-                        ButtonStyle::Tinted(TintColor::Warning),
-                        Some(Tooltip::text("Token limit is close to exhaustion")(
-                            window, cx,
-                        )),
-                    )
-                } else {
-                    (ButtonStyle::Filled, None)
-                };
-                (style, tooltip)
-            }
-            None => (ButtonStyle::Filled, None),
-        };
-
-        ButtonLike::new("edit_button")
-            .disabled(self.sending_disabled(cx))
-            .style(style)
-            .when_some(tooltip, |button, tooltip| {
-                button.tooltip(move |_, _| tooltip.clone())
-            })
-            .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Suggest Edits"))
-            .children(
-                KeyBinding::for_action_in(&Edit, &focus_handle, window, cx)
-                    .map(|binding| binding.into_any_element()),
-            )
-            .on_click(move |_event, window, cx| {
-                focus_handle.dispatch_action(&Edit, window, cx);
-            })
     }
 
     fn render_inject_context_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2600,7 +2530,6 @@ impl ContextEditor {
                 .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
-                    AssistError::FileRequired => self.render_file_required_error(cx),
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
                     AssistError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
@@ -2611,41 +2540,6 @@ impl ContextEditor {
                 })
                 .into_any(),
         )
-    }
-
-    fn render_file_required_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::Warning).color(Color::Warning))
-                    .child(
-                        Label::new("Suggest Edits needs a file to edit").weight(FontWeight::MEDIUM),
-                    ),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(
-                        "To include files, type /file or /tab in your prompt.",
-                    )),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _window, cx| {
-                            this.last_error = None;
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -3088,7 +2982,6 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
-            .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .on_action(move |_: &ToggleModelSelector, window, cx| {
@@ -3141,20 +3034,6 @@ impl Render for ContextEditor {
                             h_flex()
                                 .w_full()
                                 .justify_end()
-                                .when(
-                                    AssistantSettings::get_global(cx).are_live_diffs_enabled(cx),
-                                    |buttons| {
-                                        buttons
-                                            .items_center()
-                                            .gap_1p5()
-                                            .child(self.render_edit_button(window, cx))
-                                            .child(
-                                                Label::new("or")
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                    },
-                                )
                                 .child(self.render_send_button(window, cx)),
                         ),
                 ),
