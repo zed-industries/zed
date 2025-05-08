@@ -265,10 +265,10 @@ impl Render for LanguageServerPrompt {
         };
 
         let suppress = window.modifiers().shift;
-        let close_icon = if suppress {
-            IconName::Minimize
+        let (close_id, close_icon) = if suppress {
+            ("suppress", IconName::Minimize)
         } else {
-            IconName::Close
+            ("close", IconName::Close)
         };
 
         div()
@@ -311,7 +311,7 @@ impl Render for LanguageServerPrompt {
                                             .tooltip(Tooltip::text("Copy Description")),
                                     )
                                     .child(
-                                        IconButton::new("close", close_icon)
+                                        IconButton::new(close_id, close_icon)
                                             .tooltip(move |window, cx| {
                                                 if suppress {
                                                     Tooltip::for_action(
@@ -648,10 +648,10 @@ pub mod simple_message_notification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let show_suppress_button = self.show_suppress_button;
             let suppress = show_suppress_button && window.modifiers().shift;
-            let close_icon = if suppress {
-                IconName::Minimize
+            let (close_id, close_icon) = if suppress {
+                ("suppress", IconName::Minimize)
             } else {
-                IconName::Close
+                ("close", IconName::Close)
             };
 
             v_flex()
@@ -675,7 +675,7 @@ pub mod simple_message_notification {
                         .when(self.show_close_button, |this| {
                             this.on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
                                 .child(
-                                    IconButton::new("close", close_icon)
+                                    IconButton::new(close_id, close_icon)
                                         .tooltip(move |window, cx| {
                                             if suppress {
                                                 Tooltip::for_action(

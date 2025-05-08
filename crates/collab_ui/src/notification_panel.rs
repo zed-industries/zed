@@ -815,10 +815,10 @@ impl Render for NotificationToast {
         let user = self.actor.clone();
 
         let suppress = window.modifiers().shift;
-        let close_icon = if suppress {
-            IconName::Minimize
+        let (close_id, close_icon) = if suppress {
+            ("suppress", IconName::Minimize)
         } else {
-            IconName::Close
+            ("close", IconName::Close)
         };
 
         h_flex()
@@ -830,7 +830,7 @@ impl Render for NotificationToast {
             .child(Label::new(self.text.clone()))
             .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .child(
-                IconButton::new("close", close_icon)
+                IconButton::new(close_id, close_icon)
                     .tooltip(move |window, cx| {
                         if suppress {
                             Tooltip::for_action(
