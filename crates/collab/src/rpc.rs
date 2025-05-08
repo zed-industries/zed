@@ -166,19 +166,6 @@ impl Session {
         }
     }
 
-    pub async fn has_llm_subscription(
-        &self,
-        db: &MutexGuard<'_, DbHandle>,
-    ) -> anyhow::Result<bool> {
-        if self.is_staff() {
-            return Ok(true);
-        }
-
-        let user_id = self.user_id();
-
-        Ok(db.has_active_billing_subscription(user_id).await?)
-    }
-
     pub async fn current_plan(&self, db: &MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
         if self.is_staff() {
             return Ok(proto::Plan::ZedPro);
@@ -4000,11 +3987,6 @@ async fn get_llm_api_token(
     let db = session.db().await;
 
     let flags = db.get_user_flags(session.user_id()).await?;
-    let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
-
-    if !session.is_staff() && !has_language_models_feature_flag {
-        Err(anyhow!("permission denied"))?
-    }
 
     let user_id = session.user_id();
     let user = db
@@ -4016,7 +3998,6 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let has_legacy_llm_subscription = session.has_llm_subscription(&db).await?;
     let billing_subscription = db.get_active_billing_subscription(user.id).await?;
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
@@ -4025,7 +4006,6 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         &flags,
-        has_legacy_llm_subscription,
         billing_subscription,
         session.system_id.clone(),
         &session.app_state.config,
