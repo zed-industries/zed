@@ -22,10 +22,10 @@ use tasks_ui::task_contexts;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
-    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, InteractiveElement,
-    IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing, ParentElement, RenderOnce,
-    SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Window, div, h_flex,
-    relative, rems, v_flex,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconButton, IconName,
+    InteractiveElement, IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing,
+    ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton, ToggleState,
+    Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -40,8 +40,7 @@ pub(super) struct NewSessionModal {
     attach_mode: Entity<AttachMode>,
     custom_mode: Entity<CustomMode>,
     debugger: Option<DebugAdapterName>,
-    last_selected_profile_name: Option<SharedString>,
-    _subscriptions: Vec<Subscription>,
+    _subscriptions: [Subscription; 2],
 }
 
 fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
@@ -85,36 +84,54 @@ impl NewSessionModal {
                 .modal(false)
             });
 
+            let _subscriptions = [
+                cx.subscribe(&launch_picker, |_, _, _, cx| {
+                    cx.emit(DismissEvent);
+                }),
+                cx.subscribe(
+                    &attach_mode.read(cx).attach_picker.clone(),
+                    |_, _, _, cx| {
+                        cx.emit(DismissEvent);
+                    },
+                ),
+            ];
+
             let custom_mode = CustomMode::new(None, window, cx);
 
             Self {
-                _subscriptions: vec![cx.subscribe(&launch_picker, |_, _, _, cx| {
-                    cx.emit(DismissEvent);
-                })],
                 launch_picker,
                 attach_mode,
                 custom_mode,
                 debugger: None,
                 mode: NewSessionMode::Launch,
-                last_selected_profile_name: None,
                 debug_panel: debug_panel.downgrade(),
                 workspace: workspace_handle,
+                _subscriptions,
             }
         });
     }
 
-    fn render_mode(&self, window: &mut Window, cx: &mut App) -> impl ui::IntoElement {
+    fn render_mode(&self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+        let dap_menu = self.adapter_drop_down_menu(window, cx);
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
             NewSessionMode::Custom => self.custom_mode.update(cx, |this, cx| {
-                this.clone().render(window, cx).into_any_element()
+                this.clone().render(dap_menu, window, cx).into_any_element()
             }),
             NewSessionMode::Launch => v_flex()
                 .w(rems(34.))
                 .child(self.launch_picker.clone())
                 .into_any_element(),
+        }
+    }
+
+    fn mode_focus_handle(&self, cx: &App) -> FocusHandle {
+        match self.mode {
+            NewSessionMode::Attach => self.attach_mode.read(cx).attach_picker.focus_handle(cx),
+            NewSessionMode::Custom => self.custom_mode.read(cx).program.focus_handle(cx),
+            NewSessionMode::Launch => self.launch_picker.focus_handle(cx),
         }
     }
 
@@ -257,99 +274,9 @@ impl NewSessionModal {
             }),
         )
     }
-
-    fn debug_config_drop_down_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ui::DropdownMenu {
-        let workspace = self.workspace.clone();
-        let weak = cx.weak_entity();
-        let last_profile = self.last_selected_profile_name.clone();
-        let worktree = workspace
-            .update(cx, |this, cx| {
-                this.project().read(cx).visible_worktrees(cx).next()
-            })
-            .ok()
-            .flatten();
-        DropdownMenu::new(
-            "debug-config-menu",
-            last_profile.unwrap_or_else(|| SELECT_SCENARIO_LABEL.clone()),
-            ContextMenu::build(window, cx, move |mut menu, _, cx| {
-                let setter_for_name = |task: DebugScenario| {
-                    let weak = weak.clone();
-                    move |_: &mut Window, cx: &mut App| {
-                        weak.update(cx, |this, cx| {
-                            this.last_selected_profile_name = Some(SharedString::from(&task.label));
-                            this.debugger = Some(DebugAdapterName(task.adapter.clone()));
-                            match &task.request {
-                                Some(DebugRequest::Launch(_launch_config)) => {
-                                    // todo!(Fix the drop down menu here)
-                                    // this.mode = NewSessionMode::launch(
-                                    //     Some(launch_config.clone()),
-                                    //     window,
-                                    //     cx,
-                                    // );
-                                }
-                                Some(DebugRequest::Attach(_)) => {
-                                    // this.mode = NewSessionMode::attach(
-                                    //     this.debugger.clone(),
-                                    //     this.workspace.clone(),
-                                    //     window,
-                                    //     cx,
-                                    // );
-                                    // this.mode.focus_handle(cx).focus(window);
-                                    // if let Some((debugger, attach)) =
-                                    //     this.debugger.as_ref().zip(this.mode.as_attach())
-                                    // {
-                                    //     Self::update_attach_picker(&attach, &debugger, window, cx);
-                                    // }
-                                }
-                                _ => log::warn!("Selected debug scenario without either attach or launch request specified"),
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-                    }
-                };
-
-                let available_tasks: Vec<DebugScenario> = workspace
-                    .update(cx, |this, cx| {
-                        this.project()
-                            .read(cx)
-                            .task_store()
-                            .read(cx)
-                            .task_inventory()
-                            .iter()
-                            .flat_map(|task_inventory| {
-                                task_inventory.read(cx).list_debug_scenarios(
-                                    worktree
-                                        .as_ref()
-                                        .map(|worktree| worktree.read(cx).id())
-                                        .iter()
-                                        .copied(),
-                                )
-                            })
-                            .map(|(_source_kind, scenario)| scenario)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                for debug_definition in available_tasks {
-                    menu = menu.entry(
-                        debug_definition.label.clone(),
-                        None,
-                        setter_for_name(debug_definition),
-                    );
-                }
-                menu
-            }),
-        )
-    }
 }
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
-static SELECT_SCENARIO_LABEL: SharedString = SharedString::new_static("Select Profile");
 
 #[derive(Clone)]
 enum NewSessionMode {
@@ -439,7 +366,7 @@ impl Render for NewSessionModal {
                         }
                     };
 
-                    this.mode.focus_handle(cx).focus(window);
+                    this.mode_focus_handle(cx).focus(window);
                 }),
             )
             .on_action(cx.listener(|this, _: &pane::ActivateNextItem, window, cx| {
@@ -451,7 +378,7 @@ impl Render for NewSessionModal {
                     }
                 };
 
-                this.mode.focus_handle(cx).focus(window);
+                this.mode_focus_handle(cx).focus(window);
             }))
             .child(
                 h_flex()
@@ -469,6 +396,7 @@ impl Render for NewSessionModal {
                                     .toggle_state(matches!(self.mode, NewSessionMode::Launch))
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.mode = NewSessionMode::Launch;
+                                        this.mode_focus_handle(cx).focus(window);
                                         cx.notify();
                                     }))
                                     .first(),
@@ -489,7 +417,7 @@ impl Render for NewSessionModal {
                                                 cx,
                                             );
                                         }
-
+                                        this.mode_focus_handle(cx).focus(window);
                                         cx.notify();
                                     }))
                                     .last(),
@@ -518,13 +446,19 @@ impl Render for NewSessionModal {
                                 move |_, window, cx| {
                                     this.update(cx, |this, cx| {
                                         this.mode = NewSessionMode::Custom;
-                                        this.mode.focus_handle(cx).focus(window);
+                                        this.mode_focus_handle(cx).focus(window);
                                     })
                                     .ok();
                                 }
                             }),
                         ),
-                        NewSessionMode::Custom => div(), // todo!(Back to launch mode button)
+                        NewSessionMode::Custom => div().child(
+                            IconButton::new("new-session-modal-back", IconName::DebugStepBack)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.mode = NewSessionMode::Launch;
+                                    cx.notify();
+                                })),
+                        ),
                     })
                     .child(
                         Button::new("debugger-spawn", "Start")
@@ -566,54 +500,11 @@ impl Render for NewSessionModal {
 impl EventEmitter<DismissEvent> for NewSessionModal {}
 impl Focusable for NewSessionModal {
     fn focus_handle(&self, cx: &ui::App) -> gpui::FocusHandle {
-        self.mode.focus_handle(cx)
+        self.mode_focus_handle(cx)
     }
 }
 
 impl ModalView for NewSessionModal {}
-
-impl Render for CustomMode {
-    fn render(&mut self, window: &mut Window, cx: &mut ui::Context<Self>) -> impl IntoElement {
-        v_flex()
-            .p_2()
-            .w_full()
-            .gap_3()
-            .track_focus(&self.program.focus_handle(cx))
-            .child(
-                div().child(
-                    Label::new("Program")
-                        .size(ui::LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-            )
-            .child(render_editor(&self.program, window, cx))
-            .child(
-                div().child(
-                    Label::new("Working Directory")
-                        .size(ui::LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-            )
-            .child(render_editor(&self.cwd, window, cx))
-            .child(
-                CheckboxWithLabel::new(
-                    "debugger-stop-on-entry",
-                    Label::new("Stop on Entry").size(ui::LabelSize::Small),
-                    self.stop_on_entry,
-                    {
-                        let this = cx.weak_entity();
-                        move |state, _, cx| {
-                            this.update(cx, |this, _| {
-                                this.stop_on_entry = *state;
-                            })
-                            .ok();
-                        }
-                    },
-                )
-                .checkbox_position(ui::IconPosition::End),
-            )
-    }
-}
 
 impl RenderOnce for AttachMode {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -623,8 +514,6 @@ impl RenderOnce for AttachMode {
             .child(self.attach_picker.clone())
     }
 }
-
-use std::rc::Rc;
 
 #[derive(Clone)]
 pub(super) struct CustomMode {
@@ -674,13 +563,60 @@ impl CustomMode {
             env: Default::default(),
         }
     }
+
+    fn render(
+        &mut self,
+        adapter_menu: DropdownMenu,
+        window: &mut Window,
+        cx: &mut ui::Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .p_2()
+            .w_full()
+            .gap_3()
+            .track_focus(&self.program.focus_handle(cx))
+            .child(
+                div().child(
+                    Label::new("Program")
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+            .child(render_editor(&self.program, window, cx))
+            .child(
+                h_flex()
+                    .child(
+                        Label::new("Debugger")
+                            .size(ui::LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .gap(ui::DynamicSpacing::Base08.rems(cx))
+                    .child(adapter_menu),
+            )
+            .child(
+                CheckboxWithLabel::new(
+                    "debugger-stop-on-entry",
+                    Label::new("Stop on Entry").size(ui::LabelSize::Small),
+                    self.stop_on_entry,
+                    {
+                        let this = cx.weak_entity();
+                        move |state, _, cx| {
+                            this.update(cx, |this, _| {
+                                this.stop_on_entry = *state;
+                            })
+                            .ok();
+                        }
+                    },
+                )
+                .checkbox_position(ui::IconPosition::End),
+            )
+    }
 }
 
 #[derive(Clone)]
 pub(super) struct AttachMode {
     pub(super) definition: DebugTaskDefinition,
     pub(super) attach_picker: Entity<AttachModal>,
-    _subscription: Rc<Subscription>,
 }
 
 impl AttachMode {
@@ -705,14 +641,9 @@ impl AttachMode {
             modal
         });
 
-        let subscription = cx.subscribe(&attach_picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        });
-
         cx.new(|_| Self {
             definition,
             attach_picker,
-            _subscription: Rc::new(subscription),
         })
     }
     pub(super) fn debug_task(&self) -> task::AttachRequest {

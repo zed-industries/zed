@@ -8,13 +8,13 @@ use crate::{
 use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
+use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
 };
-use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
