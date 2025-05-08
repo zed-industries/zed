@@ -11952,6 +11952,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "assistant_tool",
+ "assistant_tools",
  "async-watch",
  "backtrace",
  "cargo_toml",
@@ -11974,6 +11976,7 @@ dependencies = [
  "http_client",
  "language",
  "language_extension",
+ "language_model",
  "languages",
  "libc",
  "log",
