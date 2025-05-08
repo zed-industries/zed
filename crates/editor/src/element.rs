@@ -7162,9 +7162,7 @@ impl Element for EditorElement {
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Never => None,
                             ShowMinimap::Always => Some(minimap_setting_width),
-                            ShowMinimap::Auto => {
-                                scrollbars_shown.then_some(minimap_setting_width)
-                            }
+                            ShowMinimap::Auto => scrollbars_shown.then_some(minimap_setting_width),
                         })
                         .flatten()
                         .filter(|minimap_width| {
