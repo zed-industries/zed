@@ -63,7 +63,13 @@ pub struct AllLanguageSettings {
     pub edit_predictions: EditPredictionSettings,
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
-    pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub(crate) file_types: FxHashMap<Arc<str>, LanguageCustomFileTypes>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LanguageCustomFileTypes {
+    pub(crate) glob: GlobSet,
+    pub(crate) patterns: Vec<String>,
 }
 
 /// The settings for a particular language.
@@ -1229,7 +1235,7 @@ impl settings::Settings for AllLanguageSettings {
             .map(|settings| settings.enabled_in_text_threads)
             .unwrap_or(true);
 
-        let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_types: FxHashMap<Arc<str>, LanguageCustomFileTypes> = FxHashMap::default();
 
         for (language, patterns) in &default_value.file_types {
             let mut builder = GlobSetBuilder::new();
@@ -1238,7 +1244,13 @@ impl settings::Settings for AllLanguageSettings {
                 builder.add(Glob::new(pattern)?);
             }
 
-            file_types.insert(language.clone(), builder.build()?);
+            file_types.insert(
+                language.clone(),
+                LanguageCustomFileTypes {
+                    glob: builder.build()?,
+                    patterns: patterns.clone(),
+                },
+            );
         }
 
         for user_settings in sources.customizations() {
@@ -1308,7 +1320,13 @@ impl settings::Settings for AllLanguageSettings {
                     builder.add(Glob::new(pattern)?);
                 }
 
-                file_types.insert(language.clone(), builder.build()?);
+                file_types.insert(
+                    language.clone(),
+                    LanguageCustomFileTypes {
+                        glob: builder.build()?,
+                        patterns: patterns.clone(),
+                    },
+                );
             }
         }
 
