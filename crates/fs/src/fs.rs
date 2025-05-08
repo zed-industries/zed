@@ -563,11 +563,7 @@ impl Fs for RealFs {
             let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             let temp_file = {
                 let temp_file_path = temp_dir.path().join("temp_file");
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&temp_file_path)?;
+                let mut file = std::fs::File::create_new(&temp_file_path)?;
                 file.write_all(data.as_bytes())?;
                 temp_file_path
             };
@@ -2948,12 +2944,7 @@ mod tests {
         };
         let temp_dir = TempDir::new().unwrap();
         let file_to_be_replaced = temp_dir.path().join("file.txt");
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&file_to_be_replaced)
-            .unwrap();
+        let mut file = std::fs::File::create_new(&file_to_be_replaced).unwrap();
         file.write_all(b"Hello").unwrap();
         // drop(file);  // We still hold the file handle here
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
