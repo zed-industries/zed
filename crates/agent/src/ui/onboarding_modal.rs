@@ -4,7 +4,7 @@ use gpui::{
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::assistant_panel::AssistantPanel;
+use crate::agent_panel::AgentPanel;
 
 macro_rules! agent_onboarding_event {
     ($name:expr) => {
@@ -31,7 +31,7 @@ impl AgentOnboardingModal {
 
     fn open_panel(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.update(cx, |workspace, cx| {
-            workspace.focus_panel::<AssistantPanel>(window, cx);
+            workspace.focus_panel::<AgentPanel>(window, cx);
         });
 
         cx.emit(DismissEvent);
