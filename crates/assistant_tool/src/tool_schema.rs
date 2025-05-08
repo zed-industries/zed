@@ -46,6 +46,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             obj.remove(key);
         }
 
+        // If a type is not specified for an input parameter, add a default type
         if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
             && !(obj.contains_key("anyOf")
