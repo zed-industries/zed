@@ -4163,23 +4163,36 @@ impl Project {
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree_root_name = worktree.read(cx).root_name();
-            if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: relative_path.into(),
-                });
-            }
-        }
+        if path.is_absolute() {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_abs_path = worktree.read(cx).abs_path();
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree = worktree.read(cx);
-            if let Some(entry) = worktree.entry_for_path(path) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: entry.path.clone(),
-                });
+                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+        } else {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_root_name = worktree.read(cx).root_name();
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_path(path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
             }
         }
 
