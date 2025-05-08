@@ -825,7 +825,7 @@ impl Render for NotificationToast {
             .id("notification_panel_toast")
             .elevation_3(cx)
             .p_2()
-            .gap_2()
+            .justify_between()
             .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))
             .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
@@ -841,7 +841,7 @@ impl Render for NotificationToast {
                             )
                         } else {
                             Tooltip::for_action(
-                                format!("Close.\nSuppress with shift-click"),
+                                "Close.\nSuppress with shift-click",
                                 &menu::Cancel,
                                 window,
                                 cx,

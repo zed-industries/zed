@@ -322,9 +322,7 @@ impl Render for LanguageServerPrompt {
                                                     )
                                                 } else {
                                                     Tooltip::for_action(
-                                                        format!(
-                                                            "Close.\nSuppress with shift-click."
-                                                        ),
+                                                        "Close.\nSuppress with shift-click.",
                                                         &menu::Cancel,
                                                         window,
                                                         cx,
@@ -688,14 +686,14 @@ pub mod simple_message_notification {
                                                 )
                                             } else if show_suppress_button {
                                                 Tooltip::for_action(
-                                                    format!("Close.\nSuppress with shift-click."),
+                                                    "Close.\nSuppress with shift-click.",
                                                     &menu::Cancel,
                                                     window,
                                                     cx,
                                                 )
                                             } else {
                                                 Tooltip::for_action(
-                                                    format!("Close."),
+                                                    "Close.",
                                                     &menu::Cancel,
                                                     window,
                                                     cx,
