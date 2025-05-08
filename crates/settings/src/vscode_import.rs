@@ -123,29 +123,8 @@ impl VsCodeShortcuts {
         })
     }
 
-    pub async fn load_user_shortcuts(_fs: Arc<dyn Fs>) -> Result<Self> {
-        let content = r#"
-        [
-            {
-                "key": "ctrl+shift+a",
-                "command": "list.focusFirst",
-            },
-            {
-                "key": "ctrl+shift+=",
-                "command": "menu::SelectFirst",
-            },
-            {
-                "key": "ctrl+shift+[BracketLeft]",
-                "command": "menu::SelectFirst",
-            },
-            {
-                "key": "ctrl+shift+oem_3",
-                "command": "menu::SelectFirst",
-            }
-        ]
-        "#;
-        // let content = fs.load(paths::vscode_shortcuts_file()).await?;
-        println!("Loaded shortcuts: {}", content);
+    pub async fn load_user_shortcuts(fs: Arc<dyn Fs>) -> Result<Self> {
+        let content = fs.load(paths::vscode_shortcuts_file()).await?;
 
         Ok(Self {
             content: serde_json_lenient::from_str(&content)?,
