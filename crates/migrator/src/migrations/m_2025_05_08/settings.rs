@@ -7,14 +7,20 @@ pub const SETTINGS_PATTERNS: MigrationPatterns =
     &[(SETTINGS_DUPLICATED_AGENT_PATTERN, comment_duplicated_agent)];
 
 fn comment_duplicated_agent(
-    _contents: &str,
+    contents: &str,
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
     let pair_ix = query.capture_index_for_name("pair1")?;
-    let pair_range = mat.nodes_for_capture_index(pair_ix).next()?.byte_range();
+    let mut range = mat.nodes_for_capture_index(pair_ix).next()?.byte_range();
 
-    let value = _contents[pair_range.clone()].to_string();
+    // Include the comma into the commented region
+    let rtext = &contents[range.end..];
+    if let Some(comma_index) = rtext.find(',') {
+        range.end += comma_index + 1;
+    }
+
+    let value = contents[range.clone()].to_string();
     let commented_value = format!("/* Duplicated key auto-commented: {value} */");
-    Some((pair_range, commented_value))
+    Some((range, commented_value))
 }

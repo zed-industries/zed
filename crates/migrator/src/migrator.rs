@@ -774,7 +774,7 @@ mod tests {
                     "name": "assistant-1",
                 "model": "gpt-4", // weird formatting
                     "utf8": "привіт"
-                } */,
+                }, */
                 "something": "else",
                 "agent": {
                     "name": "assistant-2",
