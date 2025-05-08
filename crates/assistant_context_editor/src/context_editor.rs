@@ -9,11 +9,11 @@ use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
-    ProposedChangeLocation, ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
+    RowExt, ToOffset as _, ToPoint,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
-        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
-        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
+        BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
+        RenderBlock, ToDisplayPoint,
     },
     scroll::Autoscroll,
 };
@@ -21,12 +21,11 @@ use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
-    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    WeakEntity, actions, div, img, impl_internal_actions, percentage, point, prelude::*,
-    pulsating_between, size,
+    Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem, Empty,
+    Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
+    StatefulInteractiveElement, Styled, Subscription, Task, Transformation, WeakEntity, actions,
+    div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between, size,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -69,14 +68,14 @@ use workspace::{
     Save, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
-    pane::{self, SaveIntent},
+    pane,
     searchable::{SearchEvent, SearchableItem},
 };
 
 use crate::{
-    AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
-    ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus,
+    AssistantContext, CacheStatus, Content, ContextEvent, ContextId, InvokedSlashCommandId,
+    InvokedSlashCommandStatus, Message, MessageId, MessageMetadata, MessageStatus,
+    ParsedSlashCommand, PendingSlashCommandStatus,
 };
 use crate::{
     ThoughtProcessOutputSection, slash_command::SlashCommandCompletionProvider,
@@ -108,17 +107,6 @@ impl_internal_actions!(assistant, [InsertDraggedFiles]);
 struct ScrollPosition {
     offset_before_cursor: gpui::Point<f32>,
     cursor: Anchor,
-}
-
-struct PatchViewState {
-    crease_id: CreaseId,
-    editor: Option<PatchEditorState>,
-    update_task: Option<Task<()>>,
-}
-
-struct PatchEditorState {
-    editor: WeakEntity<ProposedChangesEditor>,
-    opened_patch: AssistantPatch,
 }
 
 type MessageHeader = MessageMetadata;
@@ -202,8 +190,6 @@ pub struct ContextEditor {
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     _subscriptions: Vec<Subscription>,
-    patches: HashMap<Range<language::Anchor>, PatchViewState>,
-    active_patch: Option<Range<language::Anchor>>,
     last_error: Option<AssistError>,
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
@@ -272,7 +258,6 @@ impl ContextEditor {
 
         let slash_command_sections = context.read(cx).slash_command_output_sections().to_vec();
         let thought_process_sections = context.read(cx).thought_process_output_sections().to_vec();
-        let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
         let mut this = Self {
             context,
@@ -290,8 +275,6 @@ impl ContextEditor {
             pending_slash_command_creases: HashMap::default(),
             invoked_slash_command_creases: HashMap::default(),
             _subscriptions,
-            patches: HashMap::default(),
-            active_patch: None,
             last_error: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
@@ -322,7 +305,6 @@ impl ContextEditor {
             window,
             cx,
         );
-        this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
     }
 
@@ -371,21 +353,6 @@ impl ContextEditor {
         self.send_to_model(window, cx);
     }
 
-    fn focus_active_patch(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some((_range, patch)) = self.active_patch() {
-            if let Some(editor) = patch
-                .editor
-                .as_ref()
-                .and_then(|state| state.editor.upgrade())
-            {
-                editor.focus_handle(cx).focus(window);
-                return true;
-            }
-        }
-
-        false
-    }
-
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let provider = LanguageModelRegistry::read_global(cx)
             .default_model()
@@ -396,10 +363,6 @@ impl ContextEditor {
         {
             self.show_accept_terms = true;
             cx.notify();
-            return;
-        }
-
-        if self.focus_active_patch(window, cx) {
             return;
         }
 
@@ -670,9 +633,6 @@ impl ContextEditor {
                     }
                 });
             }
-            ContextEvent::PatchesUpdated { removed, updated } => {
-                self.patches_updated(removed, updated, window, cx);
-            }
             ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -877,131 +837,6 @@ impl ContextEditor {
         });
     }
 
-    fn patches_updated(
-        &mut self,
-        removed: &Vec<Range<text::Anchor>>,
-        updated: &Vec<Range<text::Anchor>>,
-        window: &mut Window,
-        cx: &mut Context<ContextEditor>,
-    ) {
-        let this = cx.entity().downgrade();
-        let mut editors_to_close = Vec::new();
-
-        self.editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let multibuffer = &snapshot.buffer_snapshot;
-            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
-
-            let mut removed_crease_ids = Vec::new();
-            let mut ranges_to_unfold: Vec<Range<Anchor>> = Vec::new();
-            for range in removed {
-                if let Some(state) = self.patches.remove(range) {
-                    let patch_start = multibuffer
-                        .anchor_in_excerpt(excerpt_id, range.start)
-                        .unwrap();
-                    let patch_end = multibuffer
-                        .anchor_in_excerpt(excerpt_id, range.end)
-                        .unwrap();
-
-                    editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                    ranges_to_unfold.push(patch_start..patch_end);
-                    removed_crease_ids.push(state.crease_id);
-                }
-            }
-            editor.unfold_ranges(&ranges_to_unfold, true, false, cx);
-            editor.remove_creases(removed_crease_ids, cx);
-
-            for range in updated {
-                let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
-                    continue;
-                };
-
-                let path_count = patch.path_count();
-                let patch_start = multibuffer
-                    .anchor_in_excerpt(excerpt_id, patch.range.start)
-                    .unwrap();
-                let patch_end = multibuffer
-                    .anchor_in_excerpt(excerpt_id, patch.range.end)
-                    .unwrap();
-                let render_block: RenderBlock = Arc::new({
-                    let this = this.clone();
-                    let patch_range = range.clone();
-                    move |cx: &mut BlockContext| {
-                        let max_width = cx.max_width;
-                        let gutter_width = cx.margins.gutter.full_width();
-                        let block_id = cx.block_id;
-                        let selected = cx.selected;
-                        let window = &mut cx.window;
-                        this.update(cx.app, |this, cx| {
-                            this.render_patch_block(
-                                patch_range.clone(),
-                                max_width,
-                                gutter_width,
-                                block_id,
-                                selected,
-                                window,
-                                cx,
-                            )
-                        })
-                        .ok()
-                        .flatten()
-                        .unwrap_or_else(|| Empty.into_any())
-                    }
-                });
-
-                let height = path_count as u32 + 1;
-                let crease = Crease::block(
-                    patch_start..patch_end,
-                    height,
-                    BlockStyle::Flex,
-                    render_block.clone(),
-                );
-
-                let should_refold;
-                if let Some(state) = self.patches.get_mut(&range) {
-                    if let Some(editor_state) = &state.editor {
-                        if editor_state.opened_patch != patch {
-                            state.update_task = Some({
-                                let this = this.clone();
-                                cx.spawn_in(window, async move |_, cx| {
-                                    Self::update_patch_editor(this.clone(), patch, cx)
-                                        .await
-                                        .log_err();
-                                })
-                            });
-                        }
-                    }
-
-                    should_refold =
-                        snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
-                } else {
-                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
-                    self.patches.insert(
-                        range.clone(),
-                        PatchViewState {
-                            crease_id,
-                            editor: None,
-                            update_task: None,
-                        },
-                    );
-
-                    should_refold = true;
-                }
-
-                if should_refold {
-                    editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
-                    editor.fold_creases(vec![crease], false, window, cx);
-                }
-            }
-        });
-
-        for editor in editors_to_close {
-            self.close_patch_editor(editor, window, cx);
-        }
-
-        self.update_active_patch(window, cx);
-    }
-
     fn insert_thought_process_output_sections(
         &mut self,
         sections: impl IntoIterator<
@@ -1130,175 +965,10 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(window, cx);
-                self.update_active_patch(window, cx);
             }
             _ => {}
         }
         cx.emit(event.clone());
-    }
-
-    fn active_patch(&self) -> Option<(Range<text::Anchor>, &PatchViewState)> {
-        let patch = self.active_patch.as_ref()?;
-        Some((patch.clone(), self.patches.get(&patch)?))
-    }
-
-    fn update_active_patch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let newest_cursor = self.editor.update(cx, |editor, cx| {
-            editor.selections.newest::<Point>(cx).head()
-        });
-        let context = self.context.read(cx);
-
-        let new_patch = context.patch_containing(newest_cursor, cx).cloned();
-
-        if new_patch.as_ref().map(|p| &p.range) == self.active_patch.as_ref() {
-            return;
-        }
-
-        if let Some(old_patch_range) = self.active_patch.take() {
-            if let Some(patch_state) = self.patches.get_mut(&old_patch_range) {
-                if let Some(state) = patch_state.editor.take() {
-                    if let Some(editor) = state.editor.upgrade() {
-                        self.close_patch_editor(editor, window, cx);
-                    }
-                }
-            }
-        }
-
-        if let Some(new_patch) = new_patch {
-            self.active_patch = Some(new_patch.range.clone());
-
-            if let Some(patch_state) = self.patches.get_mut(&new_patch.range) {
-                let mut editor = None;
-                if let Some(state) = &patch_state.editor {
-                    if let Some(opened_editor) = state.editor.upgrade() {
-                        editor = Some(opened_editor);
-                    }
-                }
-
-                if let Some(editor) = editor {
-                    self.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.activate_item(&editor, true, false, window, cx);
-                        })
-                        .ok();
-                } else {
-                    patch_state.update_task = Some(cx.spawn_in(window, async move |this, cx| {
-                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
-                    }));
-                }
-            }
-        }
-    }
-
-    fn close_patch_editor(
-        &mut self,
-        editor: Entity<ProposedChangesEditor>,
-        window: &mut Window,
-        cx: &mut Context<ContextEditor>,
-    ) {
-        self.workspace
-            .update(cx, |workspace, cx| {
-                if let Some(pane) = workspace.pane_for(&editor) {
-                    pane.update(cx, |pane, cx| {
-                        let item_id = editor.entity_id();
-                        if !editor.read(cx).focus_handle(cx).is_focused(window) {
-                            pane.close_item_by_id(item_id, SaveIntent::Skip, window, cx)
-                                .detach_and_log_err(cx);
-                        }
-                    });
-                }
-            })
-            .ok();
-    }
-
-    async fn open_patch_editor(
-        this: WeakEntity<Self>,
-        patch: AssistantPatch,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let project = this.read_with(cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), cx).await;
-
-        let editor = cx.new_window_entity(|window, cx| {
-            let editor = ProposedChangesEditor::new(
-                patch.title.clone(),
-                resolved_patch
-                    .edit_groups
-                    .iter()
-                    .map(|(buffer, groups)| ProposedChangeLocation {
-                        buffer: buffer.clone(),
-                        ranges: groups
-                            .iter()
-                            .map(|group| group.context_range.clone())
-                            .collect(),
-                    })
-                    .collect(),
-                Some(project.clone()),
-                window,
-                cx,
-            );
-            resolved_patch.apply(&editor, cx);
-            editor
-        })?;
-
-        this.update(cx, |this, _| {
-            if let Some(patch_state) = this.patches.get_mut(&patch.range) {
-                patch_state.editor = Some(PatchEditorState {
-                    editor: editor.downgrade(),
-                    opened_patch: patch,
-                });
-                patch_state.update_task.take();
-            }
-        })?;
-        this.read_with(cx, |this, _| this.workspace.clone())?
-            .update_in(cx, |workspace, window, cx| {
-                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
-            })
-            .log_err();
-
-        Ok(())
-    }
-
-    async fn update_patch_editor(
-        this: WeakEntity<Self>,
-        patch: AssistantPatch,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let project = this.update(cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), cx).await;
-        this.update_in(cx, |this, window, cx| {
-            let patch_state = this.patches.get_mut(&patch.range)?;
-
-            let locations = resolved_patch
-                .edit_groups
-                .iter()
-                .map(|(buffer, groups)| ProposedChangeLocation {
-                    buffer: buffer.clone(),
-                    ranges: groups
-                        .iter()
-                        .map(|group| group.context_range.clone())
-                        .collect(),
-                })
-                .collect();
-
-            if let Some(state) = &mut patch_state.editor {
-                if let Some(editor) = state.editor.upgrade() {
-                    editor.update(cx, |editor, cx| {
-                        editor.set_title(patch.title.clone(), cx);
-                        editor.reset_locations(locations, window, cx);
-                        resolved_patch.apply(editor, cx);
-                    });
-
-                    state.opened_patch = patch;
-                } else {
-                    patch_state.editor.take();
-                }
-            }
-            patch_state.update_task.take();
-
-            Some(())
-        })?;
-        Ok(())
     }
 
     fn handle_editor_search_event(
@@ -2191,118 +1861,6 @@ impl ContextEditor {
 
     pub fn title(&self, cx: &App) -> SharedString {
         self.context.read(cx).summary_or_default()
-    }
-
-    fn render_patch_block(
-        &mut self,
-        range: Range<text::Anchor>,
-        max_width: Pixels,
-        gutter_width: Pixels,
-        id: BlockId,
-        selected: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let snapshot = self
-            .editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
-        let excerpt_id = *excerpt_id;
-        let anchor = snapshot
-            .buffer_snapshot
-            .anchor_in_excerpt(excerpt_id, range.start)
-            .unwrap();
-
-        let theme = cx.theme().clone();
-        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
-        let paths = patch
-            .paths()
-            .map(|p| SharedString::from(p.to_string()))
-            .collect::<BTreeSet<_>>();
-
-        Some(
-            v_flex()
-                .id(id)
-                .bg(theme.colors().editor_background)
-                .ml(gutter_width)
-                .pb_1()
-                .w(max_width - gutter_width)
-                .rounded_sm()
-                .border_1()
-                .border_color(theme.colors().border_variant)
-                .overflow_hidden()
-                .hover(|style| style.border_color(theme.colors().text_accent))
-                .when(selected, |this| {
-                    this.border_color(theme.colors().text_accent)
-                })
-                .cursor(CursorStyle::PointingHand)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.editor.update(cx, |editor, cx| {
-                        editor.change_selections(None, window, cx, |selections| {
-                            selections.select_ranges(vec![anchor..anchor]);
-                        });
-                    });
-                    this.focus_active_patch(window, cx);
-                }))
-                .child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .border_b_1()
-                        .border_color(theme.colors().border_variant)
-                        .bg(theme.colors().element_background)
-                        .child(
-                            Label::new(patch.title.clone())
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-                .children(paths.into_iter().map(|path| {
-                    h_flex()
-                        .px_2()
-                        .pt_1()
-                        .gap_1p5()
-                        .child(Icon::new(IconName::File).size(IconSize::Small))
-                        .child(Label::new(path).size(LabelSize::Small))
-                }))
-                .when(patch.status == AssistantPatchStatus::Pending, |div| {
-                    div.child(
-                        h_flex()
-                            .pt_1()
-                            .px_2()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::ArrowCircle)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted)
-                                    .with_animation(
-                                        "arrow-circle",
-                                        Animation::new(Duration::from_secs(2)).repeat(),
-                                        |icon, delta| {
-                                            icon.transform(Transformation::rotate(percentage(
-                                                delta,
-                                            )))
-                                        },
-                                    ),
-                            )
-                            .child(
-                                Label::new("Generating…")
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small)
-                                    .with_animation(
-                                        "pulsating-label",
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.4, 0.8)),
-                                        |label, delta| label.alpha(delta),
-                                    ),
-                            ),
-                    )
-                })
-                .into_any(),
-        )
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
