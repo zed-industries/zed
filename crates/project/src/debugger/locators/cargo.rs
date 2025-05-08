@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use dap::{DapLocator, DebugRequest};
+use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
 use serde_json::Value;
 use smol::{
@@ -41,7 +41,12 @@ impl DapLocator for CargoLocator {
     fn name(&self) -> SharedString {
         SharedString::new_static("rust-cargo-locator")
     }
-    fn create_scenario(&self, build_config: &TaskTemplate, adapter: &str) -> Option<DebugScenario> {
+    fn create_scenario(
+        &self,
+        build_config: &TaskTemplate,
+        resolved_label: &str,
+        adapter: DebugAdapterName,
+    ) -> Option<DebugScenario> {
         if build_config.command != "cargo" {
             return None;
         }
@@ -70,9 +75,9 @@ impl DapLocator for CargoLocator {
             }
             _ => {}
         }
-        let label = format!("Debug `{}`", build_config.label);
+        let label = format!("Debug `{resolved_label}`");
         Some(DebugScenario {
-            adapter: adapter.to_owned().into(),
+            adapter: adapter.0,
             label: SharedString::from(label),
             build: Some(BuildTaskDefinition::Template {
                 task_template,
