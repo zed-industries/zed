@@ -2744,6 +2744,15 @@ impl AgentPanel {
 
 impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // WARNING: Changes to this element hierarchy can have
+        // non-obvious implications to the layout of children.
+        //
+        // If you need to change it, please confirm:
+        // - The messsage editor expands (⌘esc) correctly
+        // - When expanded, the buttons at the bottom of the panel are displayed correctly
+        // - Font size works as expected and can be changed with ⌘+/⌘-
+        // - Scrolling in all views works as expected
+        // - Files can be dropped into the panel
         let content = v_flex()
             .key_context(self.key_context())
             .justify_between()
