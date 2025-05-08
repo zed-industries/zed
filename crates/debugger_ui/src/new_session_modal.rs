@@ -75,11 +75,13 @@ impl NewSessionModal {
         let task_store = workspace.project().read(cx).task_store().clone();
 
         cx.spawn_in(window, async move |workspace, cx| {
-            let task_contexts = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    tasks_ui::task_contexts(workspace, window, cx)
-                })?
-                .await;
+            let task_contexts = Arc::from(
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        tasks_ui::task_contexts(workspace, window, cx)
+                    })?
+                    .await,
+            );
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
@@ -92,6 +94,7 @@ impl NewSessionModal {
                                 debug_panel.downgrade(),
                                 workspace_handle.clone(),
                                 task_store,
+                                task_contexts.clone(),
                             ),
                             window,
                             cx,
@@ -121,7 +124,7 @@ impl NewSessionModal {
                         mode: NewSessionMode::Launch,
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
-                        task_contexts: Arc::from(task_contexts),
+                        task_contexts,
                         _subscriptions,
                     }
                 });
@@ -688,6 +691,7 @@ pub(super) struct DebugScenarioDelegate {
     prompt: String,
     debug_panel: WeakEntity<DebugPanel>,
     workspace: WeakEntity<Workspace>,
+    task_contexts: Arc<TaskContexts>,
 }
 
 impl DebugScenarioDelegate {
@@ -695,6 +699,7 @@ impl DebugScenarioDelegate {
         debug_panel: WeakEntity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         task_store: Entity<TaskStore>,
+        task_contexts: Arc<TaskContexts>,
     ) -> Self {
         Self {
             task_store,
@@ -704,6 +709,7 @@ impl DebugScenarioDelegate {
             prompt: String::new(),
             debug_panel,
             workspace,
+            task_contexts,
         }
     }
 }
@@ -829,52 +835,28 @@ impl PickerDelegate for DebugScenarioDelegate {
             return;
         };
 
-        let task_context = if let TaskSourceKind::Worktree {
+        let (task_context, worktree_id) = if let TaskSourceKind::Worktree {
             id: worktree_id,
             directory_in_worktree: _,
             id_base: _,
         } = task_source_kind
         {
-            let workspace = self.workspace.clone();
-
-            cx.spawn_in(window, async move |_, cx| {
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        tasks_ui::task_contexts(workspace, window, cx)
-                    })
-                    .ok()?
-                    .await
-                    .task_context_for_worktree_id(worktree_id)
-                    .cloned()
-                    .map(|context| (context, Some(worktree_id)))
-            })
+            self.task_contexts
+                .task_context_for_worktree_id(worktree_id)
+                .cloned()
+                .map(|context| (context, Some(worktree_id)))
         } else {
-            gpui::Task::ready(None)
-        };
+            None
+        }
+        .unwrap_or_default();
 
-        cx.spawn_in(window, async move |this, cx| {
-            let (task_context, worktree_id) = task_context.await.unwrap_or_default();
-
-            this.update_in(cx, |this, window, cx| {
-                this.delegate
-                    .debug_panel
-                    .update(cx, |panel, cx| {
-                        panel.start_session(
-                            debug_scenario,
-                            task_context,
-                            None,
-                            worktree_id,
-                            window,
-                            cx,
-                        );
-                    })
-                    .ok();
-
-                cx.emit(DismissEvent);
+        self.debug_panel
+            .update(cx, |panel, cx| {
+                panel.start_session(debug_scenario, task_context, None, worktree_id, window, cx);
             })
             .ok();
-        })
-        .detach();
+
+        cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
