@@ -129,7 +129,8 @@ mod tests {
             "format": "uint32",
             "exclusiveMinimum": 0,
             "exclusiveMaximum": 100,
-            "additionalProperties": false
+            "additionalProperties": false,
+            "optional": true
         });
 
         adapt_to_json_schema_subset(&mut json).unwrap();
