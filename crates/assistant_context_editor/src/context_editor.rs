@@ -367,10 +367,16 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sending_disabled(cx) {
+            return;
+        }
         self.send_to_model(RequestType::Chat, window, cx);
     }
 
     fn edit(&mut self, _: &Edit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sending_disabled(cx) {
+            return;
+        }
         self.send_to_model(RequestType::SuggestEdits, window, cx);
     }
 
@@ -2438,17 +2444,8 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let model = LanguageModelRegistry::read_global(cx).default_model();
-
-        let has_configuration_error = configuration_error(cx).is_some();
-        let needs_to_accept_terms = self.show_accept_terms
-            && model
-                .as_ref()
-                .map_or(false, |model| model.provider.must_accept_terms(cx));
-        let disabled = has_configuration_error || needs_to_accept_terms;
-
         ButtonLike::new("send_button")
-            .disabled(disabled)
+            .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
@@ -2468,6 +2465,20 @@ impl ContextEditor {
             .on_click(move |_event, window, cx| {
                 focus_handle.dispatch_action(&Assist, window, cx);
             })
+    }
+
+    /// Whether or not we should allow messages to be sent.
+    /// Will return false if the selected provided has a configuration error or
+    /// if the user has not accepted the terms of service for this provider.
+    fn sending_disabled(&self, cx: &mut Context<'_, ContextEditor>) -> bool {
+        let model = LanguageModelRegistry::read_global(cx).default_model();
+
+        let has_configuration_error = configuration_error(cx).is_some();
+        let needs_to_accept_terms = self.show_accept_terms
+            && model
+                .as_ref()
+                .map_or(false, |model| model.provider.must_accept_terms(cx));
+        has_configuration_error || needs_to_accept_terms
     }
 
     fn render_edit_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2497,19 +2508,8 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let provider = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.provider);
-
-        let has_configuration_error = configuration_error(cx).is_some();
-        let needs_to_accept_terms = self.show_accept_terms
-            && provider
-                .as_ref()
-                .map_or(false, |provider| provider.must_accept_terms(cx));
-        let disabled = has_configuration_error || needs_to_accept_terms;
-
         ButtonLike::new("edit_button")
-            .disabled(disabled)
+            .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
