@@ -176,7 +176,7 @@ impl PickerDelegate for ToolPickerDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         match self.mode {
             ToolPickerMode::BuiltinTools => "Search built-in tools…",
-            ToolPickerMode::McpTools => "Search MCP servers…",
+            ToolPickerMode::McpTools => "Search MCP tools…",
         }
         .into()
     }
