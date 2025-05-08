@@ -405,7 +405,7 @@ impl ModelMatcher {
         }
     }
 
-    pub async fn search(&self, query: &str) -> Vec<ModelInfo> {
+    pub async fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
         let matches = match_strings(
             &self.candidates,
             &query,
@@ -424,6 +424,20 @@ impl ModelMatcher {
         matched_models
     }
 
+    pub fn exact_search(&self, query: &str) -> Vec<ModelInfo> {
+        self.models
+            .iter()
+            .filter(|m| {
+                m.model
+                    .name()
+                    .0
+                    .to_lowercase()
+                    .contains(&query.to_lowercase())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
     fn make_match_candidates(model_infos: &Vec<ModelInfo>) -> Vec<StringMatchCandidate> {
         model_infos
             .iter()
@@ -431,11 +445,7 @@ impl ModelMatcher {
             .map(|(index, model)| {
                 StringMatchCandidate::new(
                     index,
-                    &format!(
-                        "{}/{}",
-                        &model.model.provider_name().0,
-                        &model.model.name().0
-                    ),
+                    &format!("{}/{}", &model.model.provider_id().0, &model.model.name().0),
                 )
             })
             .collect::<Vec<_>>()
@@ -518,8 +528,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = cx
                 .background_spawn(async move {
-                    let recommended = matcher_rec.search(&query).await;
-                    let all = matcher_all.search(&query).await;
+                    let recommended = matcher_rec.exact_search(&query);
+                    let all = matcher_all.fuzzy_search(&query).await;
 
                     GroupedModels::new(all, recommended)
                 })
