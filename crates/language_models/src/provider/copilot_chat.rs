@@ -222,7 +222,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
-                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
                     CopilotChatModel::O1 => open_ai::Model::O1,
                     CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
                     CopilotChatModel::O3 => open_ai::Model::O3,

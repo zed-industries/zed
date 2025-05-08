@@ -46,8 +46,6 @@ pub enum Model {
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
-    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
-    Claude3Sonnet,
     #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-latest")]
     Claude3Haiku,
     #[serde(rename = "custom")]
@@ -85,8 +83,6 @@ impl Model {
             Ok(Self::Claude3_5Haiku)
         } else if id.starts_with("claude-3-opus") {
             Ok(Self::Claude3Opus)
-        } else if id.starts_with("claude-3-sonnet") {
-            Ok(Self::Claude3Sonnet)
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
@@ -101,7 +97,6 @@ impl Model {
             Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
             Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
@@ -114,7 +109,6 @@ impl Model {
             Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
             Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
@@ -127,7 +121,6 @@ impl Model {
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3Opus => "Claude 3 Opus",
-            Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
             Self::Custom {
                 name, display_name, ..
@@ -161,7 +154,6 @@ impl Model {
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::Claude3Opus
-            | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -169,7 +161,7 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> u32 {
         match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
+            Self::Claude3Opus | Self::Claude3Haiku => 4_096,
             Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -187,7 +179,6 @@ impl Model {
             | Self::Claude3_7SonnetThinking
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
-            | Self::Claude3Sonnet
             | Self::Claude3Haiku => 1.0,
             Self::Custom {
                 default_temperature,
@@ -202,7 +193,6 @@ impl Model {
             | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
-            | Self::Claude3Sonnet
             | Self::Claude3Haiku => AnthropicModelMode::Default,
             Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),

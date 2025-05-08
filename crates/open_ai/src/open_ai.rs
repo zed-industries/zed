@@ -56,8 +56,6 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo")]
-    ThreePointFiveTurbo,
     #[serde(rename = "gpt-4", alias = "gpt-4")]
     Four,
     #[serde(rename = "gpt-4-turbo", alias = "gpt-4-turbo")]
@@ -104,7 +102,6 @@ impl Model {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "gpt-3.5-turbo" => Ok(Self::ThreePointFiveTurbo),
             "gpt-4" => Ok(Self::Four),
             "gpt-4-turbo-preview" => Ok(Self::FourTurbo),
             "gpt-4o" => Ok(Self::FourOmni),
@@ -124,7 +121,6 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
@@ -144,7 +140,6 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::ThreePointFiveTurbo => "gpt-3.5-turbo",
             Self::Four => "gpt-4",
             Self::FourTurbo => "gpt-4-turbo",
             Self::FourOmni => "gpt-4o",
@@ -166,7 +161,6 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
             Self::FourTurbo => 128_000,
             Self::FourOmni => 128_000,
@@ -198,8 +192,7 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::ThreePointFiveTurbo
-            | Self::Four
+            Self::Four
             | Self::FourTurbo
             | Self::FourOmni
             | Self::FourOmniMini
