@@ -1578,7 +1578,6 @@ impl Pane {
                         window,
                         cx,
                     );
-                    pane.remove_item(item_to_close.item_id(), false, true, window, cx);
                 })
                 .ok();
             }
