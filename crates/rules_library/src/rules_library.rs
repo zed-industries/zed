@@ -929,6 +929,7 @@ impl RulesLibrary {
                                         cache: false,
                                     }],
                                     tools: Vec::new(),
+                                    tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
                                 },

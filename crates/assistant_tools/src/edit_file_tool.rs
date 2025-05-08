@@ -19,7 +19,7 @@ use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
     language_settings::SoftWrap,
 };
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -146,7 +146,7 @@ impl Tool for EditFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         model: Arc<dyn LanguageModel>,
@@ -177,7 +177,6 @@ impl Tool for EditFileTool {
         });
 
         let card_clone = card.clone();
-        let messages = messages.to_vec();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
             let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
@@ -209,14 +208,14 @@ impl Tool for EditFileTool {
                 edit_agent.overwrite(
                     buffer.clone(),
                     input.display_description.clone(),
-                    messages,
+                    &request,
                     cx,
                 )
             } else {
                 edit_agent.edit(
                     buffer.clone(),
                     input.display_description.clone(),
-                    messages,
+                    &request,
                     cx,
                 )
             };
@@ -864,7 +863,15 @@ mod tests {
                 })
                 .unwrap();
                 Arc::new(EditFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;

@@ -4,6 +4,7 @@ use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolChoice,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -281,6 +282,10 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         false
     }
 
