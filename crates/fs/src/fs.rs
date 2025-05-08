@@ -33,7 +33,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::TempDir;
 use text::LineEnding;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -525,38 +525,27 @@ impl Fs for RealFs {
         Ok(bytes)
     }
 
-    // async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
-    //     smol::unblock(move || {
-    //         let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-    //             // Use the directory of the destination as temp dir to avoid
-    //             // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-    //             // See https://github.com/zed-industries/zed/pull/8437 for more details.
-    //             NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-    //         } else if cfg!(target_os = "windows") {
-    //             // If temp dir is set to a different drive than the destination,
-    //             // we receive error:
-    //             //
-    //             // failed to persist temporary file:
-    //             // The system cannot move the file to a different disk drive. (os error 17)
-    //             //
-    //             // So we use the directory of the destination as a temp dir to avoid it.
-    //             // https://github.com/zed-industries/zed/issues/16571
-    //             NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-    //         } else {
-    //             NamedTempFile::new()
-    //         }?;
-    //         tmp_file.write_all(data.as_bytes())?;
-    //         let temp_file_path = tmp_file.path().to_path_buf();
-    //         drop(tmp_file);
-    //         // tmp_file.persist(path)?;
-    //         persist(path.as_path(), temp_file_path.as_path())?;
-    //         Ok::<(), anyhow::Error>(())
-    //     })
-    //     .await?;
+    #[cfg(not(target_os = "windows"))]
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        smol::unblock(move || {
+            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+                // Use the directory of the destination as temp dir to avoid
+                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+                // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+            } else {
+                tempfile::NamedTempFile::new()
+            }?;
+            tmp_file.write_all(data.as_bytes())?;
+            tmp_file.persist(path)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await?;
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
+    #[cfg(target_os = "windows")]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
             // If temp dir is set to a different drive than the destination,
@@ -564,6 +553,9 @@ impl Fs for RealFs {
             //
             // failed to persist temporary file:
             // The system cannot move the file to a different disk drive. (os error 17)
+            // This is because `ReplaceFileW` does not support cross volume moves.
+            // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume.""
+            // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
             //
             // So we use the directory of the destination as a temp dir to avoid it.
             // https://github.com/zed-industries/zed/issues/16571
@@ -2940,6 +2932,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
+        // With the file handle still open, the file should be replaced
+        // https://github.com/zed-industries/zed/issues/30054
         let fs = RealFs {
             git_binary_path: None,
             executor,
@@ -2952,7 +2946,7 @@ mod tests {
             .open(&file_to_be_replaced)
             .unwrap();
         file.write_all(b"Hello").unwrap();
-        // drop(file);
+        // drop(file);  // We still hold the file handle here
         let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
         assert_eq!(content, "Hello");
         smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
