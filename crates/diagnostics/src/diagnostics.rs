@@ -23,11 +23,10 @@ use gpui::{
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
-use lsp::DiagnosticSeverity;
 use project::{
     DiagnosticSummary, Project, ProjectPath,
     lsp_store::rust_analyzer_ext::{cancel_flycheck, run_flycheck},
-    project_settings::ProjectSettings,
+    project_settings::{DiagnosticSeverity, ProjectSettings},
 };
 use settings::Settings;
 use std::{
@@ -203,6 +202,14 @@ impl ProjectDiagnosticsEditor {
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.disable_inline_diagnostics();
+            editor.set_max_diagnostics_severity(
+                if include_warnings {
+                    DiagnosticSeverity::Warning
+                } else {
+                    DiagnosticSeverity::Error
+                },
+                cx,
+            );
             editor.set_all_diagnostics_active(cx);
             editor
         });
@@ -224,7 +231,18 @@ impl ProjectDiagnosticsEditor {
         )
         .detach();
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
-            this.include_warnings = cx.global::<IncludeWarnings>().0;
+            let include_warnings = cx.global::<IncludeWarnings>().0;
+            this.include_warnings = include_warnings;
+            this.editor.update(cx, |editor, cx| {
+                editor.set_max_diagnostics_severity(
+                    if include_warnings {
+                        DiagnosticSeverity::Warning
+                    } else {
+                        DiagnosticSeverity::Error
+                    },
+                    cx,
+                )
+            });
             this.diagnostics.clear();
             this.update_all_diagnostics(false, window, cx);
         })
@@ -488,9 +506,9 @@ impl ProjectDiagnosticsEditor {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
         let max_severity = if self.include_warnings {
-            DiagnosticSeverity::WARNING
+            lsp::DiagnosticSeverity::WARNING
         } else {
-            DiagnosticSeverity::ERROR
+            lsp::DiagnosticSeverity::ERROR
         };
 
         cx.spawn_in(window, async move |this, mut cx| {
