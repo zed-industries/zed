@@ -592,8 +592,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 })
                 .child(
                     Button::new("configure", "Configure")
+                        .label_size(LabelSize::XSmall)
                         .icon(IconName::Settings)
-                        .icon_size(IconSize::Small)
+                        .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
