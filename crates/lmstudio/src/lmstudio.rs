@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, value::RawValue};
+use serde_json::Value;
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
@@ -70,74 +70,114 @@ impl Model {
         self.max_tokens
     }
 }
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
-    Assistant {
-        #[serde(default)]
-        content: Option<String>,
-        #[serde(default)]
-        tool_calls: Option<Vec<LmStudioToolCall>>,
+    System {
+        content: String,
     },
     User {
         content: String,
     },
-    System {
-        content: String,
+    Assistant {
+        content: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
     },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum LmStudioToolCall {
-    Function(LmStudioFunctionCall),
+    Function {
+        id: String,
+        r#type: String, // Should always be "function"
+        function: LmStudioFunctionCall,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LmStudioFunctionCall {
     pub name: String,
-    pub arguments: Box<RawValue>,
+    pub arguments: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LmStudioFunctionTool {
+#[derive(Serialize, Debug)]
+pub struct ChatCompletionRequest {
+    pub messages: Vec<ChatMessage>,
+    pub model: String,
+    pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDefinition {
+    Function { function: FunctionDefinition },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Value>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    Auto,
+    Required,
+    None,
+    Other(ToolDefinition),
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum LmStudioTool {
-    Function { function: LmStudioFunctionTool },
+pub struct ResponseMessageDelta {
+    pub role: Option<Role>,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "is_none_or_empty_option_vec")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
-#[derive(Serialize, Debug)]
-pub struct ChatCompletionRequest {
-    pub model: String,
-    pub messages: Vec<ChatMessage>,
-    pub stream: bool,
-    pub max_tokens: Option<i32>,
-    pub stop: Option<Vec<String>>,
-    pub temperature: Option<f32>,
-    pub tools: Vec<LmStudioTool>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChatResponse {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<ChoiceDelta>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    #[serde(default)]
-    pub delta: serde_json::Value,
-    pub finish_reason: Option<String>,
+fn is_none_or_empty_option_vec<T>(opt_vec: &Option<Vec<T>>) -> bool {
+    match opt_vec {
+        Some(vec) => vec.is_empty(),
+        None => true,
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -155,6 +195,23 @@ pub struct ToolCallChunk {
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChatResponse {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<ChoiceDelta>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChoiceDelta {
+    pub index: u32,
+    #[serde(default)]
+    pub delta: serde_json::Value,
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -219,14 +276,6 @@ pub enum ModelState {
 pub enum CompatibilityType {
     Gguf,
     Mlx,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
 pub async fn complete(

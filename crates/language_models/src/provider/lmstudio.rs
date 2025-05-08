@@ -1,23 +1,21 @@
 use anyhow::{Result, anyhow};
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use collections::{BTreeMap, HashMap};
+use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
-use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
-};
-use lmstudio::{
-    ChatCompletionRequest, ChatMessage, ModelType, get_models, preload_model,
-    stream_chat_completion,
-};
+use lmstudio::{ChatCompletionRequest, ModelType, get_models, preload_model};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{collections::BTreeMap, sync::Arc};
+use std::pin::Pin;
+use std::str::FromStr as _;
+use std::sync::Arc;
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
@@ -236,30 +234,100 @@ pub struct LmStudioLanguageModel {
 
 impl LmStudioLanguageModel {
     fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
+        let mut messages = Vec::new();
+        for message in request.messages {
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        messages.push(match message.role {
+                            Role::User => lmstudio::ChatMessage::User { content: text },
+                            Role::Assistant => lmstudio::ChatMessage::Assistant {
+                                content: Some(text),
+                                tool_calls: Vec::new(),
+                            },
+                            Role::System => lmstudio::ChatMessage::System { content: text },
+                        });
+                    }
+                    MessageContent::RedactedThinking(_) => {}
+                    MessageContent::Image(_) => {} // LM Studio doesn't support images yet
+                    MessageContent::ToolUse(tool_use) => {
+                        let tool_call = lmstudio::ToolCall {
+                            id: tool_use.id.to_string(),
+                            content: lmstudio::ToolCallContent::Function {
+                                function: lmstudio::FunctionContent {
+                                    name: tool_use.name.to_string(),
+                                    arguments: serde_json::to_string(&tool_use.input)
+                                        .unwrap_or_default(),
+                                },
+                            },
+                        };
+
+                        if let Some(lmstudio::ChatMessage::Assistant { tool_calls, .. }) =
+                            messages.last_mut()
+                        {
+                            tool_calls.push(tool_call);
+                        } else {
+                            messages.push(lmstudio::ChatMessage::Assistant {
+                                content: None,
+                                tool_calls: vec![tool_call],
+                            });
+                        }
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        messages.push(lmstudio::ChatMessage::Tool {
+                            content: tool_result.content.to_string(),
+                            tool_call_id: tool_result.tool_use_id.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
         ChatCompletionRequest {
             model: self.model.name.clone(),
-            messages: request
-                .messages
-                .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => ChatMessage::User {
-                        content: msg.string_contents(),
-                    },
-                    Role::Assistant => ChatMessage::Assistant {
-                        content: Some(msg.string_contents()),
-                        tool_calls: None,
-                    },
-                    Role::System => ChatMessage::System {
-                        content: msg.string_contents(),
-                    },
-                })
-                .collect(),
+            messages,
             stream: true,
             max_tokens: Some(-1),
             stop: Some(request.stop),
             temperature: request.temperature.or(Some(0.0)),
-            tools: vec![],
+            tools: request
+                .tools
+                .into_iter()
+                .map(|tool| lmstudio::ToolDefinition::Function {
+                    function: lmstudio::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
+                    },
+                })
+                .collect(),
+            tool_choice: None,
         }
+    }
+
+    fn stream_completion(
+        &self,
+        request: lmstudio::ChatCompletionRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<lmstudio::ChatResponse>>>,
+    > {
+        let http_client = self.http_client.clone();
+        let Ok(api_url) = cx.update(|cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+            settings.api_url.clone()
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.request_limiter.stream(async move {
+            let response =
+                lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -281,7 +349,7 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -319,83 +387,124 @@ impl LanguageModel for LmStudioLanguageModel {
         >,
     > {
         let request = self.to_lmstudio_request(request);
-
-        let http_client = self.http_client.clone();
-        let Ok(api_url) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-            settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.request_limiter.stream(async move {
-            let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
-
-            // Create a stream mapper to handle content across multiple deltas
-            let stream_mapper = LmStudioStreamMapper::new();
-
-            let stream = response
-                .map(move |response| {
-                    response.and_then(|fragment| stream_mapper.process_fragment(fragment))
-                })
-                .filter_map(|result| async move {
-                    match result {
-                        Ok(Some(content)) => Some(Ok(content)),
-                        Ok(None) => None,
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-
-            Ok(stream)
-        });
+        let completions = self.stream_completion(request, cx);
 
         async move {
-            Ok(future
-                .await?
-                .map(|result| {
-                    result
-                        .map(LanguageModelCompletionEvent::Text)
-                        .map_err(LanguageModelCompletionError::Other)
-                })
-                .boxed())
+            let mapper = LmStudioEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
     }
 }
 
-// This will be more useful when we implement tool calling. Currently keeping it empty.
-struct LmStudioStreamMapper {}
+pub struct LmStudioEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
 
-impl LmStudioStreamMapper {
-    fn new() -> Self {
-        Self {}
+impl LmStudioEventMapper {
+    pub fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
     }
 
-    fn process_fragment(&self, fragment: lmstudio::ChatResponse) -> Result<Option<String>> {
-        // Most of the time, there will be only one choice
-        let Some(choice) = fragment.choices.first() else {
-            return Ok(None);
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ChatResponse>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: lmstudio::ChatResponse,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
         };
 
-        // Extract the delta content
+        let mut events = Vec::new();
         if let Ok(delta) =
             serde_json::from_value::<lmstudio::ResponseMessageDelta>(choice.delta.clone())
         {
             if let Some(content) = delta.content {
                 if !content.is_empty() {
-                    return Ok(Some(content));
+                    events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+                }
+            }
+
+            if let Some(tool_calls) = delta.tool_calls {
+                for tool_call in tool_calls {
+                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                    if let Some(id) = tool_call.id {
+                        entry.id = id;
+                    }
+
+                    if let Some(function) = tool_call.function {
+                        if let Some(name) = function.name {
+                            entry.name = name;
+                        }
+
+                        if let Some(arguments) = function.arguments {
+                            entry.arguments.push_str(&arguments);
+                        }
+                    }
                 }
             }
         }
 
-        // If there's a finish_reason, we're done
-        if choice.finish_reason.is_some() {
-            return Ok(None);
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::Value::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.clone().into(),
+                                name: tool_call.name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone().into(),
+                            },
+                        )),
+                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.as_str().into(),
+                            raw_input: tool_call.arguments.into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected LMStudio stop_reason: {stop_reason:?}");
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
         }
 
-        Ok(None)
+        events
     }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 struct ConfigurationView {
