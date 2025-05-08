@@ -746,7 +746,7 @@ struct UserMessageView {
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     last_estimated_token_count: Option<usize>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 4],
     _update_token_count_task: Option<Task<()>>,
 }
 
@@ -1410,9 +1410,26 @@ impl ActiveThread {
         });
     }
 
-    fn cancel_editing_message(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+    fn focus_new_message_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    // FIXME
+                    panel.focus_handle(cx).focus(window);
+                }
+            })
+            .ok();
+    }
+
+    // FIXME still needed?
+    fn cancel_editing_message(
+        &mut self,
+        _: &menu::Cancel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.focused_user_message.take();
-        // todo!("restore focus to new message editor in parent panel")
+        self.focus_new_message_editor(window, cx);
         cx.notify();
     }
 
@@ -1422,9 +1439,12 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(message_id) = self.focused_user_message else {
+        self.cancel_last_completion(window, cx);
+
+        let Some(message_id) = self.focused_user_message.take() else {
             return;
         };
+        self.focus_new_message_editor(window, cx);
         let Some(user_message_editor) = self.user_message_views.get(&message_id) else {
             return;
         };
@@ -1490,9 +1510,9 @@ impl ActiveThread {
             .unwrap_or(&[])
     }
 
-    fn handle_cancel_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_editing_message(&menu::Cancel, window, cx);
-    }
+    // fn handle_cancel_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    //     self.cancel_editing_message(&menu::Cancel, window, cx);
+    // }
 
     fn handle_regenerate_click(
         &mut self,
@@ -1605,20 +1625,18 @@ impl ActiveThread {
         message_id: MessageId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        // Cancel any ongoing streaming when user starts editing a previous message
-        // todo!("do this when submitting an edited message")
-        // self.cancel_last_completion(window, cx);
-
+    ) -> Vec<AnyElement> {
         let view = match self.user_message_views.entry(message_id) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let message = self.thread.read(cx).message(message_id)?;
+                let Some(message) = self.thread.read(cx).message(message_id) else {
+                    return vec![];
+                };
 
                 // User message should always consist of a single text segment,
                 // therefore we can skip returning early if it's not a text segment.
                 let Some(MessageSegment::Text(message_text)) = message.segments.first() else {
-                    return None;
+                    return vec![];
                 };
                 let message_text = message_text.clone();
 
@@ -1667,12 +1685,30 @@ impl ActiveThread {
                     },
                 );
 
+                // FIXME focus out too?
+                let editor_focus_handle = editor.focus_handle(cx);
+                let editor_focus_in_subscription =
+                    cx.on_focus_in(&editor_focus_handle, window, move |this, window, cx| {
+                        this.focused_user_message = Some(message_id);
+                    });
+                let editor_focus_out_subscription =
+                    cx.on_focus_out(&editor_focus_handle, window, move |this, _, window, cx| {
+                        if this.focused_user_message == Some(message_id) {
+                            this.focused_user_message = None;
+                        }
+                    });
+
                 entry.insert(UserMessageView {
                     editor: editor.clone(),
                     context_strip,
                     context_picker_menu_handle,
                     last_estimated_token_count: None,
-                    _subscriptions: [buffer_edited_subscription, context_strip_subscription],
+                    _subscriptions: [
+                        buffer_edited_subscription,
+                        context_strip_subscription,
+                        editor_focus_in_subscription,
+                        editor_focus_out_subscription,
+                    ],
                     _update_token_count_task: None,
                 })
             }
@@ -1700,35 +1736,87 @@ impl ActiveThread {
         };
         let context_picker_menu_handle = view.context_picker_menu_handle.clone();
 
-        Some(
-            v_flex()
-                .key_context("EditMessageEditor")
-                .on_action(move |_: &ToggleContextPicker, window, cx| {
-                    let handle = context_picker_menu_handle.clone();
-                    window.defer(cx, move |window, cx| handle.toggle(window, cx));
-                })
-                .on_action(cx.listener(Self::remove_all_context))
-                .on_action(cx.listener(Self::move_up))
-                .on_action(cx.listener(Self::cancel_editing_message))
-                .on_action(cx.listener(Self::confirm_editing_message))
-                .capture_action(cx.listener(Self::paste))
-                .min_h_6()
-                .flex_grow()
-                .w_full()
-                .gap_2()
-                .child(EditorElement::new(
-                    &view.editor,
-                    EditorStyle {
-                        background: colors.editor_background,
-                        local_player: cx.theme().players().local(),
-                        text: text_style,
-                        syntax: cx.theme().syntax().clone(),
-                        ..Default::default()
-                    },
-                ))
-                // todo!("only show this if it's not empty")
-                .child(view.context_strip.clone()),
-        )
+        let context_strip_is_empty = view.context_strip.read(cx).added_contexts(cx).is_empty();
+
+        let editor = v_flex()
+            .key_context("EditMessageEditor")
+            .on_action(move |_: &ToggleContextPicker, window, cx| {
+                let handle = context_picker_menu_handle.clone();
+                window.defer(cx, move |window, cx| handle.toggle(window, cx));
+            })
+            .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::cancel_editing_message))
+            .on_action(cx.listener(Self::confirm_editing_message))
+            .capture_action(cx.listener(Self::paste))
+            .min_h_6()
+            .flex_grow()
+            .w_full()
+            .gap_2()
+            .child(EditorElement::new(
+                &view.editor,
+                EditorStyle {
+                    background: colors.editor_background,
+                    local_player: cx.theme().players().local(),
+                    text: text_style,
+                    syntax: cx.theme().syntax().clone(),
+                    ..Default::default()
+                },
+            ))
+            .when(!context_strip_is_empty, |el| {
+                el.child(view.context_strip.clone())
+            })
+            .into_any_element();
+
+        let focus_handle = view.editor.focus_handle(cx).clone();
+        let is_focused = focus_handle.is_focused(window);
+        let is_empty = view.editor.read(cx).is_empty(cx);
+
+        let buttons = h_flex()
+            .gap_0p5()
+            // FIXME seems like we don't need this anymore
+            // .child(
+            //     IconButton::new("cancel-edit-message", IconName::Close)
+            //         .shape(ui::IconButtonShape::Square)
+            //         .icon_color(Color::Error)
+            //         .tooltip({
+            //             let focus_handle = focus_handle.clone();
+            //             move |window, cx| {
+            //                 Tooltip::for_action_in(
+            //                     "Cancel Edit",
+            //                     &menu::Cancel,
+            //                     &focus_handle,
+            //                     window,
+            //                     cx,
+            //                 )
+            //             }
+            //         })
+            //         .on_click(cx.listener(Self::handle_cancel_click)),
+            // )
+            .when(is_focused, |el| {
+                el.child(
+                    IconButton::new("confirm-edit-message", IconName::Check)
+                        .disabled(is_empty)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_color(Color::Success)
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Regenerate",
+                                    &menu::Confirm,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .on_click(cx.listener(Self::handle_regenerate_click)),
+                )
+            })
+            .into_any_element();
+
+        vec![editor, buttons]
     }
 
     fn render_message(
@@ -1908,9 +1996,8 @@ impl ActiveThread {
         let message_content = if has_content {
             if message.role == Role::User {
                 self.render_user_message(message_id, window, cx)
-                    .map(|m| m.into_any_element())
             } else {
-                Some(
+                vec![
                     v_flex()
                         .w_full()
                         .gap_1()
@@ -1943,10 +2030,10 @@ impl ActiveThread {
                             ))
                         })
                         .into_any_element(),
-                )
+                ]
             }
         } else {
-            None
+            vec![]
         };
 
         let colors = cx.theme().colors();
@@ -1969,59 +2056,12 @@ impl ActiveThread {
                         .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
                         .cursor_pointer()
                         .child(
-                            h_flex().p_2p5().gap_1().children(message_content), // todo!("handle this in render_user_message")
-                                                                                // .when_some(editing_message_state, |this, state| {
-                                                                                //     let focus_handle = state.editor.focus_handle(cx).clone();
-                                                                                //     this.w_full().justify_between().child(
-                                                                                //         h_flex()
-                                                                                //             .gap_0p5()
-                                                                                //             .child(
-                                                                                //                 IconButton::new(
-                                                                                //                     "cancel-edit-message",
-                                                                                //                     IconName::Close,
-                                                                                //                 )
-                                                                                //                 .shape(ui::IconButtonShape::Square)
-                                                                                //                 .icon_color(Color::Error)
-                                                                                //                 .tooltip({
-                                                                                //                     let focus_handle = focus_handle.clone();
-                                                                                //                     move |window, cx| {
-                                                                                //                         Tooltip::for_action_in(
-                                                                                //                             "Cancel Edit",
-                                                                                //                             &menu::Cancel,
-                                                                                //                             &focus_handle,
-                                                                                //                             window,
-                                                                                //                             cx,
-                                                                                //                         )
-                                                                                //                     }
-                                                                                //                 })
-                                                                                //                 .on_click(cx.listener(Self::handle_cancel_click)),
-                                                                                //             )
-                                                                                //             .child(
-                                                                                //                 IconButton::new(
-                                                                                //                     "confirm-edit-message",
-                                                                                //                     IconName::Check,
-                                                                                //                 )
-                                                                                //                 .disabled(state.editor.read(cx).is_empty(cx))
-                                                                                //                 .shape(ui::IconButtonShape::Square)
-                                                                                //                 .icon_color(Color::Success)
-                                                                                //                 .tooltip({
-                                                                                //                     let focus_handle = focus_handle.clone();
-                                                                                //                     move |window, cx| {
-                                                                                //                         Tooltip::for_action_in(
-                                                                                //                             "Regenerate",
-                                                                                //                             &menu::Confirm,
-                                                                                //                             &focus_handle,
-                                                                                //                             window,
-                                                                                //                             cx,
-                                                                                //                         )
-                                                                                //                     }
-                                                                                //                 })
-                                                                                //                 .on_click(
-                                                                                //                     cx.listener(Self::handle_regenerate_click),
-                                                                                //                 ),
-                                                                                //             ),
-                                                                                //     )
-                                                                                // }),
+                            h_flex()
+                                .p_2p5()
+                                .gap_1()
+                                .w_full()
+                                .justify_between()
+                                .children(message_content),
                         ),
                 ),
             Role::Assistant => v_flex()

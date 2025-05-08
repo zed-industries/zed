@@ -84,7 +84,7 @@ impl ContextStrip {
         }
     }
 
-    fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
+    pub fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
         if let Some(workspace) = self.workspace.upgrade() {
             let project = workspace.read(cx).project().read(cx);
             let prompt_store = self
