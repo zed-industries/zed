@@ -525,59 +525,62 @@ impl Fs for RealFs {
         Ok(bytes)
     }
 
+    // async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+    //     smol::unblock(move || {
+    //         let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+    //             // Use the directory of the destination as temp dir to avoid
+    //             // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+    //             // See https://github.com/zed-industries/zed/pull/8437 for more details.
+    //             NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+    //         } else if cfg!(target_os = "windows") {
+    //             // If temp dir is set to a different drive than the destination,
+    //             // we receive error:
+    //             //
+    //             // failed to persist temporary file:
+    //             // The system cannot move the file to a different disk drive. (os error 17)
+    //             //
+    //             // So we use the directory of the destination as a temp dir to avoid it.
+    //             // https://github.com/zed-industries/zed/issues/16571
+    //             NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+    //         } else {
+    //             NamedTempFile::new()
+    //         }?;
+    //         tmp_file.write_all(data.as_bytes())?;
+    //         let temp_file_path = tmp_file.path().to_path_buf();
+    //         drop(tmp_file);
+    //         // tmp_file.persist(path)?;
+    //         persist(path.as_path(), temp_file_path.as_path())?;
+    //         Ok::<(), anyhow::Error>(())
+    //     })
+    //     .await?;
+
+    //     Ok(())
+    // }
+
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            // let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            //     // Use the directory of the destination as temp dir to avoid
-            //     // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-            //     // See https://github.com/zed-industries/zed/pull/8437 for more details.
-            //     NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            // } else if cfg!(target_os = "windows") {
-            //     // If temp dir is set to a different drive than the destination,
-            //     // we receive error:
-            //     //
-            //     // failed to persist temporary file:
-            //     // The system cannot move the file to a different disk drive. (os error 17)
-            //     //
-            //     // So we use the directory of the destination as a temp dir to avoid it.
-            //     // https://github.com/zed-industries/zed/issues/16571
-            //     NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            // } else {
-            //     NamedTempFile::new()
-            // }?;
-            let dir = path
-                .parent()
-                .unwrap_or(paths::temp_dir())
-                .join("temp123.tmp");
-            let mut tmp_file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(&dir)?;
-            tmp_file.write_all(data.as_bytes())?;
-
-            drop(tmp_file);
-            let result = // tmp_file.persist(&path);
-            if cfg!(target_os = "windows") {
-                // If file handle is already in used we receive error:
-                //
-                // failed to persist temporary file:
-                // Access is denied. (os error 5)
-                //
-                // So we use direct fs write instead to avoid it.
-                // https://github.com/zed-industries/zed/issues/30054
-                if let Err(persist_err) = &result {
-                    if persist_err.error.raw_os_error() == Some(5) {
-                        return std::fs::write(&path, data.as_bytes()).map_err(Into::into);
-                    }
-                }
-            }
-            result?;
-
-            persist(path.as_path(), dir.as_path())?;
+            // If temp dir is set to a different drive than the destination,
+            // we receive error:
+            //
+            // failed to persist temporary file:
+            // The system cannot move the file to a different disk drive. (os error 17)
+            //
+            // So we use the directory of the destination as a temp dir to avoid it.
+            // https://github.com/zed-industries/zed/issues/16571
+            let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+            let temp_file = {
+                let temp_file_path = temp_dir.path().join("temp_file");
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&temp_file_path)?;
+                file.write_all(data.as_bytes())?;
+                temp_file_path
+            };
+            persist(path.as_path(), temp_file.as_path())?;
             Ok::<(), anyhow::Error>(())
         })
         .await?;
-
         Ok(())
     }
 
