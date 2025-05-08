@@ -609,31 +609,15 @@ impl DebugPanel {
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
         let div = if is_side { v_flex() } else { h_flex() };
-        let weak_panel = cx.weak_entity();
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
                 .icon_size(IconSize::Small)
                 .on_click({
                     let workspace = self.workspace.clone();
-                    let weak_panel = weak_panel.clone();
-                    let past_debug_definition = self.past_debug_definition.clone();
                     move |_, window, cx| {
-                        let weak_panel = weak_panel.clone();
-                        let past_debug_definition = past_debug_definition.clone();
-
-                        let _ = workspace.update(cx, |this, cx| {
-                            let workspace = cx.entity();
-                            this.toggle_modal(window, cx, |window, cx| {
-                                NewSessionModal::new(
-                                    past_debug_definition,
-                                    weak_panel,
-                                    workspace,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            });
+                        let _ = workspace.update(cx, |workspace, cx| {
+                            NewSessionModal::show(workspace, window, cx);
                         });
                     }
                 })

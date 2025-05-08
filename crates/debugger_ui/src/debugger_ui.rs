@@ -149,40 +149,11 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &CreateDebuggingSession, window, cx| {
-                        if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                            let weak_panel = debug_panel.downgrade();
-                            let workspace_entity = cx.entity();
-
-                            workspace.toggle_modal(window, cx, |window, cx| {
-                                NewSessionModal::new(
-                                    debug_panel.read(cx).past_debug_definition.clone(),
-                                    weak_panel,
-                                    workspace_entity,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            });
-                        }
+                        NewSessionModal::show(workspace, window, cx);
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        let weak_panel = debug_panel.downgrade();
-                        let workspace_entity = cx.entity();
-                        let task_store = workspace.project().read(cx).task_store().clone();
-
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            NewSessionModal::new(
-                                debug_panel.read(cx).past_debug_definition.clone(),
-                                weak_panel,
-                                workspace_entity,
-                                Some(task_store),
-                                window,
-                                cx,
-                            )
-                        });
-                    }
+                    NewSessionModal::show(workspace, window, cx);
                 });
         })
     })
