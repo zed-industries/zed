@@ -1038,7 +1038,8 @@
       "ctrl-alt-up": "pane::SplitUp",
       "ctrl-alt-down": "pane::SplitDown",
       "ctrl-alt-left": "pane::SplitLeft",
-      "ctrl-alt-right": "pane::SplitRight"
+      "ctrl-alt-right": "pane::SplitRight",
+      "cmd-alt-r": "terminal::RerunTask"
     }
   },
   {
