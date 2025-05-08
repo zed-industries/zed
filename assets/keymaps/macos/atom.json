@@ -10,11 +10,6 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-l": "language_selector::Toggle",
-      "cmd-|": "pane::RevealInProjectPanel",
-      "cmd-b": "editor::GoToDefinition",
-      "alt-cmd-b": "editor::GoToDefinitionSplit",
-      "cmd-<": "editor::ScrollCursorCenter",
       "cmd-g": ["editor::SelectNext", { "replace_newest": true }],
       "cmd-shift-g": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-shift-down": "editor::AddSelectionBelow",
@@ -26,13 +21,18 @@
       "cmd-shift-d": "editor::DuplicateLineDown",
       "ctrl-cmd-up": "editor::MoveLineUp",
       "ctrl-cmd-down": "editor::MoveLineDown",
-      "cmd-\\": "workspace::ToggleLeftDock",
+      "cmd-\\": "workspace::ToggleLeftDock", // overrides bind in default keymap
       "ctrl-shift-m": "markdown::OpenPreviewToTheSide"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
+      "ctrl-shift-l": "language_selector::Toggle",
+      "cmd-|": "pane::RevealInProjectPanel",
+      "cmd-b": "editor::GoToDefinition",
+      "alt-cmd-b": "editor::GoToDefinitionSplit",
+      "cmd-<": "editor::ScrollCursorCenter",
       "cmd-r": "outline::Toggle"
     }
   },
