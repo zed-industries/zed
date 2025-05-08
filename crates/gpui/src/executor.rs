@@ -278,6 +278,8 @@ impl BackgroundExecutor {
                     if !dispatcher.tick(background_only) {
                         if awoken.swap(false, SeqCst) {
                             continue;
+                        } else if dispatcher.advance_clock_to_next_delayed() {
+                            continue;
                         }
 
                         if !dispatcher.parking_allowed() {
