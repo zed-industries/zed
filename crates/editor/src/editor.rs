@@ -4949,46 +4949,44 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
-        // lsp always returns function with parentheses and args in "new_text"
-        // when "completeFunctionCalls" is being used, even when editing in middle of text
-        //
-        // in such cases, we use label instead
-        // https://github.com/zed-industries/zed/issues/29982
-        let text_source = completion
-            .label()
-            .filter(|label| {
-                completion.is_snippet()
-                    && completion.kind() == Some(CompletionItemKind::FUNCTION)
-                    && label != &completion.new_text
-            })
-            .and_then(|label| {
-                let buffer = self.buffer.read(cx).snapshot(cx);
-                let cursor_offset = self.selections.newest_anchor().head().to_offset(&buffer);
-                let next_char_is_not_whitespace = buffer
-                    .chars_at(cursor_offset)
-                    .next()
-                    .map_or(true, |ch| !ch.is_whitespace());
-                next_char_is_not_whitespace.then_some(label)
-            })
-            .unwrap_or(completion.new_text.clone());
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let newest_anchor = self.selections.newest_anchor();
 
         let snippet;
         let new_text;
         if completion.is_snippet() {
-            snippet = Some(Snippet::parse(&text_source).log_err()?);
+            // LSP returns function signatures with parentheses and args in "new_text"
+            // when configured, even when renaming a function
+            //
+            // In such cases, we use the label instead
+            // https://github.com/zed-industries/zed/issues/29982
+            let snippet_source = completion
+                .label()
+                .filter(|label| {
+                    completion.kind() == Some(CompletionItemKind::FUNCTION)
+                        && label != &completion.new_text
+                })
+                .and_then(|label| {
+                    let cursor_offset = newest_anchor.head().to_offset(&snapshot);
+                    let next_char_is_not_whitespace = snapshot
+                        .chars_at(cursor_offset)
+                        .next()
+                        .map_or(true, |ch| !ch.is_whitespace());
+                    next_char_is_not_whitespace.then_some(label)
+                })
+                .unwrap_or(completion.new_text.clone());
+
+            snippet = Some(Snippet::parse(&snippet_source).log_err()?);
             new_text = snippet.as_ref().unwrap().text.clone();
         } else {
             snippet = None;
-            new_text = text_source;
+            new_text = completion.new_text.clone();
         };
 
         let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
         let buffer = buffer_handle.read(cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let replace_range_multibuffer = {
-            let excerpt = snapshot
-                .excerpt_containing(self.selections.newest_anchor().range())
-                .unwrap();
+            let excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
             let multibuffer_anchor = snapshot
                 .anchor_in_excerpt(excerpt.id(), buffer.anchor_before(replace_range.start))
                 .unwrap()
@@ -4998,7 +4996,6 @@ impl Editor {
             multibuffer_anchor.start.to_offset(&snapshot)
                 ..multibuffer_anchor.end.to_offset(&snapshot)
         };
-        let newest_anchor = self.selections.newest_anchor();
         if newest_anchor.head().buffer_id != Some(buffer.remote_id()) {
             return None;
         }
