@@ -527,26 +527,35 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                // Use the directory of the destination as temp dir to avoid
-                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-                // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else if cfg!(target_os = "windows") {
-                // If temp dir is set to a different drive than the destination,
-                // we receive error:
-                //
-                // failed to persist temporary file:
-                // The system cannot move the file to a different disk drive. (os error 17)
-                //
-                // So we use the directory of the destination as a temp dir to avoid it.
-                // https://github.com/zed-industries/zed/issues/16571
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else {
-                NamedTempFile::new()
-            }?;
+            // let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            //     // Use the directory of the destination as temp dir to avoid
+            //     // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+            //     // See https://github.com/zed-industries/zed/pull/8437 for more details.
+            //     NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+            // } else if cfg!(target_os = "windows") {
+            //     // If temp dir is set to a different drive than the destination,
+            //     // we receive error:
+            //     //
+            //     // failed to persist temporary file:
+            //     // The system cannot move the file to a different disk drive. (os error 17)
+            //     //
+            //     // So we use the directory of the destination as a temp dir to avoid it.
+            //     // https://github.com/zed-industries/zed/issues/16571
+            //     NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+            // } else {
+            //     NamedTempFile::new()
+            // }?;
+            let dir = path
+                .parent()
+                .unwrap_or(paths::temp_dir())
+                .join("temp123.tmp");
+            let mut tmp_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&dir)?;
             tmp_file.write_all(data.as_bytes())?;
 
+            drop(tmp_file);
             let result = // tmp_file.persist(&path);
             if cfg!(target_os = "windows") {
                 // If file handle is already in used we receive error:
@@ -564,7 +573,7 @@ impl Fs for RealFs {
             }
             result?;
 
-            persist(path.as_path(), tmp_file.path())?;
+            persist(path.as_path(), dir.as_path())?;
             Ok::<(), anyhow::Error>(())
         })
         .await?;
@@ -2924,5 +2933,27 @@ mod tests {
                 .unwrap(),
             "B"
         );
+    }
+
+    #[gpui::test]
+    async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
+        let fs = RealFs {
+            git_binary_path: None,
+            executor,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file_to_be_replaced = temp_dir.path().join("file.txt");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(&file_to_be_replaced)
+            .unwrap();
+        file.write_all(b"Hello").unwrap();
+        // drop(file);
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "Hello");
+        smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "World");
     }
 }
