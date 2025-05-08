@@ -5,7 +5,7 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
-    ThreadFeedback,
+    ThreadFeedback, ThreadSummary,
 };
 use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -827,12 +827,12 @@ impl ActiveThread {
         self.messages.is_empty()
     }
 
-    pub fn summary(&self, cx: &App) -> Option<SharedString> {
+    pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
         self.thread.read(cx).summary()
     }
 
-    pub fn summary_or_default(&self, cx: &App) -> SharedString {
-        self.thread.read(cx).summary_or_default()
+    pub fn regenerate_summary<'a>(&self, cx: &mut App) {
+        self.thread.update(cx, |thread, cx| thread.summarize(cx))
     }
 
     pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) -> bool {
@@ -1138,11 +1138,7 @@ impl ActiveThread {
             return;
         }
 
-        let title = self
-            .thread
-            .read(cx)
-            .summary()
-            .unwrap_or("Agent Panel".into());
+        let title = self.thread.read(cx).summary().unwrap_or("Agent Panel");
 
         match AssistantSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -3436,10 +3432,7 @@ pub(crate) fn open_active_thread_as_markdown(
         workspace.update_in(cx, |workspace, window, cx| {
             let thread = thread.read(cx);
             let markdown = thread.to_markdown(cx)?;
-            let thread_summary = thread
-                .summary()
-                .map(|summary| summary.to_string())
-                .unwrap_or_else(|| "Thread".to_string());
+            let thread_summary = thread.summary().or_default().to_string();
 
             let project = workspace.project().clone();
 

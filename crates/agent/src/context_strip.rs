@@ -160,7 +160,7 @@ impl ContextStrip {
             }
 
             Some(SuggestedContext::Thread {
-                name: active_thread.summary_or_default(),
+                name: active_thread.summary().or_default(),
                 thread: weak_active_thread,
             })
         } else if let Some(active_context_editor) = panel.active_context_editor() {

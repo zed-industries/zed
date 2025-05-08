@@ -57,7 +57,7 @@ use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent
 use crate::agent_diff::AgentDiff;
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
-use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
+use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
 use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
@@ -194,7 +194,7 @@ impl ActiveView {
     }
 
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
-        let summary = thread.read(cx).summary_or_default();
+        let summary = thread.read(cx).summary().or_default();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -216,7 +216,7 @@ impl ActiveView {
                         }
                         EditorEvent::Blurred => {
                             if editor.read(cx).text(cx).is_empty() {
-                                let summary = thread.read(cx).summary_or_default();
+                                let summary = thread.read(cx).summary().or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -231,7 +231,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |thread, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary_or_default();
+                        let summary = thread.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -1426,23 +1426,45 @@ impl AgentPanel {
                 ..
             } => {
                 let active_thread = self.thread.read(cx);
-                let is_empty = active_thread.is_empty();
-
-                let summary = active_thread.summary(cx);
-
-                if is_empty {
-                    Label::new(Thread::DEFAULT_SUMMARY.clone())
-                        .truncate()
-                        .into_any_element()
-                } else if summary.is_none() {
-                    Label::new(LOADING_SUMMARY_PLACEHOLDER)
-                        .truncate()
-                        .into_any_element()
+                let state = if active_thread.is_empty() {
+                    &ThreadSummary::Pending
                 } else {
-                    div()
+                    active_thread.summary(cx)
+                };
+
+                match state {
+                    ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT.clone())
+                        .truncate()
+                        .into_any_element(),
+                    ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                        .truncate()
+                        .into_any_element(),
+                    ThreadSummary::Ready(_) => div()
                         .w_full()
                         .child(change_title_editor.clone())
-                        .into_any_element()
+                        .into_any_element(),
+                    ThreadSummary::Error => h_flex()
+                        .w_full()
+                        .child(change_title_editor.clone())
+                        .child(
+                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .on_click({
+                                    let active_thread = self.thread.clone();
+                                    move |_, _window, cx| {
+                                        active_thread.update(cx, |thread, cx| {
+                                            thread.regenerate_summary(cx);
+                                        });
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        Tooltip::new("Failed to generate title")
+                                            .meta("Click to try again")
+                                    })
+                                    .into()
+                                }),
+                        )
+                        .into_any_element(),
                 }
             }
             ActiveView::PromptEditor {

@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use thiserror::Error;
 use ui::Window;
-use util::{ResultExt as _, TryFutureExt as _, post_inc};
+use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
 use zed_llm_client::CompletionRequestStatus;
 
@@ -324,7 +324,7 @@ pub enum QueueState {
 pub struct Thread {
     id: ThreadId,
     updated_at: DateTime<Utc>,
-    summary: Option<SharedString>,
+    summary: ThreadSummary,
     pending_summary: Task<Option<()>>,
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
@@ -362,6 +362,40 @@ pub struct Thread {
     configured_profile: Option<AgentProfile>,
 }
 
+#[derive(Clone, Debug)]
+pub enum ThreadSummary {
+    Pending,
+    Generating,
+    Ready(SharedString),
+    Error,
+}
+
+impl ThreadSummary {
+    pub const DEFAULT: SharedString = SharedString::new_static("New Thread");
+
+    pub fn or_default(&self) -> SharedString {
+        self.unwrap_or(Self::DEFAULT)
+    }
+
+    pub fn unwrap_or(&self, message: impl Into<SharedString>) -> SharedString {
+        self.ready().unwrap_or_else(|| message.into())
+    }
+
+    pub fn ready(&self) -> Option<SharedString> {
+        match self {
+            ThreadSummary::Ready(summary) => Some(summary.clone()),
+            ThreadSummary::Pending | ThreadSummary::Generating | ThreadSummary::Error => None,
+        }
+    }
+
+    pub fn is_ready(&self) -> bool {
+        match self {
+            ThreadSummary::Ready(_) => true,
+            ThreadSummary::Pending | ThreadSummary::Generating | ThreadSummary::Error => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExceededWindowError {
     /// Model used when last message exceeded context window
@@ -387,7 +421,7 @@ impl Thread {
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
-            summary: None,
+            summary: ThreadSummary::Pending,
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
@@ -483,7 +517,7 @@ impl Thread {
         Self {
             id,
             updated_at: serialized.updated_at,
-            summary: Some(serialized.summary),
+            summary: ThreadSummary::Ready(serialized.summary),
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
@@ -585,10 +619,6 @@ impl Thread {
         self.last_prompt_id = PromptId::new();
     }
 
-    pub fn summary(&self) -> Option<SharedString> {
-        self.summary.clone()
-    }
-
     pub fn project_context(&self) -> SharedProjectContext {
         self.project_context.clone()
     }
@@ -622,26 +652,30 @@ impl Thread {
         cx.notify();
     }
 
-    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
+    pub fn summary(&self) -> &ThreadSummary {
+        &self.summary
+    }
 
     pub fn summary_or_default(&self) -> SharedString {
-        self.summary.clone().unwrap_or(Self::DEFAULT_SUMMARY)
+        // todo!: do we need this?
+        self.summary.or_default()
     }
 
     pub fn set_summary(&mut self, new_summary: impl Into<SharedString>, cx: &mut Context<Self>) {
-        let Some(current_summary) = &self.summary else {
-            // Don't allow setting summary until generated
-            return;
+        let current_summary = match &self.summary {
+            ThreadSummary::Pending | ThreadSummary::Generating => return,
+            ThreadSummary::Ready(summary) => summary,
+            ThreadSummary::Error => &ThreadSummary::DEFAULT,
         };
 
         let mut new_summary = new_summary.into();
 
         if new_summary.is_empty() {
-            new_summary = Self::DEFAULT_SUMMARY;
+            new_summary = ThreadSummary::DEFAULT;
         }
 
         if current_summary != &new_summary {
-            self.summary = Some(new_summary);
+            self.summary = ThreadSummary::Ready(new_summary);
             cx.emit(ThreadEvent::SummaryChanged);
         }
     }
@@ -1055,7 +1089,7 @@ impl Thread {
             let initial_project_snapshot = initial_project_snapshot.await;
             this.read_with(cx, |this, cx| SerializedThread {
                 version: SerializedThread::VERSION.to_string(),
-                summary: this.summary_or_default(),
+                summary: this.summary().or_default(),
                 updated_at: this.updated_at(),
                 messages: this
                     .messages()
@@ -1655,7 +1689,7 @@ impl Thread {
 
                     // If there is a response without tool use, summarize the message. Otherwise,
                     // allow two tool uses before summarizing.
-                    if thread.summary.is_none()
+                    if !thread.summary.is_ready()
                         && thread.messages.len() >= 2
                         && (!thread.has_pending_tool_uses() || thread.messages.len() >= 6)
                     {
@@ -1783,13 +1817,17 @@ impl Thread {
 
         let request = self.to_summarize_request(&model.model, added_user_message.into(), cx);
 
+        self.summary = ThreadSummary::Generating;
+
         self.pending_summary = cx.spawn(async move |this, cx| {
-            async move {
+            let result = async {
                 let mut messages = model.model.stream_completion(request, &cx).await?;
 
                 let mut new_summary = String::new();
                 while let Some(event) = messages.next().await {
-                    let event = event?;
+                    let Ok(event) = event else {
+                        continue;
+                    };
                     let text = match event {
                         LanguageModelCompletionEvent::Text(text) => text,
                         LanguageModelCompletionEvent::StatusUpdate(
@@ -1815,18 +1853,29 @@ impl Thread {
                     }
                 }
 
-                this.update(cx, |this, cx| {
-                    if !new_summary.is_empty() {
-                        this.summary = Some(new_summary.into());
-                    }
-
-                    cx.emit(ThreadEvent::SummaryGenerated);
-                })?;
-
-                anyhow::Ok(())
+                anyhow::Ok(new_summary)
             }
-            .log_err()
-            .await
+            .await;
+
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(new_summary) => {
+                        if new_summary.is_empty() {
+                            this.summary = ThreadSummary::Error;
+                        } else {
+                            this.summary = ThreadSummary::Ready(new_summary.into());
+                        }
+                    }
+                    Err(err) => {
+                        this.summary = ThreadSummary::Error;
+                        log::error!("Failed to generate thread summary: {}", err);
+                    }
+                }
+                cx.emit(ThreadEvent::SummaryGenerated);
+            })
+            .log_err()?;
+
+            Some(())
         });
     }
 
@@ -2436,9 +2485,8 @@ impl Thread {
     pub fn to_markdown(&self, cx: &App) -> Result<String> {
         let mut markdown = Vec::new();
 
-        if let Some(summary) = self.summary() {
-            writeln!(markdown, "# {summary}\n")?;
-        };
+        let summary = self.summary().or_default();
+        writeln!(markdown, "# {summary}\n")?;
 
         for message in self.messages() {
             writeln!(

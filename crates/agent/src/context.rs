@@ -586,10 +586,7 @@ impl ThreadContextHandle {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.thread
-            .read(cx)
-            .summary()
-            .unwrap_or_else(|| "New thread".into())
+        self.thread.read(cx).summary().or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
@@ -597,9 +594,7 @@ impl ThreadContextHandle {
             let text = Thread::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
             let title = self
                 .thread
-                .read_with(cx, |thread, _cx| {
-                    thread.summary().unwrap_or_else(|| "New thread".into())
-                })
+                .read_with(cx, |thread, _cx| thread.summary().or_default())
                 .ok()?;
             let context = AgentContext::Thread(ThreadContext {
                 title,
