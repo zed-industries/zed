@@ -25,6 +25,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
 use settings::SettingsStore;
+use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::{
     any::TypeId,
     env,
@@ -38,7 +39,7 @@ use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
 pub use crate::copilot_completion_provider::CopilotCompletionProvider;
-pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in};
+pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_and_sign_in};
 
 actions!(
     copilot,
@@ -103,25 +104,23 @@ pub fn init(
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &SignIn, window, cx| {
-            initiate_sign_in_within_workspace(workspace, window, cx)
+            if let Some(copilot) = Copilot::global(cx) {
+                let is_reinstall = false;
+                initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &Reinstall, window, cx| {
+            if let Some(copilot) = Copilot::global(cx) {
+                reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &SignOut, _window, cx| {
+            if let Some(copilot) = Copilot::global(cx) {
+                sign_out_within_workspace(workspace, copilot, cx);
+            }
         });
     })
     .detach();
-
-    cx.on_action(|_: &SignOut, cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_out(cx))
-                .detach_and_log_err(cx);
-        }
-    });
-    cx.on_action(|_: &Reinstall, cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot
-                .update(cx, |copilot, cx| copilot.reinstall(cx))
-                .detach();
-        }
-    });
 }
 
 enum CopilotServer {
@@ -565,7 +564,7 @@ impl Copilot {
         .ok();
     }
 
-    pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
@@ -649,7 +648,7 @@ impl Copilot {
         }
     }
 
-    pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub(crate) fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         match &self.server {
             CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
@@ -669,7 +668,7 @@ impl Copilot {
         }
     }
 
-    pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    pub(crate) fn reinstall(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let language_settings = all_language_settings(None, cx);
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
@@ -691,7 +690,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.background_spawn(start_task)
+        start_task
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {

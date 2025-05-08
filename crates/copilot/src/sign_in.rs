@@ -12,34 +12,64 @@ use workspace::{ModalView, Toast, Workspace};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 
-struct CopilotStartingToast;
+struct CopilotStatusToast;
 
 pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
+    let Some(copilot) = Copilot::global(cx) else {
+        return;
+    };
     let Some(workspace) = window.root::<Workspace>().flatten() else {
         return;
     };
     workspace.update(cx, |workspace, cx| {
-        initiate_sign_in_within_workspace(workspace, window, cx)
+        let is_reinstall = false;
+        initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx)
     });
+}
+
+pub fn reinstall_and_sign_in(window: &mut Window, cx: &mut App) {
+    let Some(copilot) = Copilot::global(cx) else {
+        return;
+    };
+    let Some(workspace) = window.root::<Workspace>().flatten() else {
+        return;
+    };
+    workspace.update(cx, |workspace, cx| {
+        reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx);
+    });
+}
+
+pub fn reinstall_and_sign_in_within_workspace(
+    workspace: &mut Workspace,
+    copilot: Entity<Copilot>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let _ = copilot.update(cx, |copilot, cx| copilot.reinstall(cx));
+    let is_reinstall = true;
+    initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
 }
 
 pub fn initiate_sign_in_within_workspace(
     workspace: &mut Workspace,
+    copilot: Entity<Copilot>,
+    is_reinstall: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let Some(copilot) = Copilot::global(cx) else {
-        return;
-    };
     if matches!(copilot.read(cx).status(), Status::Disabled) {
-        copilot.update(cx, |this, cx| this.start_copilot(false, true, cx));
+        copilot.update(cx, |copilot, cx| copilot.start_copilot(false, true, cx));
     }
     match copilot.read(cx).status() {
         Status::Starting { task } => {
             workspace.show_toast(
                 Toast::new(
-                    NotificationId::unique::<CopilotStartingToast>(),
-                    "Copilot is starting...",
+                    NotificationId::unique::<CopilotStatusToast>(),
+                    if is_reinstall {
+                        "Copilot is reinstalling..."
+                    } else {
+                        "Copilot is starting..."
+                    },
                 ),
                 cx,
             );
@@ -52,14 +82,14 @@ pub fn initiate_sign_in_within_workspace(
                             match copilot.read(cx).status() {
                                 Status::Authorized => workspace.show_toast(
                                     Toast::new(
-                                        NotificationId::unique::<CopilotStartingToast>(),
-                                        "Copilot has started!",
+                                        NotificationId::unique::<CopilotStatusToast>(),
+                                        "Copilot has started.",
                                     ),
                                     cx,
                                 ),
                                 _ => {
                                     workspace.dismiss_toast(
-                                        &NotificationId::unique::<CopilotStartingToast>(),
+                                        &NotificationId::unique::<CopilotStatusToast>(),
                                         cx,
                                     );
                                     copilot
@@ -77,12 +107,52 @@ pub fn initiate_sign_in_within_workspace(
             .detach();
         }
         _ => {
-            copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
+            copilot
+                .update(cx, |copilot, cx| copilot.sign_in(cx))
+                .detach();
             workspace.toggle_modal(window, cx, |_, cx| {
                 CopilotCodeVerification::new(&copilot, cx)
             });
         }
     }
+}
+
+pub fn sign_out_within_workspace(
+    workspace: &mut Workspace,
+    copilot: Entity<Copilot>,
+    cx: &mut Context<Workspace>,
+) {
+    workspace.show_toast(
+        Toast::new(
+            NotificationId::unique::<CopilotStatusToast>(),
+            "Signing out of Copilot...",
+        ),
+        cx,
+    );
+    let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
+    cx.spawn(async move |workspace, cx| match sign_out_task.await {
+        Ok(()) => {
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.show_toast(
+                        Toast::new(
+                            NotificationId::unique::<CopilotStatusToast>(),
+                            "Signed out of Copilot.",
+                        ),
+                        cx,
+                    )
+                })
+                .ok();
+        }
+        Err(err) => {
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.show_error(&err, cx);
+                })
+                .ok();
+        }
+    })
+    .detach();
 }
 
 pub struct CopilotCodeVerification {

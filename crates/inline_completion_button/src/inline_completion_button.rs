@@ -106,14 +106,8 @@ impl Render for InlineCompletionButton {
                                             )
                                             .on_click(
                                                 "Reinstall Copilot",
-                                                |_, cx| {
-                                                    if let Some(copilot) = Copilot::global(cx) {
-                                                        copilot
-                                                            .update(cx, |copilot, cx| {
-                                                                copilot.reinstall(cx)
-                                                            })
-                                                            .detach();
-                                                    }
+                                                |window, cx| {
+                                                    copilot::reinstall_and_sign_in(window, cx)
                                                 },
                                             ),
                                             cx,
