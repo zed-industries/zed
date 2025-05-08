@@ -2744,42 +2744,7 @@ impl AgentPanel {
 
 impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match &self.active_view {
-            ActiveView::Thread { .. } => v_flex()
-                .relative()
-                .justify_between()
-                .size_full()
-                .child(self.render_active_thread_or_empty_state(window, cx))
-                .children(self.render_tool_use_limit_reached(cx))
-                .child(h_flex().child(self.message_editor.clone()))
-                .children(self.render_last_error(cx))
-                .child(self.render_drag_target(cx))
-                .into_any(),
-            ActiveView::History => self.history.clone().into_any_element(),
-            ActiveView::PromptEditor {
-                context_editor,
-                buffer_search_bar,
-                ..
-            } => self
-                .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
-                .into_any(),
-            ActiveView::Configuration => v_flex()
-                .size_full()
-                .children(self.configuration.clone())
-                .into_any(),
-        };
-
-        let content = match self.active_view.which_font_size_used() {
-            WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
-                    .size_full()
-                    .child(content)
-                    .into_any()
-            }
-            _ => content,
-        };
-
-        v_flex()
+        let content = v_flex()
             .key_context(self.key_context())
             .justify_between()
             .size_full()
@@ -2804,7 +2769,37 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
-            .child(content)
+            .map(|parent| match &self.active_view {
+                ActiveView::Thread { .. } => parent
+                    .relative()
+                    .child(self.render_active_thread_or_empty_state(window, cx))
+                    .children(self.render_tool_use_limit_reached(cx))
+                    .child(h_flex().child(self.message_editor.clone()))
+                    .children(self.render_last_error(cx))
+                    .child(self.render_drag_target(cx)),
+                ActiveView::History => parent.child(self.history.clone()),
+                ActiveView::PromptEditor {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => parent.child(self.render_prompt_editor(
+                    context_editor,
+                    buffer_search_bar,
+                    window,
+                    cx,
+                )),
+                ActiveView::Configuration => parent.children(self.configuration.clone()),
+            });
+
+        match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                    .size_full()
+                    .child(content)
+                    .into_any()
+            }
+            _ => content.into_any(),
+        }
     }
 }
 
