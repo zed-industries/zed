@@ -4955,10 +4955,10 @@ impl Editor {
         let snippet;
         let new_text;
         if completion.is_snippet() {
-            // LSP returns function signatures with parentheses and args in "new_text"
-            // when configured, even when renaming a function
+            // lsp returns function definition with placeholders in "new_text"
+            // when configured from language server, even when renaming a function
             //
-            // In such cases, we use the label instead
+            // in such cases, we use the label instead
             // https://github.com/zed-industries/zed/issues/29982
             let snippet_source = completion
                 .label()

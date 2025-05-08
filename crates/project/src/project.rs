@@ -5179,7 +5179,7 @@ impl Completion {
     pub fn label(&self) -> Option<String> {
         self.source
             .lsp_completion(false)
-            .and_then(|lsp_completion| Some(lsp_completion.label.clone()))
+            .map(|lsp_completion| lsp_completion.label.clone())
     }
 
     /// A key that can be used to sort completions when displaying
