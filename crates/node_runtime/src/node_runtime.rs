@@ -130,18 +130,20 @@ impl NodeRuntime {
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
-        // Check if there's an override for this package
         let state = self.0.lock().await;
-        if let Some(options) = state.options.borrow().as_ref() {
-            if let Some(version_overrides) = &options.version_overrides {
-                if let Some(version) = version_overrides.get(name) {
-                    return Ok(version.clone());
-                }
-            }
+
+        let version_override = state
+            .options
+            .borrow()
+            .as_ref()
+            .and_then(|options| options.version_overrides.as_ref()?.get(name))
+            .cloned();
+        if let Some(version) = version_override {
+            return Ok(version);
         }
 
         let http = state.http.clone();
-        drop(state); // Release the lock before awaiting instance()
+        drop(state);
 
         let output = self
             .instance()
