@@ -756,6 +756,10 @@ pub(crate) fn insert_crease_for_mention(
 
         let ids = editor.insert_creases(vec![crease.clone()], cx);
         editor.fold_creases(vec![crease], false, window, cx);
+        
+        let end_offset = end.to_offset(&snapshot);
+        editor.edit([(end_offset..end_offset, " ")], cx);
+        
         Some(ids[0])
     })
 }
