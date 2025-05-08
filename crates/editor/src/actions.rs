@@ -425,6 +425,7 @@ actions!(
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,
+        ToggleDiagnostics,
         ToggleIndentGuides,
         ToggleInlayHints,
         ToggleInlineValues,

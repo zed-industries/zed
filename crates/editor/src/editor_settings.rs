@@ -1,5 +1,6 @@
 use gpui::App;
 use language::CursorShape;
+use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, VsCodeSettings};
@@ -41,6 +42,8 @@ pub struct EditorSettings {
     pub jupyter: Jupyter,
     pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
+    #[serde(default)]
+    pub diagnostics_max_severity: Option<DiagnosticSeverity>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -451,6 +454,19 @@ pub struct EditorSettingsContent {
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
+
+    /// Which level to use to filter out diagnostics displayed in the editor.
+    ///
+    /// Affects the editor rendering only, and does not interrupt
+    /// the functionality of diagnostics fetching and project diagnostics editor.
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// Diagnostics are only shown when file icons are also active.
+    ///
+    /// Shows all diagnostics if not specified.
+    ///
+    /// Default: warning
+    #[serde(default)]
+    pub diagnostics_max_severity: Option<DiagnosticSeverity>,
 }
 
 // Toolbar related settings

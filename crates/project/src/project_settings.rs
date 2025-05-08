@@ -181,13 +181,29 @@ pub struct CargoDiagnosticsSettings {
     pub fetch_cargo_diagnostics: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
+    // No diagnostics are shown.
+    Off,
     Error,
     Warning,
     Info,
     Hint,
+}
+
+impl DiagnosticSeverity {
+    pub fn into_lsp(self) -> Option<lsp::DiagnosticSeverity> {
+        match self {
+            DiagnosticSeverity::Off => None,
+            DiagnosticSeverity::Error => Some(lsp::DiagnosticSeverity::ERROR),
+            DiagnosticSeverity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
+            DiagnosticSeverity::Info => Some(lsp::DiagnosticSeverity::INFORMATION),
+            DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
+        }
+    }
 }
 
 impl Default for InlineDiagnosticsSettings {
