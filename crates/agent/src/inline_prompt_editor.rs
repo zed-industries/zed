@@ -1,4 +1,4 @@
-use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AssistantModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};

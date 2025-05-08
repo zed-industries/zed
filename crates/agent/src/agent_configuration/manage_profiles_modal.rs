@@ -18,8 +18,8 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
-use crate::assistant_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
-use crate::assistant_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
+use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
+use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AssistantPanel, ManageProfiles, ThreadStore};
 
 use super::tool_picker::ToolPickerMode;

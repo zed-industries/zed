@@ -53,8 +53,8 @@ use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFon
 use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
+use crate::agent_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
@@ -1171,7 +1171,7 @@ impl AssistantPanel {
             self.configuration_subscription = Some(cx.subscribe_in(
                 configuration,
                 window,
-                Self::handle_assistant_configuration_event,
+                Self::handle_agent_configuration_event,
             ));
 
             configuration.focus_handle(cx).focus(window);
@@ -1201,7 +1201,7 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
     }
 
-    fn handle_assistant_configuration_event(
+    fn handle_agent_configuration_event(
         &mut self,
         _entity: &Entity<AssistantConfiguration>,
         event: &AssistantConfigurationEvent,

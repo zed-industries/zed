@@ -4,7 +4,7 @@ use gpui::{
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::assistant_panel::AssistantPanel;
+use crate::agent_panel::AssistantPanel;
 
 macro_rules! agent_onboarding_event {
     ($name:expr) => {

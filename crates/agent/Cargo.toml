@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/assistant.rs"
+path = "src/agent.rs"
 doctest = false
 
 [features]

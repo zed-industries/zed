@@ -1,8 +1,8 @@
 mod active_thread;
+mod agent_configuration;
 mod agent_diff;
-mod assistant_configuration;
-mod assistant_model_selector;
-mod assistant_panel;
+mod agent_model_selector;
+mod agent_panel;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -43,8 +43,8 @@ use settings::{Settings as _, SettingsStore};
 use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
-use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
-pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
+use crate::agent_configuration::{AddContextServerModal, ManageProfilesModal};
+pub use crate::agent_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
@@ -126,7 +126,7 @@ pub fn init(
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     thread_store::init(cx);
-    assistant_panel::init(cx);
+    agent_panel::init(cx);
     context_server_configuration::init(language_registry, cx);
 
     register_slash_commands(cx);
