@@ -804,7 +804,7 @@ impl RunningState {
 
                     dap::DebugRequest::Launch(new_launch_request)
                 }
-                request @ dap::DebugRequest::Attach(_) => request,
+                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
             };
             Ok(DebugTaskDefinition {
                 label,

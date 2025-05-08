@@ -743,14 +743,7 @@ impl AttachMode {
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
-            // todo!(Do not leave this unwrap here)
-            let modal = AttachModal::new(
-                definition.clone(),
-                workspace.upgrade().unwrap(),
-                false,
-                window,
-                cx,
-            );
+            let modal = AttachModal::new(definition.clone(), workspace, false, window, cx);
             window.focus(&modal.focus_handle(cx));
 
             modal

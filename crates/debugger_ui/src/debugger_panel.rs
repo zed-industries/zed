@@ -59,8 +59,6 @@ pub struct DebugPanel {
     size: Pixels,
     sessions: Vec<Entity<DebugSession>>,
     active_session: Option<Entity<DebugSession>>,
-    /// This represents the last debug definition that was created in the new session modal
-    pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -81,7 +79,6 @@ impl DebugPanel {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
                 project,
                 workspace: workspace.weak_handle(),
