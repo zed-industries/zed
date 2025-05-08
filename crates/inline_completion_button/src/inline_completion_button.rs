@@ -423,36 +423,39 @@ impl InlineCompletionButton {
 
             if let Some(usage) = usage {
                 menu = menu.header("Usage");
-                menu = menu.custom_entry(
-                    move |_window, cx| {
-                        let used_percentage = match usage.limit {
-                            UsageLimit::Limited(limit) => {
-                                Some((usage.amount as f32 / limit as f32) * 100.)
-                            }
-                            UsageLimit::Unlimited => None,
-                        };
+                menu = menu
+                    .custom_entry(
+                        move |_window, cx| {
+                            let used_percentage = match usage.limit {
+                                UsageLimit::Limited(limit) => {
+                                    Some((usage.amount as f32 / limit as f32) * 100.)
+                                }
+                                UsageLimit::Unlimited => None,
+                            };
 
-                        h_flex()
-                            .flex_1()
-                            .gap_1p5()
-                            .children(
-                                used_percentage
-                                    .map(|percent| ProgressBar::new("usage", percent, 100., cx)),
-                            )
-                            .child(
-                                Label::new(match usage.limit {
-                                    UsageLimit::Limited(limit) => {
-                                        format!("{} / {limit}", usage.amount)
-                                    }
-                                    UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-                                })
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .into_any_element()
-                    },
-                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                );
+                            h_flex()
+                                .flex_1()
+                                .gap_1p5()
+                                .children(
+                                    used_percentage.map(|percent| {
+                                        ProgressBar::new("usage", percent, 100., cx)
+                                    }),
+                                )
+                                .child(
+                                    Label::new(match usage.limit {
+                                        UsageLimit::Limited(limit) => {
+                                            format!("{} / {limit}", usage.amount)
+                                        }
+                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
+                                    })
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
+                                .into_any_element()
+                        },
+                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                    )
+                    .separator();
             }
         }
 
