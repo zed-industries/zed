@@ -550,17 +550,27 @@ impl EditAgent {
             content: vec![MessageContent::Text(prompt)],
             cache: false,
         });
+
+        // Include tools in the request so that we can take advantage of
+        // caching when ToolChoice::None is supported.
+        let mut tool_choice = None;
+        let mut tools = Vec::new();
+        if !conversation.tools.is_empty()
+            && self
+                .model
+                .supports_tool_choice(LanguageModelToolChoice::None)
+        {
+            tool_choice = Some(LanguageModelToolChoice::None);
+            tools = conversation.tools.clone();
+        }
+
         let request = LanguageModelRequest {
             thread_id: conversation.thread_id,
             prompt_id: conversation.prompt_id,
             mode: conversation.mode,
             messages: conversation.messages,
-            tool_choice: if conversation.tools.is_empty() {
-                None
-            } else {
-                Some(LanguageModelToolChoice::None)
-            },
-            tools: conversation.tools,
+            tool_choice,
+            tools,
             stop: Vec::new(),
             temperature: None,
         };
