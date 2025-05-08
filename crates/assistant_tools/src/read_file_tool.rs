@@ -7,7 +7,7 @@ use gpui::{AnyWindowHandle, App, Entity, Task};
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,7 +83,7 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -231,7 +231,15 @@ mod test {
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -262,7 +270,15 @@ mod test {
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -295,7 +311,7 @@ mod test {
                 Arc::new(ReadFileTool)
                     .run(
                         input,
-                        &[],
+                        Arc::default(),
                         project.clone(),
                         action_log.clone(),
                         model.clone(),
@@ -325,7 +341,15 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -372,7 +396,15 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -406,7 +438,7 @@ mod test {
                 Arc::new(ReadFileTool)
                     .run(
                         input,
-                        &[],
+                        Arc::default(),
                         project.clone(),
                         action_log.clone(),
                         model.clone(),
@@ -429,7 +461,7 @@ mod test {
                 Arc::new(ReadFileTool)
                     .run(
                         input,
-                        &[],
+                        Arc::default(),
                         project.clone(),
                         action_log.clone(),
                         model.clone(),
@@ -450,7 +482,15 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;

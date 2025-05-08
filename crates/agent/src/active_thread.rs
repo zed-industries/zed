@@ -3256,7 +3256,7 @@ impl ActiveThread {
                         c.tool_use_id.clone(),
                         c.ui_text.clone(),
                         c.input.clone(),
-                        &c.messages,
+                        c.request.clone(),
                         c.tool.clone(),
                         configured.model,
                         Some(window.window_handle()),

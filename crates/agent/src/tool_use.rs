@@ -7,7 +7,7 @@ use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelRequestMessage, LanguageModelToolResult,
+    ConfiguredModel, LanguageModel, LanguageModelRequest, LanguageModelToolResult,
     LanguageModelToolUse, LanguageModelToolUseId, Role,
 };
 use project::Project;
@@ -354,7 +354,7 @@ impl ToolUseState {
         tool_use_id: LanguageModelToolUseId,
         ui_text: impl Into<Arc<str>>,
         input: serde_json::Value,
-        messages: Arc<Vec<LanguageModelRequestMessage>>,
+        request: Arc<LanguageModelRequest>,
         tool: Arc<dyn Tool>,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
@@ -363,7 +363,7 @@ impl ToolUseState {
             let confirmation = Confirmation {
                 tool_use_id,
                 input,
-                messages,
+                request,
                 tool,
                 ui_text,
             };
@@ -483,7 +483,7 @@ pub struct Confirmation {
     pub tool_use_id: LanguageModelToolUseId,
     pub input: serde_json::Value,
     pub ui_text: Arc<str>,
-    pub messages: Arc<Vec<LanguageModelRequestMessage>>,
+    pub request: Arc<LanguageModelRequest>,
     pub tool: Arc<dyn Tool>,
 }
 

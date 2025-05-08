@@ -1957,8 +1957,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = self.to_completion_request(model.clone(), cx);
-        let messages = Arc::new(request.messages);
+        let request = Arc::new(self.to_completion_request(model.clone(), cx));
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -1976,7 +1975,7 @@ impl Thread {
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
-                        messages.clone(),
+                        request.clone(),
                         tool,
                     );
                     cx.emit(ThreadEvent::ToolConfirmationNeeded);
@@ -1985,7 +1984,7 @@ impl Thread {
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
-                        &messages,
+                        request.clone(),
                         tool,
                         model.clone(),
                         window,
@@ -2080,21 +2079,14 @@ impl Thread {
         tool_use_id: LanguageModelToolUseId,
         ui_text: impl Into<SharedString>,
         input: serde_json::Value,
-        messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let task = self.spawn_tool_use(
-            tool_use_id.clone(),
-            messages,
-            input,
-            tool,
-            model,
-            window,
-            cx,
-        );
+        let task =
+            self.spawn_tool_use(tool_use_id.clone(), request, input, tool, model, window, cx);
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
@@ -2102,7 +2094,7 @@ impl Thread {
     fn spawn_tool_use(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
@@ -2116,7 +2108,7 @@ impl Thread {
         } else {
             tool.run(
                 input,
-                messages,
+                request,
                 self.project.clone(),
                 self.action_log.clone(),
                 model,

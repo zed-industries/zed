@@ -83,7 +83,7 @@ impl EditAgent {
         &self,
         buffer: Entity<Buffer>,
         edit_description: String,
-        previous_messages: Vec<LanguageModelRequestMessage>,
+        conversation: &LanguageModelRequest,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -91,6 +91,7 @@ impl EditAgent {
     ) {
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
@@ -99,7 +100,7 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let new_chunks = this.request(previous_messages, prompt, cx).await?;
+            let new_chunks = this.request(conversation, prompt, cx).await?;
 
             let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
             while let Some(event) = inner_events.next().await {
@@ -194,7 +195,7 @@ impl EditAgent {
         &self,
         buffer: Entity<Buffer>,
         edit_description: String,
-        previous_messages: Vec<LanguageModelRequestMessage>,
+        conversation: &LanguageModelRequest,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -214,7 +215,9 @@ impl EditAgent {
 
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
+            println!("=======================");
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
             let prompt = EditFilePromptTemplate {
@@ -222,13 +225,15 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let edit_chunks = this.request(previous_messages, prompt, cx).await?;
+            let edit_chunks = this.request(conversation, prompt, cx).await?;
 
             let (output, mut inner_events) = this.apply_edit_chunks(buffer, edit_chunks, cx);
             while let Some(event) = inner_events.next().await {
                 events_tx.unbounded_send(event).ok();
             }
-            output.await
+            let res = output.await;
+            println!("=======================");
+            res
         });
         (output, events_rx)
     }
@@ -512,11 +517,11 @@ impl EditAgent {
 
     async fn request(
         &self,
-        mut messages: Vec<LanguageModelRequestMessage>,
+        mut conversation: LanguageModelRequest,
         prompt: String,
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
-        let mut messages_iter = messages.iter_mut();
+        let mut messages_iter = conversation.messages.iter_mut();
         if let Some(last_message) = messages_iter.next_back() {
             if last_message.role == Role::Assistant {
                 let old_content_len = last_message.content.len();
@@ -538,22 +543,23 @@ impl EditAgent {
                 }
 
                 if last_message.content.is_empty() {
-                    messages.pop();
+                    conversation.messages.pop();
                 }
             }
         }
 
-        messages.push(LanguageModelRequestMessage {
+        conversation.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![MessageContent::Text(prompt)],
             cache: false,
         });
+        // todo!("tool choice")
 
-        let request = LanguageModelRequest {
-            messages,
-            ..Default::default()
-        };
-        Ok(self.model.stream_completion_text(request, cx).await?.stream)
+        Ok(self
+            .model
+            .stream_completion_text(conversation, cx)
+            .await?
+            .stream)
     }
 
     fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {

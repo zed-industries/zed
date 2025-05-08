@@ -1225,12 +1225,16 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
+        let conversation = LanguageModelRequest {
+            messages: eval.conversation,
+            ..Default::default()
+        };
         let edit_output = if let Some(input_content) = eval.input_content.as_deref() {
             buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
             let (edit_output, _) = self.agent.edit(
                 buffer.clone(),
                 eval.edit_description,
-                eval.conversation,
+                &conversation,
                 &mut cx.to_async(),
             );
             edit_output.await?
@@ -1238,7 +1242,7 @@ impl EditAgentTest {
             let (edit_output, _) = self.agent.overwrite(
                 buffer.clone(),
                 eval.edit_description,
-                eval.conversation,
+                &conversation,
                 &mut cx.to_async(),
             );
             edit_output.await?
