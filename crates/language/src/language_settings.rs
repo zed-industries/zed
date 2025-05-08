@@ -29,6 +29,11 @@ use util::serde::default_true;
 /// Initializes the language settings.
 pub fn init(cx: &mut App) {
     AllLanguageSettings::register(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let settings = AllLanguageSettings::get_global(cx);
+        dbg!(settings.language(None, Some(&LanguageName::new("Markdown")), cx));
+    })
+    .detach();
 }
 
 /// Returns the settings for the specified language from the provided file.
@@ -381,6 +386,7 @@ fn default_lsp_fetch_timeout_ms() -> u64 {
 
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
