@@ -4949,14 +4949,37 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
+        // lsp always returns function with parentheses and args in "new_text"
+        // when "completeFunctionCalls" is being used, even when editing in middle of text
+        //
+        // in such cases, we use label instead
+        // https://github.com/zed-industries/zed/issues/29982
+        let text_source = completion
+            .label()
+            .filter(|label| {
+                completion.is_snippet()
+                    && completion.kind() == Some(CompletionItemKind::FUNCTION)
+                    && label != &completion.new_text
+            })
+            .and_then(|label| {
+                let buffer = self.buffer.read(cx).snapshot(cx);
+                let cursor_offset = self.selections.newest_anchor().head().to_offset(&buffer);
+                let next_char_is_not_whitespace = buffer
+                    .chars_at(cursor_offset)
+                    .next()
+                    .map_or(true, |ch| !ch.is_whitespace());
+                next_char_is_not_whitespace.then_some(label)
+            })
+            .unwrap_or(completion.new_text.clone());
+
         let snippet;
         let new_text;
         if completion.is_snippet() {
-            snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
+            snippet = Some(Snippet::parse(&text_source).log_err()?);
             new_text = snippet.as_ref().unwrap().text.clone();
         } else {
             snippet = None;
-            new_text = completion.new_text.clone();
+            new_text = text_source;
         };
 
         let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);

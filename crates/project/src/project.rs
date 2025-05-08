@@ -5169,15 +5169,25 @@ impl ProjectItem for Buffer {
 }
 
 impl Completion {
+    pub fn kind(&self) -> Option<CompletionItemKind> {
+        self.source
+            // `lsp::CompletionListItemDefaults` has no `kind` field
+            .lsp_completion(false)
+            .and_then(|lsp_completion| lsp_completion.kind)
+    }
+
+    pub fn label(&self) -> Option<String> {
+        self.source
+            .lsp_completion(false)
+            .and_then(|lsp_completion| Some(lsp_completion.label.clone()))
+    }
+
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
         const DEFAULT_KIND_KEY: usize = 3;
         let kind_key = self
-            .source
-            // `lsp::CompletionListItemDefaults` has no `kind` field
-            .lsp_completion(false)
-            .and_then(|lsp_completion| lsp_completion.kind)
+            .kind()
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
