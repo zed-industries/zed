@@ -13490,11 +13490,14 @@ dependencies = [
 name = "snippets_ui"
 version = "0.1.0"
 dependencies = [
+ "file_finder",
+ "file_icons",
  "fuzzy",
  "gpui",
  "language",
  "paths",
  "picker",
+ "settings",
  "ui",
  "util",
  "workspace",

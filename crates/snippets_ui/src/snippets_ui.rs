@@ -1,15 +1,49 @@
+use file_finder::file_finder_settings::FileFinderSettings;
+use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
     WeakEntity, Window, actions,
 };
-use language::LanguageRegistry;
+use language::{LanguageMatcher, LanguageName, LanguageRegistry};
 use paths::config_dir;
 use picker::{Picker, PickerDelegate};
-use std::{borrow::Borrow, fs, sync::Arc};
+use settings::Settings;
+use std::{borrow::Borrow, collections::HashSet, fs, path::Path, sync::Arc};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, OpenOptions, OpenVisible, Workspace, notifications::NotifyResultExt};
+
+#[derive(Eq, Hash, PartialEq)]
+struct ScopeName(String);
+
+struct ScopeFileName(String);
+
+impl ScopeFileName {
+    fn with_extension(self) -> String {
+        self.0 + ".json"
+    }
+}
+
+impl From<ScopeName> for ScopeFileName {
+    fn from(value: ScopeName) -> Self {
+        if value.0 == "global" {
+            ScopeFileName("snippets".to_string())
+        } else {
+            ScopeFileName(value.0)
+        }
+    }
+}
+
+impl From<ScopeFileName> for ScopeName {
+    fn from(value: ScopeFileName) -> Self {
+        if value.0 == "snippets" {
+            ScopeName("global".to_string())
+        } else {
+            ScopeName(value.0)
+        }
+    }
+}
 
 actions!(snippets, [ConfigureSnippets, OpenFolder]);
 
@@ -89,6 +123,7 @@ pub struct ScopeSelectorDelegate {
     candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    existing_scopes: HashSet<ScopeName>,
 }
 
 impl ScopeSelectorDelegate {
@@ -106,6 +141,24 @@ impl ScopeSelectorDelegate {
             .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
             .collect::<Vec<_>>();
 
+        let mut existing_scopes = HashSet::new();
+
+        if let Some(read_dir) = fs::read_dir(config_dir().join("snippets")).log_err() {
+            for entry in read_dir {
+                if let Some(entry) = entry.log_err() {
+                    let path = entry.path();
+                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension()) {
+                        if extension.to_os_string().into_string().unwrap() != "json" {
+                            continue;
+                        }
+                        if let Ok(file_name) = stem.to_os_string().into_string() {
+                            existing_scopes.insert(ScopeFileName(file_name).into());
+                        }
+                    }
+                }
+            }
+        }
+
         Self {
             workspace,
             scope_selector,
@@ -113,7 +166,47 @@ impl ScopeSelectorDelegate {
             candidates,
             matches: vec![],
             selected_index: 0,
+            existing_scopes,
         }
+    }
+
+    fn scope_data_for_match(&self, mat: &StringMatch, cx: &App) -> (Option<String>, Option<Icon>) {
+        let need_icon = FileFinderSettings::get_global(cx).file_icons;
+        let scope_name =
+            ScopeName(LanguageName::new(&self.candidates[mat.candidate_id].string).lsp_id());
+
+        let file_label = if self.existing_scopes.contains(&scope_name) {
+            Some(ScopeFileName::from(scope_name).with_extension())
+        } else {
+            None
+        };
+
+        let icon = need_icon
+            .then(|| {
+                let language_name = LanguageName::new(mat.string.as_str());
+                self.language_registry
+                    .available_language_for_name(language_name.as_ref())
+                    .and_then(|available_language| {
+                        self.scope_icon(available_language.matcher(), cx)
+                    })
+                    .or(Some(
+                        Icon::from_path(IconName::Globe.path())
+                            .map(|icon| icon.color(Color::Muted)),
+                    ))
+            })
+            .flatten();
+
+        (file_label, icon)
+    }
+
+    fn scope_icon(&self, matcher: &LanguageMatcher, cx: &App) -> Option<Icon> {
+        matcher
+            .path_suffixes
+            .iter()
+            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
+            .or(FileIcons::get(cx).get_icon_for_type("default", cx))
+            .map(Icon::from_path)
+            .map(|icon| icon.color(Color::Muted))
     }
 }
 
@@ -135,15 +228,17 @@ impl PickerDelegate for ScopeSelectorDelegate {
 
             if let Some(workspace) = self.workspace.upgrade() {
                 cx.spawn_in(window, async move |_, cx| {
-                    let scope = match scope_name.as_str() {
-                        "Global" => "snippets".to_string(),
+                    let scope_file_name = ScopeFileName(match scope_name.to_lowercase().as_str() {
+                        "global" => "snippets".to_string(),
                         _ => language.await?.lsp_id(),
-                    };
+                    });
 
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace
                             .open_abs_path(
-                                config_dir().join("snippets").join(scope + ".json"),
+                                config_dir()
+                                    .join("snippets")
+                                    .join(scope_file_name.with_extension()),
                                 OpenOptions {
                                     visible: Some(OpenVisible::None),
                                     ..Default::default()
@@ -228,17 +323,31 @@ impl PickerDelegate for ScopeSelectorDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let label = mat.string.clone();
+        let name_label = mat.string.clone();
+        let (file_label, language_icon) = self.scope_data_for_match(mat, cx);
+
+        let mut item = h_flex()
+            .gap_x_2()
+            .child(HighlightedLabel::new(name_label, mat.positions.clone()));
+
+        if let Some(path_label) = file_label {
+            item = item.child(
+                Label::new(path_label)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            );
+        }
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(HighlightedLabel::new(label, mat.positions.clone())),
+                .start_slot::<Icon>(language_icon)
+                .child(item),
         )
     }
 }
