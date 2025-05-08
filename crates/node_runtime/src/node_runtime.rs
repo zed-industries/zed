@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow, bail};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use collections::HashMap;
 use futures::AsyncReadExt;
 use http_client::{HttpClient, Url};
 use semver::Version;
@@ -15,7 +16,6 @@ use std::ffi::OsString;
 use std::io;
 use std::process::{Output, Stdio};
 use std::{
-    collections::HashMap,
     env::consts,
     path::{Path, PathBuf},
     sync::Arc,
@@ -139,10 +139,10 @@ impl NodeRuntime {
                 }
             }
         }
-        
+
         let http = state.http.clone();
-        drop(state);  // Release the lock before awaiting instance()
-        
+        drop(state); // Release the lock before awaiting instance()
+
         let output = self
             .instance()
             .await?

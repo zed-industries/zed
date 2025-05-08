@@ -9043,6 +9043,7 @@ dependencies = [
  "async-trait",
  "async-watch",
  "async_zip",
+ "collections",
  "futures 0.3.31",
  "http_client",
  "log",
