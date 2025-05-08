@@ -516,7 +516,6 @@ impl EditAgent {
         prompt: String,
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
-        let mut message_content = Vec::new();
         if let Some(last_message) = messages.last_mut() {
             if last_message.role == Role::Assistant {
                 last_message
@@ -527,10 +526,10 @@ impl EditAgent {
                 }
             }
         }
-        message_content.push(MessageContent::Text(prompt));
+
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: message_content,
+            content: vec![MessageContent::Text(prompt)],
             cache: false,
         });
 
