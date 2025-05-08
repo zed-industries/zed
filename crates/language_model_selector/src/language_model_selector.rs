@@ -405,16 +405,15 @@ impl ModelMatcher {
         }
     }
 
-    pub async fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
-        let matches = match_strings(
+    pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
+        let matches = self.bg_executor.block(match_strings(
             &self.candidates,
             &query,
             false,
             100,
             &Default::default(),
             self.bg_executor.clone(),
-        )
-        .await;
+        ));
 
         let matched_models: Vec<_> = matches
             .into_iter()
@@ -525,16 +524,12 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
         let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
 
+        let recommended = matcher_rec.exact_search(&query);
+        let all = matcher_all.fuzzy_search(&query);
+
+        let filtered_models = GroupedModels::new(all, recommended);
+
         cx.spawn_in(window, async move |this, cx| {
-            let filtered_models = cx
-                .background_spawn(async move {
-                    let recommended = matcher_rec.exact_search(&query);
-                    let all = matcher_all.fuzzy_search(&query).await;
-
-                    GroupedModels::new(all, recommended)
-                })
-                .await;
-
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries = filtered_models.entries();
                 // Preserve selection focus
