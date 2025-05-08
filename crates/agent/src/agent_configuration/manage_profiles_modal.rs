@@ -18,9 +18,9 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
-use crate::assistant_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
-use crate::assistant_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::{AssistantPanel, ManageProfiles, ThreadStore};
+use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
+use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
+use crate::{AgentPanel, ManageProfiles, ThreadStore};
 
 use super::tool_picker::ToolPickerMode;
 
@@ -115,7 +115,7 @@ impl ManageProfilesModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
-            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store();
                 let tools = thread_store.read(cx).tools();
@@ -124,7 +124,7 @@ impl ManageProfilesModal {
                     let mut this = Self::new(fs, tools, thread_store, window, cx);
 
                     if let Some(profile_id) = action.customize_tools.clone() {
-                        this.configure_tools(profile_id, window, cx);
+                        this.configure_builtin_tools(profile_id, window, cx);
                     }
 
                     this
@@ -190,7 +190,7 @@ impl ManageProfilesModal {
         self.focus_handle(cx).focus(window);
     }
 
-    fn configure_mcps(
+    fn configure_mcp_tools(
         &mut self,
         profile_id: AgentProfileId,
         window: &mut Window,
@@ -228,7 +228,7 @@ impl ManageProfilesModal {
         self.focus_handle(cx).focus(window);
     }
 
-    fn configure_tools(
+    fn configure_builtin_tools(
         &mut self,
         profile_id: AgentProfileId,
         window: &mut Window,
@@ -581,16 +581,20 @@ impl ManageProfilesModal {
                         )
                         .child(
                             div()
-                                .id("configure-tools")
+                                .id("configure-builtin-tools")
                                 .track_focus(&mode.configure_tools.focus_handle)
                                 .on_action({
                                     let profile_id = mode.profile_id.clone();
                                     cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                        this.configure_tools(profile_id.clone(), window, cx);
+                                        this.configure_builtin_tools(
+                                            profile_id.clone(),
+                                            window,
+                                            cx,
+                                        );
                                     })
                                 })
                                 .child(
-                                    ListItem::new("configure-tools")
+                                    ListItem::new("configure-builtin-tools-item")
                                         .toggle_state(
                                             mode.configure_tools
                                                 .focus_handle
@@ -603,11 +607,11 @@ impl ManageProfilesModal {
                                                 .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
-                                        .child(Label::new("Configure Tools"))
+                                        .child(Label::new("Configure Built-in Tools"))
                                         .on_click({
                                             let profile_id = mode.profile_id.clone();
                                             cx.listener(move |this, _, window, cx| {
-                                                this.configure_tools(
+                                                this.configure_builtin_tools(
                                                     profile_id.clone(),
                                                     window,
                                                     cx,
@@ -623,11 +627,11 @@ impl ManageProfilesModal {
                                 .on_action({
                                     let profile_id = mode.profile_id.clone();
                                     cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                        this.configure_mcps(profile_id.clone(), window, cx);
+                                        this.configure_mcp_tools(profile_id.clone(), window, cx);
                                     })
                                 })
                                 .child(
-                                    ListItem::new("configure-mcps")
+                                    ListItem::new("configure-mcp-tools")
                                         .toggle_state(
                                             mode.configure_mcps
                                                 .focus_handle
@@ -640,11 +644,15 @@ impl ManageProfilesModal {
                                                 .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
-                                        .child(Label::new("Configure MCP Servers"))
+                                        .child(Label::new("Configure MCP Tools"))
                                         .on_click({
                                             let profile_id = mode.profile_id.clone();
                                             cx.listener(move |this, _, window, cx| {
-                                                this.configure_mcps(profile_id.clone(), window, cx);
+                                                this.configure_mcp_tools(
+                                                    profile_id.clone(),
+                                                    window,
+                                                    cx,
+                                                );
                                             })
                                         }),
                                 ),
@@ -777,7 +785,7 @@ impl Render for ManageProfilesModal {
                     v_flex()
                         .pb_1()
                         .child(ProfileModalHeader::new(
-                            format!("{profile_name} — Configure Tools"),
+                            format!("{profile_name} — Configure Built-in Tools"),
                             Some(IconName::Cog),
                         ))
                         .child(ListSeparator)
@@ -800,7 +808,7 @@ impl Render for ManageProfilesModal {
                     v_flex()
                         .pb_1()
                         .child(ProfileModalHeader::new(
-                            format!("{profile_name} — Configure MCP Servers"),
+                            format!("{profile_name} — Configure MCP Tools"),
                             Some(IconName::Hammer),
                         ))
                         .child(ListSeparator)

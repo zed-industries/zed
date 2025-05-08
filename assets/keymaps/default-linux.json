@@ -214,25 +214,9 @@
     }
   },
   {
-    "context": "AssistantPanel",
-    "bindings": {
-      "ctrl-k c": "assistant::CopyCode",
-      "ctrl-shift-e": "project_panel::ToggleFocus",
-      "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPreviousMatch",
-      "ctrl-alt-/": "agent::ToggleModelSelector",
-      "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "agent::OpenRulesLibrary",
-      "new": "assistant::NewChat",
-      "ctrl-t": "assistant::NewChat",
-      "ctrl-n": "assistant::NewChat"
-    }
-  },
-  {
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
-      "ctrl-shift-enter": "assistant::Edit",
       "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
@@ -713,8 +697,8 @@
   {
     "context": "PromptEditor",
     "bindings": {
-      "ctrl-[": "assistant::CyclePreviousInlineAssist",
-      "ctrl-]": "assistant::CycleNextInlineAssist",
+      "ctrl-[": "agent::CyclePreviousInlineAssist",
+      "ctrl-]": "agent::CycleNextInlineAssist",
       "ctrl-alt-e": "agent::RemoveAllContext"
     }
   },

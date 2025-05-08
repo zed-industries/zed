@@ -5,15 +5,15 @@ use crate::{
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
     StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
+use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
 };
-use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
@@ -54,12 +54,11 @@ pub enum DebugPanelEvent {
 }
 
 actions!(debug_panel, [ToggleFocus]);
+
 pub struct DebugPanel {
     size: Pixels,
     sessions: Vec<Entity<DebugSession>>,
     active_session: Option<Entity<DebugSession>>,
-    /// This represents the last debug definition that was created in the new session modal
-    pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -80,7 +79,6 @@ impl DebugPanel {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
                 project,
                 workspace: workspace.weak_handle(),
@@ -991,6 +989,69 @@ impl DebugPanel {
         });
         self.active_session = Some(session_item);
         cx.notify();
+    }
+
+    pub(crate) fn save_scenario(
+        &self,
+        scenario: &DebugScenario,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
+                    return Task::ready(Err(anyhow!("Couldn't get worktree path")));
+                };
+
+                let serialized_scenario = serde_json::to_value(scenario);
+
+                path.push(paths::local_debug_file_relative_path());
+
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let serialized_scenario = serialized_scenario?;
+                    let path = path.as_path();
+                    let fs =
+                        workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+
+                    if !fs.is_file(path).await {
+                        let content =
+                            serde_json::to_string_pretty(&serde_json::Value::Array(vec![
+                                serialized_scenario,
+                            ]))?;
+
+                        fs.create_file(path, Default::default()).await?;
+                        fs.save(path, &content.into(), Default::default()).await?;
+                    } else {
+                        let content = fs.load(path).await?;
+                        let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&content)?;
+                        values.push(serialized_scenario);
+                        fs.save(
+                            path,
+                            &serde_json::to_string_pretty(&values).map(Into::into)?,
+                            Default::default(),
+                        )
+                        .await?;
+                    }
+
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        if let Some(project_path) = workspace
+                            .project()
+                            .read(cx)
+                            .project_path_for_absolute_path(&path, cx)
+                        {
+                            workspace.open_path(project_path, None, true, window, cx)
+                        } else {
+                            Task::ready(Err(anyhow!(
+                                "Couldn't get project path for .zed/debug.json in active worktree"
+                            )))
+                        }
+                    })?.await?;
+
+                    anyhow::Ok(())
+                })
+            })
+            .unwrap_or_else(|err| Task::ready(Err(err)))
     }
 }
 

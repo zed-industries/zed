@@ -78,6 +78,11 @@ impl From<DebugAdapterName> for SharedString {
         name.0
     }
 }
+impl From<SharedString> for DebugAdapterName {
+    fn from(name: SharedString) -> Self {
+        DebugAdapterName(name)
+    }
+}
 
 impl<'a> From<&'a str> for DebugAdapterName {
     fn from(str: &'a str) -> DebugAdapterName {

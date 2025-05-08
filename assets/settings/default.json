@@ -356,6 +356,45 @@
       "vertical": true
     }
   },
+  // Minimap related settings
+  "minimap": {
+    // When to show the minimap in the editor.
+    // This setting can take three values:
+    // 1. Show the minimap if the editor's scrollbar is visible:
+    //    "auto"
+    // 2. Always show the minimap:
+    //    "always"
+    // 3. Never show the minimap:
+    //    "never" (default)
+    "show": "never",
+    // When to show the minimap thumb.
+    // This setting can take two values:
+    // 1. Show the minimap thumb if the mouse is over the minimap:
+    //    "hover"
+    // 2. Always show the minimap thumb:
+    //    "always" (default)
+    "thumb": "always",
+    // How the minimap thumb border should look.
+    // This setting can take five values:
+    // 1. Display a border on all sides of the thumb:
+    //    "thumb_border": "full"
+    // 2. Display a border on all sides except the left side of the thumb:
+    //    "thumb_border": "left_open" (default)
+    // 3. Display a border on all sides except the right side of the thumb:
+    //    "thumb_border": "right_open"
+    // 4. Display a border only on the left side of the thumb:
+    //    "thumb_border": "left_only"
+    // 5. Display the thumb without any border:
+    //    "thumb_border": "none"
+    "thumb_border": "left_open",
+    // How to highlight the current line in the minimap.
+    // This setting can take the following values:
+    //
+    // 1. `null` to inherit the editor `current_line_highlight` setting (default)
+    // 2. "line" or "all" to highlight the current line in the minimap.
+    // 3. "gutter" or "none" to not highlight the current line in the minimap.
+    "current_line_highlight": null
+  },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts

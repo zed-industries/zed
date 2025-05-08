@@ -76,7 +76,6 @@ workspace-hack.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
-assistant = { workspace = true, features = ["test-support"] }
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
 assistant_slash_command.workspace = true

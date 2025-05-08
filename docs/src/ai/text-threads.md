@@ -228,7 +228,6 @@ Zed has the following internal rule templates:
 
 - `content_prompt.hbs`: Used for generating content in the editor.
 - `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
-- `suggest_edits.hbs`: Used for generating the model instructions for the XML Suggest Edits should return.
 
 At this point it is unknown if we will expand templates further to be user-creatable.
 
@@ -243,8 +242,6 @@ The following templates can be overridden:
 1. [`content_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/content_prompt.hbs): Used for generating content in the editor.
 
 2. [`terminal_assistant_prompt.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/terminal_assistant_prompt.hbs): Used for the terminal assistant feature.
-
-3. [`suggest_edits.hbs`](https://github.com/zed-industries/zed/tree/main/assets/prompts/suggest_edits.hbs): Used for generating the model instructions for the XML Suggest Edits should return.
 
 > **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
 

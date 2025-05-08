@@ -3906,11 +3906,7 @@ impl Project {
         })
     }
 
-    pub fn resolve_abs_path(
-        &self,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<ResolvedPath>> {
+    pub fn resolve_abs_path(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
@@ -5122,6 +5118,13 @@ impl ResolvedPath {
     pub fn abs_path(&self) -> Option<&Path> {
         match self {
             Self::AbsPath { path, .. } => Some(path.as_path()),
+            _ => None,
+        }
+    }
+
+    pub fn into_abs_path(self) -> Option<PathBuf> {
+        match self {
+            Self::AbsPath { path, .. } => Some(path),
             _ => None,
         }
     }

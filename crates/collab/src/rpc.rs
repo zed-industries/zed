@@ -2709,7 +2709,7 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
     let billing_customer = db.get_billing_customer_by_user_id(user_id).await?;
     let billing_preferences = db.get_billing_preferences(user_id).await?;
 
-    let usage = if let Some(llm_db) = session.app_state.llm_db.clone() {
+    let (subscription_period, usage) = if let Some(llm_db) = session.app_state.llm_db.clone() {
         let subscription = db.get_active_billing_subscription(user_id).await?;
 
         let subscription_period = crate::db::billing_subscription::Model::current_period(
@@ -2717,15 +2717,17 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
             session.is_staff(),
         );
 
-        if let Some((period_start_at, period_end_at)) = subscription_period {
+        let usage = if let Some((period_start_at, period_end_at)) = subscription_period {
             llm_db
                 .get_subscription_usage_for_period(user_id, period_start_at, period_end_at)
                 .await?
         } else {
             None
-        }
+        };
+
+        (subscription_period, usage)
     } else {
-        None
+        (None, None)
     };
 
     session
@@ -2743,6 +2745,12 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
                     billing_preferences
                         .map(|preferences| preferences.model_request_overages_enabled)
                 },
+                subscription_period: subscription_period.map(|(started_at, ended_at)| {
+                    proto::SubscriptionPeriod {
+                        started_at: started_at.timestamp() as u64,
+                        ended_at: ended_at.timestamp() as u64,
+                    }
+                }),
                 usage: usage.map(|usage| {
                     let plan = match plan {
                         proto::Plan::Free => zed_llm_client::Plan::Free,

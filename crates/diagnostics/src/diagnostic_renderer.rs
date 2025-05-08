@@ -145,6 +145,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
                     priority: 1,
+                    render_in_minimap: false,
                 }
             })
             .collect()

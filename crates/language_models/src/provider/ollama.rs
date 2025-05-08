@@ -5,7 +5,8 @@ use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRequestTool, LanguageModelToolUse, LanguageModelToolUseId, StopReason,
+    LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
+    LanguageModelToolUseId, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -322,6 +323,14 @@ impl LanguageModel for OllamaLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tools.unwrap_or(false)
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => false,
+            LanguageModelToolChoice::Any => false,
+            LanguageModelToolChoice::None => false,
+        }
     }
 
     fn telemetry_id(&self) -> String {

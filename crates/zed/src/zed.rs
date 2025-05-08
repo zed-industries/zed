@@ -12,7 +12,7 @@ use agent::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant_context_editor::AssistantPanelDelegate;
+use assistant_context_editor::AgentPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
@@ -61,7 +61,7 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{BaseKeymap, MultibufferHint};
+use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -71,7 +71,7 @@ use workspace::{
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
 
 actions!(
@@ -433,31 +433,19 @@ fn initialize_panels(
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
-
-        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-            let assistant2_panel =
-                agent::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+        let agent_panel = if is_assistant2_enabled {
+            let agent_panel =
+                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
-            (None, Some(assistant2_panel))
+            Some(agent_panel)
         } else {
-            let assistant_panel = assistant::AssistantPanel::load(
-                workspace_handle.clone(),
-                prompt_builder.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            (Some(assistant_panel), None)
+            None
         };
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(assistant2_panel) = assistant2_panel {
-                workspace.add_panel(assistant2_panel, window, cx);
-            }
-
-            if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, window, cx);
+            if let Some(agent_panel) = agent_panel {
+                workspace.add_panel(agent_panel, window, cx);
             }
 
             // Register the actions that are shared between `assistant` and `assistant2`.
@@ -465,25 +453,16 @@ fn initialize_panels(
             // We need to do this here instead of within the individual `init`
             // functions so that we only register the actions once.
             //
-            // Once we ship `assistant2` we can push this back down into `agent::assistant_panel::init`.
+            // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
             if is_assistant2_enabled {
-                <dyn AssistantPanelDelegate>::set_global(
+                <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(agent::AssistantPanel::toggle_focus)
+                    .register_action(agent::AgentPanel::toggle_focus)
                     .register_action(agent::InlineAssistant::inline_assist);
-            } else {
-                <dyn AssistantPanelDelegate>::set_global(
-                    Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
-                    cx,
-                );
-
-                workspace
-                    .register_action(assistant::AssistantPanel::toggle_focus)
-                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 
@@ -500,6 +479,7 @@ fn register_actions(
 ) {
     workspace
         .register_action(about)
+        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -721,7 +701,7 @@ fn register_actions(
         })
         .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
             open_settings_file(
-                paths::debug_tasks_file(),
+                paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
                 window,
                 cx,
@@ -4241,10 +4221,11 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            assistant::init(
+            agent::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
                 prompt_builder.clone(),
+                app_state.languages.clone(),
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);
