@@ -2,24 +2,28 @@ use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag, ZedProFeatureFlag};
+use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
-use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
+use gpui::{
+    AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
+};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolSchemaFormat,
-    ModelRequestLimitReachedError, RateLimiter, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
     MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
 };
 use proto::Plan;
+use release_channel::AppVersion;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::{Settings, SettingsStore};
@@ -39,7 +43,7 @@ use zed_llm_client::{
     CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
     MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME,
+    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
@@ -526,6 +530,7 @@ impl CloudLanguageModel {
     async fn perform_llm_completion(
         client: Arc<Client>,
         llm_api_token: LlmApiToken,
+        app_version: Option<SemanticVersion>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
@@ -535,13 +540,15 @@ impl CloudLanguageModel {
         let mut retry_delay = Duration::from_secs(1);
 
         loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
-            {
-                request_builder.uri(completions_url)
+            let request_builder = http_client::Request::builder()
+                .method(Method::POST)
+                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
+            let request_builder = if let Some(app_version) = app_version {
+                request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
             } else {
-                request_builder.uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
+                request_builder
             };
+
             let request = request_builder
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
@@ -676,6 +683,14 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id())
     }
@@ -724,17 +739,6 @@ impl LanguageModel for CloudLanguageModel {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
 
-                    let request_builder = http_client::Request::builder().method(Method::POST);
-                    let request_builder =
-                        if let Ok(completions_url) = std::env::var("ZED_COUNT_TOKENS_URL") {
-                            request_builder.uri(completions_url)
-                        } else {
-                            request_builder.uri(
-                                http_client
-                                    .build_zed_llm_url("/count_tokens", &[])?
-                                    .as_ref(),
-                            )
-                        };
                     let request_body = CountTokensBody {
                         provider: zed_llm_client::LanguageModelProvider::Google,
                         model: model_id,
@@ -742,7 +746,13 @@ impl LanguageModel for CloudLanguageModel {
                             generate_content_request,
                         })?,
                     };
-                    let request = request_builder
+                    let request = http_client::Request::builder()
+                        .method(Method::POST)
+                        .uri(
+                            http_client
+                                .build_zed_llm_url("/count_tokens", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "application/json")
                         .header("Authorization", format!("Bearer {token}"))
                         .body(serde_json::to_string(&request_body)?.into())?;
@@ -774,7 +784,7 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _cx: &AsyncApp,
+        cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
@@ -784,6 +794,7 @@ impl LanguageModel for CloudLanguageModel {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
         let mode = request.mode;
+        let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         match &self.model {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
@@ -804,6 +815,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        app_version,
                         CompletionBody {
                             thread_id,
                             prompt_id,
@@ -855,6 +867,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        app_version,
                         CompletionBody {
                             thread_id,
                             prompt_id,
@@ -891,6 +904,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         client.clone(),
                         llm_api_token,
+                        app_version,
                         CompletionBody {
                             thread_id,
                             prompt_id,
@@ -1013,48 +1027,56 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ZED_AI_URL: &str = "https://zed.dev/ai";
+        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
 
         let is_connected = !self.state.read(cx).is_signed_out();
-        let plan = self.state.read(cx).user_store.read(cx).current_plan();
+        let user_store = self.state.read(cx).user_store.read(cx);
+        let plan = user_store.current_plan();
+        let subscription_period = user_store.subscription_period();
+        let eligible_for_trial = user_store.trial_started_at().is_none();
         let has_accepted_terms = self.state.read(cx).has_accepted_terms_of_service(cx);
 
         let is_pro = plan == Some(proto::Plan::ZedPro);
-        let subscription_text = Label::new(if is_pro {
-            "You have full access to Zed's hosted LLMs, which include models from Anthropic, OpenAI, and Google. They come with faster speeds and higher limits through Zed Pro."
+        let subscription_text = match (plan, subscription_period) {
+            (Some(proto::Plan::ZedPro), Some(_)) => {
+                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+            }
+            (Some(proto::Plan::ZedProTrial), Some(_)) => {
+                "You have access to Zed's hosted LLMs through your Zed Pro trial."
+            }
+            (Some(proto::Plan::Free), Some(_)) => {
+                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
+            }
+            _ => {
+                if eligible_for_trial {
+                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
+                } else {
+                    "Subscribe for access to Zed's hosted LLMs."
+                }
+            }
+        };
+        let manage_subscription_buttons = if is_pro {
+            h_flex().child(
+                Button::new("manage_settings", "Manage Subscription")
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
+            )
         } else {
-            "You have basic access to models from Anthropic through the Zed AI Free plan."
-        });
-        let manage_subscription_button = if is_pro {
-            Some(
-                h_flex().child(
-                    Button::new("manage_settings", "Manage Subscription")
-                        .style(ButtonStyle::Tinted(TintColor::Accent))
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("learn_more", "Learn more")
+                        .style(ButtonStyle::Subtle)
+                        .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_PRICING_URL))),
+                )
+                .child(
+                    Button::new("upgrade", "Upgrade")
+                        .style(ButtonStyle::Subtle)
+                        .color(Color::Accent)
                         .on_click(
                             cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
                         ),
-                ),
-            )
-        } else if cx.has_flag::<ZedProFeatureFlag>() {
-            Some(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("learn_more", "Learn more")
-                            .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_AI_URL))),
-                    )
-                    .child(
-                        Button::new("upgrade", "Upgrade")
-                            .style(ButtonStyle::Subtle)
-                            .color(Color::Accent)
-                            .on_click(
-                                cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
-                            ),
-                    ),
-            )
-        } else {
-            None
+                )
         };
 
         if is_connected {
@@ -1068,7 +1090,7 @@ impl Render for ConfigurationView {
                 ))
                 .when(has_accepted_terms, |this| {
                     this.child(subscription_text)
-                        .children(manage_subscription_button)
+                        .child(manage_subscription_buttons)
                 })
         } else {
             v_flex()

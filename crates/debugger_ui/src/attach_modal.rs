@@ -32,12 +32,12 @@ pub(crate) struct AttachModalDelegate {
 
 impl AttachModalDelegate {
     fn new(
-        workspace: Entity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         definition: DebugTaskDefinition,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
-            workspace: workspace.downgrade(),
+            workspace,
             definition,
             candidates,
             selected_index: 0,
@@ -55,7 +55,7 @@ pub struct AttachModal {
 impl AttachModal {
     pub fn new(
         definition: DebugTaskDefinition,
-        workspace: Entity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -82,7 +82,7 @@ impl AttachModal {
     }
 
     pub(super) fn with_processes(
-        workspace: Entity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         definition: DebugTaskDefinition,
         processes: Arc<[Candidate]>,
         modal: bool,
@@ -237,7 +237,7 @@ impl PickerDelegate for AttachModalDelegate {
             .flatten();
         if let Some(panel) = panel {
             panel.update(cx, |panel, cx| {
-                panel.start_session(scenario, Default::default(), None, window, cx);
+                panel.start_session(scenario, Default::default(), None, None, window, cx);
             });
         }
 

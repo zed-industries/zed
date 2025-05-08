@@ -52,7 +52,7 @@ struct Args {
     /// Model provider to use.
     #[arg(long, default_value = "anthropic")]
     provider: String,
-    #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
+    #[arg(long, value_delimiter = ',', default_value = "rs,ts,py")]
     languages: Vec<String>,
     /// How many times to run each example.
     #[arg(long, default_value = "8")]

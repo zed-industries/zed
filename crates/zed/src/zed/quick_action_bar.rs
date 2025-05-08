@@ -15,8 +15,8 @@ use gpui::{
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconName, IconSize, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
+    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -101,6 +101,8 @@ impl Render for QuickActionBar {
         let show_edit_predictions = editor_value.edit_predictions_enabled();
         let edit_predictions_enabled_at_cursor =
             editor_value.edit_predictions_enabled_at_cursor(cx);
+        let supports_minimap = editor_value.supports_minimap();
+        let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
 
         let focus_handle = editor_value.focus_handle(cx);
 
@@ -244,7 +246,6 @@ impl Render for QuickActionBar {
                                         }
                                     }
                                 );
-
                             }
 
                             if supports_inline_diagnostics {
@@ -270,6 +271,23 @@ impl Render for QuickActionBar {
                                 );
                             }
 
+                            if supports_minimap {
+                                menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_minimap(
+                                                    &editor::actions::ToggleMinimap,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                },)
+                            }
+
                             if has_edit_prediction_provider {
                                 let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
                                     .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
@@ -291,7 +309,7 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                    inline_completion_entry = inline_completion_entry.documentation_aside(DocumentationSide::Left, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }
@@ -433,7 +451,6 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .p(DynamicSpacing::Base08.rems(cx))
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))

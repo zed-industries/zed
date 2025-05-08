@@ -56,13 +56,13 @@ dependencies = [
  "assistant_context_editor",
  "assistant_settings",
  "assistant_slash_command",
+ "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
  "buffer_diff",
  "chrono",
  "client",
  "collections",
- "command_palette_hooks",
  "component",
  "context_server",
  "convert_case 0.8.0",
@@ -79,6 +79,7 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
+ "indexed_docs",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
@@ -472,68 +473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_context_editor",
- "assistant_settings",
- "assistant_slash_command",
- "assistant_slash_commands",
- "assistant_tool",
- "async-watch",
- "client",
- "collections",
- "command_palette_hooks",
- "ctor",
- "db",
- "editor",
- "env_logger 0.11.8",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indexed_docs",
- "indoc",
- "language",
- "language_model",
- "language_model_selector",
- "languages",
- "log",
- "lsp",
- "menu",
- "multi_buffer",
- "parking_lot",
- "pretty_assertions",
- "project",
- "prompt_store",
- "proto",
- "rand 0.8.5",
- "rope",
- "rules_library",
- "schemars",
- "search",
- "serde",
- "serde_json_lenient",
- "settings",
- "smol",
- "streaming_diff",
- "telemetry",
- "telemetry_events",
- "terminal",
- "terminal_view",
- "text",
- "theme",
- "tree-sitter-md",
- "ui",
- "unindent",
- "util",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
@@ -547,7 +486,6 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -575,7 +513,6 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "strum 0.27.1",
  "telemetry_events",
  "text",
  "theme",
@@ -595,8 +532,8 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "collections",
  "deepseek",
- "feature_flags",
  "fs",
  "gpui",
  "indexmap",
@@ -608,9 +545,11 @@ dependencies = [
  "paths",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "settings",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -3002,8 +2941,8 @@ name = "collab"
 version = "0.44.0"
 dependencies = [
  "anyhow",
- "assistant",
  "assistant_context_editor",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",
@@ -3237,6 +3176,7 @@ dependencies = [
  "gpui",
  "linkme",
  "parking_lot",
+ "strum 0.27.1",
  "theme",
  "workspace-hack",
 ]
@@ -4066,7 +4006,6 @@ dependencies = [
  "http_client",
  "language",
  "log",
- "lsp-types",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -4099,9 +4038,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dap",
+ "futures 0.3.31",
  "gpui",
  "language",
- "lsp-types",
  "paths",
  "serde",
  "serde_json",
@@ -4246,6 +4185,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "dap",
+ "dap_adapters",
  "db",
  "debugger_tools",
  "editor",
@@ -4258,6 +4198,7 @@ dependencies = [
  "log",
  "menu",
  "parking_lot",
+ "paths",
  "picker",
  "pretty_assertions",
  "project",
@@ -7794,6 +7735,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -7901,6 +7843,7 @@ dependencies = [
  "partial-json-fixer",
  "project",
  "proto",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
@@ -12009,6 +11952,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "assistant_tool",
+ "assistant_tools",
  "async-watch",
  "backtrace",
  "cargo_toml",
@@ -12031,6 +11976,7 @@ dependencies = [
  "http_client",
  "language",
  "language_extension",
+ "language_model",
  "languages",
  "libc",
  "log",
@@ -14745,6 +14691,7 @@ dependencies = [
  "log",
  "project",
  "rand 0.8.5",
+ "regex",
  "schemars",
  "search",
  "serde",
@@ -15081,7 +15028,6 @@ dependencies = [
  "client",
  "collections",
  "db",
- "feature_flags",
  "gpui",
  "http_client",
  "notifications",
@@ -18154,6 +18100,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "node_runtime",
  "parking_lot",
  "postage",
@@ -18689,7 +18636,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.186.0"
+version = "0.187.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18697,7 +18644,6 @@ dependencies = [
  "ashpd",
  "askpass",
  "assets",
- "assistant",
  "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",
@@ -18879,9 +18825,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.5"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fe0d60001c02d0d21a4114a13bee3a905fbb9e146ada80a90435c05fda18852"
+checksum = "a23b2fd00776b0c55072f389654910ceb501eb0083d7f78905ab0e5cc86949ec"
 dependencies = [
  "anyhow",
  "serde",

@@ -229,10 +229,11 @@ impl Inventory {
     pub fn task_template_by_label(
         &self,
         buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         label: &str,
         cx: &App,
     ) -> Option<TaskTemplate> {
-        let (worktree_id, file, language) = buffer
+        let (buffer_worktree_id, file, language) = buffer
             .map(|buffer| {
                 let buffer = buffer.read(cx);
                 let file = buffer.file().cloned();
@@ -244,7 +245,7 @@ impl Inventory {
             })
             .unwrap_or((None, None, None));
 
-        self.list_tasks(file, language, worktree_id, cx)
+        self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx)
             .iter()
             .find(|(_, template)| template.label == label)
             .map(|val| val.1.clone())
@@ -807,10 +808,6 @@ impl ContextProvider for BasicContextProvider {
 
         Task::ready(Ok(task_variables))
     }
-
-    fn debug_adapter(&self) -> Option<String> {
-        None
-    }
 }
 
 /// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
@@ -833,10 +830,6 @@ impl ContextProvider for ContextProviderWithTasks {
         _: &App,
     ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
-    }
-
-    fn debug_adapter(&self) -> Option<String> {
-        None
     }
 }
 

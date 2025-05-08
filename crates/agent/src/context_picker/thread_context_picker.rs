@@ -154,7 +154,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -165,7 +165,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
                     return;
                 };
                 let open_thread_task =
-                    thread_store.update(cx, |this, cx| this.open_thread(&id, cx));
+                    thread_store.update(cx, |this, cx| this.open_thread(&id, window, cx));
 
                 cx.spawn(async move |this, cx| {
                     let thread = open_thread_task.await?;

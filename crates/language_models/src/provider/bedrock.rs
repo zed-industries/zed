@@ -15,11 +15,11 @@ use bedrock::bedrock_client::types::{
     StopReason,
 };
 use bedrock::{
-    BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent, BedrockMessage,
-    BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock,
-    BedrockTool, BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema,
-    BedrockToolResultBlock, BedrockToolResultContentBlock, BedrockToolResultStatus,
-    BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent,
+    BedrockMessage, BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock,
+    BedrockThinkingTextBlock, BedrockTool, BedrockToolChoice, BedrockToolConfig,
+    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
+    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -35,8 +35,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, TokenUsage,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -490,6 +490,15 @@ impl LanguageModel for BedrockModel {
         self.model.supports_tool_use()
     }
 
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
+                self.model.supports_tool_use()
+            }
+            LanguageModelToolChoice::None => false,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("bedrock/{}", self.model.id())
     }
@@ -689,11 +698,20 @@ pub fn into_bedrock(
         })
         .collect();
 
+    let tool_choice = match request.tool_choice {
+        Some(LanguageModelToolChoice::Auto) | None => {
+            BedrockToolChoice::Auto(BedrockAutoToolChoice::builder().build())
+        }
+        Some(LanguageModelToolChoice::Any) => {
+            BedrockToolChoice::Any(BedrockAnyToolChoice::builder().build())
+        }
+        Some(LanguageModelToolChoice::None) => {
+            return Err(anyhow!("LanguageModelToolChoice::None is not supported"));
+        }
+    };
     let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
         .set_tools(Some(tool_spec))
-        .tool_choice(BedrockToolChoice::Auto(
-            BedrockAutoToolChoice::builder().build(),
-        ))
+        .tool_choice(tool_choice)
         .build()?;
 
     Ok(bedrock::Request {

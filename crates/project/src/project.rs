@@ -894,7 +894,6 @@ impl Project {
                     client.http_client(),
                     node.clone(),
                     fs.clone(),
-                    languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
@@ -1131,9 +1130,10 @@ impl Project {
                     cx.on_release(Self::release),
                     cx.on_app_quit(|this, cx| {
                         let shutdown = this.ssh_client.take().and_then(|client| {
-                            client
-                                .read(cx)
-                                .shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+                            client.read(cx).shutdown_processes(
+                                Some(proto::ShutdownRemoteServer {}),
+                                cx.background_executor().clone(),
+                            )
                         });
 
                         cx.background_executor().spawn(async move {
@@ -1473,9 +1473,10 @@ impl Project {
 
     fn release(&mut self, cx: &mut App) {
         if let Some(client) = self.ssh_client.take() {
-            let shutdown = client
-                .read(cx)
-                .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
+            let shutdown = client.read(cx).shutdown_processes(
+                Some(proto::ShutdownRemoteServer {}),
+                cx.background_executor().clone(),
+            );
 
             cx.background_spawn(async move {
                 if let Some(shutdown) = shutdown {
@@ -3563,52 +3564,43 @@ impl Project {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let snapshot = buffer_handle.read(cx).snapshot();
+        let language_name = buffer_handle
+            .read(cx)
+            .language()
+            .map(|language| language.name().to_string());
 
-        let adapter = session.read(cx).adapter();
-        let Some(inline_value_provider) = DapRegistry::global(cx)
-            .adapter(&adapter)
-            .and_then(|adapter| adapter.inline_value_provider())
+        let Some(inline_value_provider) = language_name
+            .and_then(|language| DapRegistry::global(cx).inline_value_provider(&language))
         else {
             return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
         };
 
-        let mut text_objects =
-            snapshot.text_object_ranges(range.end..range.end, Default::default());
-        let text_object_range = text_objects
-            .find(|(_, obj)| matches!(obj, language::TextObject::AroundFunction))
-            .map(|(range, _)| snapshot.anchor_before(range.start))
-            .unwrap_or(range.start);
+        let snapshot = buffer_handle.read(cx).snapshot();
 
-        let variable_ranges = snapshot
-            .debug_variable_ranges(
-                text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
-            )
-            .filter_map(|range| {
-                let lsp_range = language::range_to_lsp(
-                    range.range.start.to_point_utf16(&snapshot)
-                        ..range.range.end.to_point_utf16(&snapshot),
-                )
-                .ok()?;
+        let root_node = snapshot.syntax_root_ancestor(range.end).unwrap();
 
-                Some((
-                    snapshot.text_for_range(range.range).collect::<String>(),
-                    lsp_range,
-                ))
-            })
-            .collect::<Vec<_>>();
+        let row = snapshot
+            .summary_for_anchor::<text::PointUtf16>(&range.end)
+            .row as usize;
 
-        let inline_values = inline_value_provider.provide(variable_ranges);
+        let inline_value_locations = inline_value_provider.provide(
+            root_node,
+            snapshot
+                .text_for_range(Anchor::MIN..range.end)
+                .collect::<String>()
+                .as_str(),
+            row,
+        );
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |project, cx| {
                 project.dap_store().update(cx, |dap_store, cx| {
-                    dap_store.resolve_inline_values(
+                    dap_store.resolve_inline_value_locations(
                         session,
                         stack_frame_id,
                         buffer_handle,
-                        inline_values,
+                        inline_value_locations,
                         cx,
                     )
                 })
@@ -3914,11 +3906,7 @@ impl Project {
         })
     }
 
-    pub fn resolve_abs_path(
-        &self,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<ResolvedPath>> {
+    pub fn resolve_abs_path(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
@@ -4177,23 +4165,36 @@ impl Project {
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree_root_name = worktree.read(cx).root_name();
-            if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: relative_path.into(),
-                });
-            }
-        }
+        if path.is_absolute() {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_abs_path = worktree.read(cx).abs_path();
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree = worktree.read(cx);
-            if let Some(entry) = worktree.entry_for_path(path) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: entry.path.clone(),
-                });
+                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+        } else {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_root_name = worktree.read(cx).root_name();
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_path(path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
             }
         }
 
@@ -5130,6 +5131,13 @@ impl ResolvedPath {
     pub fn abs_path(&self) -> Option<&Path> {
         match self {
             Self::AbsPath { path, .. } => Some(path.as_path()),
+            _ => None,
+        }
+    }
+
+    pub fn into_abs_path(self) -> Option<PathBuf> {
+        match self {
+            Self::AbsPath { path, .. } => Some(path),
             _ => None,
         }
     }
