@@ -19,10 +19,10 @@ use util::ResultExt;
 
 use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::thread_store::SerializedThreadMetadata;
-use crate::{AssistantPanel, RemoveSelectedThread};
+use crate::{AgentPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
-    assistant_panel: WeakEntity<AssistantPanel>,
+    agent_panel: WeakEntity<AgentPanel>,
     history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -69,7 +69,7 @@ impl HistoryListItem {
 
 impl ThreadHistory {
     pub(crate) fn new(
-        assistant_panel: WeakEntity<AssistantPanel>,
+        agent_panel: WeakEntity<AgentPanel>,
         history_store: Entity<HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -96,7 +96,7 @@ impl ThreadHistory {
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
-            assistant_panel,
+            agent_panel,
             history_store,
             scroll_handle,
             selected_index: 0,
@@ -380,14 +380,12 @@ impl ThreadHistory {
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self.get_match(self.selected_index) {
             let task_result = match entry {
-                HistoryEntry::Thread(thread) => self.assistant_panel.update(cx, move |this, cx| {
+                HistoryEntry::Thread(thread) => self.agent_panel.update(cx, move |this, cx| {
                     this.open_thread_by_id(&thread.id, window, cx)
                 }),
-                HistoryEntry::Context(context) => {
-                    self.assistant_panel.update(cx, move |this, cx| {
-                        this.open_saved_prompt_editor(context.path.clone(), window, cx)
-                    })
-                }
+                HistoryEntry::Context(context) => self.agent_panel.update(cx, move |this, cx| {
+                    this.open_saved_prompt_editor(context.path.clone(), window, cx)
+                }),
             };
 
             if let Some(task) = task_result.log_err() {
@@ -407,10 +405,10 @@ impl ThreadHistory {
         if let Some(entry) = self.get_match(self.selected_index) {
             let task_result = match entry {
                 HistoryEntry::Thread(thread) => self
-                    .assistant_panel
+                    .agent_panel
                     .update(cx, |this, cx| this.delete_thread(&thread.id, cx)),
                 HistoryEntry::Context(context) => self
-                    .assistant_panel
+                    .agent_panel
                     .update(cx, |this, cx| this.delete_context(context.path.clone(), cx)),
             };
 
@@ -506,7 +504,7 @@ impl ThreadHistory {
         match entry {
             HistoryEntry::Thread(thread) => PastThread::new(
                 thread.clone(),
-                self.assistant_panel.clone(),
+                self.agent_panel.clone(),
                 is_active,
                 highlight_positions,
                 format,
@@ -514,7 +512,7 @@ impl ThreadHistory {
             .into_any_element(),
             HistoryEntry::Context(context) => PastContext::new(
                 context.clone(),
-                self.assistant_panel.clone(),
+                self.agent_panel.clone(),
                 is_active,
                 highlight_positions,
                 format,
@@ -605,7 +603,7 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: SerializedThreadMetadata,
-    assistant_panel: WeakEntity<AssistantPanel>,
+    agent_panel: WeakEntity<AgentPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
     timestamp_format: EntryTimeFormat,
@@ -614,14 +612,14 @@ pub struct PastThread {
 impl PastThread {
     pub fn new(
         thread: SerializedThreadMetadata,
-        assistant_panel: WeakEntity<AssistantPanel>,
+        agent_panel: WeakEntity<AgentPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
         timestamp_format: EntryTimeFormat,
     ) -> Self {
         Self {
             thread,
-            assistant_panel,
+            agent_panel,
             selected,
             highlight_positions,
             timestamp_format,
@@ -634,7 +632,7 @@ impl RenderOnce for PastThread {
         let summary = self.thread.summary;
 
         let thread_timestamp = self.timestamp_format.format_timestamp(
-            &self.assistant_panel,
+            &self.agent_panel,
             self.thread.updated_at.timestamp(),
             cx,
         );
@@ -667,10 +665,10 @@ impl RenderOnce for PastThread {
                                 Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                             })
                             .on_click({
-                                let assistant_panel = self.assistant_panel.clone();
+                                let agent_panel = self.agent_panel.clone();
                                 let id = self.thread.id.clone();
                                 move |_event, _window, cx| {
-                                    assistant_panel
+                                    agent_panel
                                         .update(cx, |this, cx| {
                                             this.delete_thread(&id, cx).detach_and_log_err(cx);
                                         })
@@ -680,10 +678,10 @@ impl RenderOnce for PastThread {
                     ),
             )
             .on_click({
-                let assistant_panel = self.assistant_panel.clone();
+                let agent_panel = self.agent_panel.clone();
                 let id = self.thread.id.clone();
                 move |_event, window, cx| {
-                    assistant_panel
+                    agent_panel
                         .update(cx, |this, cx| {
                             this.open_thread_by_id(&id, window, cx)
                                 .detach_and_log_err(cx);
@@ -697,7 +695,7 @@ impl RenderOnce for PastThread {
 #[derive(IntoElement)]
 pub struct PastContext {
     context: SavedContextMetadata,
-    assistant_panel: WeakEntity<AssistantPanel>,
+    agent_panel: WeakEntity<AgentPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
     timestamp_format: EntryTimeFormat,
@@ -706,14 +704,14 @@ pub struct PastContext {
 impl PastContext {
     pub fn new(
         context: SavedContextMetadata,
-        assistant_panel: WeakEntity<AssistantPanel>,
+        agent_panel: WeakEntity<AgentPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
         timestamp_format: EntryTimeFormat,
     ) -> Self {
         Self {
             context,
-            assistant_panel,
+            agent_panel,
             selected,
             highlight_positions,
             timestamp_format,
@@ -725,7 +723,7 @@ impl RenderOnce for PastContext {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.context.title;
         let context_timestamp = self.timestamp_format.format_timestamp(
-            &self.assistant_panel,
+            &self.agent_panel,
             self.context.mtime.timestamp(),
             cx,
         );
@@ -760,10 +758,10 @@ impl RenderOnce for PastContext {
                             Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
                         })
                         .on_click({
-                            let assistant_panel = self.assistant_panel.clone();
+                            let agent_panel = self.agent_panel.clone();
                             let path = self.context.path.clone();
                             move |_event, _window, cx| {
-                                assistant_panel
+                                agent_panel
                                     .update(cx, |this, cx| {
                                         this.delete_context(path.clone(), cx)
                                             .detach_and_log_err(cx);
@@ -774,10 +772,10 @@ impl RenderOnce for PastContext {
                 ),
         )
         .on_click({
-            let assistant_panel = self.assistant_panel.clone();
+            let agent_panel = self.agent_panel.clone();
             let path = self.context.path.clone();
             move |_event, window, cx| {
-                assistant_panel
+                agent_panel
                     .update(cx, |this, cx| {
                         this.open_saved_prompt_editor(path.clone(), window, cx)
                             .detach_and_log_err(cx);
@@ -797,12 +795,12 @@ pub enum EntryTimeFormat {
 impl EntryTimeFormat {
     fn format_timestamp(
         &self,
-        assistant_panel: &WeakEntity<AssistantPanel>,
+        agent_panel: &WeakEntity<AgentPanel>,
         timestamp: i64,
         cx: &App,
     ) -> String {
         let timestamp = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
-        let timezone = assistant_panel
+        let timezone = agent_panel
             .read_with(cx, |this, _cx| this.local_timezone())
             .unwrap_or(UtcOffset::UTC);
 
