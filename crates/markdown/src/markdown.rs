@@ -1,9 +1,12 @@
 pub mod parser;
 mod path_range;
 
+use base64::Engine as _;
+use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter;
 use std::mem;
@@ -15,10 +18,10 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
-    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Stateful,
-    StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, actions, point, quad,
+    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
+    ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -93,6 +96,7 @@ pub struct Markdown {
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
     parsed_markdown: ParsedMarkdown,
+    images_by_source_offset: HashMap<usize, Arc<Image>>,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
     focus_handle: FocusHandle,
@@ -149,6 +153,7 @@ impl Markdown {
             pressed_link: None,
             autoscroll_request: None,
             should_reparse: false,
+            images_by_source_offset: Default::default(),
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
             focus_handle,
@@ -172,6 +177,7 @@ impl Markdown {
             autoscroll_request: None,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
+            images_by_source_offset: Default::default(),
             pending_parse: None,
             focus_handle,
             language_registry: None,
@@ -269,19 +275,23 @@ impl Markdown {
         }
 
         let source = self.source.clone();
-        let parse_text_only = self.options.parse_links_only;
+        let should_parse_links_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
         let parsed = cx.background_spawn(async move {
-            if parse_text_only {
-                return anyhow::Ok(ParsedMarkdown {
-                    events: Arc::from(parse_links_only(source.as_ref())),
-                    source,
-                    languages_by_name: TreeMap::default(),
-                    languages_by_path: TreeMap::default(),
-                });
+            if should_parse_links_only {
+                return anyhow::Ok((
+                    ParsedMarkdown {
+                        events: Arc::from(parse_links_only(source.as_ref())),
+                        source,
+                        languages_by_name: TreeMap::default(),
+                        languages_by_path: TreeMap::default(),
+                    },
+                    Default::default(),
+                ));
             }
             let (events, language_names, paths) = parse_markdown(&source);
+            let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
             if let Some(registry) = language_registry.as_ref() {
@@ -304,20 +314,52 @@ impl Markdown {
                     }
                 }
             }
-            anyhow::Ok(ParsedMarkdown {
-                source,
-                events: Arc::from(events),
-                languages_by_name,
-                languages_by_path,
-            })
+
+            for (range, event) in &events {
+                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event {
+                    if let Some(data_url) = dest_url.strip_prefix("data:") {
+                        let Some((mime_info, data)) = data_url.split_once(',') else {
+                            continue;
+                        };
+                        let Some((mime_type, encoding)) = mime_info.split_once(';') else {
+                            continue;
+                        };
+                        let Some(format) = ImageFormat::from_mime_type(mime_type) else {
+                            continue;
+                        };
+                        let is_base64 = encoding == "base64";
+                        if is_base64 {
+                            if let Some(bytes) = base64::prelude::BASE64_STANDARD
+                                .decode(data)
+                                .log_with_level(Level::Debug)
+                            {
+                                let image = Arc::new(Image::from_bytes(format, bytes));
+                                images_by_source_offset.insert(range.start, image);
+                            }
+                        }
+                    }
+                }
+            }
+
+            anyhow::Ok((
+                ParsedMarkdown {
+                    source,
+                    events: Arc::from(events),
+                    languages_by_name,
+                    languages_by_path,
+                },
+                images_by_source_offset,
+            ))
         });
 
         self.should_reparse = false;
         self.pending_parse = Some(cx.spawn(async move |this, cx| {
             async move {
-                let parsed = parsed.await?;
+                let (parsed, images_by_source_offset) = parsed.await?;
+
                 this.update(cx, |this, cx| {
                     this.parsed_markdown = parsed;
+                    this.images_by_source_offset = images_by_source_offset;
                     this.pending_parse.take();
                     if this.should_reparse {
                         this.parse(cx);
@@ -680,7 +722,9 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
+        let markdown = self.markdown.read(cx);
+        let parsed_markdown = &markdown.parsed_markdown;
+        let images = &markdown.images_by_source_offset;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -688,11 +732,29 @@ impl Element for MarkdownElement {
         };
 
         let mut current_code_block_metadata = None;
-
+        let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
+            // Skip alt text for images that rendered
+            if let Some(current_img_block_range) = &current_img_block_range {
+                if current_img_block_range.end > range.end {
+                    continue;
+                }
+            }
+
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
+                        MarkdownTag::Image { .. } => {
+                            if let Some(image) = images.get(&range.start) {
+                                current_img_block_range = Some(range.clone());
+                                builder.modify_current_div(|el| {
+                                    el.items_center()
+                                        .flex()
+                                        .flex_row()
+                                        .child(img(image.clone()))
+                                });
+                            }
+                        }
                         MarkdownTag::Paragraph => {
                             builder.push_div(
                                 div().when(!self.style.height_is_multiple_of_line_height, |el| {
@@ -940,6 +1002,9 @@ impl Element for MarkdownElement {
                     }
                 }
                 MarkdownEvent::End(tag) => match tag {
+                    MarkdownTagEnd::Image => {
+                        current_img_block_range.take();
+                    }
                     MarkdownTagEnd::Paragraph => {
                         builder.pop_div();
                     }
