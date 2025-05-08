@@ -283,13 +283,14 @@ impl DapStore {
     pub fn debug_scenario_for_build_task(
         &self,
         build: TaskTemplate,
-        adapter: SharedString,
+        adapter: DebugAdapterName,
+        label: SharedString,
         cx: &mut App,
     ) -> Option<DebugScenario> {
         DapRegistry::global(cx)
             .locators()
             .values()
-            .find_map(|locator| locator.create_scenario(&build, &adapter))
+            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
     }
 
     pub fn run_debug_locator(
