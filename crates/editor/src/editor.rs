@@ -122,7 +122,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    ProjectPath,
+    BreakpointWithPosition, ProjectPath,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
@@ -6809,7 +6809,11 @@ impl Editor {
                 buffer_snapshot,
                 cx,
             );
-            for (anchor, breakpoint) in breakpoints {
+            for BreakpointWithPosition {
+                position: anchor,
+                breakpoint,
+            } in breakpoints
+            {
                 let multi_buffer_anchor =
                     Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), *anchor);
                 let position = multi_buffer_anchor
@@ -9403,16 +9407,16 @@ impl Editor {
                         cx,
                     )
                     .next()
-                    .and_then(|(anchor, bp)| {
+                    .and_then(|bp| {
                         let breakpoint_row = buffer_snapshot
-                            .summary_for_anchor::<text::PointUtf16>(anchor)
+                            .summary_for_anchor::<text::PointUtf16>(&bp.position)
                             .row;
 
                         if breakpoint_row == row {
                             snapshot
                                 .buffer_snapshot
-                                .anchor_in_excerpt(enclosing_excerpt, *anchor)
-                                .map(|anchor| (anchor, bp.clone()))
+                                .anchor_in_excerpt(enclosing_excerpt, bp.position)
+                                .map(|position| (position, bp.breakpoint.clone()))
                         } else {
                             None
                         }
@@ -9575,7 +9579,10 @@ impl Editor {
         breakpoint_store.update(cx, |breakpoint_store, cx| {
             breakpoint_store.toggle_breakpoint(
                 buffer,
-                (breakpoint_position.text_anchor, breakpoint),
+                BreakpointWithPosition {
+                    position: breakpoint_position.text_anchor,
+                    breakpoint,
+                },
                 edit_action,
                 cx,
             );
