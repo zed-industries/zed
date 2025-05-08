@@ -5,7 +5,7 @@ use crate::{
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
     StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
@@ -54,6 +54,7 @@ pub enum DebugPanelEvent {
 }
 
 actions!(debug_panel, [ToggleFocus]);
+
 pub struct DebugPanel {
     size: Pixels,
     sessions: Vec<Entity<DebugSession>>,
@@ -988,6 +989,65 @@ impl DebugPanel {
         });
         self.active_session = Some(session_item);
         cx.notify();
+    }
+
+    pub(crate) fn save_scenario(
+        &self,
+        scenario: &DebugScenario,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
+                    return Task::ready(Err(anyhow!("Couldn't get worktree path")));
+                };
+
+                let serialized_scenario = serde_json::to_value(scenario);
+
+                path.push(paths::local_debug_file_relative_path());
+
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let serialized_scenario = serialized_scenario?;
+                    let path = path.as_path();
+                    let fs =
+                        workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+
+                    if !fs.is_file(path).await {
+                        fs.create_file(path, Default::default()).await?;
+                        fs.save(path, &language::Rope::new(), Default::default())
+                            .await?;
+                    } else {
+                        let content = fs.load(path).await?;
+                        let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&content)?;
+                        values.push(serialized_scenario);
+                        fs.save(
+                            path,
+                            &serde_json::to_string_pretty(&values).map(Into::into)?,
+                            Default::default(),
+                        )
+                        .await?;
+                    }
+
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        if let Some(project_path) = workspace
+                            .project()
+                            .read(cx)
+                            .project_path_for_absolute_path(&path, cx)
+                        {
+                            workspace.open_path(project_path, None, true, window, cx)
+                        } else {
+                            Task::ready(Err(anyhow!(
+                                "Couldn't get project path for .zed/debug.json in active worktree"
+                            )))
+                        }
+                    })?.await?;
+
+                    anyhow::Ok(())
+                })
+            })
+            .unwrap_or_else(|err| Task::ready(Err(err)))
     }
 }
 

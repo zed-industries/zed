@@ -701,7 +701,7 @@ fn register_actions(
         })
         .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
             open_settings_file(
-                paths::debug_tasks_file(),
+                paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
                 window,
                 cx,

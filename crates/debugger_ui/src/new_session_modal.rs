@@ -23,10 +23,10 @@ use task::{DebugScenario, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
-    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconButton, IconName,
-    InteractiveElement, IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing,
-    ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton, ToggleState,
-    Toggleable, Window, div, h_flex, relative, rems, v_flex,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, InteractiveElement,
+    IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing, ParentElement, RenderOnce,
+    SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Window, div, h_flex,
+    relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -159,7 +159,7 @@ impl NewSessionModal {
         }
     }
 
-    fn debug_scenario(&self, cx: &App, debugger: &str) -> Option<DebugScenario> {
+    fn debug_scenario(&self, debugger: &str, cx: &App) -> Option<DebugScenario> {
         let request = match self.mode {
             NewSessionMode::Custom => Some(DebugRequest::Launch(
                 self.custom_mode.read(cx).debug_request(cx),
@@ -202,7 +202,7 @@ impl NewSessionModal {
             return;
         }
 
-        let Some(config) = self.debug_scenario(cx, debugger) else {
+        let Some(config) = self.debug_scenario(debugger, cx) else {
             log::error!("debug config not found in mode: {}", self.mode);
             return;
         };
@@ -485,11 +485,40 @@ impl Render for NewSessionModal {
                             }),
                         ),
                         NewSessionMode::Custom => div().child(
-                            IconButton::new("new-session-modal-back", IconName::DebugStepBack)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.mode = NewSessionMode::Launch;
-                                    cx.notify();
-                                })),
+                            Button::new("new-session-modal-back", "Save to .zed/debug.json...")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let Some(save_scenario_task) = this
+                                        .debugger
+                                        .as_ref()
+                                        .and_then(|debugger| this.debug_scenario(&debugger, cx))
+                                        .zip(this.task_contexts.worktree())
+                                        .and_then(|(scenario, worktree_id)| {
+                                            this.debug_panel
+                                                .update(cx, |panel, cx| {
+                                                    panel.save_scenario(
+                                                        &scenario,
+                                                        worktree_id,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .ok()
+                                        })
+                                    else {
+                                        return;
+                                    };
+
+                                    cx.spawn(async move |this, cx| {
+                                        if save_scenario_task.await.is_ok() {
+                                            this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                                        }
+                                    })
+                                    .detach();
+                                }))
+                                .disabled(
+                                    self.debugger.is_none()
+                                        || self.custom_mode.read(cx).program.read(cx).is_empty(cx),
+                                ),
                         ),
                     })
                     .child(
