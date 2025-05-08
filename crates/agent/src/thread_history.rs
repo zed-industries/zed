@@ -31,6 +31,8 @@ pub struct ThreadHistory {
     // When the search is empty, we display date separators between history entries
     // This vector contains an enum of either a separator or an actual entry
     separated_items: Vec<HistoryListItem>,
+    // Maps entry indexes to list item indexes
+    separated_item_indexes: Vec<u32>,
     _separated_items_task: Option<Task<()>>,
     search_state: SearchState,
     scrollbar_visibility: bool,
@@ -103,6 +105,7 @@ impl ThreadHistory {
             search_state: SearchState::Empty,
             all_entries: Default::default(),
             separated_items: Default::default(),
+            separated_item_indexes: Default::default(),
             search_editor,
             scrollbar_visibility: true,
             scrollbar_state,
@@ -119,7 +122,7 @@ impl ThreadHistory {
             .update(cx, |store, cx| store.entries(cx))
             .into();
 
-        self.set_selected_index(0, cx);
+        self.set_selected_entry_index(0, cx);
         self.update_separated_items(cx);
 
         match &self.search_state {
@@ -133,10 +136,15 @@ impl ThreadHistory {
 
     fn update_separated_items(&mut self, cx: &mut Context<Self>) {
         self._separated_items_task.take();
-
-        let mut separated_items = std::mem::take(&mut self.separated_items);
-        separated_items.clear();
         let all_entries = self.all_entries.clone();
+
+        let mut items = std::mem::take(&mut self.separated_items);
+        let mut indexes = std::mem::take(&mut self.separated_item_indexes);
+        items.clear();
+        indexes.clear();
+        // We know there's going to be at least one bucket separator
+        items.reserve(all_entries.len() + 1);
+        indexes.reserve(all_entries.len() + 1);
 
         let bg_task = cx.background_spawn(async move {
             let mut bucket = None;
@@ -152,20 +160,23 @@ impl ThreadHistory {
 
                 if Some(entry_bucket) != bucket {
                     bucket = Some(entry_bucket);
-                    separated_items.push(HistoryListItem::BucketSeparator(entry_bucket));
+                    items.push(HistoryListItem::BucketSeparator(entry_bucket));
                 }
-                separated_items.push(HistoryListItem::Entry {
+
+                indexes.push(items.len() as u32);
+                items.push(HistoryListItem::Entry {
                     index,
                     format: entry_bucket.into(),
                 });
             }
-            separated_items
+            (items, indexes)
         });
 
         let task = cx.spawn(async move |this, cx| {
-            let separated_items = bg_task.await;
+            let (items, indexes) = bg_task.await;
             this.update(cx, |this, cx| {
-                this.separated_items = separated_items;
+                this.separated_items = items;
+                this.separated_item_indexes = indexes;
                 cx.notify();
             })
             .log_err();
@@ -233,7 +244,7 @@ impl ThreadHistory {
                             matches,
                         };
 
-                        this.set_selected_index(0, cx);
+                        this.set_selected_entry_index(0, cx);
                         cx.notify();
                     };
                 })
@@ -291,9 +302,9 @@ impl ThreadHistory {
         let count = self.matched_count();
         if count > 0 {
             if self.selected_index == 0 {
-                self.set_selected_index(count - 1, cx);
+                self.set_selected_entry_index(count - 1, cx);
             } else {
-                self.set_selected_index(self.selected_index - 1, cx);
+                self.set_selected_entry_index(self.selected_index - 1, cx);
             }
         }
     }
@@ -307,9 +318,9 @@ impl ThreadHistory {
         let count = self.matched_count();
         if count > 0 {
             if self.selected_index == count - 1 {
-                self.set_selected_index(0, cx);
+                self.set_selected_entry_index(0, cx);
             } else {
-                self.set_selected_index(self.selected_index + 1, cx);
+                self.set_selected_entry_index(self.selected_index + 1, cx);
             }
         }
     }
@@ -322,21 +333,32 @@ impl ThreadHistory {
     ) {
         let count = self.matched_count();
         if count > 0 {
-            self.set_selected_index(0, cx);
+            self.set_selected_entry_index(0, cx);
         }
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         let count = self.matched_count();
         if count > 0 {
-            self.set_selected_index(count - 1, cx);
+            self.set_selected_entry_index(count - 1, cx);
         }
     }
 
-    fn set_selected_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.selected_index = index;
+    fn set_selected_entry_index(&mut self, entry_index: usize, cx: &mut Context<Self>) {
+        self.selected_index = entry_index;
+
+        let scroll_ix = match self.search_state {
+            SearchState::Empty | SearchState::Searching { .. } => self
+                .separated_item_indexes
+                .get(entry_index)
+                .map(|ix| *ix as usize)
+                .unwrap_or(entry_index + 1),
+            SearchState::Searched { .. } => entry_index,
+        };
+
         self.scroll_handle
-            .scroll_to_item(index, ScrollStrategy::Top);
+            .scroll_to_item(scroll_ix, ScrollStrategy::Top);
+
         cx.notify();
     }
 
