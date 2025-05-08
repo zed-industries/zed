@@ -20,8 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -197,6 +197,14 @@ impl LanguageModel for CopilotChatLanguageModel {
         }
     }
 
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => self.supports_tools(),
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("copilot_chat/{}", self.model.id())
     }
@@ -211,32 +219,24 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         match self.model {
-            CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Claude3_5Sonnet
+            | CopilotChatModel::Claude3_7Sonnet
+            | CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
             CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
                 count_google_tokens(request, cx)
             }
-            _ => {
-                let model = match self.model {
-                    CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
-                    CopilotChatModel::Gpt4 => open_ai::Model::Four,
-                    CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
-                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 => open_ai::Model::O1,
-                    CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
-                    CopilotChatModel::O3 => open_ai::Model::O3,
-                    CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
-                    CopilotChatModel::Claude3_5Sonnet
-                    | CopilotChatModel::Claude3_7Sonnet
-                    | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash
-                    | CopilotChatModel::Gemini25Pro => {
-                        unreachable!()
-                    }
-                };
-                count_open_ai_tokens(request, model, cx)
+            CopilotChatModel::Gpt4o => count_open_ai_tokens(request, open_ai::Model::FourOmni, cx),
+            CopilotChatModel::Gpt4 => count_open_ai_tokens(request, open_ai::Model::Four, cx),
+            CopilotChatModel::Gpt4_1 => {
+                count_open_ai_tokens(request, open_ai::Model::FourPointOne, cx)
             }
+            CopilotChatModel::Gpt3_5Turbo => {
+                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
+            }
+            CopilotChatModel::O1 => count_open_ai_tokens(request, open_ai::Model::O1, cx),
+            CopilotChatModel::O3Mini => count_open_ai_tokens(request, open_ai::Model::O3Mini, cx),
+            CopilotChatModel::O3 => count_open_ai_tokens(request, open_ai::Model::O3, cx),
+            CopilotChatModel::O4Mini => count_open_ai_tokens(request, open_ai::Model::O4Mini, cx),
         }
     }
 
@@ -541,7 +541,11 @@ impl CopilotChatLanguageModel {
             model,
             messages,
             tools,
-            tool_choice: None,
+            tool_choice: request.tool_choice.map(|choice| match choice {
+                LanguageModelToolChoice::Auto => copilot::copilot_chat::ToolChoice::Auto,
+                LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
+                LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
+            }),
         })
     }
 }

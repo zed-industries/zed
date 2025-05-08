@@ -293,6 +293,7 @@ impl TerminalInlineAssistant {
                 mode: None,
                 messages: vec![request_message],
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
                 temperature,
             }

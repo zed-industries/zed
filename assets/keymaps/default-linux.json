@@ -217,7 +217,6 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
-      "ctrl-shift-enter": "assistant::Edit",
       "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
@@ -952,7 +951,10 @@
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
-      "ctrl-shift-space": "terminal::ToggleViMode"
+      "ctrl-shift-space": "terminal::ToggleViMode",
+      "ctrl-shift-r": "terminal::RerunTask",
+      "ctrl-alt-r": "terminal::RerunTask",
+      "alt-t": "terminal::RerunTask"
     }
   },
   {

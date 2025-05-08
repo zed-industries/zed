@@ -263,7 +263,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "assistant::Assist",
-      "cmd-shift-enter": "assistant::Edit",
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
@@ -1038,7 +1037,8 @@
       "ctrl-alt-up": "pane::SplitUp",
       "ctrl-alt-down": "pane::SplitDown",
       "ctrl-alt-left": "pane::SplitLeft",
-      "ctrl-alt-right": "pane::SplitRight"
+      "ctrl-alt-right": "pane::SplitRight",
+      "cmd-alt-r": "terminal::RerunTask"
     }
   },
   {

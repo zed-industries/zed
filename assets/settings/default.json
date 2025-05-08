@@ -393,11 +393,7 @@
     // 1. `null` to inherit the editor `current_line_highlight` setting (default)
     // 2. "line" or "all" to highlight the current line in the minimap.
     // 3. "gutter" or "none" to not highlight the current line in the minimap.
-    "current_line_highlight": null,
-    // The width of the minimap in pixels.
-    "width": 100,
-    // The font size of the minimap in pixels.
-    "font_size": 2
+    "current_line_highlight": null
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,

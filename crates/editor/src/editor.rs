@@ -5276,7 +5276,8 @@ impl Editor {
                                             if let Some(scenario) = this
                                                 .debug_scenario_for_build_task(
                                                     task.original_task().clone(),
-                                                    debug_adapter.clone(),
+                                                    debug_adapter.clone().into(),
+                                                    task.display_label().to_owned().into(),
                                                     cx,
                                                 )
                                             {
