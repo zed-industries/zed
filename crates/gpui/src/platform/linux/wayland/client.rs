@@ -75,7 +75,7 @@ use crate::platform::linux::{
     LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
     reveal_path_internal,
     wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
         serial::{SerialKind, SerialTracker},
         window::WaylandWindow,
@@ -778,8 +778,10 @@ impl LinuxClient for WaylandClient {
             state.clipboard.set_primary(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
+            for mime_type in TEXT_MIME_TYPES {
+                data_source.offer(mime_type.to_string());
+            }
             data_source.offer(state.clipboard.self_mime());
-            data_source.offer(TEXT_MIME_TYPE.to_string());
             primary_selection.set_selection(Some(&data_source), serial);
         }
     }
@@ -796,8 +798,10 @@ impl LinuxClient for WaylandClient {
             state.clipboard.set(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+            for mime_type in TEXT_MIME_TYPES {
+                data_source.offer(mime_type.to_string());
+            }
             data_source.offer(state.clipboard.self_mime());
-            data_source.offer(TEXT_MIME_TYPE.to_string());
             data_device.set_selection(Some(&data_source), serial);
         }
     }
