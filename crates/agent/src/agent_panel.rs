@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    AssistantContext, AssistantPanelDelegate, ConfigurationError, ContextEditor, ContextEvent,
+    AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
     SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
     render_remaining_tokens,
 };
@@ -1975,9 +1975,9 @@ impl AgentPanel {
                                                     .style(ButtonStyle::Transparent)
                                                     .color(Color::Muted)
                                                     .on_click({
-                                                        let assistant_panel = cx.entity();
+                                                        let agent_panel = cx.entity();
                                                         move |_, _, cx| {
-                                                            assistant_panel.update(
+                                                            agent_panel.update(
                                                                 cx,
                                                                 |this, cx| {
                                                                     let hidden =
@@ -2853,7 +2853,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         })
     }
 
-    fn focus_assistant_panel(
+    fn focus_agent_panel(
         &self,
         workspace: &mut Workspace,
         window: &mut Window,
@@ -2865,7 +2865,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
 
 pub struct ConcreteAssistantPanelDelegate;
 
-impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
+impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_context_editor(
         &self,
         workspace: &mut Workspace,

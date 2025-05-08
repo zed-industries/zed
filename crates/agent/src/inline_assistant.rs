@@ -185,10 +185,9 @@ impl InlineAssistant {
                     let panel = workspace.read(cx).panel::<AgentPanel>(cx);
                     let thread_store = panel
                         .as_ref()
-                        .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
-                    let text_thread_store = panel.map(|assistant_panel| {
-                        assistant_panel.read(cx).text_thread_store().downgrade()
-                    });
+                        .map(|agent_panel| agent_panel.read(cx).thread_store().downgrade());
+                    let text_thread_store = panel
+                        .map(|agent_panel| agent_panel.read(cx).text_thread_store().downgrade());
 
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
@@ -240,15 +239,15 @@ impl InlineAssistant {
                 .map_or(false, |model| model.provider.is_authenticated(cx))
         };
 
-        let Some(assistant_panel) = workspace.panel::<AgentPanel>(cx) else {
+        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
             return;
         };
-        let assistant_panel = assistant_panel.read(cx);
+        let agent_panel = agent_panel.read(cx);
 
-        let prompt_store = assistant_panel.prompt_store().as_ref().cloned();
-        let thread_store = Some(assistant_panel.thread_store().downgrade());
-        let text_thread_store = Some(assistant_panel.text_thread_store().downgrade());
-        let context_store = assistant_panel.inline_assist_context_store().clone();
+        let prompt_store = agent_panel.prompt_store().as_ref().cloned();
+        let thread_store = Some(agent_panel.thread_store().downgrade());
+        let text_thread_store = Some(agent_panel.text_thread_store().downgrade());
+        let context_store = agent_panel.inline_assist_context_store().clone();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -1454,7 +1453,7 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
-        assistant_panel: Option<Entity<AgentPanel>>,
+        agent_panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
@@ -1474,7 +1473,7 @@ impl InlineAssistant {
             }
         }
 
-        let context_editor = assistant_panel
+        let context_editor = agent_panel
             .and_then(|panel| panel.read(cx).active_context_editor())
             .and_then(|editor| {
                 let editor = &editor.read(cx).editor().clone();
