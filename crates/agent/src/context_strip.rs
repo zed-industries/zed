@@ -174,7 +174,7 @@ impl ContextStrip {
             }
 
             Some(SuggestedContext::TextThread {
-                name: context.summary_or_default(),
+                name: context.summary().or_default(),
                 context: weak_context,
             })
         } else {

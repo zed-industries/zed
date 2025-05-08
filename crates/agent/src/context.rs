@@ -637,7 +637,7 @@ impl TextThreadContextHandle {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {

@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
-    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
-    render_remaining_tokens,
+    ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
+    make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -294,7 +294,8 @@ impl ActiveView {
                                     .read(cx)
                                     .context()
                                     .read(cx)
-                                    .summary_or_default();
+                                    .summary()
+                                    .or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -309,7 +310,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |assistant_context, event, window, cx| match event {
                     ContextEvent::SummaryGenerated => {
-                        let summary = assistant_context.read(cx).summary_or_default();
+                        let summary = assistant_context.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -1472,14 +1473,13 @@ impl AgentPanel {
                 context_editor,
                 ..
             } => {
-                let context_editor = context_editor.read(cx);
-                let summary = context_editor.context().read(cx).summary();
+                let summary = context_editor.read(cx).context().read(cx).summary();
 
                 match summary {
-                    None => Label::new(AssistantContext::DEFAULT_SUMMARY.clone())
+                    ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
                         .truncate()
                         .into_any_element(),
-                    Some(summary) => {
+                    ContextSummary::Content(summary) => {
                         if summary.done {
                             div()
                                 .w_full()
@@ -1491,6 +1491,28 @@ impl AgentPanel {
                                 .into_any_element()
                         }
                     }
+                    ContextSummary::Error => h_flex()
+                        .w_full()
+                        .child(title_editor.clone())
+                        .child(
+                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .on_click({
+                                    let context_editor = context_editor.clone();
+                                    move |_, _window, cx| {
+                                        context_editor.update(cx, |context_editor, cx| {
+                                            context_editor.regenerate_summary(cx);
+                                        });
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        Tooltip::new("Failed to generate title")
+                                            .meta("Click to try again")
+                                    })
+                                    .into()
+                                }),
+                        )
+                        .into_any_element(),
                 }
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
