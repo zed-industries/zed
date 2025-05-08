@@ -101,6 +101,8 @@ impl Render for QuickActionBar {
         let show_edit_predictions = editor_value.edit_predictions_enabled();
         let edit_predictions_enabled_at_cursor =
             editor_value.edit_predictions_enabled_at_cursor(cx);
+        let supports_minimap = editor_value.supports_minimap();
+        let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
 
         let focus_handle = editor_value.focus_handle(cx);
 
@@ -244,7 +246,6 @@ impl Render for QuickActionBar {
                                         }
                                     }
                                 );
-
                             }
 
                             if supports_inline_diagnostics {
@@ -268,6 +269,23 @@ impl Render for QuickActionBar {
                                         }
                                     },
                                 );
+                            }
+
+                            if supports_minimap {
+                                menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_minimap(
+                                                    &editor::actions::ToggleMinimap,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                },)
                             }
 
                             if has_edit_prediction_provider {

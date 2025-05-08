@@ -428,6 +428,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_inlay_hints);
         register_action(editor, window, Editor::toggle_edit_predictions);
         register_action(editor, window, Editor::toggle_inline_diagnostics);
+        register_action(editor, window, Editor::toggle_minimap);
         register_action(editor, window, hover_popover::hover);
         register_action(editor, window, Editor::reveal_in_finder);
         register_action(editor, window, Editor::copy_path);

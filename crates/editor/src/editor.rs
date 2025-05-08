@@ -6107,6 +6107,10 @@ impl Editor {
         }
     }
 
+    pub fn supports_minimap(&self) -> bool {
+        self.mode.is_full()
+    }
+
     fn edit_predictions_enabled_in_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -15087,6 +15091,17 @@ impl Editor {
         self.refresh_inline_diagnostics(false, window, cx);
     }
 
+    pub fn toggle_minimap(
+        &mut self,
+        _: &ToggleMinimap,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if self.supports_minimap() {
+            self.set_show_minimap(!self.show_minimap, window, cx);
+        }
+    }
+
     fn refresh_inline_diagnostics(
         &mut self,
         debounce: bool,
@@ -16544,14 +16559,27 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_minimap(&mut self, show_minimap: bool, cx: &mut Context<Self>) {
-        self.show_minimap = show_minimap;
-        cx.notify();
+    pub fn set_show_minimap(
+        &mut self,
+        show_minimap: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_minimap != show_minimap {
+            self.show_minimap = show_minimap;
+            if show_minimap {
+                let minimap_settings = EditorSettings::get_global(cx).minimap;
+                self.minimap = self.create_minimap(minimap_settings, window, cx);
+            } else {
+                self.minimap = None;
+            }
+            cx.notify();
+        }
     }
 
-    pub fn disable_scrollbars_and_minimap(&mut self, cx: &mut Context<Self>) {
+    pub fn disable_scrollbars_and_minimap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_show_scrollbars(false, cx);
-        self.set_show_minimap(false, cx);
+        self.set_show_minimap(false, window, cx);
     }
 
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
@@ -18045,8 +18073,8 @@ impl Editor {
             }
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap.as_ref().is_some() != minimap_settings.minimap_enabled() {
-                self.minimap = self.create_minimap(minimap_settings, window, cx);
+            if self.show_minimap != minimap_settings.minimap_enabled() {
+                self.set_show_minimap(!self.show_minimap, window, cx);
             } else if let Some(minimap_entity) = self.minimap.as_ref() {
                 minimap_entity.update(cx, |minimap_editor, cx| {
                     minimap_editor.update_minimap_configuration(minimap_settings, cx)

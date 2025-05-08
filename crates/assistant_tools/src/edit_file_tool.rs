@@ -359,7 +359,7 @@ impl EditFileToolCard {
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
             editor.disable_expand_excerpt_buttons(cx);
-            editor.disable_scrollbars_and_minimap(cx);
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_indent_guides(false, cx);
