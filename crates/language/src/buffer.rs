@@ -2698,7 +2698,7 @@ impl Buffer {
         }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers: triggers.iter().cloned().collect(),
+                triggers: triggers.into_iter().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
                 server_id,
             },
