@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
+    Action, AnyElement, AnyView, App, BackgroundExecutor, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    action_with_deprecated_aliases,
 };
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
@@ -322,6 +324,23 @@ struct GroupedModels {
 }
 
 impl GroupedModels {
+    pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
+        let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
+        for model in other {
+            let provider = model.model.provider_id();
+            if let Some(models) = other_by_provider.get_mut(&provider) {
+                models.push(model);
+            } else {
+                other_by_provider.insert(provider, vec![model]);
+            }
+        }
+
+        Self {
+            recommended,
+            other: other_by_provider,
+        }
+    }
+
     fn entries(&self) -> Vec<LanguageModelPickerEntry> {
         let mut entries = Vec::new();
 
@@ -349,11 +368,78 @@ impl GroupedModels {
         }
         entries
     }
+
+    fn model_infos(&self) -> Vec<ModelInfo> {
+        let other = self
+            .other
+            .values()
+            .flat_map(|model| model.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        self.recommended
+            .iter()
+            .chain(&other)
+            .cloned()
+            .collect::<Vec<_>>()
+    }
 }
 
 enum LanguageModelPickerEntry {
     Model(ModelInfo),
     Separator(SharedString),
+}
+
+struct ModelMatcher {
+    models: Vec<ModelInfo>,
+    bg_executor: BackgroundExecutor,
+    candidates: Vec<StringMatchCandidate>,
+}
+
+impl ModelMatcher {
+    fn new(models: Vec<ModelInfo>, bg_executor: BackgroundExecutor) -> ModelMatcher {
+        let candidates = Self::make_match_candidates(&models);
+        Self {
+            models,
+            bg_executor,
+            candidates,
+        }
+    }
+
+    pub async fn search(&self, query: &str) -> Vec<ModelInfo> {
+        let matches = match_strings(
+            &self.candidates,
+            &query,
+            false,
+            100,
+            &Default::default(),
+            self.bg_executor.clone(),
+        )
+        .await;
+
+        let matched_models: Vec<_> = matches
+            .into_iter()
+            .map(|m| self.models[m.candidate_id].clone())
+            .collect();
+
+        matched_models
+    }
+
+    fn make_match_candidates(model_infos: &Vec<ModelInfo>) -> Vec<StringMatchCandidate> {
+        model_infos
+            .iter()
+            .enumerate()
+            .map(|(index, model)| {
+                StringMatchCandidate::new(
+                    index,
+                    &format!(
+                        "{}/{}",
+                        &model.model.provider_name().0,
+                        &model.model.name().0
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 impl PickerDelegate for LanguageModelPickerDelegate {
@@ -396,53 +482,46 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Task<()> {
         let all_models = self.all_models.clone();
         let current_index = self.selected_index;
+        let bg_executor = cx.background_executor();
 
         let language_model_registry = LanguageModelRegistry::global(cx);
 
         let configured_providers = language_model_registry
             .read(cx)
             .providers()
-            .iter()
+            .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
+            .collect::<Vec<_>>();
+
+        let configured_provider_ids = configured_providers
+            .iter()
             .map(|provider| provider.id())
             .collect::<Vec<_>>();
+
+        let recommended_models = all_models
+            .recommended
+            .iter()
+            .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let available_models = all_models
+            .model_infos()
+            .iter()
+            .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
+        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
 
         cx.spawn_in(window, async move |this, cx| {
             let filtered_models = cx
                 .background_spawn(async move {
-                    let matches = |info: &ModelInfo| {
-                        info.model
-                            .name()
-                            .0
-                            .to_lowercase()
-                            .contains(&query.to_lowercase())
-                    };
+                    let recommended = matcher_rec.search(&query).await;
+                    let all = matcher_all.search(&query).await;
 
-                    let recommended_models = all_models
-                        .recommended
-                        .iter()
-                        .filter(|r| {
-                            configured_providers.contains(&r.model.provider_id()) && matches(r)
-                        })
-                        .cloned()
-                        .collect();
-                    let mut other_models = IndexMap::default();
-                    for (provider_id, models) in &all_models.other {
-                        if configured_providers.contains(&provider_id) {
-                            other_models.insert(
-                                provider_id.clone(),
-                                models
-                                    .iter()
-                                    .filter(|m| matches(m))
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
-                        }
-                    }
-                    GroupedModels {
-                        recommended: recommended_models,
-                        other: other_models,
-                    }
+                    GroupedModels::new(all, recommended)
                 })
                 .await;
 
