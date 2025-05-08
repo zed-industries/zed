@@ -217,7 +217,7 @@ pub fn init(cx: &mut App) {
                                     )
                                 })
                                 .ok() {
-                                    fs.write(resolved_path.as_path(), new_content.as_bytes()).await
+                                    fs.atomic_write(resolved_path.clone(), new_content).await
                                     .inspect_err(|err| {
                                         log::error!(
                                             "Failed to write user keymap file {:?}, error: {}",
