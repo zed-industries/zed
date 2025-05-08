@@ -17,7 +17,7 @@ use gpui::{AppContext, AsyncApp, Entity, SharedString, Task};
 use language::{Bias, Buffer, BufferSnapshot, LineIndent, Point};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
-    MessageContent, Role,
+    LanguageModelToolChoice, MessageContent, Role,
 };
 use project::{AgentLocation, Project};
 use serde::Serialize;
@@ -83,7 +83,7 @@ impl EditAgent {
         &self,
         buffer: Entity<Buffer>,
         edit_description: String,
-        previous_messages: Vec<LanguageModelRequestMessage>,
+        conversation: &LanguageModelRequest,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -91,6 +91,7 @@ impl EditAgent {
     ) {
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
@@ -99,7 +100,7 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let new_chunks = this.request(previous_messages, prompt, cx).await?;
+            let new_chunks = this.request(conversation, prompt, cx).await?;
 
             let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
             while let Some(event) = inner_events.next().await {
@@ -194,7 +195,7 @@ impl EditAgent {
         &self,
         buffer: Entity<Buffer>,
         edit_description: String,
-        previous_messages: Vec<LanguageModelRequestMessage>,
+        conversation: &LanguageModelRequest,
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<EditAgentOutput>>,
@@ -214,6 +215,7 @@ impl EditAgent {
 
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
+        let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
@@ -222,7 +224,7 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let edit_chunks = this.request(previous_messages, prompt, cx).await?;
+            let edit_chunks = this.request(conversation, prompt, cx).await?;
 
             let (output, mut inner_events) = this.apply_edit_chunks(buffer, edit_chunks, cx);
             while let Some(event) = inner_events.next().await {
@@ -269,6 +271,12 @@ impl EditAgent {
             let EditParserEvent::OldText(old_text_query) = edit_event? else {
                 continue;
             };
+
+            // Skip edits with an empty old text.
+            if old_text_query.is_empty() {
+                continue;
+            }
+
             let old_text_query = SharedString::from(old_text_query);
 
             let (edits_tx, edits_rx) = mpsc::unbounded();
@@ -506,32 +514,67 @@ impl EditAgent {
 
     async fn request(
         &self,
-        mut messages: Vec<LanguageModelRequestMessage>,
+        mut conversation: LanguageModelRequest,
         prompt: String,
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
-        let mut message_content = Vec::new();
-        if let Some(last_message) = messages.last_mut() {
+        let mut messages_iter = conversation.messages.iter_mut();
+        if let Some(last_message) = messages_iter.next_back() {
             if last_message.role == Role::Assistant {
+                let old_content_len = last_message.content.len();
                 last_message
                     .content
                     .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
+                let new_content_len = last_message.content.len();
+
+                // We just removed pending tool uses from the content of the
+                // last message, so it doesn't make sense to cache it anymore
+                // (e.g., the message will look very different on the next
+                // request). Thus, we move the flag to the message prior to it,
+                // as it will still be a valid prefix of the conversation.
+                if old_content_len != new_content_len && last_message.cache {
+                    if let Some(prev_message) = messages_iter.next_back() {
+                        last_message.cache = false;
+                        prev_message.cache = true;
+                    }
+                }
+
                 if last_message.content.is_empty() {
-                    messages.pop();
+                    conversation.messages.pop();
                 }
             }
         }
-        message_content.push(MessageContent::Text(prompt));
-        messages.push(LanguageModelRequestMessage {
+
+        conversation.messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: message_content,
+            content: vec![MessageContent::Text(prompt)],
             cache: false,
         });
 
+        // Include tools in the request so that we can take advantage of
+        // caching when ToolChoice::None is supported.
+        let mut tool_choice = None;
+        let mut tools = Vec::new();
+        if !conversation.tools.is_empty()
+            && self
+                .model
+                .supports_tool_choice(LanguageModelToolChoice::None)
+        {
+            tool_choice = Some(LanguageModelToolChoice::None);
+            tools = conversation.tools.clone();
+        }
+
         let request = LanguageModelRequest {
-            messages,
-            ..Default::default()
+            thread_id: conversation.thread_id,
+            prompt_id: conversation.prompt_id,
+            mode: conversation.mode,
+            messages: conversation.messages,
+            tool_choice,
+            tools,
+            stop: Vec::new(),
+            temperature: None,
         };
+
         Ok(self.model.stream_completion_text(request, cx).await?.stream)
     }
 
@@ -741,6 +784,42 @@ mod tests {
     use std::cmp;
     use unindent::Unindent;
     use util::test::{generate_marked_text, marked_text_ranges};
+
+    #[gpui::test(iterations = 100)]
+    async fn test_empty_old_text(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! {"
+                    abc
+                    def
+                    ghi
+                "},
+                cx,
+            )
+        });
+        let raw_edits = simulate_llm_output(
+            indoc! {"
+                <old_text></old_text>
+                <new_text>jkl</new_text>
+                <old_text>def</old_text>
+                <new_text>DEF</new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        let (apply, _events) =
+            agent.apply_edit_chunks(buffer.clone(), raw_edits, &mut cx.to_async());
+        apply.await.unwrap();
+        pretty_assertions::assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+            indoc! {"
+                abc
+                DEF
+                ghi
+            "}
+        );
+    }
 
     #[gpui::test(iterations = 100)]
     async fn test_indentation(cx: &mut TestAppContext, mut rng: StdRng) {

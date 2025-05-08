@@ -10,7 +10,7 @@ use super::dap_command::{
     TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
@@ -169,8 +169,7 @@ impl LocalMode {
                     .await?
             } else {
                 DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
-                    .await
-                    .with_context(|| format!("Failed to start {:?}", &binary.command))?
+                    .await?
             },
         );
 

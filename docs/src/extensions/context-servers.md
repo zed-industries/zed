@@ -1,6 +1,6 @@
 # Context Servers
 
-Extensions may provide [context servers](../assistant/context-servers.md) for use in the Assistant.
+Extensions may provide [context servers](../ai/mcp.md) for use in the Assistant.
 
 ## Example extension
 

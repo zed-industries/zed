@@ -20,8 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -194,6 +194,14 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CopilotChatModel::Claude3_5Sonnet
             | CopilotChatModel::Claude3_7Sonnet => true,
             _ => false,
+        }
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => self.supports_tools(),
         }
     }
 
@@ -436,6 +444,7 @@ impl CopilotChatLanguageModel {
             }
         }
 
+        let mut tool_called = false;
         let mut messages: Vec<ChatMessage> = Vec::new();
         for message in request_messages {
             let text_content = {
@@ -476,6 +485,7 @@ impl CopilotChatLanguageModel {
                     let mut tool_calls = Vec::new();
                     for content in &message.content {
                         if let MessageContent::ToolUse(tool_use) = content {
+                            tool_called = true;
                             tool_calls.push(ToolCall {
                                 id: tool_use.id.to_string(),
                                 content: copilot::copilot_chat::ToolCallContent::Function {
@@ -503,7 +513,7 @@ impl CopilotChatLanguageModel {
             }
         }
 
-        let tools = request
+        let mut tools = request
             .tools
             .iter()
             .map(|tool| Tool::Function {
@@ -513,7 +523,23 @@ impl CopilotChatLanguageModel {
                     parameters: tool.input_schema.clone(),
                 },
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        // The API will return a Bad Request (with no error message) when tools
+        // were used previously in the conversation but no tools are provided as
+        // part of this request. Inserting a dummy tool seems to circumvent this
+        // error.
+        if tool_called && tools.is_empty() {
+            tools.push(Tool::Function {
+                function: copilot::copilot_chat::Function {
+                    name: "noop".to_string(),
+                    description: "No operation".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object"
+                    }),
+                },
+            });
+        }
 
         Ok(CopilotChatRequest {
             intent: true,
@@ -523,7 +549,11 @@ impl CopilotChatLanguageModel {
             model,
             messages,
             tools,
-            tool_choice: None,
+            tool_choice: request.tool_choice.map(|choice| match choice {
+                LanguageModelToolChoice::Auto => copilot::copilot_chat::ToolChoice::Auto,
+                LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
+                LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
+            }),
         })
     }
 }

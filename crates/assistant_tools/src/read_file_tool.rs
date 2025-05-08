@@ -7,7 +7,7 @@ use gpui::{AnyWindowHandle, App, Entity, Task};
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,9 +83,10 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -97,27 +98,22 @@ impl Tool for ReadFileTool {
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        else {
-            return Task::ready(Err(anyhow!("Worktree not found for project path"))).into();
-        };
-        let exists = worktree.update(cx, |worktree, cx| {
-            worktree.file_exists(&project_path.path, cx)
-        });
 
         let file_path = input.path.clone();
         cx.spawn(async move |cx| {
-            if !exists.await? {
-                return Err(anyhow!("{} not found", file_path));
-            }
-
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
+            if buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .file()
+                    .as_ref()
+                    .map_or(true, |file| !file.disk_state().exists())
+            })? {
+                return Err(anyhow!("{} not found", file_path));
+            }
 
             project.update(cx, |project, cx| {
                 project.set_agent_location(
@@ -145,9 +141,13 @@ impl Tool for ReadFileTool {
                     let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count as usize), "\n").collect()
+                        Itertools::intersperse(lines.take(count as usize), "\n")
+                            .collect::<String>()
+                            .into()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect()
+                        Itertools::intersperse(lines, "\n")
+                            .collect::<String>()
+                            .into()
                     }
                 })?;
 
@@ -180,19 +180,24 @@ impl Tool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(result.into())
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
-                    let outline = outline::file_outline(project, file_path, action_log, None, cx).await?;
+                    let outline =
+                        outline::file_outline(project, file_path, action_log, None, cx).await?;
                     Ok(formatdoc! {"
-                        This file was too big to read all at once. Here is an outline of its symbols:
+                        This file was too big to read all at once.
+
+                        Here is an outline of its symbols:
 
                         {outline}
 
-                        Using the line numbers in this outline, you can call this tool again while specifying
-                        the start_line and end_line fields to see the implementations of symbols in the outline."
-                    })
+                        Using the line numbers in this outline, you can call this tool again
+                        while specifying the start_line and end_line fields to see the
+                        implementations of symbols in the outline."
+                    }
+                    .into())
                 }
             }
         })
@@ -205,6 +210,7 @@ mod test {
     use super::*;
     use gpui::{AppContext, TestAppContext};
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
@@ -218,13 +224,22 @@ mod test {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -248,17 +263,26 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content");
+        assert_eq!(result.unwrap().content, "This is a small file content");
     }
 
     #[gpui::test]
@@ -277,6 +301,7 @@ mod test {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(Arc::new(rust_lang()));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let result = cx
             .update(|cx| {
@@ -284,13 +309,21 @@ mod test {
                     "path": "root/large_file.rs"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
         let content = result.unwrap();
         assert_eq!(
-            content.lines().skip(2).take(6).collect::<Vec<_>>(),
+            content.lines().skip(4).take(6).collect::<Vec<_>>(),
             vec![
                 "struct Test0 [L1-4]",
                 " a [L2]",
@@ -308,7 +341,15 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -325,7 +366,7 @@ mod test {
         pretty_assertions::assert_eq!(
             content
                 .lines()
-                .skip(2)
+                .skip(4)
                 .take(expected_content.len())
                 .collect::<Vec<_>>(),
             expected_content
@@ -346,6 +387,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
@@ -354,11 +396,19 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+        assert_eq!(result.unwrap().content, "Line 2\nLine 3\nLine 4");
     }
 
     #[gpui::test]
@@ -375,6 +425,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -385,11 +436,19 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+        assert_eq!(result.unwrap().content, "Line 1\nLine 2");
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -400,11 +459,19 @@ mod test {
                     "end_line": 0
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1");
+        assert_eq!(result.unwrap().content, "Line 1");
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -415,11 +482,19 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3");
+        assert_eq!(result.unwrap().content, "Line 3");
     }
 
     fn init_test(cx: &mut TestAppContext) {
