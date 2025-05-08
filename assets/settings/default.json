@@ -309,8 +309,12 @@
   },
   // Titlebar related settings
   "title_bar": {
-    // Whether to show the branch icon beside branch switcher in the title bar.
-    "show_branch_icon": false
+    // Whether to show the branch icon beside branch switcher in the titlebar.
+    "show_branch_icon": false,
+    // Whether to show onboarding banners in the titlebar.
+    "show_onboarding_banner": true,
+    // Whether to show user picture in the titlebar.
+    "show_user_picture": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -352,6 +356,49 @@
       "vertical": true
     }
   },
+  // Minimap related settings
+  "minimap": {
+    // When to show the minimap in the editor.
+    // This setting can take three values:
+    // 1. Show the minimap if the editor's scrollbar is visible:
+    //    "auto"
+    // 2. Always show the minimap:
+    //    "always"
+    // 3. Never show the minimap:
+    //    "never" (default)
+    "show": "never",
+    // When to show the minimap thumb.
+    // This setting can take two values:
+    // 1. Show the minimap thumb if the mouse is over the minimap:
+    //    "hover"
+    // 2. Always show the minimap thumb:
+    //    "always" (default)
+    "thumb": "always",
+    // How the minimap thumb border should look.
+    // This setting can take five values:
+    // 1. Display a border on all sides of the thumb:
+    //    "thumb_border": "full"
+    // 2. Display a border on all sides except the left side of the thumb:
+    //    "thumb_border": "left_open" (default)
+    // 3. Display a border on all sides except the right side of the thumb:
+    //    "thumb_border": "right_open"
+    // 4. Display a border only on the left side of the thumb:
+    //    "thumb_border": "left_only"
+    // 5. Display the thumb without any border:
+    //    "thumb_border": "none"
+    "thumb_border": "left_open",
+    // How to highlight the current line in the minimap.
+    // This setting can take the following values:
+    //
+    // 1. `null` to inherit the editor `current_line_highlight` setting (default)
+    // 2. "line" or "all" to highlight the current line in the minimap.
+    // 3. "gutter" or "none" to not highlight the current line in the minimap.
+    "current_line_highlight": null,
+    // The width of the minimap in pixels.
+    "width": 100,
+    // The font size of the minimap in pixels.
+    "font_size": 2
+  },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
@@ -366,8 +413,6 @@
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
-    // Whether to show code action buttons in the gutter.
-    "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
     // Whether to show breakpoints in the gutter.
@@ -610,13 +655,11 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-
     // Whether to sort entries in the panel by path
     // or by status (the default).
     //
     // Default: false
     "sort_by_path": false,
-
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -642,6 +685,8 @@
     "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -664,6 +709,28 @@
       // The model to use.
       "model": "claude-3-7-sonnet-latest"
     },
+    // Additional parameters for language model requests. When making a request to a model, parameters will be taken
+    // from the last entry in this list that matches the model's provider and name. In each entry, both provider
+    // and model are optional, so that you can specify parameters for either one.
+    "model_parameters": [
+      // To set parameters for all requests to OpenAI models:
+      // {
+      //   "provider": "openai",
+      //   "temperature": 0.5
+      // }
+      //
+      // To set parameters for all requests in general:
+      // {
+      //   "temperature": 0
+      // }
+      //
+      // To set parameters for a specific provider and model:
+      // {
+      //   "provider": "zed.dev",
+      //   "model": "claude-3-7-sonnet-latest",
+      //   "temperature": 1.0
+      // }
+    ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
@@ -908,6 +975,8 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // What debuggers are preferred by default for all languages.
+  "debuggers": [],
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
@@ -1604,8 +1673,6 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
-  // Whether to show user picture in titlebar.
-  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.

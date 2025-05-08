@@ -12,14 +12,14 @@ use agent::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant_context_editor::AssistantPanelDelegate;
+use assistant_context_editor::AgentPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -53,7 +53,6 @@ use settings::{
 };
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
-use std::time::Duration;
 use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
@@ -62,7 +61,7 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{BaseKeymap, MultibufferHint};
+use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -72,7 +71,7 @@ use workspace::{
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
 
 actions!(
@@ -373,9 +372,6 @@ fn initialize_panels(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let assistant2_feature_flag =
-        cx.wait_for_flag_or_timeout::<feature_flags::Assistant2FeatureFlag>(Duration::from_secs(5));
-
     let prompt_builder = prompt_builder.clone();
 
     cx.spawn_in(window, async move |workspace_handle, cx| {
@@ -436,36 +432,20 @@ fn initialize_panels(
             workspace.add_panel(git_panel, window, cx);
         })?;
 
-        let is_assistant2_enabled = if cfg!(test) {
-            false
-        } else {
-            assistant2_feature_flag.await
-        };
-
-        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-            let assistant2_panel =
-                agent::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+        let is_assistant2_enabled = !cfg!(test);
+        let agent_panel = if is_assistant2_enabled {
+            let agent_panel =
+                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
-            (None, Some(assistant2_panel))
+            Some(agent_panel)
         } else {
-            let assistant_panel = assistant::AssistantPanel::load(
-                workspace_handle.clone(),
-                prompt_builder.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            (Some(assistant_panel), None)
+            None
         };
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(assistant2_panel) = assistant2_panel {
-                workspace.add_panel(assistant2_panel, window, cx);
-            }
-
-            if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, window, cx);
+            if let Some(agent_panel) = agent_panel {
+                workspace.add_panel(agent_panel, window, cx);
             }
 
             // Register the actions that are shared between `assistant` and `assistant2`.
@@ -473,25 +453,16 @@ fn initialize_panels(
             // We need to do this here instead of within the individual `init`
             // functions so that we only register the actions once.
             //
-            // Once we ship `assistant2` we can push this back down into `agent::assistant_panel::init`.
+            // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
             if is_assistant2_enabled {
-                <dyn AssistantPanelDelegate>::set_global(
+                <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(agent::AssistantPanel::toggle_focus)
+                    .register_action(agent::AgentPanel::toggle_focus)
                     .register_action(agent::InlineAssistant::inline_assist);
-            } else {
-                <dyn AssistantPanelDelegate>::set_global(
-                    Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
-                    cx,
-                );
-
-                workspace
-                    .register_action(assistant::AssistantPanel::toggle_focus)
-                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 
@@ -508,6 +479,7 @@ fn register_actions(
 ) {
     workspace
         .register_action(about)
+        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -4249,10 +4221,11 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            assistant::init(
+            agent::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
                 prompt_builder.clone(),
+                app_state.languages.clone(),
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);

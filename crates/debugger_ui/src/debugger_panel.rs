@@ -1,11 +1,10 @@
 use crate::persistence::DebuggerPaneItem;
+use crate::session::DebugSession;
 use crate::{
-    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, FocusBreakpointList,
-    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
-    Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    persistence,
+    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
+    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
-use crate::{new_session_modal::NewSessionModal, session::DebugSession};
 use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
@@ -107,7 +106,7 @@ impl DebugPanel {
 
         let filter = CommandPaletteFilter::global_mut(cx);
         let debugger_action_types = [
-            TypeId::of::<Disconnect>(),
+            TypeId::of::<Detach>(),
             TypeId::of::<Stop>(),
             TypeId::of::<ToggleIgnoreBreakpoints>(),
         ];
@@ -210,7 +209,6 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         let dap_store = self.project.read(cx).dap_store();
-        let workspace = self.workspace.clone();
         let session = dap_store.update(cx, |dap_store, cx| {
             dap_store.new_session(
                 scenario.label.clone(),
@@ -249,14 +247,14 @@ impl DebugPanel {
 
         cx.spawn(async move |_, cx| {
             if let Err(error) = task.await {
-                log::error!("{:?}", error);
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_error(&error, cx);
-                    })
-                    .ok();
                 session
-                    .update(cx, |session, cx| session.shutdown(cx))?
+                    .update(cx, |session, cx| {
+                        session
+                            .console_output(cx)
+                            .unbounded_send(format!("error: {}", error))
+                            .ok();
+                        session.shutdown(cx)
+                    })?
                     .await;
             }
             anyhow::Ok(())
@@ -611,19 +609,14 @@ impl DebugPanel {
             IconButton::new("debug-new-session", IconName::Plus)
                 .icon_size(IconSize::Small)
                 .on_click({
-                    let workspace = self.workspace.clone();
-                    move |_, window, cx| {
-                        let _ = workspace.update(cx, |workspace, cx| {
-                            NewSessionModal::show(workspace, window, cx);
-                        });
-                    }
+                    move |_, window, cx| window.dispatch_action(crate::Start.boxed_clone(), cx)
                 })
                 .tooltip({
                     let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
-                            "New Debug Session",
-                            &CreateDebuggingSession,
+                            "Start Debug Session",
+                            &crate::Start,
                             &focus_handle,
                             window,
                             cx,
@@ -882,6 +875,28 @@ impl DebugPanel {
                                                     Tooltip::for_action_in(
                                                         label,
                                                         &Stop,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-disconnect", IconName::DebugDetach)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(window.listener_for(
+                                                &running_session,
+                                                |this, _, _, cx| {
+                                                    this.detach_client(cx);
+                                                },
+                                            ))
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Detach",
+                                                        &Detach,
                                                         &focus_handle,
                                                         window,
                                                         cx,
@@ -1239,10 +1254,7 @@ impl Render for DebugPanel {
                                     Button::new("spawn-new-session-empty-state", "New Session")
                                         .size(ButtonSize::Large)
                                         .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                CreateDebuggingSession.boxed_clone(),
-                                                cx,
-                                            );
+                                            window.dispatch_action(crate::Start.boxed_clone(), cx);
                                         }),
                                 ),
                             ),

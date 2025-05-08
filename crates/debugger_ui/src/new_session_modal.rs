@@ -2,6 +2,8 @@ use std::{
     borrow::Cow,
     ops::Not,
     path::{Path, PathBuf},
+    sync::Arc,
+    usize,
 };
 
 use dap::{
@@ -15,10 +17,9 @@ use gpui::{
     Subscription, TextStyle, WeakEntity,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskSourceKind, task_store::TaskStore};
+use project::{TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
 use task::{DebugScenario, LaunchRequest};
-use tasks_ui::task_contexts;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -40,6 +41,7 @@ pub(super) struct NewSessionModal {
     attach_mode: Entity<AttachMode>,
     custom_mode: Entity<CustomMode>,
     debugger: Option<DebugAdapterName>,
+    task_contexts: Arc<TaskContexts>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -62,53 +64,72 @@ fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
 }
 
 impl NewSessionModal {
-    pub(super) fn show(workspace: &mut Workspace, window: &mut Window, cx: &mut App) {
+    pub(super) fn show(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
             return;
         };
-        let workspace_handle = workspace.weak_handle();
         let task_store = workspace.project().read(cx).task_store().clone();
-        workspace.toggle_modal(window, cx, |window, cx| {
-            let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
 
-            let launch_picker = cx.new(|cx| {
-                Picker::uniform_list(
-                    DebugScenarioDelegate::new(
-                        debug_panel.downgrade(),
-                        workspace_handle.clone(),
-                        task_store,
-                    ),
-                    window,
-                    cx,
-                )
-                .modal(false)
-            });
+        cx.spawn_in(window, async move |workspace, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
 
-            let _subscriptions = [
-                cx.subscribe(&launch_picker, |_, _, _, cx| {
-                    cx.emit(DismissEvent);
-                }),
-                cx.subscribe(
-                    &attach_mode.read(cx).attach_picker.clone(),
-                    |_, _, _, cx| {
-                        cx.emit(DismissEvent);
-                    },
-                ),
-            ];
+            workspace.update_in(cx, |workspace, window, cx| {
+                let workspace_handle = workspace.weak_handle();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
 
-            let custom_mode = CustomMode::new(None, window, cx);
+                    let launch_picker = cx.new(|cx| {
+                        Picker::uniform_list(
+                            DebugScenarioDelegate::new(
+                                debug_panel.downgrade(),
+                                workspace_handle.clone(),
+                                task_store,
+                            ),
+                            window,
+                            cx,
+                        )
+                        .modal(false)
+                    });
 
-            Self {
-                launch_picker,
-                attach_mode,
-                custom_mode,
-                debugger: None,
-                mode: NewSessionMode::Launch,
-                debug_panel: debug_panel.downgrade(),
-                workspace: workspace_handle,
-                _subscriptions,
-            }
-        });
+                    let _subscriptions = [
+                        cx.subscribe(&launch_picker, |_, _, _, cx| {
+                            cx.emit(DismissEvent);
+                        }),
+                        cx.subscribe(
+                            &attach_mode.read(cx).attach_picker.clone(),
+                            |_, _, _, cx| {
+                                cx.emit(DismissEvent);
+                            },
+                        ),
+                    ];
+
+                    let custom_mode = CustomMode::new(None, window, cx);
+
+                    Self {
+                        launch_picker,
+                        attach_mode,
+                        custom_mode,
+                        debugger: None,
+                        mode: NewSessionMode::Launch,
+                        debug_panel: debug_panel.downgrade(),
+                        workspace: workspace_handle,
+                        task_contexts: Arc::from(task_contexts),
+                        _subscriptions,
+                    }
+                });
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     fn render_mode(&self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
@@ -184,22 +205,10 @@ impl NewSessionModal {
         };
 
         let debug_panel = self.debug_panel.clone();
-        let workspace = self.workspace.clone();
+        let task_contexts = self.task_contexts.clone();
         cx.spawn_in(window, async move |this, cx| {
-            let task_contexts = workspace
-                .update_in(cx, |this, window, cx| task_contexts(this, window, cx))?
-                .await;
+            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
             let worktree_id = task_contexts.worktree();
-            let task_context = task_contexts
-                .active_item_context
-                .map(|(_, _, context)| context)
-                .or_else(|| {
-                    task_contexts
-                        .active_worktree_context
-                        .map(|(_, context)| context)
-                })
-                .unwrap_or_default();
-
             debug_panel.update_in(cx, |debug_panel, window, cx| {
                 debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
             })?;
@@ -245,6 +254,17 @@ impl NewSessionModal {
             .as_ref()
             .map(|d| d.0.clone())
             .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
+        let active_buffer_language = self
+            .task_contexts
+            .active_item_context
+            .as_ref()
+            .and_then(|item| {
+                item.1
+                    .as_ref()
+                    .and_then(|location| location.buffer.read(cx).language())
+            })
+            .cloned();
+
         DropdownMenu::new(
             "dap-adapter-picker",
             label,
@@ -263,11 +283,20 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_adapters = workspace
+                let mut available_adapters = workspace
                     .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
                     .unwrap_or_default();
+                if let Some(language) = active_buffer_language {
+                    available_adapters.sort_by_key(|adapter| {
+                        language
+                            .config()
+                            .debuggers
+                            .get_index_of(adapter.0.as_ref())
+                            .unwrap_or(usize::MAX)
+                    });
+                }
 
-                for adapter in available_adapters {
+                for adapter in available_adapters.into_iter() {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
                 }
                 menu

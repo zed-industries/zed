@@ -18,7 +18,6 @@ use editor::{
     scroll::Autoscroll,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
-use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
@@ -138,7 +137,7 @@ pub enum ThoughtProcessStatus {
     Completed,
 }
 
-pub trait AssistantPanelDelegate {
+pub trait AgentPanelDelegate {
     fn active_context_editor(
         &self,
         workspace: &mut Workspace,
@@ -172,7 +171,7 @@ pub trait AssistantPanelDelegate {
     );
 }
 
-impl dyn AssistantPanelDelegate {
+impl dyn AgentPanelDelegate {
     /// Returns the global [`AssistantPanelDelegate`], if it exists.
     pub fn try_global(cx: &App) -> Option<Arc<Self>> {
         cx.try_global::<GlobalAssistantPanelDelegate>()
@@ -185,7 +184,7 @@ impl dyn AssistantPanelDelegate {
     }
 }
 
-struct GlobalAssistantPanelDelegate(Arc<dyn AssistantPanelDelegate>);
+struct GlobalAssistantPanelDelegate(Arc<dyn AgentPanelDelegate>);
 
 impl Global for GlobalAssistantPanelDelegate {}
 
@@ -243,9 +242,9 @@ impl ContextEditor {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_buffer(context.read(cx).buffer().clone(), None, window, cx);
+            editor.disable_scrollbars_and_minimap(cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
-            editor.set_show_scrollbars(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_runnables(false, cx);
@@ -368,10 +367,16 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sending_disabled(cx) {
+            return;
+        }
         self.send_to_model(RequestType::Chat, window, cx);
     }
 
     fn edit(&mut self, _: &Edit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sending_disabled(cx) {
+            return;
+        }
         self.send_to_model(RequestType::SuggestEdits, window, cx);
     }
 
@@ -943,7 +948,7 @@ impl ContextEditor {
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext| {
                         let max_width = cx.max_width;
-                        let gutter_width = cx.gutter_dimensions.full_width();
+                        let gutter_width = cx.margins.gutter.full_width();
                         let block_id = cx.block_id;
                         let selected = cx.selected;
                         let window = &mut cx.window;
@@ -1489,7 +1494,7 @@ impl ContextEditor {
 
                         h_flex()
                             .id(("message_header", message_id.as_u64()))
-                            .pl(cx.gutter_dimensions.full_width())
+                            .pl(cx.margins.gutter.full_width())
                             .h_11()
                             .w_full()
                             .relative()
@@ -1584,6 +1589,7 @@ impl ContextEditor {
                 ),
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
+                render_in_minimap: false,
             };
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
@@ -1666,11 +1672,11 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
+        let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
         };
         let Some(context_editor_view) =
-            assistant_panel_delegate.active_context_editor(workspace, window, cx)
+            agent_panel_delegate.active_context_editor(workspace, window, cx)
         else {
             return;
         };
@@ -1696,9 +1702,9 @@ impl ContextEditor {
         cx: &mut Context<Workspace>,
     ) {
         let result = maybe!({
-            let assistant_panel_delegate = <dyn AssistantPanelDelegate>::try_global(cx)?;
+            let agent_panel_delegate = <dyn AgentPanelDelegate>::try_global(cx)?;
             let context_editor_view =
-                assistant_panel_delegate.active_context_editor(workspace, window, cx)?;
+                agent_panel_delegate.active_context_editor(workspace, window, cx)?;
             Self::get_selection_or_code_block(&context_editor_view, cx)
         });
         let Some((text, is_code_block)) = result else {
@@ -1731,11 +1737,11 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
+        let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
         };
         let Some(context_editor_view) =
-            assistant_panel_delegate.active_context_editor(workspace, window, cx)
+            agent_panel_delegate.active_context_editor(workspace, window, cx)
         else {
             return;
         };
@@ -1821,7 +1827,7 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
+        let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
         };
 
@@ -1852,7 +1858,7 @@ impl ContextEditor {
             return;
         }
 
-        assistant_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
+        agent_panel_delegate.quote_selection(workspace, selections, buffer, window, cx);
     }
 
     pub fn quote_ranges(
@@ -2158,12 +2164,12 @@ impl ContextEditor {
                             let image_size = size_for_image(
                                 &image,
                                 size(
-                                    cx.max_width - cx.gutter_dimensions.full_width(),
+                                    cx.max_width - cx.margins.gutter.full_width(),
                                     MAX_HEIGHT_IN_LINES as f32 * cx.line_height,
                                 ),
                             );
                             h_flex()
-                                .pl(cx.gutter_dimensions.full_width())
+                                .pl(cx.margins.gutter.full_width())
                                 .child(
                                     img(image.clone())
                                         .object_fit(gpui::ObjectFit::ScaleDown)
@@ -2173,6 +2179,7 @@ impl ContextEditor {
                                 .into_any_element()
                         }),
                         priority: 0,
+                        render_in_minimap: false,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2395,19 +2402,11 @@ impl ContextEditor {
                             .on_click({
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, window, cx| {
-                                    if cx.has_flag::<Assistant2FeatureFlag>() {
-                                        focus_handle.dispatch_action(
-                                            &zed_actions::agent::OpenConfiguration,
-                                            window,
-                                            cx,
-                                        );
-                                    } else {
-                                        focus_handle.dispatch_action(
-                                            &zed_actions::assistant::ShowConfiguration,
-                                            window,
-                                            cx,
-                                        );
-                                    };
+                                    focus_handle.dispatch_action(
+                                        &zed_actions::agent::OpenConfiguration,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }),
                     )
@@ -2445,17 +2444,8 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let model = LanguageModelRegistry::read_global(cx).default_model();
-
-        let has_configuration_error = configuration_error(cx).is_some();
-        let needs_to_accept_terms = self.show_accept_terms
-            && model
-                .as_ref()
-                .map_or(false, |model| model.provider.must_accept_terms(cx));
-        let disabled = has_configuration_error || needs_to_accept_terms;
-
         ButtonLike::new("send_button")
-            .disabled(disabled)
+            .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
@@ -2475,6 +2465,20 @@ impl ContextEditor {
             .on_click(move |_event, window, cx| {
                 focus_handle.dispatch_action(&Assist, window, cx);
             })
+    }
+
+    /// Whether or not we should allow messages to be sent.
+    /// Will return false if the selected provided has a configuration error or
+    /// if the user has not accepted the terms of service for this provider.
+    fn sending_disabled(&self, cx: &mut Context<'_, ContextEditor>) -> bool {
+        let model = LanguageModelRegistry::read_global(cx).default_model();
+
+        let has_configuration_error = configuration_error(cx).is_some();
+        let needs_to_accept_terms = self.show_accept_terms
+            && model
+                .as_ref()
+                .map_or(false, |model| model.provider.must_accept_terms(cx));
+        has_configuration_error || needs_to_accept_terms
     }
 
     fn render_edit_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2504,19 +2508,8 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        let provider = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.provider);
-
-        let has_configuration_error = configuration_error(cx).is_some();
-        let needs_to_accept_terms = self.show_accept_terms
-            && provider
-                .as_ref()
-                .map_or(false, |provider| provider.must_accept_terms(cx));
-        let disabled = has_configuration_error || needs_to_accept_terms;
-
         ButtonLike::new("edit_button")
-            .disabled(disabled)
+            .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
@@ -3368,10 +3361,10 @@ impl FollowableItem for ContextEditor {
         let editor_state = state.editor?;
 
         let project = workspace.read(cx).project().clone();
-        let assistant_panel_delegate = <dyn AssistantPanelDelegate>::try_global(cx)?;
+        let agent_panel_delegate = <dyn AgentPanelDelegate>::try_global(cx)?;
 
         let context_editor_task = workspace.update(cx, |workspace, cx| {
-            assistant_panel_delegate.open_remote_context(workspace, context_id, window, cx)
+            agent_panel_delegate.open_remote_context(workspace, context_id, window, cx)
         });
 
         Some(window.spawn(cx, async move |cx| {

@@ -22,7 +22,10 @@ use ui::{
     Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
+use workspace::SuppressNotification;
+use workspace::notifications::{
+    Notification as WorkspaceNotification, NotificationId, SuppressEvent,
+};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -821,7 +824,20 @@ impl Render for NotificationToast {
             .child(Label::new(self.text.clone()))
             .child(
                 IconButton::new("close", IconName::Close)
+                    .tooltip(|window, cx| Tooltip::for_action("Close", &menu::Cancel, window, cx))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+            )
+            .child(
+                IconButton::new("suppress", IconName::SquareMinus)
+                    .tooltip(|window, cx| {
+                        Tooltip::for_action(
+                            "Do not show until restart",
+                            &SuppressNotification,
+                            window,
+                            cx,
+                        )
+                    })
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SuppressEvent))),
             )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.focus_notification_panel(window, cx);
@@ -831,3 +847,4 @@ impl Render for NotificationToast {
 }
 
 impl EventEmitter<DismissEvent> for NotificationToast {}
+impl EventEmitter<SuppressEvent> for NotificationToast {}

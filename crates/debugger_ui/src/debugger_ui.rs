@@ -24,7 +24,7 @@ actions!(
     [
         Start,
         Continue,
-        Disconnect,
+        Detach,
         Pause,
         Restart,
         StepInto,
@@ -34,7 +34,6 @@ actions!(
         Stop,
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
-        CreateDebuggingSession,
         FocusConsole,
         FocusVariables,
         FocusBreakpointList,
@@ -145,11 +144,6 @@ pub fn init(cx: &mut App) {
                                 store.shutdown_sessions(cx).detach();
                             })
                         })
-                    },
-                )
-                .register_action(
-                    |workspace: &mut Workspace, _: &CreateDebuggingSession, window, cx| {
-                        NewSessionModal::show(workspace, window, cx);
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {

@@ -29,6 +29,7 @@ itertools.workspace = true
 language.workspace = true
 log.workspace = true
 project.workspace = true
+regex.workspace = true
 task.workspace = true
 schemars.workspace = true
 search.workspace = true

@@ -6,6 +6,7 @@ use crate::inline_prompt_editor::{
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use anyhow::{Context as _, Result};
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
@@ -266,6 +267,12 @@ impl TerminalInlineAssistant {
             load_context(contexts, project, &assist.prompt_store, cx)
         })?;
 
+        let ConfiguredModel { model, .. } = LanguageModelRegistry::read_global(cx)
+            .inline_assistant_model()
+            .context("No inline assistant model")?;
+
+        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+
         Ok(cx.background_spawn(async move {
             let mut request_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -286,8 +293,9 @@ impl TerminalInlineAssistant {
                 mode: None,
                 messages: vec![request_message],
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
-                temperature: None,
+                temperature,
             }
         }))
     }
