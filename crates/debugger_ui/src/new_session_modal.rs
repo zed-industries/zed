@@ -1,12 +1,11 @@
 use std::{
     borrow::Cow,
-    cmp::Reverse,
     ops::Not,
     path::{Path, PathBuf},
     sync::Arc,
+    usize,
 };
 
-use collections::{HashMap, HashSet};
 use dap::{
     DapRegistry, DebugRequest,
     adapters::{DebugAdapterName, DebugTaskDefinition},
@@ -192,25 +191,22 @@ impl NewSessionModal {
         cx: &mut Context<Self>,
     ) -> Option<ui::DropdownMenu> {
         let workspace = self.workspace.clone();
-        let language_registry = self
-            .workspace
-            .update(cx, |this, _| this.app_state().languages.clone())
-            .ok()?;
         let weak = cx.weak_entity();
         let label = self
             .debugger
             .as_ref()
             .map(|d| d.0.clone())
             .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
-        let active_buffer_language_name =
-            self.task_contexts
-                .active_item_context
-                .as_ref()
-                .and_then(|item| {
-                    item.1
-                        .as_ref()
-                        .and_then(|location| location.buffer.read(cx).language()?.name().into())
-                });
+        let active_buffer_language = self
+            .task_contexts
+            .active_item_context
+            .as_ref()
+            .and_then(|item| {
+                item.1
+                    .as_ref()
+                    .and_then(|location| location.buffer.read(cx).language())
+            })
+            .cloned();
         DropdownMenu::new(
             "dap-adapter-picker",
             label,
@@ -229,42 +225,19 @@ impl NewSessionModal {
                     }
                 };
 
-                let available_languages = language_registry.language_names();
-                let mut debugger_to_languages = HashMap::default();
-                for language in available_languages {
-                    let Some(language) =
-                        language_registry.available_language_for_name(language.as_str())
-                    else {
-                        continue;
-                    };
-
-                    language.config().debuggers.iter().for_each(|adapter| {
-                        debugger_to_languages
-                            .entry(adapter.clone())
-                            .or_insert_with(HashSet::default)
-                            .insert(language.name());
-                    });
-                }
                 let mut available_adapters = workspace
                     .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
                     .ok()
                     .unwrap_or_default();
-
-                available_adapters.sort_by_key(|name| {
-                    let languages_for_debugger = debugger_to_languages.get(name.as_ref());
-                    let languages_count =
-                        languages_for_debugger.map_or(0, |languages| languages.len());
-                    let contains_language_of_active_buffer = languages_for_debugger
-                        .zip(active_buffer_language_name.as_ref())
-                        .map_or(false, |(languages, active_buffer_language)| {
-                            languages.contains(active_buffer_language)
-                        });
-
-                    (
-                        Reverse(contains_language_of_active_buffer),
-                        Reverse(languages_count),
-                    )
-                });
+                if let Some(language) = active_buffer_language {
+                    available_adapters.sort_by_key(|adapter| {
+                        language
+                            .config()
+                            .debuggers
+                            .get_index_of(adapter.0.as_ref())
+                            .unwrap_or(usize::MAX)
+                    });
+                }
 
                 for adapter in available_adapters.into_iter() {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
