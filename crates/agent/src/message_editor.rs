@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::agent_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
@@ -65,7 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Entity<AssistantModelSelector>,
+    model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
@@ -189,7 +189,7 @@ impl MessageEditor {
         ];
 
         let model_selector = cx.new(|cx| {
-            AssistantModelSelector::new(
+            AgentModelSelector::new(
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),

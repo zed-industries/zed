@@ -19,10 +19,10 @@ use util::ResultExt;
 
 use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::thread_store::SerializedThreadMetadata;
-use crate::{AssistantPanel, RemoveSelectedThread};
+use crate::{AgentPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
-    assistant_panel: WeakEntity<AssistantPanel>,
+    assistant_panel: WeakEntity<AgentPanel>,
     history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
@@ -69,7 +69,7 @@ impl HistoryListItem {
 
 impl ThreadHistory {
     pub(crate) fn new(
-        assistant_panel: WeakEntity<AssistantPanel>,
+        assistant_panel: WeakEntity<AgentPanel>,
         history_store: Entity<HistoryStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -605,7 +605,7 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: SerializedThreadMetadata,
-    assistant_panel: WeakEntity<AssistantPanel>,
+    assistant_panel: WeakEntity<AgentPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
     timestamp_format: EntryTimeFormat,
@@ -614,7 +614,7 @@ pub struct PastThread {
 impl PastThread {
     pub fn new(
         thread: SerializedThreadMetadata,
-        assistant_panel: WeakEntity<AssistantPanel>,
+        assistant_panel: WeakEntity<AgentPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
         timestamp_format: EntryTimeFormat,
@@ -697,7 +697,7 @@ impl RenderOnce for PastThread {
 #[derive(IntoElement)]
 pub struct PastContext {
     context: SavedContextMetadata,
-    assistant_panel: WeakEntity<AssistantPanel>,
+    assistant_panel: WeakEntity<AgentPanel>,
     selected: bool,
     highlight_positions: Vec<usize>,
     timestamp_format: EntryTimeFormat,
@@ -706,7 +706,7 @@ pub struct PastContext {
 impl PastContext {
     pub fn new(
         context: SavedContextMetadata,
-        assistant_panel: WeakEntity<AssistantPanel>,
+        assistant_panel: WeakEntity<AgentPanel>,
         selected: bool,
         highlight_positions: Vec<usize>,
         timestamp_format: EntryTimeFormat,
@@ -797,7 +797,7 @@ pub enum EntryTimeFormat {
 impl EntryTimeFormat {
     fn format_timestamp(
         &self,
-        assistant_panel: &WeakEntity<AssistantPanel>,
+        assistant_panel: &WeakEntity<AgentPanel>,
         timestamp: i64,
         cx: &App,
     ) -> String {

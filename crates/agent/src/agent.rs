@@ -44,7 +44,7 @@ use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{AddContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
+pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;

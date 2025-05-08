@@ -53,7 +53,7 @@ use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFon
 use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
-use crate::agent_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
+use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
 use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
@@ -71,7 +71,7 @@ use crate::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
 #[derive(Serialize, Deserialize)]
-struct SerializedAssistantPanel {
+struct SerializedAgentPanel {
     width: Option<Pixels>,
 }
 
@@ -80,40 +80,40 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
                 .register_action(|workspace, action: &NewThread, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &OpenConfiguration, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.deploy_rules_library(action, window, cx)
                         });
                     }
                 })
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
@@ -122,8 +122,8 @@ pub fn init(cx: &mut App) {
                     workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.message_editor.update(cx, |editor, cx| {
                                 editor.expand_message_editor(&ExpandMessageEditor, window, cx);
@@ -132,16 +132,16 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &ToggleNavigationMenu, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_navigation_menu(&ToggleNavigationMenu, window, cx);
                         });
                     }
                 })
                 .register_action(|workspace, _: &ToggleOptionsMenu, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
@@ -335,7 +335,7 @@ impl ActiveView {
     }
 }
 
-pub struct AssistantPanel {
+pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     project: Entity<Project>,
@@ -349,7 +349,7 @@ pub struct AssistantPanel {
     context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     inline_assist_context_store: Entity<crate::context_store::ContextStore>,
-    configuration: Option<Entity<AssistantConfiguration>>,
+    configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
@@ -366,14 +366,14 @@ pub struct AssistantPanel {
     _trial_markdown: Entity<Markdown>,
 }
 
-impl AssistantPanel {
+impl AgentPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         self.pending_serialization = Some(cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
                     AGENT_PANEL_KEY.into(),
-                    serde_json::to_string(&SerializedAssistantPanel { width })?,
+                    serde_json::to_string(&SerializedAgentPanel { width })?,
                 )
                 .await?;
             anyhow::Ok(())
@@ -423,7 +423,7 @@ impl AssistantPanel {
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedAssistantPanel>(&panel)?)
+                Some(serde_json::from_str::<SerializedAgentPanel>(&panel)?)
             } else {
                 None
             };
@@ -1163,9 +1163,7 @@ impl AssistantPanel {
 
         self.set_active_view(ActiveView::Configuration, window, cx);
         self.configuration =
-            Some(cx.new(|cx| {
-                AssistantConfiguration::new(fs, context_server_store, tools, window, cx)
-            }));
+            Some(cx.new(|cx| AgentConfiguration::new(fs, context_server_store, tools, window, cx)));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
@@ -1203,7 +1201,7 @@ impl AssistantPanel {
 
     fn handle_agent_configuration_event(
         &mut self,
-        _entity: &Entity<AssistantConfiguration>,
+        _entity: &Entity<AgentConfiguration>,
         event: &AssistantConfigurationEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1316,7 +1314,7 @@ impl AssistantPanel {
     }
 }
 
-impl Focusable for AssistantPanel {
+impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
@@ -1341,9 +1339,9 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
     }
 }
 
-impl EventEmitter<PanelEvent> for AssistantPanel {}
+impl EventEmitter<PanelEvent> for AgentPanel {}
 
-impl Panel for AssistantPanel {
+impl Panel for AgentPanel {
     fn persistent_name() -> &'static str {
         "AgentPanel"
     }
@@ -1418,7 +1416,7 @@ impl Panel for AssistantPanel {
     }
 }
 
-impl AssistantPanel {
+impl AgentPanel {
     fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
@@ -2744,7 +2742,7 @@ impl AssistantPanel {
     }
 }
 
-impl Render for AssistantPanel {
+impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match &self.active_view {
             ActiveView::Thread { .. } => v_flex()
@@ -2861,9 +2859,7 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> bool {
-        workspace
-            .focus_panel::<AssistantPanel>(window, cx)
-            .is_some()
+        workspace.focus_panel::<AgentPanel>(window, cx).is_some()
     }
 }
 
@@ -2876,7 +2872,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<ContextEditor>> {
-        let panel = workspace.panel::<AssistantPanel>(cx)?;
+        let panel = workspace.panel::<AgentPanel>(cx)?;
         panel.read(cx).active_context_editor()
     }
 
@@ -2887,7 +2883,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
             return Task::ready(Err(anyhow!("Agent panel not found")));
         };
 
@@ -2914,12 +2910,12 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
             return;
         };
 
         if !panel.focus_handle(cx).contains_focused(window, cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
+            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
         }
 
         panel.update(cx, |_, cx| {

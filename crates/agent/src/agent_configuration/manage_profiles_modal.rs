@@ -20,7 +20,7 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::{AssistantPanel, ManageProfiles, ThreadStore};
+use crate::{AgentPanel, ManageProfiles, ThreadStore};
 
 use super::tool_picker::ToolPickerMode;
 
@@ -115,7 +115,7 @@ impl ManageProfilesModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
-            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store();
                 let tools = thread_store.read(cx).tools();

@@ -1,4 +1,4 @@
-use crate::agent_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -42,7 +42,7 @@ pub struct PromptEditor<T> {
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Entity<AssistantModelSelector>,
+    model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -927,7 +927,7 @@ impl PromptEditor<BufferCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(
+                AgentModelSelector::new(
                     fs,
                     model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
@@ -1098,7 +1098,7 @@ impl PromptEditor<TerminalCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(
+                AgentModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),

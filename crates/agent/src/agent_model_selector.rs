@@ -17,13 +17,13 @@ pub enum ModelType {
     InlineAssistant,
 }
 
-pub struct AssistantModelSelector {
+pub struct AgentModelSelector {
     selector: Entity<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     focus_handle: FocusHandle,
 }
 
-impl AssistantModelSelector {
+impl AgentModelSelector {
     pub(crate) fn new(
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
@@ -99,7 +99,7 @@ impl AssistantModelSelector {
     }
 }
 
-impl Render for AssistantModelSelector {
+impl Render for AgentModelSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
 

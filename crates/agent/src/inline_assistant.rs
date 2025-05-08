@@ -43,7 +43,7 @@ use util::ResultExt;
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenConfiguration;
 
-use crate::AssistantPanel;
+use crate::AgentPanel;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
@@ -182,7 +182,7 @@ impl InlineAssistant {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 if is_assistant2_enabled {
-                    let panel = workspace.read(cx).panel::<AssistantPanel>(cx);
+                    let panel = workspace.read(cx).panel::<AgentPanel>(cx);
                     let thread_store = panel
                         .as_ref()
                         .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
@@ -227,7 +227,7 @@ impl InlineAssistant {
 
         let Some(inline_assist_target) = Self::resolve_inline_assist_target(
             workspace,
-            workspace.panel::<AssistantPanel>(cx),
+            workspace.panel::<AgentPanel>(cx),
             window,
             cx,
         ) else {
@@ -240,7 +240,7 @@ impl InlineAssistant {
                 .map_or(false, |model| model.provider.is_authenticated(cx))
         };
 
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace.panel::<AgentPanel>(cx) else {
             return;
         };
         let assistant_panel = assistant_panel.read(cx);
@@ -1454,7 +1454,7 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
-        assistant_panel: Option<Entity<AssistantPanel>>,
+        assistant_panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
