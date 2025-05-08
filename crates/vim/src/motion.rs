@@ -84,6 +84,9 @@ pub enum Motion {
     StartOfLine {
         display_lines: bool,
     },
+    MiddleOfLine {
+        display_lines: bool,
+    },
     EndOfLine {
         display_lines: bool,
     },
@@ -267,6 +270,13 @@ pub struct StartOfLine {
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
+struct MiddleOfLine {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
@@ -283,6 +293,7 @@ impl_actions!(
     vim,
     [
         StartOfLine,
+        MiddleOfLine,
         EndOfLine,
         FirstNonWhitespace,
         Down,
@@ -403,6 +414,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
         vim.motion(
             Motion::StartOfLine {
+                display_lines: action.display_lines,
+            },
+            window,
+            cx,
+        )
+    });
+    Vim::action(editor, cx, |vim, action: &MiddleOfLine, window, cx| {
+        vim.motion(
+            Motion::MiddleOfLine {
                 display_lines: action.display_lines,
             },
             window,
@@ -721,6 +741,7 @@ impl Motion {
             | Jump { line: true, .. } => MotionKind::Linewise,
             EndOfLine { .. }
             | EndOfLineDownward
+            | MiddleOfLine { .. }
             | Matching
             | FindForward { .. }
             | NextWordEnd { .. }
@@ -769,6 +790,7 @@ impl Motion {
             Down { .. }
             | Up { .. }
             | EndOfLine { .. }
+            | MiddleOfLine { .. }
             | Matching
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
@@ -892,6 +914,10 @@ impl Motion {
             ),
             StartOfLine { display_lines } => (
                 start_of_line(map, *display_lines, point),
+                SelectionGoal::None,
+            ),
+            MiddleOfLine { display_lines } => (
+                middle_of_line(map, *display_lines, point),
                 SelectionGoal::None,
             ),
             EndOfLine { display_lines } => (
@@ -1941,6 +1967,26 @@ pub(crate) fn start_of_line(
         map.clip_point(DisplayPoint::new(point.row(), 0), Bias::Right)
     } else {
         map.prev_line_boundary(point.to_point(map)).1
+    }
+}
+
+pub(crate) fn middle_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+) -> DisplayPoint {
+    if display_lines {
+        map.clip_point(
+            DisplayPoint::new(point.row(), map.line_len(point.row()) / 2),
+            Bias::Left,
+        )
+    } else {
+        let mut mid = map.prev_line_boundary(point.to_point(map)).1;
+        let end = map.next_line_boundary(point.to_point(map)).1;
+        *mid.column_mut() += (end.column() - mid.column()) / 2;
+        *mid.row_mut() += (end.row() - mid.row()).0 / 2;
+
+        map.clip_point(mid, Bias::Left)
     }
 }
 
