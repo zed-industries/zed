@@ -2748,7 +2748,7 @@ impl Render for AgentPanel {
         // non-obvious implications to the layout of children.
         //
         // If you need to change it, please confirm:
-        // - The messsage editor expands (⌘esc) correctly
+        // - The message editor expands (⌘esc) correctly
         // - When expanded, the buttons at the bottom of the panel are displayed correctly
         // - Font size works as expected and can be changed with ⌘+/⌘-
         // - Scrolling in all views works as expected
