@@ -1,10 +1,26 @@
-use client::{TelemetrySettings, telemetry::Telemetry};
+mod base_keymap_picker;
+mod base_keymap_setting;
+mod multibuffer_hint;
+mod onboarding;
+mod persistence;
+mod recent_projects;
+mod walkthrough;
+mod welcome_ui;
+
+pub use base_keymap_setting::BaseKeymap;
+use client::{Client, TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, svg,
 };
-use language::language_settings::{EditPredictionProvider, all_language_settings};
+use language::{
+    LanguageRegistry,
+    language_settings::{EditPredictionProvider, all_language_settings},
+};
+pub use multibuffer_hint::*;
+use onboarding::OnboardingWalkthrough;
+use project::Project;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
@@ -17,23 +33,13 @@ use workspace::{
     open_new,
 };
 
-pub use base_keymap_setting::BaseKeymap;
-pub use multibuffer_hint::*;
-
-mod base_keymap_picker;
-mod base_keymap_setting;
-mod multibuffer_hint;
-mod recent_projects;
-mod walkthrough;
-mod welcome_ui;
-
 actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
 const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
-pub fn init(cx: &mut App) {
+pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     BaseKeymap::register(cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
@@ -47,6 +53,7 @@ pub fn init(cx: &mut App) {
     .detach();
 
     walkthrough::init(cx);
+    onboarding::init(app_state.clone(), cx);
     base_keymap_picker::init(cx);
 }
 

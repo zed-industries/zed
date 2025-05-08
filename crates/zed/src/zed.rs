@@ -3836,7 +3836,7 @@ mod tests {
             client::init(&app_state.client, cx);
             language::init(cx);
             workspace::init(app_state.clone(), cx);
-            welcome::init(cx);
+            welcome::init(app_state.clone(), cx);
             Project::init_settings(cx);
             app_state
         })

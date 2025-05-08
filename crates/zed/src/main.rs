@@ -557,7 +557,7 @@ fn main() {
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
-        welcome::init(cx);
+        welcome::init(app_state.clone(), cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);

@@ -188,7 +188,9 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
+        // todo!("remove")
         Walkthrough,
+        OnboardingWalkthrough,
         RestoreBanner,
     ]
 );
