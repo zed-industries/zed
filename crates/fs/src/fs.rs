@@ -553,8 +553,9 @@ impl Fs for RealFs {
             //
             // failed to persist temporary file:
             // The system cannot move the file to a different disk drive. (os error 17)
+            //
             // This is because `ReplaceFileW` does not support cross volume moves.
-            // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume.""
+            // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume."
             // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
             //
             // So we use the directory of the destination as a temp dir to avoid it.
