@@ -1,102 +1,123 @@
-#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
-
-mod assistant_configuration;
-pub mod assistant_panel;
+mod active_thread;
+mod agent_configuration;
+mod agent_diff;
+mod agent_model_selector;
+mod agent_panel;
+mod buffer_codegen;
+mod context;
+mod context_picker;
+mod context_server_configuration;
+mod context_server_tool;
+mod context_store;
+mod context_strip;
+mod debug;
+mod history_store;
 mod inline_assistant;
-pub mod slash_command_settings;
+mod inline_prompt_editor;
+mod message_editor;
+mod profile_selector;
+mod slash_command_settings;
+mod terminal_codegen;
 mod terminal_inline_assistant;
+mod thread;
+mod thread_history;
+mod thread_store;
+mod tool_compatibility;
+mod tool_use;
+mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::{AssistantSettings, LanguageModelSelection};
+use assistant_settings::{AgentProfileId, AssistantSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
-use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{App, Global, ReadGlobal, UpdateGlobal, actions};
-use language_model::{
-    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
-};
+use gpui::{App, actions, impl_actions};
+use language::LanguageRegistry;
+use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
 use prompt_store::PromptBuilder;
+use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore};
+use settings::{Settings as _, SettingsStore};
+use thread::ThreadId;
 
-pub use crate::assistant_panel::{AssistantPanel, AssistantPanelEvent};
-pub(crate) use crate::inline_assistant::*;
+pub use crate::active_thread::ActiveThread;
+use crate::agent_configuration::{AddContextServerModal, ManageProfilesModal};
+pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
+pub use crate::context::{ContextLoadResult, LoadedContext};
+pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
+pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
+pub use crate::thread_store::{TextThreadStore, ThreadStore};
+pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
+pub use context_store::ContextStore;
+pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(
-    assistant,
+    agent,
     [
-        InsertActivePrompt,
-        DeployHistory,
-        NewChat,
+        NewTextThread,
+        ToggleContextPicker,
+        ToggleNavigationMenu,
+        ToggleOptionsMenu,
+        DeleteRecentlyOpenThread,
+        ToggleProfileSelector,
+        RemoveAllContext,
+        ExpandMessageEditor,
+        OpenHistory,
+        AddContextServer,
+        RemoveSelectedThread,
+        Chat,
         CycleNextInlineAssist,
-        CyclePreviousInlineAssist
+        CyclePreviousInlineAssist,
+        FocusUp,
+        FocusDown,
+        FocusLeft,
+        FocusRight,
+        RemoveFocusedContext,
+        AcceptSuggestedContext,
+        OpenActiveThreadAsMarkdown,
+        OpenAgentDiff,
+        Keep,
+        Reject,
+        RejectAll,
+        KeepAll,
+        Follow,
+        ResetTrialUpsell,
     ]
 );
 
-const DEFAULT_CONTEXT_LINES: usize = 50;
-
-#[derive(Deserialize, Debug)]
-pub struct LanguageModelUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct NewThread {
+    #[serde(default)]
+    from_thread_id: Option<ThreadId>,
 }
 
-#[derive(Deserialize, Debug)]
-pub struct LanguageModelChoiceDelta {
-    pub index: u32,
-    pub delta: LanguageModelResponseMessage,
-    pub finish_reason: Option<String>,
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ManageProfiles {
+    #[serde(default)]
+    pub customize_tools: Option<AgentProfileId>,
 }
 
-/// The state pertaining to the Assistant.
-#[derive(Default)]
-struct Assistant {
-    /// Whether the Assistant is enabled.
-    enabled: bool,
-}
-
-impl Global for Assistant {}
-
-impl Assistant {
-    const NAMESPACE: &'static str = "assistant";
-
-    fn set_enabled(&mut self, enabled: bool, cx: &mut App) {
-        if self.enabled == enabled {
-            return;
+impl ManageProfiles {
+    pub fn customize_tools(profile_id: AgentProfileId) -> Self {
+        Self {
+            customize_tools: Some(profile_id),
         }
-
-        self.enabled = enabled;
-
-        if !enabled {
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                filter.hide_namespace(Self::NAMESPACE);
-            });
-
-            return;
-        }
-
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.show_namespace(Self::NAMESPACE);
-        });
-    }
-
-    pub fn enabled(cx: &App) -> bool {
-        Self::global(cx).enabled
     }
 }
 
+impl_actions!(agent, [NewThread, ManageProfiles]);
+
+/// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
+    language_registry: Arc<LanguageRegistry>,
     cx: &mut App,
 ) {
-    cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
 
@@ -104,8 +125,9 @@ pub fn init(
     rules_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
-    assistant_tool::init(cx);
-    assistant_panel::init(cx);
+    thread_store::init(cx);
+    agent_panel::init(cx);
+    context_server_configuration::init(language_registry, cx);
 
     register_slash_commands(cx);
     inline_assistant::init(
@@ -121,22 +143,8 @@ pub fn init(
         cx,
     );
     indexed_docs::init(cx);
-
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_namespace(Assistant::NAMESPACE);
-    });
-    Assistant::update_global(cx, |assistant, cx| {
-        let settings = AssistantSettings::get_global(cx);
-
-        assistant.set_enabled(settings.enabled, cx);
-    });
-    cx.observe_global::<SettingsStore>(|cx| {
-        Assistant::update_global(cx, |assistant, cx| {
-            let settings = AssistantSettings::get_global(cx);
-            assistant.set_enabled(settings.enabled, cx);
-        });
-    })
-    .detach();
+    cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(ManageProfilesModal::register).detach();
 }
 
 fn init_language_model_settings(cx: &mut App) {
@@ -248,13 +256,5 @@ fn update_slash_commands_from_settings(cx: &mut App) {
     } else {
         slash_command_registry
             .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
-}
-
-#[cfg(test)]
-#[ctor::ctor]
-fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
     }
 }

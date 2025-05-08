@@ -2648,7 +2648,7 @@ impl Snapshot {
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
-        self.entry_for_path("")
+        self.entries_by_path.first()
     }
 
     /// TODO: what's the difference between `root_dir` and `abs_path`?

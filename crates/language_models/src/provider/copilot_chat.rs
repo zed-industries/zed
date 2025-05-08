@@ -20,8 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -194,6 +194,14 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CopilotChatModel::Claude3_5Sonnet
             | CopilotChatModel::Claude3_7Sonnet => true,
             _ => false,
+        }
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => self.supports_tools(),
         }
     }
 
@@ -561,7 +569,9 @@ impl CopilotChatLanguageModel {
                 function: copilot::copilot_chat::Function {
                     name: "noop".to_string(),
                     description: "No operation".to_string(),
-                    parameters: serde_json::json!({}),
+                    parameters: serde_json::json!({
+                        "type": "object"
+                    }),
                 },
             });
         }
@@ -574,7 +584,11 @@ impl CopilotChatLanguageModel {
             model,
             messages,
             tools,
-            tool_choice: None,
+            tool_choice: request.tool_choice.map(|choice| match choice {
+                LanguageModelToolChoice::Auto => copilot::copilot_chat::ToolChoice::Auto,
+                LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
+                LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
+            }),
         })
     }
 }

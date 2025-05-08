@@ -5359,7 +5359,7 @@ impl Workspace {
         self.workspace_actions.push(Box::new(move |div, _, cx| {
             let callback = callback.clone();
             div.on_action(cx.listener(move |workspace, event, window, cx| {
-                (callback.clone())(workspace, event, window, cx)
+                (callback)(workspace, event, window, cx)
             }))
         }));
         self
