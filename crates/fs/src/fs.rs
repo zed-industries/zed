@@ -570,7 +570,7 @@ impl Fs for RealFs {
                 file.write_all(data.as_bytes())?;
                 temp_file_path
             };
-            persist(path.as_path(), temp_file.as_path())?;
+            atomic_replace(path.as_path(), temp_file.as_path())?;
             Ok::<(), anyhow::Error>(())
         })
         .await?;
@@ -2493,7 +2493,10 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 }
 
 #[cfg(target_os = "windows")]
-fn persist<P: AsRef<Path>>(replaced_file: P, replacement_file: P) -> windows::core::Result<()> {
+fn atomic_replace<P: AsRef<Path>>(
+    replaced_file: P,
+    replacement_file: P,
+) -> windows::core::Result<()> {
     use windows::{
         Win32::Storage::FileSystem::{MoveFileW, REPLACE_FILE_FLAGS, ReplaceFileW},
         core::HSTRING,
