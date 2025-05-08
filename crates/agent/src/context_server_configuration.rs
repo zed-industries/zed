@@ -10,7 +10,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::assistant_configuration::ConfigureContextServerModal;
+use crate::agent_configuration::ConfigureContextServerModal;
 
 pub(crate) fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
     cx.observe_new(move |_: &mut Workspace, window, cx| {

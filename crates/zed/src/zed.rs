@@ -12,7 +12,7 @@ use agent::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant_context_editor::AssistantPanelDelegate;
+use assistant_context_editor::AgentPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
@@ -435,7 +435,7 @@ fn initialize_panels(
         let is_assistant2_enabled = !cfg!(test);
         let agent_panel = if is_assistant2_enabled {
             let agent_panel =
-                agent::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
             Some(agent_panel)
@@ -453,15 +453,15 @@ fn initialize_panels(
             // We need to do this here instead of within the individual `init`
             // functions so that we only register the actions once.
             //
-            // Once we ship `assistant2` we can push this back down into `agent::assistant_panel::init`.
+            // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
             if is_assistant2_enabled {
-                <dyn AssistantPanelDelegate>::set_global(
+                <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(agent::AssistantPanel::toggle_focus)
+                    .register_action(agent::AgentPanel::toggle_focus)
                     .register_action(agent::InlineAssistant::inline_assist);
             }
         })?;
