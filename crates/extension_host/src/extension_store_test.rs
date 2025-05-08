@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageConfig, LanguageMatcher, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
