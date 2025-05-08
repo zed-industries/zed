@@ -4199,6 +4199,7 @@ dependencies = [
  "log",
  "menu",
  "parking_lot",
+ "paths",
  "picker",
  "pretty_assertions",
  "project",
