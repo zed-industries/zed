@@ -11,7 +11,8 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -279,6 +280,10 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         false
     }
 

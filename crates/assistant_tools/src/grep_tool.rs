@@ -4,7 +4,7 @@ use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{
     Project,
     search::{SearchQuery, SearchResult},
@@ -96,7 +96,7 @@ impl Tool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -746,7 +746,8 @@ mod tests {
         let tool = Arc::new(GrepTool);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let task = cx.update(|cx| tool.run(input, &[], project, action_log, model, None, cx));
+        let task =
+            cx.update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx));
 
         match task.output.await {
             Ok(result) => {

@@ -1245,6 +1245,7 @@ impl MessageEditor {
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
+                        tool_choice: None,
                         stop: vec![],
                         temperature: AssistantSettings::temperature_for_model(&model.model, cx),
                     };

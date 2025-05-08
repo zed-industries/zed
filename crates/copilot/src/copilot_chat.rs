@@ -182,11 +182,11 @@ pub enum Tool {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Any,
-    Tool { name: String },
+    None,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
