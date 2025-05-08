@@ -413,6 +413,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
                     }),
                 )
             }),
+            version_overrides: settings.version_overrides.clone(),
         };
         tx.send(Some(options)).log_err();
     })

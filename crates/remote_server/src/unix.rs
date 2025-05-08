@@ -813,6 +813,7 @@ fn initialize_settings(
                     }),
                 )
             }),
+            version_overrides: settings.version_overrides.clone(),
         };
         tx.send(Some(options)).log_err();
     })

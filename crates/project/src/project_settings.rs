@@ -105,6 +105,8 @@ pub struct NodeBinarySettings {
     /// If enabled, Zed will download its own copy of Node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
+    /// Map of package names to version overrides
+    pub version_overrides: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

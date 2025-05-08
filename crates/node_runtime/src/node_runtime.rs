@@ -15,6 +15,7 @@ use std::ffi::OsString;
 use std::io;
 use std::process::{Output, Stdio};
 use std::{
+    collections::HashMap,
     env::consts,
     path::{Path, PathBuf},
     sync::Arc,
@@ -28,6 +29,7 @@ pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
     pub allow_binary_download: bool,
     pub use_paths: Option<(PathBuf, PathBuf)>,
+    pub version_overrides: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone)]
@@ -128,7 +130,19 @@ impl NodeRuntime {
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
-        let http = self.0.lock().await.http.clone();
+        // Check if there's an override for this package
+        let state = self.0.lock().await;
+        if let Some(options) = state.options.borrow().as_ref() {
+            if let Some(version_overrides) = &options.version_overrides {
+                if let Some(version) = version_overrides.get(name) {
+                    return Ok(version.clone());
+                }
+            }
+        }
+        
+        let http = state.http.clone();
+        drop(state);  // Release the lock before awaiting instance()
+        
         let output = self
             .instance()
             .await?
