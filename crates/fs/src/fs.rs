@@ -2494,19 +2494,28 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 #[cfg(target_os = "windows")]
 fn persist<P: AsRef<Path>>(replaced_file: P, replacement_file: P) -> windows::core::Result<()> {
     use windows::{
-        Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
+        Win32::Storage::FileSystem::{MoveFileW, REPLACE_FILE_FLAGS, ReplaceFileW},
         core::HSTRING,
     };
 
-    unsafe {
-        ReplaceFileW(
-            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
-            None,
-            REPLACE_FILE_FLAGS::default(),
-            None,
-            None,
-        )
+    if !replaced_file.as_ref().exists() {
+        unsafe {
+            MoveFileW(
+                &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
+                &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            )
+        }
+    } else {
+        unsafe {
+            ReplaceFileW(
+                &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
+                &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+                None,
+                REPLACE_FILE_FLAGS::default(),
+                None,
+                None,
+            )
+        }
     }
 }
 
