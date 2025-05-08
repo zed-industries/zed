@@ -1461,7 +1461,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if !snapshot.mode.is_full() || !self.editor.read(cx).show_scrollbars {
+        if !self.editor.read(cx).show_scrollbars || self.style.scrollbar_width.is_zero() {
             return None;
         }
 
