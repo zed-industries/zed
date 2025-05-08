@@ -153,7 +153,7 @@ impl Keymap {
             for depth in (0..=context_stack.len()).rev() {
                 if self.binding_enabled(binding, &context_stack[0..depth]) {
                     if is_pending.is_none() {
-                        is_pending = Some(pending);
+                        is_pending = Some(pending && !is_no_action(&*binding.action))
                     }
                     if !pending {
                         bindings.push((binding.clone(), depth));
