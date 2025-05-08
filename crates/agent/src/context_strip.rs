@@ -22,7 +22,7 @@ use crate::thread::Thread;
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
-    AcceptSuggestedContext, AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
+    AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
     RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
 };
 
@@ -144,7 +144,7 @@ impl ContextStrip {
         }
 
         let workspace = self.workspace.upgrade()?;
-        let panel = workspace.read(cx).panel::<AssistantPanel>(cx)?.read(cx);
+        let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
         if let Some(active_thread) = panel.active_thread() {
             let weak_active_thread = active_thread.downgrade();

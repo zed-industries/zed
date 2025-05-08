@@ -29,7 +29,7 @@ pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::AddContextServer;
 
-pub struct AssistantConfiguration {
+pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
@@ -41,7 +41,7 @@ pub struct AssistantConfiguration {
     scrollbar_state: ScrollbarState,
 }
 
-impl AssistantConfiguration {
+impl AgentConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
         context_server_store: Entity<ContextServerStore>,
@@ -109,7 +109,7 @@ impl AssistantConfiguration {
     }
 }
 
-impl Focusable for AssistantConfiguration {
+impl Focusable for AgentConfiguration {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -119,9 +119,9 @@ pub enum AssistantConfigurationEvent {
     NewThread(Arc<dyn LanguageModelProvider>),
 }
 
-impl EventEmitter<AssistantConfigurationEvent> for AssistantConfiguration {}
+impl EventEmitter<AssistantConfigurationEvent> for AgentConfiguration {}
 
-impl AssistantConfiguration {
+impl AgentConfiguration {
     fn render_provider_configuration_block(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
@@ -570,7 +570,7 @@ impl AssistantConfiguration {
     }
 }
 
-impl Render for AssistantConfiguration {
+impl Render for AgentConfiguration {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("assistant-configuration")

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
@@ -65,7 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Entity<AssistantModelSelector>,
+    model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
@@ -189,7 +189,7 @@ impl MessageEditor {
         ];
 
         let model_selector = cx.new(|cx| {
-            AssistantModelSelector::new(
+            AgentModelSelector::new(
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),
@@ -197,6 +197,10 @@ impl MessageEditor {
                 window,
                 cx,
             )
+        });
+
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(thread.clone(), thread_store, editor.focus_handle(cx), cx)
         });
 
         Self {
@@ -215,8 +219,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,

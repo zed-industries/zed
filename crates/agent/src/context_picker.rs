@@ -36,7 +36,7 @@ use ui::{
 use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::AssistantPanel;
+use crate::AgentPanel;
 use crate::context::RULES_ICON;
 use crate::context_store::ContextStore;
 use crate::thread::ThreadId;
@@ -648,7 +648,7 @@ fn recent_context_picker_entries(
     let current_threads = context_store.read(cx).thread_ids();
 
     let active_thread_id = workspace
-        .panel::<AssistantPanel>(cx)
+        .panel::<AgentPanel>(cx)
         .and_then(|panel| Some(panel.read(cx).active_thread()?.read(cx).id()));
 
     if let Some((thread_store, text_thread_store)) = thread_store
