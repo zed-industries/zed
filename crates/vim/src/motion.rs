@@ -3953,6 +3953,61 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_forced_motion_delete_to_middle_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+             ˇthe quick brown fox
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g M").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+             ˇbrown fox
+             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            the quick bˇrown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g M").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            the quickˇown fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            the quick brown foˇx
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g M").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            the quicˇk
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 7 5 g M").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇ fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 2 3 g M").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇuick brown fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+    }
+
+    #[gpui::test]
     async fn test_forced_motion_delete_to_end_of_line(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
