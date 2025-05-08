@@ -2585,6 +2585,7 @@ impl AssistantContext {
             mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: model
                 .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),

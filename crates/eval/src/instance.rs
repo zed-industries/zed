@@ -578,6 +578,7 @@ impl ExampleInstance {
                 }],
                 temperature: None,
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
             };
 

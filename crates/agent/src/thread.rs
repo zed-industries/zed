@@ -1183,6 +1183,7 @@ impl Thread {
             mode: None,
             messages: vec![],
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: AssistantSettings::temperature_for_model(&model, cx),
         };
@@ -1341,6 +1342,7 @@ impl Thread {
             mode: None,
             messages: vec![],
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: AssistantSettings::temperature_for_model(model, cx),
         };

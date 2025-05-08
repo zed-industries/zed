@@ -17,7 +17,7 @@ use gpui::{AppContext, AsyncApp, Entity, SharedString, Task};
 use language::{Bias, Buffer, BufferSnapshot, LineIndent, Point};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
-    MessageContent, Role,
+    LanguageModelToolChoice, MessageContent, Role,
 };
 use project::{AgentLocation, Project};
 use serde::Serialize;
@@ -553,13 +553,22 @@ impl EditAgent {
             content: vec![MessageContent::Text(prompt)],
             cache: false,
         });
-        // todo!("tool choice")
+        let request = LanguageModelRequest {
+            thread_id: conversation.thread_id,
+            prompt_id: conversation.prompt_id,
+            mode: conversation.mode,
+            messages: conversation.messages,
+            tool_choice: if conversation.tools.is_empty() {
+                None
+            } else {
+                Some(LanguageModelToolChoice::None)
+            },
+            tools: conversation.tools,
+            stop: Vec::new(),
+            temperature: None,
+        };
 
-        Ok(self
-            .model
-            .stream_completion_text(conversation, cx)
-            .await?
-            .stream)
+        Ok(self.model.stream_completion_text(request, cx).await?.stream)
     }
 
     fn resolve_location(buffer: &BufferSnapshot, search_query: &str) -> Option<Range<usize>> {
