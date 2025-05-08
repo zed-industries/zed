@@ -566,6 +566,7 @@ impl Fs for RealFs {
                 let mut file = std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
+                    .truncate(true)
                     .open(&temp_file_path)?;
                 file.write_all(data.as_bytes())?;
                 temp_file_path
