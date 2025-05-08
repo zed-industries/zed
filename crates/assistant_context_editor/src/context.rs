@@ -2,7 +2,7 @@
 mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
@@ -143,7 +143,7 @@ pub enum ContextOperation {
         version: clock::Global,
     },
     UpdateSummary {
-        summary: ContextSummary,
+        summary: ContextSummaryContent,
         version: clock::Global,
     },
     SlashCommandStarted {
@@ -213,7 +213,7 @@ impl ContextOperation {
                 version: language::proto::deserialize_version(&update.version),
             }),
             proto::context_operation::Variant::UpdateSummary(update) => Ok(Self::UpdateSummary {
-                summary: ContextSummary {
+                summary: ContextSummaryContent {
                     text: update.summary,
                     done: update.done,
                     timestamp: language::proto::deserialize_timestamp(
@@ -481,11 +481,73 @@ pub enum ContextEvent {
     Operation(ContextOperation),
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct ContextSummary {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContextSummary {
+    Pending,
+    Content(ContextSummaryContent),
+    Error,
+}
+
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
+pub struct ContextSummaryContent {
     pub text: String,
     pub done: bool,
-    timestamp: clock::Lamport,
+    pub timestamp: clock::Lamport,
+}
+
+impl ContextSummary {
+    pub const DEFAULT: &str = "New Text Thread";
+
+    pub fn or_default(&self) -> SharedString {
+        self.unwrap_or(Self::DEFAULT)
+    }
+
+    pub fn unwrap_or(&self, message: impl Into<SharedString>) -> SharedString {
+        self.content()
+            .map_or_else(|| message.into(), |content| content.text.clone().into())
+    }
+
+    pub fn content(&self) -> Option<&ContextSummaryContent> {
+        match self {
+            ContextSummary::Content(content) => Some(content),
+            ContextSummary::Pending | ContextSummary::Error => None,
+        }
+    }
+
+    fn content_as_mut(&mut self) -> Option<&mut ContextSummaryContent> {
+        match self {
+            ContextSummary::Content(content) => Some(content),
+            ContextSummary::Pending | ContextSummary::Error => None,
+        }
+    }
+
+    fn content_or_set_empty(&mut self) -> &mut ContextSummaryContent {
+        match self {
+            ContextSummary::Content(content) => content,
+            ContextSummary::Pending | ContextSummary::Error => {
+                let content = ContextSummaryContent::default();
+                *self = ContextSummary::Content(content);
+                self.content_as_mut().unwrap()
+            }
+        }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, ContextSummary::Pending)
+    }
+
+    fn timestamp(&self) -> Option<clock::Lamport> {
+        match self {
+            ContextSummary::Content(content) => Some(content.timestamp),
+            ContextSummary::Pending | ContextSummary::Error => None,
+        }
+    }
+}
+
+impl PartialOrd for ContextSummary {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.timestamp().partial_cmp(&other.timestamp())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -641,7 +703,7 @@ pub struct AssistantContext {
     message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
-    summary: Option<ContextSummary>,
+    summary: ContextSummary,
     summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
@@ -742,7 +804,7 @@ impl AssistantContext {
             slash_command_output_sections: Vec::new(),
             thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
-            summary: None,
+            summary: ContextSummary::Pending,
             summary_task: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
@@ -803,7 +865,7 @@ impl AssistantContext {
                 .collect(),
             summary: self
                 .summary
-                .as_ref()
+                .content()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
             slash_command_output_sections: self
@@ -989,12 +1051,10 @@ impl AssistantContext {
                     summary: new_summary,
                     ..
                 } => {
-                    if self
-                        .summary
-                        .as_ref()
-                        .map_or(true, |summary| new_summary.timestamp > summary.timestamp)
-                    {
-                        self.summary = Some(new_summary);
+                    if self.summary.timestamp().map_or(true, |current_timestamp| {
+                        new_summary.timestamp > current_timestamp
+                    }) {
+                        self.summary = ContextSummary::Content(new_summary);
                         summary_generated = true;
                     }
                 }
@@ -1152,8 +1212,8 @@ impl AssistantContext {
         self.path.as_ref()
     }
 
-    pub fn summary(&self) -> Option<&ContextSummary> {
-        self.summary.as_ref()
+    pub fn summary(&self) -> &ContextSummary {
+        &self.summary
     }
 
     pub fn patch_containing(&self, position: Point, cx: &App) -> Option<&AssistantPatch> {
@@ -2980,7 +3040,7 @@ impl AssistantContext {
             return;
         };
 
-        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
+        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_pending()) {
             if !model.provider.is_authenticated(cx) {
                 return;
             }
@@ -2997,17 +3057,20 @@ impl AssistantContext {
 
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
             // be displayed.
-            if self.summary.is_none() {
-                self.summary = Some(ContextSummary {
-                    text: "".to_string(),
-                    done: false,
-                    timestamp: clock::Lamport::default(),
-                });
-                replace_old = true;
+            match self.summary {
+                ContextSummary::Pending | ContextSummary::Error => {
+                    self.summary = ContextSummary::Content(ContextSummaryContent {
+                        text: "".to_string(),
+                        done: false,
+                        timestamp: clock::Lamport::default(),
+                    });
+                    replace_old = true;
+                }
+                ContextSummary::Content(_) => {}
             }
 
             self.summary_task = cx.spawn(async move |this, cx| {
-                async move {
+                let result = async {
                     let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
@@ -3018,7 +3081,7 @@ impl AssistantContext {
                         this.update(cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
-                            let summary = this.summary.get_or_insert(ContextSummary::default());
+                            let summary = this.summary.content_or_set_empty();
                             if !replaced && replace_old {
                                 summary.text.clear();
                                 replaced = true;
@@ -3040,10 +3103,19 @@ impl AssistantContext {
                         }
                     }
 
+                    this.read_with(cx, |this, _cx| {
+                        if let Some(summary) = this.summary.content() {
+                            if summary.text.is_empty() {
+                                bail!("Model generated an empty summary");
+                            }
+                        }
+                        Ok(())
+                    })??;
+
                     this.update(cx, |this, cx| {
                         let version = this.version.clone();
                         let timestamp = this.next_timestamp();
-                        if let Some(summary) = this.summary.as_mut() {
+                        if let Some(summary) = this.summary.content_as_mut() {
                             summary.done = true;
                             summary.timestamp = timestamp;
                             let operation = ContextOperation::UpdateSummary {
@@ -3058,8 +3130,18 @@ impl AssistantContext {
 
                     anyhow::Ok(())
                 }
-                .log_err()
-                .await
+                .await;
+
+                if let Err(err) = result {
+                    this.update(cx, |this, cx| {
+                        this.summary = ContextSummary::Error;
+                        cx.emit(ContextEvent::SummaryChanged);
+                    })
+                    .log_err();
+                    log::error!("Error generating context summary: {}", err);
+                }
+
+                Some(())
             });
         }
     }
@@ -3173,7 +3255,7 @@ impl AssistantContext {
 
             let (old_path, summary) = this.read_with(cx, |this, _| {
                 let path = this.path.clone();
-                let summary = if let Some(summary) = this.summary.as_ref() {
+                let summary = if let Some(summary) = this.summary.content() {
                     if summary.done {
                         Some(summary.text.clone())
                     } else {
@@ -3227,20 +3309,11 @@ impl AssistantContext {
 
     pub fn set_custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
         let timestamp = self.next_timestamp();
-        let summary = self.summary.get_or_insert(ContextSummary::default());
+        let summary = self.summary.content_or_set_empty();
         summary.timestamp = timestamp;
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
-    }
-
-    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Text Thread");
-
-    pub fn summary_or_default(&self) -> SharedString {
-        self.summary
-            .as_ref()
-            .map(|summary| summary.text.clone().into())
-            .unwrap_or(Self::DEFAULT_SUMMARY)
     }
 }
 
@@ -3475,7 +3548,7 @@ impl SavedContext {
 
         let timestamp = next_timestamp.tick();
         operations.push(ContextOperation::UpdateSummary {
-            summary: ContextSummary {
+            summary: ContextSummaryContent {
                 text: self.summary,
                 done: true,
                 timestamp,
