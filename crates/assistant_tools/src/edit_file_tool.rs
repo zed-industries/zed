@@ -247,7 +247,8 @@ impl Tool for EditFileTool {
                     EditAgentOutputEvent::OldTextNotFound(_) => hallucinated_old_text = true,
                 }
             }
-            output.await?;
+            let output = output.await?;
+            println!("{}", output._raw_edits);
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?

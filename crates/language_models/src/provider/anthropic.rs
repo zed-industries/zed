@@ -781,7 +781,6 @@ impl AnthropicEventMapper {
                 ]
             }
             Event::MessageDelta { delta, usage } => {
-                dbg!(&usage);
                 update_usage(&mut self.usage, &usage);
                 if let Some(stop_reason) = delta.stop_reason.as_deref() {
                     self.stop_reason = match stop_reason {

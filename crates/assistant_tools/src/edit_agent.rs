@@ -217,7 +217,6 @@ impl EditAgent {
         let (events_tx, events_rx) = mpsc::unbounded();
         let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
-            println!("=======================");
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
             let prompt = EditFilePromptTemplate {
@@ -231,9 +230,7 @@ impl EditAgent {
             while let Some(event) = inner_events.next().await {
                 events_tx.unbounded_send(event).ok();
             }
-            let res = output.await;
-            println!("=======================");
-            res
+            output.await
         });
         (output, events_rx)
     }
