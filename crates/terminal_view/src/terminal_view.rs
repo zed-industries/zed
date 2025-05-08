@@ -8,12 +8,14 @@ use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHi
 use gpui::{
     AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
     KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, anchored, deferred, div, impl_actions,
+    Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    impl_actions,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
 use project::{Entry, Metadata, Project, search::SearchQuery, terminals::TerminalKind};
 use schemars::JsonSchema;
+use task::TaskId;
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp,
     ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState,
@@ -70,6 +72,8 @@ pub struct SendText(String);
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
 pub struct SendKeystroke(String);
+
+actions!(terminal, [RerunTask]);
 
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
@@ -332,6 +336,18 @@ impl TerminalView {
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.select_all());
         cx.notify();
+    }
+
+    fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
+        let task = self
+            .terminal
+            .update(cx, |terminal, _| {
+                terminal
+                    .task()
+                    .map(|task| terminal_rerun_override(&task.id))
+            })
+            .unwrap_or_default();
+        window.dispatch_action(Box::new(task), cx);
     }
 
     fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
@@ -826,19 +842,22 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(Tooltip::text("Rerun task"))
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
+                })
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::Rerun {
-                            task_id: Some(task_id.0.clone()),
-                            allow_concurrent_runs: Some(true),
-                            use_new_terminal: Some(false),
-                            reevaluate_context: false,
-                        }),
-                        cx,
-                    );
+                    window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
         )
+    }
+}
+
+fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
+    zed_actions::Rerun {
+        task_id: Some(task.0.clone()),
+        allow_concurrent_runs: Some(true),
+        use_new_terminal: Some(false),
+        reevaluate_context: false,
     }
 }
 
@@ -1360,6 +1379,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::toggle_vi_mode))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
+            .on_action(cx.listener(TerminalView::rerun_task))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,

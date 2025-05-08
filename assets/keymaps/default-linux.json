@@ -951,7 +951,10 @@
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
-      "ctrl-shift-space": "terminal::ToggleViMode"
+      "ctrl-shift-space": "terminal::ToggleViMode",
+      "ctrl-shift-r": "terminal::RerunTask",
+      "ctrl-alt-r": "terminal::RerunTask",
+      "alt-t": "terminal::RerunTask"
     }
   },
   {
