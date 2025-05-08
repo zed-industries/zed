@@ -3,6 +3,7 @@ mod copilot_completion_provider;
 pub mod request;
 mod sign_in;
 
+use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -34,6 +35,7 @@ use std::{
     sync::Arc,
 };
 use util::{ResultExt, fs::remove_matching};
+use workspace::Workspace;
 
 pub use crate::copilot_completion_provider::CopilotCompletionProvider;
 pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in};
@@ -99,13 +101,13 @@ pub fn init(
     })
     .detach();
 
-    cx.on_action(|_: &SignIn, cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_in(cx))
-                .detach_and_log_err(cx);
-        }
-    });
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|workspace, _: &SignIn, window, cx| {
+            initiate_sign_in_within_workspace(workspace, window, cx)
+        });
+    })
+    .detach();
+
     cx.on_action(|_: &SignOut, cx| {
         if let Some(copilot) = Copilot::global(cx) {
             copilot

@@ -15,10 +15,20 @@ const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 struct CopilotStartingToast;
 
 pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
-    let Some(copilot) = Copilot::global(cx) else {
+    let Some(workspace) = window.root::<Workspace>().flatten() else {
         return;
     };
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+    workspace.update(cx, |workspace, cx| {
+        initiate_sign_in_within_workspace(workspace, window, cx)
+    });
+}
+
+pub fn initiate_sign_in_within_workspace(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(copilot) = Copilot::global(cx) else {
         return;
     };
     if matches!(copilot.read(cx).status(), Status::Disabled) {
@@ -26,45 +36,38 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
     }
     match copilot.read(cx).status() {
         Status::Starting { task } => {
-            workspace.update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<CopilotStartingToast>(),
-                        "Copilot is starting...",
-                    ),
-                    cx,
-                );
-            });
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<CopilotStartingToast>(),
+                    "Copilot is starting...",
+                ),
+                cx,
+            );
 
-            let workspace = workspace.downgrade();
-            cx.spawn(async move |cx| {
+            cx.spawn_in(window, async move |workspace, cx| {
                 task.await;
-                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
+                if let Some(copilot) = cx.update(|_window, cx| Copilot::global(cx)).ok().flatten() {
                     workspace
-                        .update(cx, |workspace, cx| match copilot.read(cx).status() {
-                            Status::Authorized => workspace.show_toast(
-                                Toast::new(
-                                    NotificationId::unique::<CopilotStartingToast>(),
-                                    "Copilot has started!",
-                                ),
-                                cx,
-                            ),
-                            _ => {
-                                workspace.dismiss_toast(
-                                    &NotificationId::unique::<CopilotStartingToast>(),
+                        .update_in(cx, |workspace, window, cx| {
+                            match copilot.read(cx).status() {
+                                Status::Authorized => workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<CopilotStartingToast>(),
+                                        "Copilot has started!",
+                                    ),
                                     cx,
-                                );
-                                copilot
-                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                    .detach_and_log_err(cx);
-                                if let Some(window_handle) = cx.active_window() {
-                                    window_handle
-                                        .update(cx, |_, window, cx| {
-                                            workspace.toggle_modal(window, cx, |_, cx| {
-                                                CopilotCodeVerification::new(&copilot, cx)
-                                            });
-                                        })
-                                        .log_err();
+                                ),
+                                _ => {
+                                    workspace.dismiss_toast(
+                                        &NotificationId::unique::<CopilotStartingToast>(),
+                                        cx,
+                                    );
+                                    copilot
+                                        .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                        .detach_and_log_err(cx);
+                                    workspace.toggle_modal(window, cx, |_, cx| {
+                                        CopilotCodeVerification::new(&copilot, cx)
+                                    });
                                 }
                             }
                         })
@@ -75,10 +78,8 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
         }
         _ => {
             copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
-            workspace.update(cx, |this, cx| {
-                this.toggle_modal(window, cx, |_, cx| {
-                    CopilotCodeVerification::new(&copilot, cx)
-                });
+            workspace.toggle_modal(window, cx, |_, cx| {
+                CopilotCodeVerification::new(&copilot, cx)
             });
         }
     }
