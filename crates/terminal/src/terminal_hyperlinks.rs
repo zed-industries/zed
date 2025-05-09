@@ -598,16 +598,17 @@ mod tests {
             #[cfg_attr(
                 not(target_os = "windows"),
                 should_panic(
-                    expected = "Path = «test/controllers/template_items_controller_test.rb:20:in», at grid cells (0, 0)..=(18, 1)"
+                    expected = "Path = «test/controllers/template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(18, 1)"
                 )
             )]
             #[cfg_attr(
                 target_os = "windows",
                 should_panic(
-                    expected = r#"Path = «test\\controllers\\template_items_controller_test.rb:20:in», at grid cells (0, 0)..=(18, 1)"#
+                    expected = r#"Path = «test\\controllers\\template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(18, 1)"#
                 )
             )]
             // <https://github.com/zed-industries/zed/issues/28194>
+            // TODO(davewa): #28194 was closed, but the link includes the description part (":in" here), which seems wrong...
             fn issue_28194() {
                 test_path!(
                     "‹«test/controllers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
