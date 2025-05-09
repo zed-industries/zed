@@ -704,6 +704,7 @@ struct PathVertexOutput {
   float4 solid_color [[flat]];
   float4 color0 [[flat]];
   float4 color1 [[flat]];
+  float4 clip_distance;
 };
 
 vertex PathVertexOutput path_vertex(
@@ -732,13 +733,23 @@ vertex PathVertexOutput path_vertex(
     sprite_id,
     gradient.solid,
     gradient.color0,
-    gradient.color1
+    gradient.color1,
+    {v.xy_position.x - v.content_mask.bounds.origin.x,
+       v.content_mask.bounds.origin.x + v.content_mask.bounds.size.width -
+           v.xy_position.x,
+       v.xy_position.y - v.content_mask.bounds.origin.y,
+       v.content_mask.bounds.origin.y + v.content_mask.bounds.size.height -
+           v.xy_position.y}
   };
 }
 
 fragment float4 path_fragment(
     PathVertexOutput input [[stage_in]],
     constant PathSprite *sprites [[buffer(PathInputIndex_Sprites)]]) {
+  if (any(input.clip_distance < float4(0.0))) {
+    return float4(0.0);
+  }
+
   PathSprite sprite = sprites[input.sprite_id];
   Background background = sprite.color;
   float4 color = fill_color(background, input.position.xy, sprite.bounds,

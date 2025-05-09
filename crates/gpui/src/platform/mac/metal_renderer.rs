@@ -640,7 +640,7 @@ impl MetalRenderer {
                 .map(|v| PathVertex {
                     xy_position: v.xy_position,
                     content_mask: ContentMask {
-                        bounds: path.bounds,
+                        bounds: path.content_mask.bounds,
                     },
                 })
                 .collect::<Vec<_>>();
