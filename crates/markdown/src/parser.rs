@@ -80,8 +80,8 @@ pub fn parse_markdown(
                             content_range.start + range.start..content_range.end + range.start;
 
                         let line_count = text[content_range.clone()]
-                            .chars()
-                            .filter(|c| *c == '\n')
+                            .bytes()
+                            .filter(|c| *c == b'\n')
                             .count();
                         let metadata = CodeBlockMetadata {
                             content_range,
