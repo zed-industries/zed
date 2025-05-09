@@ -2489,6 +2489,7 @@ impl Editor {
     fn selections_did_change(
         &mut self,
         local: bool,
+        push_to_nav_history: bool,
         old_cursor_position: &Anchor,
         show_completions: bool,
         window: &mut Window,
@@ -2543,13 +2544,14 @@ impl Editor {
         self.take_rename(false, window, cx);
 
         let new_cursor_position = self.selections.newest_anchor().head();
-
-        self.push_to_nav_history(
-            *old_cursor_position,
-            Some(new_cursor_position.to_point(buffer)),
-            false,
-            cx,
-        );
+        if push_to_nav_history {
+            self.push_to_nav_history(
+                *old_cursor_position,
+                Some(new_cursor_position.to_point(buffer)),
+                false,
+                cx,
+            );
+        }
 
         if local {
             let new_cursor_position = self.selections.newest_anchor().head();
@@ -2805,13 +2807,24 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        self.change_selections_inner(autoscroll, true, window, cx, change)
+        self.change_selections_inner(autoscroll, true, true, window, cx, change)
+    }
+
+    pub fn change_selections_without_nav<R>(
+        &mut self,
+        autoscroll: Option<Autoscroll>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
+        self.change_selections_inner(autoscroll, true, false, window, cx, change)
     }
 
     fn change_selections_inner<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
         request_completions: bool,
+        push_to_nav_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
@@ -2820,12 +2833,18 @@ impl Editor {
         self.push_to_selection_history();
 
         let (changed, result) = self.selections.change_with(cx, change);
-
         if changed {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, request_completions, window, cx);
+            self.selections_did_change(
+                true,
+                push_to_nav_history,
+                &old_cursor_position,
+                request_completions,
+                window,
+                cx,
+            );
 
             if self.should_open_signature_help_automatically(
                 &old_cursor_position,
@@ -3720,7 +3739,7 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_inner(Some(Autoscroll::fit()), false, window, cx, |s| {
+            this.change_selections_inner(Some(Autoscroll::fit()), false, true, window, cx, |s| {
                 s.select(new_selections)
             });
 
@@ -11918,7 +11937,6 @@ impl Editor {
                     return;
                 }
             }
-
             nav_history.push(
                 Some(NavigationData {
                     cursor_anchor,
@@ -15184,7 +15202,7 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, true, window, cx);
+        self.selections_did_change(false, false, &old_cursor_position, true, window, cx);
     }
 
     fn push_to_selection_history(&mut self) {
