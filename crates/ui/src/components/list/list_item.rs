@@ -31,7 +31,7 @@ pub struct ListItem {
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
     /// A slot for content that only renders on hover or focus,
-    /// This slot doesn't use any `visibility`-related approach to rendering elements inside of it.
+    /// This slot doesn't use visibility to render elements inside of it.
     end_slot_conditional: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
