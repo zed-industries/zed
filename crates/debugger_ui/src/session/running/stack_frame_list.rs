@@ -255,7 +255,7 @@ impl StackFrameList {
 
         let row = (stack_frame.line.saturating_sub(1)) as u32;
 
-        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame) else {
+        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
@@ -332,7 +332,7 @@ impl StackFrameList {
         })
     }
 
-    fn abs_path_from_stack_frame(&self, stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
+    pub(crate) fn abs_path_from_stack_frame(stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
         stack_frame.source.as_ref().and_then(|s| {
             s.path
                 .as_deref()
