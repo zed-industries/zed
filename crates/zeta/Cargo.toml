@@ -39,6 +39,7 @@ migrator.workspace = true
 paths.workspace = true
 postage.workspace = true
 project.workspace = true
+proto.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 serde.workspace = true
