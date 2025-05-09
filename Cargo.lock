@@ -7817,6 +7817,7 @@ dependencies = [
  "gpui",
  "language_model",
  "log",
+ "ordered-float 2.10.1",
  "picker",
  "proto",
  "ui",

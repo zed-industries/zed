@@ -18,6 +18,7 @@ fuzzy.workspace = true
 gpui.workspace = true
 language_model.workspace = true
 log.workspace = true
+ordered-float.workspace = true
 picker.workspace = true
 proto.workspace = true
 ui.workspace = true

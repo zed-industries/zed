@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::{cmp::Reverse, sync::Arc};
 
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
-use fuzzy::{StringMatchCandidate, match_strings};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, AnyView, App, BackgroundExecutor, Corner, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -12,6 +12,7 @@ use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
     LanguageModelRegistry,
 };
+use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
@@ -406,7 +407,7 @@ impl ModelMatcher {
     }
 
     pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
-        let matches = self.bg_executor.block(match_strings(
+        let mut matches = self.bg_executor.block(match_strings(
             &self.candidates,
             &query,
             false,
@@ -415,9 +416,15 @@ impl ModelMatcher {
             self.bg_executor.clone(),
         ));
 
+        let sorting_key = |mat: &StringMatch| {
+            let candidate = &self.candidates[mat.candidate_id];
+            (Reverse(OrderedFloat(mat.score)), candidate.id)
+        };
+        matches.sort_unstable_by_key(sorting_key);
+
         let matched_models: Vec<_> = matches
             .into_iter()
-            .map(|m| self.models[m.candidate_id].clone())
+            .map(|mat| self.models[mat.candidate_id].clone())
             .collect();
 
         matched_models
@@ -444,7 +451,11 @@ impl ModelMatcher {
             .map(|(index, model)| {
                 StringMatchCandidate::new(
                     index,
-                    &format!("{}/{}", &model.model.provider_id().0, &model.model.name().0),
+                    &format!(
+                        "{}/{}",
+                        &model.model.provider_name().0,
+                        &model.model.name().0
+                    ),
                 )
             })
             .collect::<Vec<_>>()
