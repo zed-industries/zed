@@ -70,10 +70,26 @@ pub struct ToolResultOutput {
     pub output: Option<serde_json::Value>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ToolResultContent {
     Text(String),
     Image(LanguageModelImage),
+}
+
+impl ToolResultContent {
+    pub fn len(&self) -> usize {
+        match self {
+            ToolResultContent::Text(str) => str.len(),
+            ToolResultContent::Image(image) => image.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            ToolResultContent::Text(str) => str.is_empty(),
+            ToolResultContent::Image(image) => image.is_empty(),
+        }
+    }
 }
 
 impl From<String> for ToolResultOutput {

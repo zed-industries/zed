@@ -238,6 +238,11 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// Returns the image file extensions that this model accepts (e.g. &["png", "jpg", "jpeg"])
+    fn image_extensions_accepted(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
         LanguageModelAvailability::Public

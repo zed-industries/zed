@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::outline;
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{ToolResultContent, outline};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use project::{ImageItem, image_store};
 
@@ -11,7 +11,6 @@ use itertools::Itertools;
 use language::{Anchor, Point};
 use language_model::{
     LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
-    MessageContent, Role,
 };
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
@@ -88,10 +87,10 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        request: Arc<LanguageModelRequest>,
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
+        model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -106,9 +105,19 @@ impl Tool for ReadFileTool {
 
         let file_path = input.path.clone();
 
-        let is_image = image_store::is_image_file(&project, &project_path, cx);
+        if let Some(image_ext) = image_store::image_extension(&project, &project_path, cx) {
+            let is_image_supported = model
+                .image_extensions_accepted()
+                .contains(&image_ext.as_str());
 
-        if is_image {
+            if !is_image_supported {
+                return Task::ready(Err(anyhow!(
+                    "Tried to read a `.{image_ext}` image, but Zed doesn't currently support sending images of that type to {}.",
+                    model.name().0
+                )))
+                .into();
+            }
+
             let task = cx.spawn(async move |cx| -> Result<ToolResultOutput> {
                 let image_entity: Entity<ImageItem> = cx
                     .update(|cx| {
@@ -126,26 +135,10 @@ impl Tool for ReadFileTool {
                     .await
                     .ok_or_else(|| anyhow!("Failed to process image"))?;
 
-                // Create a response message that includes the image
-                let mut request_message = request.messages.last().cloned().unwrap_or_else(|| {
-                    language_model::LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![],
-                        cache: false,
-                    }
-                });
-
-                request_message
-                    .content
-                    .push(MessageContent::Text(format!("Image file: {}", file_path)));
-                request_message
-                    .content
-                    .push(MessageContent::Image(language_model_image));
-
-                Ok(ToolResultOutput::from(format!(
-                    "Successfully loaded image: {}",
-                    file_path
-                )))
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Image(language_model_image),
+                    output: None,
+                })
             });
 
             return task.into();
