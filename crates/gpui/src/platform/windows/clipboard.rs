@@ -266,8 +266,8 @@ where
 }
 
 fn read_string_from_clipboard() -> Option<ClipboardEntry> {
-    let text = with_clipboard_data(CF_UNICODETEXT.0 as u32, |global| {
-        let pcwstr = PCWSTR(global as *const u16);
+    let text = with_clipboard_data(CF_UNICODETEXT.0 as u32, |data_ptr| {
+        let pcwstr = PCWSTR(data_ptr as *const u16);
         String::from_utf16_lossy(unsafe { pcwstr.as_wide() })
     })?;
     let Some(hash) = read_hash_from_clipboard() else {
@@ -290,9 +290,9 @@ fn read_hash_from_clipboard() -> Option<u64> {
     if unsafe { IsClipboardFormatAvailable(*CLIPBOARD_HASH_FORMAT).is_err() } {
         return None;
     }
-    with_clipboard_data(*CLIPBOARD_HASH_FORMAT, |global| {
+    with_clipboard_data(*CLIPBOARD_HASH_FORMAT, |data_ptr| {
         let hash_bytes: [u8; 8] = unsafe {
-            std::slice::from_raw_parts(global.cast::<u8>(), 8)
+            std::slice::from_raw_parts(data_ptr.cast::<u8>(), 8)
                 .to_vec()
                 .try_into()
                 .log_err()
@@ -303,8 +303,8 @@ fn read_hash_from_clipboard() -> Option<u64> {
 
 fn read_metadata_from_clipboard() -> Option<String> {
     unsafe { IsClipboardFormatAvailable(*CLIPBOARD_METADATA_FORMAT).log_err()? };
-    with_clipboard_data(*CLIPBOARD_METADATA_FORMAT, |global| {
-        let pcwstr = PCWSTR(global as *const u16);
+    with_clipboard_data(*CLIPBOARD_METADATA_FORMAT, |data_ptr| {
+        let pcwstr = PCWSTR(data_ptr as *const u16);
         String::from_utf16_lossy(unsafe { pcwstr.as_wide() })
     })
 }
@@ -320,8 +320,8 @@ fn format_number_to_image_format(format_number: u32) -> Option<&'static ImageFor
 }
 
 fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<ClipboardEntry> {
-    let (bytes, id) = with_clipboard_data_and_size(format_number, |global, size| {
-        let bytes = unsafe { std::slice::from_raw_parts(global as *mut u8 as _, size).to_vec() };
+    let (bytes, id) = with_clipboard_data_and_size(format_number, |data_ptr, size| {
+        let bytes = unsafe { std::slice::from_raw_parts(data_ptr as *mut u8 as _, size).to_vec() };
         let id = hash(&bytes);
         (bytes, id)
     })?;
@@ -329,8 +329,8 @@ fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<Clipbo
 }
 
 fn read_files_from_clipboard() -> Option<ClipboardEntry> {
-    let text = with_clipboard_data(CF_HDROP.0 as u32, |global| {
-        let hdrop = HDROP(global);
+    let text = with_clipboard_data(CF_HDROP.0 as u32, |data_ptr| {
+        let hdrop = HDROP(data_ptr);
         let mut filenames = String::new();
         with_file_names(hdrop, |file_name| {
             filenames.push_str(&file_name);
@@ -347,9 +347,10 @@ fn with_clipboard_data<F, R>(format: u32, f: F) -> Option<R>
 where
     F: FnOnce(*mut std::ffi::c_void) -> R,
 {
-    let global = unsafe { GetClipboardData(format).log_err() }?.0;
-    let result = f(global);
-    unsafe { GlobalUnlock(HGLOBAL(global)).log_err() };
+    let global = HGLOBAL(unsafe { GetClipboardData(format).log_err() }?.0);
+    let data_ptr = unsafe { GlobalLock(global) };
+    let result = f(data_ptr);
+    unsafe { GlobalUnlock(global).log_err() };
     Some(result)
 }
 
@@ -357,10 +358,11 @@ fn with_clipboard_data_and_size<F, R>(format: u32, f: F) -> Option<R>
 where
     F: FnOnce(*mut std::ffi::c_void, usize) -> R,
 {
-    let global = unsafe { GetClipboardData(format).log_err() }?.0;
-    let global_size = unsafe { GlobalSize(HGLOBAL(global)) };
-    let result = f(global, global_size);
-    unsafe { GlobalUnlock(HGLOBAL(global)).log_err() };
+    let global = HGLOBAL(unsafe { GetClipboardData(format).log_err() }?.0);
+    let size = unsafe { GlobalSize(global) };
+    let data_ptr = unsafe { GlobalLock(global) };
+    let result = f(data_ptr, size);
+    unsafe { GlobalUnlock(global).log_err() };
     Some(result)
 }
 
