@@ -2487,6 +2487,13 @@ impl Thread {
 
                 writeln!(markdown, "**\n")?;
                 writeln!(markdown, "{}", tool_result.content)?;
+                if let Some(output) = tool_result.output.as_ref() {
+                    writeln!(
+                        markdown,
+                        "\n\nDebug Output:\n\n```json\n{}\n```\n",
+                        serde_json::to_string_pretty(output)?
+                    )?;
+                }
             }
         }
 
