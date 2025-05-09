@@ -3,11 +3,16 @@ use anyhow::{Result, anyhow};
 use assistant_tool::outline;
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use project::{ImageItem, image_store};
 
+use assistant_tool::ToolResultOutput;
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use language_model::{
+    LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
+    MessageContent, Role,
+};
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,7 +88,7 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
+        request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -100,6 +105,52 @@ impl Tool for ReadFileTool {
         };
 
         let file_path = input.path.clone();
+
+        let is_image = image_store::is_image_file(&project, &project_path, cx);
+
+        if is_image {
+            let task = cx.spawn(async move |cx| -> Result<ToolResultOutput> {
+                let image_entity: Entity<ImageItem> = cx
+                    .update(|cx| {
+                        project.update(cx, |project, cx| {
+                            project.open_image(project_path.clone(), cx)
+                        })
+                    })?
+                    .await?;
+
+                let image =
+                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
+
+                let language_model_image = cx
+                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .await
+                    .ok_or_else(|| anyhow!("Failed to process image"))?;
+
+                // Create a response message that includes the image
+                let mut request_message = request.messages.last().cloned().unwrap_or_else(|| {
+                    language_model::LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![],
+                        cache: false,
+                    }
+                });
+
+                request_message
+                    .content
+                    .push(MessageContent::Text(format!("Image file: {}", file_path)));
+                request_message
+                    .content
+                    .push(MessageContent::Image(language_model_image));
+
+                Ok(ToolResultOutput::from(format!(
+                    "Successfully loaded image: {}",
+                    file_path
+                )))
+            });
+
+            return task.into();
+        }
+
         cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {

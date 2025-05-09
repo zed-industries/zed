@@ -19,6 +19,7 @@ use gpui::Window;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use icons::IconName;
 use language_model::LanguageModel;
+use language_model::LanguageModelImage;
 use language_model::LanguageModelRequest;
 use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
@@ -65,21 +66,27 @@ impl ToolUseStatus {
 
 #[derive(Debug)]
 pub struct ToolResultOutput {
-    pub content: String,
+    pub content: ToolResultContent,
     pub output: Option<serde_json::Value>,
+}
+
+#[derive(Debug)]
+pub enum ToolResultContent {
+    Text(String),
+    Image(LanguageModelImage),
 }
 
 impl From<String> for ToolResultOutput {
     fn from(value: String) -> Self {
         ToolResultOutput {
-            content: value,
+            content: ToolResultContent::Text(value),
             output: None,
         }
     }
 }
 
 impl Deref for ToolResultOutput {
-    type Target = String;
+    type Target = ToolResultContent;
 
     fn deref(&self) -> &Self::Target {
         &self.content
