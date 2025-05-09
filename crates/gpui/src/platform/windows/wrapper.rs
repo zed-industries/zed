@@ -50,30 +50,3 @@ impl Deref for SafeCursor {
         &self.raw
     }
 }
-
-#[derive(Debug, Clone)]
-pub(crate) struct SmartGlobal {
-    raw: HGLOBAL,
-}
-
-impl SmartGlobal {
-    pub(crate) fn from_raw_ptr(ptr: *mut std::ffi::c_void) -> Self {
-        Self { raw: HGLOBAL(ptr) }
-    }
-
-    pub(crate) fn lock(&self) -> *mut std::ffi::c_void {
-        unsafe { GlobalLock(self.raw) }
-    }
-
-    pub(crate) fn size(&self) -> usize {
-        unsafe { GlobalSize(self.raw) }
-    }
-}
-
-impl Drop for SmartGlobal {
-    fn drop(&mut self) {
-        unsafe {
-            GlobalUnlock(self.raw).log_err();
-        }
-    }
-}
