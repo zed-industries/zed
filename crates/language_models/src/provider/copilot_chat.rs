@@ -368,25 +368,34 @@ pub fn map_to_language_model_completion_events(
                             }
                             Some("tool_calls") => {
                                 events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| match serde_json::Value::from_str(
-                                        &tool_call.arguments,
-                                    ) {
-                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse {
-                                                id: tool_call.id.clone().into(),
-                                                name: tool_call.name.as_str().into(),
-                                                is_input_complete: true,
-                                                input,
-                                                raw_input: tool_call.arguments.clone(),
-                                            },
-                                        )),
-                                        Err(error) => {
-                                            Err(LanguageModelCompletionError::BadInputJson {
-                                                id: tool_call.id.into(),
-                                                tool_name: tool_call.name.as_str().into(),
-                                                raw_input: tool_call.arguments.into(),
-                                                json_parse_error: error.to_string(),
-                                            })
+                                    |(_, tool_call)| {
+                                        // The model can output an empty string
+                                        // to indicate the absence of arguments.
+                                        // When that happens, create an empty
+                                        // object instead.
+                                        let arguments = if tool_call.arguments.is_empty() {
+                                            Ok(serde_json::Value::Object(Default::default()))
+                                        } else {
+                                            serde_json::Value::from_str(&tool_call.arguments)
+                                        };
+                                        match arguments {
+                                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.clone().into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
+                                                    input,
+                                                    raw_input: tool_call.arguments.clone(),
+                                                },
+                                            )),
+                                            Err(error) => {
+                                                Err(LanguageModelCompletionError::BadInputJson {
+                                                    id: tool_call.id.into(),
+                                                    tool_name: tool_call.name.as_str().into(),
+                                                    raw_input: tool_call.arguments.into(),
+                                                    json_parse_error: error.to_string(),
+                                                })
+                                            }
                                         }
                                     },
                                 ));
