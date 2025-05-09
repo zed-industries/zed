@@ -504,7 +504,7 @@ impl Copilot {
                 .on_notification::<DidChangeStatus, _>({
                     let this = this.clone();
                     move |params, cx| {
-                        // Convert didChangeStatus to appropriate SignInStatus and update
+                        // Convert didChangeStatus to appropriate SignInStatus
                         let sign_in_status = match params.kind.as_str() {
                             "Error" => Some(request::SignInStatus::NotAuthorized {
                                 user: String::new(),
@@ -518,7 +518,64 @@ impl Copilot {
 
                         if let Some(status) = sign_in_status {
                             this.update(cx, |this, cx| {
-                                this.update_sign_in_status(status, cx);
+                                // Check current status before deciding to update
+                                if let CopilotServer::Running(server) = &this.server {
+                                    let should_update = match (&server.sign_in_status, &status) {
+                                        // If currently signing in, only update if receiving Authorized status
+                                        (
+                                            SignInStatus::SigningIn { .. },
+                                            request::SignInStatus::AlreadySignedIn { .. },
+                                        )
+                                        | (
+                                            SignInStatus::SigningIn { .. },
+                                            request::SignInStatus::Ok { user: Some(_) },
+                                        )
+                                        | (
+                                            SignInStatus::SigningIn { .. },
+                                            request::SignInStatus::MaybeOk { .. },
+                                        ) => true,
+
+                                        // Don't interrupt sign-in flow with an error
+                                        (SignInStatus::SigningIn { .. }, _) => false,
+
+                                        // Avoid redundant transitions between signed-out states
+                                        (
+                                            SignInStatus::SignedOut { .. },
+                                            request::SignInStatus::NotSignedIn,
+                                        )
+                                        | (
+                                            SignInStatus::SignedOut { .. },
+                                            request::SignInStatus::Ok { user: None },
+                                        ) => false,
+
+                                        // Avoid redundant transitions between authorized states
+                                        (
+                                            SignInStatus::Authorized,
+                                            request::SignInStatus::AlreadySignedIn { .. },
+                                        )
+                                        | (
+                                            SignInStatus::Authorized,
+                                            request::SignInStatus::MaybeOk { .. },
+                                        )
+                                        | (
+                                            SignInStatus::Authorized,
+                                            request::SignInStatus::Ok { user: Some(_) },
+                                        ) => false,
+
+                                        // Avoid redundant transitions between unauthorized states
+                                        (
+                                            SignInStatus::Unauthorized,
+                                            request::SignInStatus::NotAuthorized { .. },
+                                        ) => false,
+
+                                        // Allow all other transitions
+                                        _ => true,
+                                    };
+
+                                    if should_update {
+                                        this.update_sign_in_status(status, cx);
+                                    }
+                                }
                             })
                             .ok();
                         }
@@ -741,7 +798,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if (!matches!(status, SignInStatus::Authorized { .. })) {
                 return;
             }
 
@@ -895,12 +952,15 @@ impl Copilot {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-        let request =
-            server
-                .lsp
-                .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
-                    uuid: completion.uuid.clone(),
-                });
+        let request = server
+            .lsp
+            .request::<lsp::ExecuteCommand>(lsp::ExecuteCommandParams {
+                command: "github.copilot.didAcceptCompletionItem".into(),
+                arguments: vec![serde_json::Value::String(completion.uuid.clone())],
+                work_done_progress_params: lsp::WorkDoneProgressParams {
+                    work_done_token: None,
+                },
+            });
         cx.background_spawn(async move {
             request.await?;
             Ok(())
@@ -997,8 +1057,14 @@ impl Copilot {
                     let end =
                         snapshot.clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
                     Completion {
-                        /// TODO: Use a better UUID generator
-                        uuid: "some random uuid".to_string(),
+                        uuid: completion
+                            .command
+                            .arguments
+                            .as_ref()
+                            .and_then(|args| args.get(0))
+                            .and_then(|val| val.as_str())
+                            .map(String::from)
+                            .unwrap_or_default(),
                         range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
                         text: completion.insert_text,
                     }
