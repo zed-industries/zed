@@ -21,3 +21,7 @@ debuggers = ["JavaScript"]
 
 [overrides.string]
 completion_query_characters = ["."]
+prefer_label_for_snippet = true
+
+[overrides.call_expression]
+prefer_label_for_snippet = true

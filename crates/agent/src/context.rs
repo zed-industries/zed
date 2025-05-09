@@ -749,11 +749,11 @@ pub enum ImageStatus {
 
 impl ImageContext {
     pub fn eq_for_key(&self, other: &Self) -> bool {
-        self.original_image.id == other.original_image.id
+        self.original_image.id() == other.original_image.id()
     }
 
     pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
-        self.original_image.id.hash(state);
+        self.original_image.id().hash(state);
     }
 
     pub fn image(&self) -> Option<LanguageModelImage> {

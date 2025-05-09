@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
+use assistant_settings::{AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -359,7 +359,7 @@ pub struct Thread {
     >,
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
-    configured_profile: Option<AgentProfile>,
+    configured_profile_id: Option<AgentProfileId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -408,8 +408,7 @@ impl Thread {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
         let assistant_settings = AssistantSettings::get_global(cx);
-        let profile_id = &assistant_settings.default_profile;
-        let configured_profile = assistant_settings.profiles.get(profile_id).cloned();
+        let configured_profile_id = assistant_settings.default_profile.clone();
 
         Self {
             id: ThreadId::new(),
@@ -452,7 +451,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            configured_profile,
+            configured_profile_id: Some(configured_profile_id),
         }
     }
 
@@ -500,12 +499,7 @@ impl Thread {
             .completion_mode
             .unwrap_or_else(|| AssistantSettings::get_global(cx).preferred_completion_mode);
 
-        let configured_profile = serialized.profile.and_then(|profile| {
-            AssistantSettings::get_global(cx)
-                .profiles
-                .get(&profile)
-                .cloned()
-        });
+        let configured_profile_id = serialized.profile.clone();
 
         Self {
             id,
@@ -580,7 +574,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            configured_profile,
+            configured_profile_id,
         }
     }
 
@@ -632,16 +626,16 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn configured_profile(&self) -> Option<AgentProfile> {
-        self.configured_profile.clone()
+    pub fn configured_profile_id(&self) -> Option<AgentProfileId> {
+        self.configured_profile_id.clone()
     }
 
-    pub fn set_configured_profile(
+    pub fn set_configured_profile_id(
         &mut self,
-        profile: Option<AgentProfile>,
+        id: Option<AgentProfileId>,
         cx: &mut Context<Self>,
     ) {
-        self.configured_profile = profile;
+        self.configured_profile_id = id;
         cx.notify();
     }
 
@@ -1148,10 +1142,7 @@ impl Thread {
                         provider: model.provider.id().0.to_string(),
                         model: model.model.id().0.to_string(),
                     }),
-                profile: this
-                    .configured_profile
-                    .as_ref()
-                    .map(|profile| AgentProfileId(profile.name.clone().into())),
+                profile: this.configured_profile_id.clone(),
                 completion_mode: Some(this.completion_mode),
             })
         })
@@ -2533,6 +2524,13 @@ impl Thread {
 
                 writeln!(markdown, "**\n")?;
                 writeln!(markdown, "{}", tool_result.content)?;
+                if let Some(output) = tool_result.output.as_ref() {
+                    writeln!(
+                        markdown,
+                        "\n\nDebug Output:\n\n```json\n{}\n```\n",
+                        serde_json::to_string_pretty(output)?
+                    )?;
+                }
             }
         }
 
