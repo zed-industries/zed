@@ -79,9 +79,10 @@ pub fn parse_markdown(
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
 
+                        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
                         let line_count = text[content_range.clone()]
-                            .chars()
-                            .filter(|c| *c == '\n')
+                            .bytes()
+                            .filter(|c| *c == b'\n')
                             .count();
                         let metadata = CodeBlockMetadata {
                             content_range,
