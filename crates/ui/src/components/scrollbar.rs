@@ -334,7 +334,7 @@ impl Element for Scrollbar {
                             let thumb_start = (event.position.along(axis)
                                 - padded_bounds.origin.along(axis)
                                 - (thumb_size / 2.))
-                                .clamp(px(0.), viewport_size - thumb_size);
+                                .clamp(px(0.), (viewport_size - thumb_size).max(px(0.)));
 
                             let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
                             let percentage = if viewport_size > thumb_size {
