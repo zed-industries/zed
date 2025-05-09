@@ -152,6 +152,9 @@ impl Keymap {
         'outer: for (binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
                 if self.binding_enabled(binding, &context_stack[0..depth]) {
+                    // We only want to consider a binding pending if it has an action
+                    // This, however, means that if we have both a NoAction binding and a binding
+                    // with an action at the same depth, we should still set is_pending to true.
                     if let Some(is_pending) = is_pending_opt.as_mut() {
                         if !is_pending.0 && pending && is_pending.1 == depth {
                             is_pending.0 = !is_no_action(&*binding.action);
@@ -313,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    /// Tests for https://github.com/zed-industries/zed/issues/30259
     fn test_multiple_keystroke_binding_disabled() {
         let bindings = [
             KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
