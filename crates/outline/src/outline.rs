@@ -323,7 +323,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .toggle_state(selected)
                 .child(
                     div()
-                        .text_ui(cx)
+                        .text_ui()
                         .pl(rems(outline_item.depth as f32))
                         .child(render_item(outline_item, mat.ranges(), cx)),
                 ),

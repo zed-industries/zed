@@ -1,14 +1,13 @@
 use anyhow::anyhow;
 use gpui::{
-    AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, MouseButton, Stateful,
-    Subscription, WeakEntity, list,
+    AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription, WeakEntity, list,
 };
 use project::{
     ProjectItem as _, ProjectPath,
     debugger::session::{Session, SessionEvent},
 };
 use std::{path::Path, sync::Arc};
-use ui::{Scrollbar, ScrollbarState, prelude::*};
+use ui::{ScrollbarState, prelude::*, scrollbar};
 use util::maybe;
 use workspace::Workspace;
 
@@ -141,10 +140,10 @@ impl ModuleList {
             })
             .p_1()
             .hover(|s| s.bg(cx.theme().colors().element_hover))
-            .child(h_flex().gap_0p5().text_ui_sm(cx).child(module.name.clone()))
+            .child(h_flex().gap_0p5().text_ui_sm().child(module.name.clone()))
             .child(
                 h_flex()
-                    .text_ui_xs(cx)
+                    .text_ui_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when_some(module.path.clone(), |this, path| this.child(path)),
             )
@@ -156,38 +155,6 @@ impl ModuleList {
         self.session
             .update(cx, |session, cx| session.modules(cx).to_vec())
     }
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("module-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
-    }
 }
 
 impl Focusable for ModuleList {
@@ -197,7 +164,7 @@ impl Focusable for ModuleList {
 }
 
 impl Render for ModuleList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.invalidate {
             let len = self
                 .session
@@ -212,6 +179,6 @@ impl Render for ModuleList {
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())
-            .child(self.render_vertical_scrollbar(cx))
+            .child(scrollbar(self.scrollbar_state.clone(), window))
     }
 }

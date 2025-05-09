@@ -95,7 +95,7 @@ impl RenderOnce for Callout {
                                         .w_full()
                                         .flex_1()
                                         .child(message)
-                                        .text_ui_sm(cx)
+                                        .text_ui_sm()
                                         .text_color(cx.theme().colors().text_muted),
                                 )
                             }),

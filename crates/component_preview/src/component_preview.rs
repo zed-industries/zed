@@ -629,7 +629,7 @@ impl ComponentPreview {
                         .when_some(description, |this, description| {
                             this.child(
                                 div()
-                                    .text_ui_sm(cx)
+                                    .text_ui_sm()
                                     .text_color(cx.theme().colors().text_muted)
                                     .max_w(px(600.0))
                                     .child(description),

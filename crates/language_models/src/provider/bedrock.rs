@@ -1187,7 +1187,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).credentials_from_env;
         let bedrock_settings = self.state.read(cx).settings.as_ref();
         let bedrock_method = bedrock_settings

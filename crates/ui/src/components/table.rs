@@ -49,12 +49,12 @@ impl Table {
         self
     }
 
-    fn base_cell_style(cx: &mut App) -> Div {
+    fn base_cell_style() -> Div {
         div()
             .px_1p5()
             .flex_1()
             .justify_start()
-            .text_ui(cx)
+            .text_ui()
             .whitespace_nowrap()
             .text_ellipsis()
             .overflow_hidden()
@@ -85,7 +85,7 @@ impl RenderOnce for Table {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .children(self.column_headers.into_iter().map(|h| {
-                Self::base_cell_style(cx)
+                Self::base_cell_style()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(h)
             }));
@@ -111,8 +111,8 @@ impl RenderOnce for Table {
                     row.border_b_1().border_color(cx.theme().colors().border)
                 })
                 .children(row.into_iter().map(|cell| match cell {
-                    TableCell::String(s) => Self::base_cell_style(cx).child(s),
-                    TableCell::Element(e) => Self::base_cell_style(cx).child(e),
+                    TableCell::String(s) => Self::base_cell_style().child(s),
+                    TableCell::Element(e) => Self::base_cell_style().child(e),
                 }))
         });
 

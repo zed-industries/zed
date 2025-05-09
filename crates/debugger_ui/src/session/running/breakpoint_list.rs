@@ -21,8 +21,8 @@ use project::{
 use ui::{
     App, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    h_flex, px, v_flex,
+    ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Window, div, h_flex, px,
+    scrollbar, v_flex,
 };
 use util::{ResultExt, maybe};
 use workspace::Workspace;
@@ -103,48 +103,17 @@ impl BreakpointList {
         }))
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, window: &mut Window) -> Option<Stateful<Div>> {
         if !(self.show_scrollbar || self.scrollbar_state.is_dragging()) {
             return None;
         }
-        Some(
-            div()
-                .occlude()
-                .id("breakpoint-list-vertical-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
+        Some(scrollbar(self.scrollbar_state.clone(), window))
     }
 }
 impl Render for BreakpointList {
     fn render(
         &mut self,
-        _window: &mut ui::Window,
+        window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let old_len = self.breakpoints.len();
@@ -227,7 +196,7 @@ impl Render for BreakpointList {
             .size_full()
             .m_0p5()
             .child(list(self.list_state.clone()).flex_grow())
-            .children(self.render_vertical_scrollbar(cx))
+            .children(self.render_vertical_scrollbar(window))
     }
 }
 #[derive(Clone, Debug)]

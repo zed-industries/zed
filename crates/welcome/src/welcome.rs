@@ -23,6 +23,8 @@ pub use multibuffer_hint::*;
 mod base_keymap_picker;
 mod base_keymap_setting;
 mod multibuffer_hint;
+mod recent_projects;
+mod walkthrough;
 mod welcome_ui;
 
 actions!(welcome, [ResetHints]);
@@ -44,6 +46,7 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
+    walkthrough::init(cx);
     base_keymap_picker::init(cx);
 }
 

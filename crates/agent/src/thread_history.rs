@@ -12,7 +12,7 @@ use gpui::{
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
     HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    Tooltip, prelude::*, scrollbar,
 };
 use util::ResultExt;
 
@@ -370,40 +370,21 @@ impl ThreadHistory {
         cx.notify();
     }
 
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         if !(self.scrollbar_visibility || self.scrollbar_state.is_dragging()) {
             return None;
         }
 
         Some(
-            div()
-                .occlude()
-                .id("thread-history-scroll")
-                .h_full()
+            scrollbar(self.scrollbar_state.clone(), window)
                 .bg(cx.theme().colors().panel_background.opacity(0.8))
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
-                .absolute()
-                .right_1()
-                .top_0()
-                .bottom_0()
-                .w_4()
-                .pl_1()
-                .cursor_default()
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+                .pl_1(),
         )
     }
 
@@ -543,7 +524,7 @@ impl Focusable for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
@@ -606,7 +587,7 @@ impl Render for ThreadHistory {
                             .track_scroll(self.scroll_handle.clone())
                             .flex_grow(),
                         )
-                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                        .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
                             div.child(scrollbar)
                         })
                 }

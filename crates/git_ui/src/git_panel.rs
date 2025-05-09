@@ -3383,7 +3383,7 @@ impl GitPanel {
                             )
                         })
                     })
-                    .text_ui_sm(cx)
+                    .text_ui_sm()
                     .mx_auto()
                     .text_color(Color::Placeholder.color(cx)),
             )

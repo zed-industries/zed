@@ -413,15 +413,28 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
 
 /// Returns the path to the vscode user settings file
 pub fn vscode_settings_file() -> &'static PathBuf {
-    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    let rel_path = "Code/User/settings.json";
-    LOGS_DIR.get_or_init(|| {
+    static VSCODE_SETTINGS_PATH: OnceLock<PathBuf> = OnceLock::new();
+    VSCODE_SETTINGS_PATH.get_or_init(|| vscode_data_dir().join("User/Settings.json"))
+}
+
+pub fn vscode_data_dir() -> &'static PathBuf {
+    static VSCODE_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+    VSCODE_DATA_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
-            home_dir()
-                .join("Library/Application Support")
-                .join(rel_path)
+            home_dir().join("Library/Application Support/Code")
         } else {
-            config_dir().join(rel_path)
+            config_dir().join("Code")
+        }
+    })
+}
+
+pub fn sublime_data_dir() -> &'static PathBuf {
+    static SUBLIME_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SUBLIME_DATA_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir().join("Library/Application Support/Sublime Text")
+        } else {
+            config_dir().join("sublime-text-3") // TODO: handle 4?
         }
     })
 }
