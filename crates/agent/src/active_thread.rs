@@ -600,14 +600,8 @@ fn render_markdown_code_block(
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
         .when(
-            metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK,
-            |this| {
-                if is_expanded {
-                    this.h_full()
-                } else {
-                    this.max_h_80()
-                }
-            },
+            metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK && !is_expanded,
+            |this| this.max_h_80(),
         )
 }
 
