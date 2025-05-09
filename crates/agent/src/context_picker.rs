@@ -381,6 +381,16 @@ impl ContextPicker {
         cx.focus_self(window);
     }
 
+    pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.mode {
+            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+                entity.select_first(&Default::default(), window, cx)
+            }),
+            // Other variants already select their first entry on open automatically
+            _ => {}
+        }
+    }
+
     fn recent_menu_item(
         &self,
         context_picker: Entity<ContextPicker>,

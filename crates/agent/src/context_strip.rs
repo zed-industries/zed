@@ -420,12 +420,25 @@ impl Render for ContextStrip {
             })
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |window, cx| {
-                        context_picker.update(cx, |this, cx| {
-                            this.init(window, cx);
-                        });
+                    .menu({
+                        let context_picker = context_picker.clone();
+                        move |window, cx| {
+                            context_picker.update(cx, |this, cx| {
+                                this.init(window, cx);
+                            });
 
-                        Some(context_picker.clone())
+                            Some(context_picker.clone())
+                        }
+                    })
+                    .on_open({
+                        let context_picker = context_picker.downgrade();
+                        Rc::new(move |window, cx| {
+                            context_picker
+                                .update(cx, |context_picker, cx| {
+                                    context_picker.select_first(window, cx);
+                                })
+                                .ok();
+                        })
                     })
                     .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)
