@@ -958,11 +958,6 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Stops propagation of left mouse down event.
-    fn block_mouse_down(mut self) -> Self {
-        self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    }
-
     /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
     /// [`Hitbox::is_hovered`] for details.
     ///

@@ -15021,7 +15021,7 @@ impl Editor {
                                         text_style = text_style.highlight(highlight_style);
                                     }
                                     div()
-                                        .block_mouse_down()
+                                        .block_mouse_except_scroll()
                                         .pl(cx.anchor_x)
                                         .child(EditorElement::new(
                                             &rename_editor,
