@@ -6811,7 +6811,7 @@ impl Editor {
             );
             for BreakpointWithPosition {
                 position: anchor,
-                breakpoint,
+                bp: breakpoint,
             } in breakpoints
             {
                 let multi_buffer_anchor =
@@ -9416,7 +9416,7 @@ impl Editor {
                             snapshot
                                 .buffer_snapshot
                                 .anchor_in_excerpt(enclosing_excerpt, bp.position)
-                                .map(|position| (position, bp.breakpoint.clone()))
+                                .map(|position| (position, bp.bp.clone()))
                         } else {
                             None
                         }
@@ -9581,7 +9581,7 @@ impl Editor {
                 buffer,
                 BreakpointWithPosition {
                     position: breakpoint_position.text_anchor,
-                    breakpoint,
+                    bp: breakpoint,
                 },
                 edit_action,
                 cx,

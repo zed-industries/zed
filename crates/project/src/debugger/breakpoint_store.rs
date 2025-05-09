@@ -21,14 +21,29 @@ use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::Wor
 use super::session::ThreadId;
 
 mod breakpoints_in_file {
+    use collections::HashMap;
     use language::{BufferEvent, DiskState};
 
     use super::*;
 
-    #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct BreakpointWithPosition {
         pub position: text::Anchor,
-        pub breakpoint: Breakpoint,
+        pub bp: Breakpoint,
+    }
+
+    /// A breakpoint with per-session data about it's state.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct StatefulBreakpoint {
+        pub bp: BreakpointWithPosition,
+        pub session_state: HashMap<SessionId, BreakpointSessionState>,
+    }
+
+    #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+    pub struct BreakpointSessionState {
+        /// Session-specific identifier for the breakpoint, as assigned by Debug Adapter.
+        id: Box<str>,
+        verified: bool,
     }
     #[derive(Clone)]
     pub(super) struct BreakpointsInFile {
@@ -179,9 +194,6 @@ impl BreakpointStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
-        if message.payload.breakpoints.is_empty() {
-            return Ok(());
-        }
 
         let buffer = this
             .update(&mut cx, |this, cx| {
@@ -210,7 +222,7 @@ impl BreakpointStore {
                     let breakpoint = Breakpoint::from_proto(breakpoint)?;
                     Some(BreakpointWithPosition {
                         position,
-                        breakpoint,
+                        bp: breakpoint,
                     })
                 })
                 .collect();
@@ -256,7 +268,7 @@ impl BreakpointStore {
                 buffer,
                 BreakpointWithPosition {
                     position,
-                    breakpoint,
+                    bp: breakpoint,
                 },
                 BreakpointEditAction::Toggle,
                 cx,
@@ -275,12 +287,21 @@ impl BreakpointStore {
                         .breakpoints
                         .iter()
                         .filter_map(|breakpoint| {
-                            breakpoint.breakpoint.to_proto(&path, &breakpoint.position)
+                            breakpoint.bp.to_proto(&path, &breakpoint.position)
                         })
                         .collect(),
                 });
             }
         }
+    }
+
+    pub(super) fn mark_breakpoints_verified(
+        &mut self,
+        session_id: SessionId,
+        abs_path: &Path,
+
+        it: impl Iterator<Item = (BreakpointWithPosition, bool)>,
+    ) {
     }
 
     pub fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -317,7 +338,7 @@ impl BreakpointStore {
                 }
             }
             BreakpointEditAction::InvertState => {
-                if let Some(BreakpointWithPosition { breakpoint: bp, .. }) = breakpoint_set
+                if let Some(BreakpointWithPosition { bp, .. }) = breakpoint_set
                     .breakpoints
                     .iter_mut()
                     .find(|value| breakpoint == **value)
@@ -328,7 +349,7 @@ impl BreakpointStore {
                         bp.state = BreakpointState::Enabled;
                     }
                 } else {
-                    breakpoint.breakpoint.state = BreakpointState::Disabled;
+                    breakpoint.bp.state = BreakpointState::Disabled;
                     breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
@@ -337,7 +358,7 @@ impl BreakpointStore {
                     let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(
                         |BreakpointWithPosition {
                              position: other_pos,
-                             breakpoint: other_bp,
+                             bp: other_bp,
                          }| {
                             if breakpoint.position == *other_pos {
                                 Some(other_bp)
@@ -350,17 +371,16 @@ impl BreakpointStore {
                     if let Some(found_bp) = found_bp {
                         found_bp.message = Some(log_message.clone());
                     } else {
-                        breakpoint.breakpoint.message = Some(log_message.clone());
+                        breakpoint.bp.message = Some(log_message.clone());
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
-                } else if breakpoint.breakpoint.message.is_some() {
+                } else if breakpoint.bp.message.is_some() {
                     if let Some(position) = breakpoint_set
                         .breakpoints
                         .iter()
                         .find_position(|other| {
-                            breakpoint.position == other.position
-                                && other.breakpoint == breakpoint.breakpoint
+                            breakpoint.position == other.position && other.bp == breakpoint.bp
                         })
                         .map(|res| res.0)
                     {
@@ -374,7 +394,7 @@ impl BreakpointStore {
                 if !hit_condition.is_empty() {
                     let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(|other| {
                         if breakpoint.position == other.position {
-                            Some(&mut other.breakpoint)
+                            Some(&mut other.bp)
                         } else {
                             None
                         }
@@ -383,17 +403,16 @@ impl BreakpointStore {
                     if let Some(found_bp) = found_bp {
                         found_bp.hit_condition = Some(hit_condition.clone());
                     } else {
-                        breakpoint.breakpoint.hit_condition = Some(hit_condition.clone());
+                        breakpoint.bp.hit_condition = Some(hit_condition.clone());
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
-                } else if breakpoint.breakpoint.hit_condition.is_some() {
+                } else if breakpoint.bp.hit_condition.is_some() {
                     if let Some(position) = breakpoint_set
                         .breakpoints
                         .iter()
                         .find_position(|bp| {
-                            breakpoint.position == bp.position
-                                && bp.breakpoint == breakpoint.breakpoint
+                            breakpoint.position == bp.position && bp.bp == breakpoint.bp
                         })
                         .map(|res| res.0)
                     {
@@ -407,7 +426,7 @@ impl BreakpointStore {
                 if !condition.is_empty() {
                     let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(|other| {
                         if breakpoint.position == other.position {
-                            Some(&mut other.breakpoint)
+                            Some(&mut other.bp)
                         } else {
                             None
                         }
@@ -416,17 +435,16 @@ impl BreakpointStore {
                     if let Some(found_bp) = found_bp {
                         found_bp.condition = Some(condition.clone());
                     } else {
-                        breakpoint.breakpoint.condition = Some(condition.clone());
+                        breakpoint.bp.condition = Some(condition.clone());
                         // We did not remove any breakpoint, hence let's toggle one.
                         breakpoint_set.breakpoints.push(breakpoint.clone());
                     }
-                } else if breakpoint.breakpoint.condition.is_some() {
+                } else if breakpoint.bp.condition.is_some() {
                     if let Some(position) = breakpoint_set
                         .breakpoints
                         .iter()
                         .find_position(|bp| {
-                            breakpoint.position == bp.position
-                                && bp.breakpoint == breakpoint.breakpoint
+                            breakpoint.position == bp.position && bp.bp == breakpoint.bp
                         })
                         .map(|res| res.0)
                     {
@@ -442,10 +460,7 @@ impl BreakpointStore {
             self.breakpoints.remove(&abs_path);
         }
         if let BreakpointStoreMode::Remote(remote) = &self.mode {
-            if let Some(breakpoint) = breakpoint
-                .breakpoint
-                .to_proto(&abs_path, &breakpoint.position)
-            {
+            if let Some(breakpoint) = breakpoint.bp.to_proto(&abs_path, &breakpoint.position) {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
                     project_id: remote._upstream_project_id,
                     path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
@@ -461,7 +476,7 @@ impl BreakpointStore {
                     breakpoint_set
                         .breakpoints
                         .iter()
-                        .filter_map(|bp| bp.breakpoint.to_proto(&abs_path, &bp.position))
+                        .filter_map(|bp| bp.bp.to_proto(&abs_path, &bp.position))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -593,10 +608,10 @@ impl BreakpointStore {
                         SourceBreakpoint {
                             row: position,
                             path: path.clone(),
-                            state: bp.breakpoint.state,
-                            message: bp.breakpoint.message.clone(),
-                            condition: bp.breakpoint.condition.clone(),
-                            hit_condition: bp.breakpoint.hit_condition.clone(),
+                            state: bp.bp.state,
+                            message: bp.bp.message.clone(),
+                            condition: bp.bp.condition.clone(),
+                            hit_condition: bp.bp.hit_condition.clone(),
                         }
                     })
                     .collect()
@@ -620,10 +635,10 @@ impl BreakpointStore {
                             SourceBreakpoint {
                                 row: position,
                                 path: path.clone(),
-                                message: breakpoint.breakpoint.message.clone(),
-                                state: breakpoint.breakpoint.state,
-                                hit_condition: breakpoint.breakpoint.hit_condition.clone(),
-                                condition: breakpoint.breakpoint.condition.clone(),
+                                message: breakpoint.bp.message.clone(),
+                                state: breakpoint.bp.state,
+                                hit_condition: breakpoint.bp.hit_condition.clone(),
+                                condition: breakpoint.bp.condition.clone(),
                             }
                         })
                         .collect(),
@@ -682,7 +697,7 @@ impl BreakpointStore {
                             .breakpoints
                             .push(BreakpointWithPosition {
                                 position,
-                                breakpoint: Breakpoint {
+                                bp: Breakpoint {
                                     message: bp.message,
                                     state: bp.state,
                                     condition: bp.condition,
