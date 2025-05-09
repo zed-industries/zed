@@ -36,6 +36,7 @@ pub struct AgentConfiguration {
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
     expanded_context_server_tools: HashMap<ContextServerId, bool>,
+    expanded_provider_configurations: HashMap<LanguageModelProviderId, bool>,
     tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
@@ -78,6 +79,7 @@ impl AgentConfiguration {
             configuration_views_by_provider: HashMap::default(),
             context_server_store,
             expanded_context_server_tools: HashMap::default(),
+            expanded_provider_configurations: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
             scroll_handle,
@@ -134,10 +136,14 @@ impl AgentConfiguration {
             .configuration_views_by_provider
             .get(&provider.id())
             .cloned();
+        let is_expanded = self
+            .expanded_provider_configurations
+            .get(&provider.id())
+            .copied()
+            .unwrap_or(false); // Default to collapsed
 
         v_flex()
             .pt_3()
-            .pb_1()
             .gap_1p5()
             .border_t_1()
             .border_color(cx.theme().colors().border.opacity(0.6))
@@ -147,41 +153,79 @@ impl AgentConfiguration {
                     .child(
                         h_flex()
                             .gap_2()
+                            .items_center()
                             .child(
                                 Icon::new(provider.icon())
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new(provider_name.clone()).size(LabelSize::Large)),
+                            .child(Label::new(provider_name.clone()).size(LabelSize::Large))
+                            .when(provider.is_authenticated(cx), |parent| {
+                                parent.child(
+                                    h_flex()
+                                        .items_center()
+                                        .child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::Medium)
+                                                .color(Color::Success)
+                                        )
+                                )
+                            }),
                     )
-                    .when(provider.is_authenticated(cx), |parent| {
-                        parent.child(
-                            Button::new(
-                                SharedString::from(format!("new-thread-{provider_id}")),
-                                "Start New Thread",
-                            )
-                            .icon_position(IconPosition::Start)
-                            .icon(IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ModalSurface)
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener({
-                                let provider = provider.clone();
-                                move |_this, _event, _window, cx| {
-                                    cx.emit(AssistantConfigurationEvent::NewThread(
-                                        provider.clone(),
-                                    ))
-                                }
-                            })),
-                        )
-                    }),
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .when(provider.is_authenticated(cx), |parent| {
+                                parent.child(
+                                    Button::new(
+                                        SharedString::from(format!("new-thread-{provider_id}")),
+                                        "Start New Thread",
+                                    )
+                                    .icon_position(IconPosition::Start)
+                                    .icon(IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Filled)
+                                    .layer(ElevationIndex::ModalSurface)
+                                    .label_size(LabelSize::Small)
+                                    .on_click(cx.listener({
+                                        let provider = provider.clone();
+                                        move |_this, _event, _window, cx| {
+                                            cx.emit(AssistantConfigurationEvent::NewThread(
+                                                provider.clone(),
+                                            ))
+                                        }
+                                    })),
+                                )
+                            })
+                            .child(
+                                Disclosure::new(
+                                    SharedString::from(format!("provider-disclosure-{provider_id}")),
+                                    is_expanded
+                                )
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .on_click(cx.listener({
+                                    let provider_id = provider.id().clone();
+                                    move |this, _event, _window, _cx| {
+                                        let is_open = this
+                                            .expanded_provider_configurations
+                                            .entry(provider_id.clone())
+                                            .or_insert(false);
+
+                                        *is_open = !*is_open;
+                                    }
+                                })),
+                            ),
+                    ),
             )
-            .map(|parent| match configuration_view {
-                Some(configuration_view) => parent.child(configuration_view),
-                None => parent.child(div().child(Label::new(format!(
-                    "No configuration view for {provider_name}",
-                )))),
+            .when(is_expanded, |parent| {
+                match configuration_view {
+                    Some(configuration_view) => parent.child(configuration_view),
+                    _ => parent.child(div().child(Label::new(format!(
+                        "No configuration view for {provider_name}",
+                    )))),
+                }
             })
     }
 
