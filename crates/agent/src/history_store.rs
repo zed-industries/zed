@@ -36,6 +36,16 @@ impl HistoryEntry {
     }
 }
 
+impl PartialEq for HistoryEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Thread(l), Self::Thread(r)) => l.id == r.id,
+            (Self::Context(l), Self::Context(r)) => l.path == r.path,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum RecentEntry {
     Thread(ThreadId, Entity<Thread>),

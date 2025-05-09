@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -117,16 +118,26 @@ impl ThreadHistory {
     }
 
     fn update_all_entries(&mut self, cx: &mut Context<Self>) {
+        let old_entries = mem::take(&mut self.all_entries);
+        let previously_selected_entry = old_entries.get(self.selected_index);
+
         self.all_entries = self
             .history_store
             .update(cx, |store, cx| store.entries(cx))
             .into();
 
-        self.set_selected_entry_index(0, cx);
         self.update_separated_items(cx);
 
         match &self.search_state {
-            SearchState::Empty => {}
+            SearchState::Empty => {
+                if self.selected_index >= self.all_entries.len() {
+                    self.set_selected_entry_index(self.all_entries.len().saturating_sub(1), cx);
+                } else if let Some(prev) = previously_selected_entry {
+                    if let Some(new_ix) = self.all_entries.iter().position(|probe| probe == prev) {
+                        self.set_selected_entry_index(new_ix, cx);
+                    }
+                }
+            }
             SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
                 self.search(query.clone(), cx);
             }
@@ -138,8 +149,8 @@ impl ThreadHistory {
         self._separated_items_task.take();
         let all_entries = self.all_entries.clone();
 
-        let mut items = std::mem::take(&mut self.separated_items);
-        let mut indexes = std::mem::take(&mut self.separated_item_indexes);
+        let mut items = mem::take(&mut self.separated_items);
+        let mut indexes = mem::take(&mut self.separated_item_indexes);
         items.clear();
         indexes.clear();
         // We know there's going to be at least one bucket separator
