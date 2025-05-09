@@ -16,9 +16,9 @@ use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet, hash_map::Entry};
-use editor::actions::{MoveUp, Paste};
+use editor::actions::Paste;
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer};
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
@@ -1272,93 +1272,95 @@ impl ActiveThread {
     }
 
     fn update_editing_message_token_count(&mut self, debounce: bool, cx: &mut Context<Self>) {
-        // todo!()
-        // let Some((message_id, state)) = self.user_message_views.as_mut() else {
-        //     return;
-        // };
+        let Some(message_id) = self.focused_user_message else {
+            return;
+        };
 
-        // cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
-        // state._update_token_count_task.take();
+        let Some(state) = self.user_message_views.get_mut(&message_id) else {
+            return;
+        };
 
-        // let Some(configured_model) = self.thread.read(cx).configured_model() else {
-        //     state.last_estimated_token_count.take();
-        //     return;
-        // };
+        cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
+        state._update_token_count_task.take();
 
-        // let editor = state.editor.clone();
-        // let thread = self.thread.clone();
-        // let message_id = *message_id;
+        let Some(configured_model) = self.thread.read(cx).configured_model() else {
+            state.last_estimated_token_count.take();
+            return;
+        };
 
-        // state._update_token_count_task = Some(cx.spawn(async move |this, cx| {
-        //     if debounce {
-        //         cx.background_executor()
-        //             .timer(Duration::from_millis(200))
-        //             .await;
-        //     }
+        let editor = state.editor.clone();
+        let thread = self.thread.clone();
 
-        //     let token_count = if let Some(task) = cx
-        //         .update(|cx| {
-        //             let Some(message) = thread.read(cx).message(message_id) else {
-        //                 log::error!("Message that was being edited no longer exists");
-        //                 return None;
-        //             };
-        //             let message_text = editor.read(cx).text(cx);
+        state._update_token_count_task = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+            }
 
-        //             if message_text.is_empty() && message.loaded_context.is_empty() {
-        //                 return None;
-        //             }
+            let token_count = if let Some(task) = cx
+                .update(|cx| {
+                    let Some(message) = thread.read(cx).message(message_id) else {
+                        log::error!("Message that was being edited no longer exists");
+                        return None;
+                    };
+                    let message_text = editor.read(cx).text(cx);
 
-        //             let mut request_message = LanguageModelRequestMessage {
-        //                 role: language_model::Role::User,
-        //                 content: Vec::new(),
-        //                 cache: false,
-        //             };
+                    if message_text.is_empty() && message.loaded_context.is_empty() {
+                        return None;
+                    }
 
-        //             message
-        //                 .loaded_context
-        //                 .add_to_request_message(&mut request_message);
+                    let mut request_message = LanguageModelRequestMessage {
+                        role: language_model::Role::User,
+                        content: Vec::new(),
+                        cache: false,
+                    };
 
-        //             if !message_text.is_empty() {
-        //                 request_message
-        //                     .content
-        //                     .push(MessageContent::Text(message_text));
-        //             }
+                    message
+                        .loaded_context
+                        .add_to_request_message(&mut request_message);
 
-        //             let request = language_model::LanguageModelRequest {
-        //                 thread_id: None,
-        //                 prompt_id: None,
-        //                 mode: None,
-        //                 messages: vec![request_message],
-        //                 tools: vec![],
-        //                 stop: vec![],
-        //                 temperature: AssistantSettings::temperature_for_model(
-        //                     &configured_model.model,
-        //                     cx,
-        //                 ),
-        //             };
+                    if !message_text.is_empty() {
+                        request_message
+                            .content
+                            .push(MessageContent::Text(message_text));
+                    }
 
-        //             Some(configured_model.model.count_tokens(request, cx))
-        //         })
-        //         .ok()
-        //         .flatten()
-        //     {
-        //         task.await.log_err()
-        //     } else {
-        //         Some(0)
-        //     };
+                    let request = language_model::LanguageModelRequest {
+                        thread_id: None,
+                        prompt_id: None,
+                        mode: None,
+                        messages: vec![request_message],
+                        tools: vec![],
+                        stop: vec![],
+                        temperature: AssistantSettings::temperature_for_model(
+                            &configured_model.model,
+                            cx,
+                        ),
+                    };
 
-        //     if let Some(token_count) = token_count {
-        //         this.update(cx, |this, cx| {
-        //             let Some((_message_id, state)) = this.user_message_views.as_mut() else {
-        //                 return;
-        //             };
+                    Some(configured_model.model.count_tokens(request, cx))
+                })
+                .ok()
+                .flatten()
+            {
+                task.await.log_err()
+            } else {
+                Some(0)
+            };
 
-        //             state.last_estimated_token_count = Some(token_count);
-        //             cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
-        //         })
-        //         .ok();
-        //     };
-        // }));
+            if let Some(token_count) = token_count {
+                this.update(cx, |this, cx| {
+                    let Some(state) = this.user_message_views.get_mut(&message_id) else {
+                        return;
+                    };
+
+                    state.last_estimated_token_count = Some(token_count);
+                    cx.emit(ActiveThreadEvent::EditingMessageTokenCountChanged);
+                })
+                .ok();
+            };
+        }));
     }
 
     fn remove_all_context(
@@ -1371,16 +1373,15 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn move_up(&mut self, _: &MoveUp, _window: &mut Window, _cx: &mut Context<Self>) {
-        // todo!()
-        // if let Some((_, state)) = self.user_message_views.as_mut() {
-        //     if state.context_picker_menu_handle.is_deployed() {
-        //         cx.propagate();
-        //     } else {
-        //         state.context_strip.focus_handle(cx).focus(window);
-        //     }
-        // }
-    }
+    // fn move_up(&mut self, _: &MoveUp, _window: &mut Window, _cx: &mut Context<Self>) {
+    //     if let Some((_, state)) = self.user_message_views.as_mut() {
+    //         if state.context_picker_menu_handle.is_deployed() {
+    //             cx.propagate();
+    //         } else {
+    //             state.context_strip.focus_handle(cx).focus(window);
+    //         }
+    //     }
+    // }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
         let images = cx
@@ -1689,15 +1690,19 @@ impl ActiveThread {
                 // FIXME focus out too?
                 let editor_focus_handle = editor.focus_handle(cx);
                 let editor_focus_in_subscription =
-                    cx.on_focus_in(&editor_focus_handle, window, move |this, window, cx| {
+                    cx.on_focus_in(&editor_focus_handle, window, move |this, _window, cx| {
                         this.focused_user_message = Some(message_id);
+                        this.update_editing_message_token_count(false, cx);
                     });
-                let editor_focus_out_subscription =
-                    cx.on_focus_out(&editor_focus_handle, window, move |this, _, window, cx| {
+                let editor_focus_out_subscription = cx.on_focus_out(
+                    &editor_focus_handle,
+                    window,
+                    move |this, _, _window, _cx| {
                         if this.focused_user_message == Some(message_id) {
                             this.focused_user_message = None;
                         }
-                    });
+                    },
+                );
 
                 entry.insert(UserMessageView {
                     editor: editor.clone(),
@@ -1714,9 +1719,6 @@ impl ActiveThread {
                 })
             }
         };
-
-        // todo!("on focus call this")
-        // self.update_editing_message_token_count(false, cx);
 
         let settings = ThemeSettings::get_global(cx);
         let font_size = TextSize::Small
@@ -1746,7 +1748,7 @@ impl ActiveThread {
                 window.defer(cx, move |window, cx| handle.toggle(window, cx));
             })
             .on_action(cx.listener(Self::remove_all_context))
-            .on_action(cx.listener(Self::move_up))
+            // .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::cancel_editing_message))
             .on_action(cx.listener(Self::confirm_editing_message))
             .capture_action(cx.listener(Self::paste))
