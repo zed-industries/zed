@@ -430,6 +430,16 @@ impl Render for ContextStrip {
                             Some(context_picker.clone())
                         }
                     })
+                    .on_open({
+                        let context_picker = context_picker.downgrade();
+                        Rc::new(move |window, cx| {
+                            context_picker
+                                .update(cx, |context_picker, cx| {
+                                    context_picker.select_first(window, cx);
+                                })
+                                .ok();
+                        })
+                    })
                     .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
@@ -447,16 +457,6 @@ impl Render for ContextStrip {
                             }
                         },
                     )
-                    .on_open({
-                        let context_picker = context_picker.downgrade();
-                        Rc::new(move |window, cx| {
-                            context_picker
-                                .update(cx, |context_picker, cx| {
-                                    context_picker.select_first(window, cx);
-                                })
-                                .ok();
-                        })
-                    })
                     .attach(gpui::Corner::TopLeft)
                     .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
