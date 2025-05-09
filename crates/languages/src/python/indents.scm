@@ -24,6 +24,31 @@
   body: (block) @indent
 )
 
+(with_statement
+  ":" @start
+  body: (block) @indent
+)
+
+(while_statement
+  ":" @start
+  body: (block) @indent
+)
+
+(match_statement
+  ":" @start
+  body: (block) @indent
+)
+
+(class_definition
+  ":" @start
+  body: (block) @indent
+)
+
+(case_clause
+  ":" @start
+  consequence: (block) @indent
+)
+
 (try_statement
   ":" @start
   body: (block) @indent

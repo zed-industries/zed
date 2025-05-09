@@ -5491,14 +5491,15 @@ impl Workspace {
             .ok();
     }
 
-    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((notification_id, _)) = self.notifications.pop() {
-            dismiss_app_notification(&notification_id, cx);
+    pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
             return;
+        } else if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+        } else {
+            cx.emit(Event::ClearActivityIndicator);
+            cx.propagate();
         }
-
-        cx.emit(Event::ClearActivityIndicator);
-        cx.propagate();
     }
 }
 

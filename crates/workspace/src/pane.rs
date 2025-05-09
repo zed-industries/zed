@@ -2680,10 +2680,13 @@ impl Pane {
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
                 let is_scrollable = content_width > viewport_width;
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
+                let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
                 h_flex()
                     .children(pinned_tabs)
                     .when(is_scrollable && is_scrolled, |this| {
-                        this.border_r_1().border_color(cx.theme().colors().border)
+                        this.when(has_active_unpinned_tab, |this| this.border_r_2())
+                            .when(!has_active_unpinned_tab, |this| this.border_r_1())
+                            .border_color(cx.theme().colors().border)
                     })
             }))
             .child(
@@ -3330,6 +3333,13 @@ impl Render for Pane {
                     }
                 }),
             )
+            .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
+                if cx.stop_active_drag(window) {
+                    return;
+                } else {
+                    cx.propagate();
+                }
+            }))
             .when(self.active_item().is_some() && display_tab_bar, |pane| {
                 pane.child((self.render_tab_bar.clone())(self, window, cx))
             })
