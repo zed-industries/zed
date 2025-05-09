@@ -174,36 +174,7 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        let weak_panel = debug_panel.downgrade();
-                        let weak_workspace = cx.weak_entity();
-                        let task_store = workspace.project().read(cx).task_store().clone();
-
-                        cx.spawn_in(window, async move |this, cx| {
-                            let task_contexts = this
-                                .update_in(cx, |workspace, window, cx| {
-                                    tasks_ui::task_contexts(workspace, window, cx)
-                                })?
-                                .await;
-
-                            this.update_in(cx, |workspace, window, cx| {
-                                workspace.toggle_modal(window, cx, |window, cx| {
-                                    NewSessionModal::new(
-                                        debug_panel.read(cx).past_debug_definition.clone(),
-                                        weak_panel,
-                                        weak_workspace,
-                                        Some(task_store),
-                                        task_contexts,
-                                        window,
-                                        cx,
-                                    )
-                                });
-                            })?;
-
-                            anyhow::Ok(())
-                        })
-                        .detach()
-                    }
+                    NewSessionModal::show(workspace, window, cx);
                 });
         })
     })
