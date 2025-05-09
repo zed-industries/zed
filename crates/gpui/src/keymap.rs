@@ -148,8 +148,8 @@ impl Keymap {
 
         let mut bindings: SmallVec<[(KeyBinding, usize); 1]> = SmallVec::new();
 
-        // (pending, is_no_action, depth)
-        let mut pending_info_opt: Option<(bool, bool, usize)> = None;
+        // (pending, is_no_action, depth, keystrokes)
+        let mut pending_info_opt: Option<(bool, bool, usize, &[Keystroke])> = None;
 
         'outer: for (binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
@@ -159,21 +159,35 @@ impl Keymap {
                     // This, however, means that if we have both a NoAction binding and a binding
                     // with an action at the same depth, we should still set is_pending to true.
                     if let Some(pending_info) = pending_info_opt.as_mut() {
-                        let (already_pending, pending_is_no_action, pending_depth) = *pending_info;
+                        let (
+                            already_pending,
+                            pending_is_no_action,
+                            pending_depth,
+                            pending_keystrokes,
+                        ) = *pending_info;
 
                         // We only want to change the pending status if it's not already pending AND if
                         // the existing pending status was set by a NoAction binding. This avoids a NoAction
                         // binding erroneously setting the pending status to true when a binding with an action
                         // already set it to false
+                        //
+                        // We also want to change the pending status if the keystrokes don't match,
+                        // meaning it's different keystrokes than the NoAction that set pending to false
                         if pending
                             && !already_pending
                             && pending_is_no_action
-                            && pending_depth == depth
+                            && (pending_depth == depth
+                                || pending_keystrokes != binding.keystrokes())
                         {
                             pending_info.0 = !is_no_action;
                         }
                     } else {
-                        pending_info_opt = Some((pending && !is_no_action, is_no_action, depth));
+                        pending_info_opt = Some((
+                            pending && !is_no_action,
+                            is_no_action,
+                            depth,
+                            binding.keystrokes(),
+                        ));
                     }
 
                     if !pending {
@@ -400,6 +414,20 @@ mod tests {
         let bindings = [
             KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
             KeyBinding::new("space w x", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, true);
+
+        // Now test what happens if we have another binding defined at a higher context
+        // that should result in pending
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w x", ActionAlpha {}, Some("workspace")),
             KeyBinding::new("space w w", NoAction {}, Some("editor")),
         ];
         let mut keymap = Keymap::default();
