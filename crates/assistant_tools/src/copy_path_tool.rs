@@ -1,15 +1,16 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
-use language_model::LanguageModelToolSchemaFormat;
+use language_model::LanguageModel;
+use language_model::{LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
@@ -44,7 +45,7 @@ impl Tool for CopyPathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -62,8 +63,8 @@ impl Tool for CopyPathTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CopyPathToolInput>(input.clone()) {
             Ok(input) => {
-                let src = MarkdownString::inline_code(&input.source_path);
-                let dest = MarkdownString::inline_code(&input.destination_path);
+                let src = MarkdownInlineCode(&input.source_path);
+                let dest = MarkdownInlineCode(&input.destination_path);
                 format!("Copy {src} to {dest}")
             }
             Err(_) => "Copy path".to_string(),
@@ -73,9 +74,11 @@ impl Tool for CopyPathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CopyPathToolInput>(input) {
@@ -105,10 +108,9 @@ impl Tool for CopyPathTool {
 
         cx.background_spawn(async move {
             match copy_task.await {
-                Ok(_) => Ok(format!(
-                    "Copied {} to {}",
-                    input.source_path, input.destination_path
-                )),
+                Ok(_) => Ok(
+                    format!("Copied {} to {}", input.source_path, input.destination_path).into(),
+                ),
                 Err(err) => Err(anyhow!(
                     "Failed to copy {} to {}: {}",
                     input.source_path,

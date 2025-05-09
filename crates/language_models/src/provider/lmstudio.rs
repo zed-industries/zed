@@ -2,7 +2,10 @@ use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
-use language_model::{AuthenticateError, LanguageModelCompletionEvent};
+use language_model::{
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolChoice,
+};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -282,6 +285,10 @@ impl LanguageModel for LmStudioLanguageModel {
         false
     }
 
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("lmstudio/{}", self.model.id())
     }
@@ -310,7 +317,12 @@ impl LanguageModel for LmStudioLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = self.to_lmstudio_request(request);
 
         let http_client = self.http_client.clone();
@@ -323,51 +335,71 @@ impl LanguageModel for LmStudioLanguageModel {
 
         let future = self.request_limiter.stream(async move {
             let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(fragment) => {
-                            // Skip empty deltas
-                            if fragment.choices[0].delta.is_object()
-                                && fragment.choices[0].delta.as_object().unwrap().is_empty()
-                            {
-                                return None;
-                            }
 
-                            // Try to parse the delta as ChatMessage
-                            if let Ok(chat_message) = serde_json::from_value::<ChatMessage>(
-                                fragment.choices[0].delta.clone(),
-                            ) {
-                                let content = match chat_message {
-                                    ChatMessage::User { content } => content,
-                                    ChatMessage::Assistant { content, .. } => {
-                                        content.unwrap_or_default()
-                                    }
-                                    ChatMessage::System { content } => content,
-                                };
-                                if !content.is_empty() {
-                                    Some(Ok(content))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }
+            // Create a stream mapper to handle content across multiple deltas
+            let stream_mapper = LmStudioStreamMapper::new();
+
+            let stream = response
+                .map(move |response| {
+                    response.and_then(|fragment| stream_mapper.process_fragment(fragment))
+                })
+                .filter_map(|result| async move {
+                    match result {
+                        Ok(Some(content)) => Some(Ok(content)),
+                        Ok(None) => None,
                         Err(error) => Some(Err(error)),
                     }
                 })
                 .boxed();
+
             Ok(stream)
         });
 
         async move {
             Ok(future
                 .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .map(|result| {
+                    result
+                        .map(LanguageModelCompletionEvent::Text)
+                        .map_err(LanguageModelCompletionError::Other)
+                })
                 .boxed())
         }
         .boxed()
+    }
+}
+
+// This will be more useful when we implement tool calling. Currently keeping it empty.
+struct LmStudioStreamMapper {}
+
+impl LmStudioStreamMapper {
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn process_fragment(&self, fragment: lmstudio::ChatResponse) -> Result<Option<String>> {
+        // Most of the time, there will be only one choice
+        let Some(choice) = fragment.choices.first() else {
+            return Ok(None);
+        };
+
+        // Extract the delta content
+        if let Ok(delta) =
+            serde_json::from_value::<lmstudio::ResponseMessageDelta>(choice.delta.clone())
+        {
+            if let Some(content) = delta.content {
+                if !content.is_empty() {
+                    return Ok(Some(content));
+                }
+            }
+        }
+
+        // If there's a finish_reason, we're done
+        if choice.finish_reason.is_some() {
+            return Ok(None);
+        }
+
+        Ok(None)
     }
 }
 

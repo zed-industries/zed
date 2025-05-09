@@ -1,12 +1,13 @@
 pub mod adapters;
 pub mod client;
 pub mod debugger_settings;
+pub mod inline_value;
 pub mod proto_conversions;
 mod registry;
 pub mod transport;
 
 pub use dap_types::*;
-pub use registry::DapRegistry;
+pub use registry::{DapLocator, DapRegistry};
 pub use task::DebugRequest;
 
 pub type ScopeId = u64;

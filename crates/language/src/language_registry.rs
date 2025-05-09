@@ -104,7 +104,6 @@ pub struct LanguageRegistry {
     language_server_download_dir: Option<Arc<Path>>,
     executor: BackgroundExecutor,
     lsp_binary_status_tx: BinaryStatusSender,
-    dap_binary_status_tx: BinaryStatusSender,
 }
 
 struct LanguageRegistryState {
@@ -162,6 +161,7 @@ impl AvailableLanguage {
     pub fn matcher(&self) -> &LanguageMatcher {
         &self.matcher
     }
+
     pub fn hidden(&self) -> bool {
         self.hidden
     }
@@ -214,6 +214,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
     ("runnables", |q| &mut q.runnables),
+    ("debug_variables", |q| &mut q.debug_variables),
     ("textobjects", |q| &mut q.text_objects),
 ];
 
@@ -230,6 +231,7 @@ pub struct LanguageQueries {
     pub redactions: Option<Cow<'static, str>>,
     pub runnables: Option<Cow<'static, str>>,
     pub text_objects: Option<Cow<'static, str>>,
+    pub debug_variables: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
@@ -267,7 +269,6 @@ impl LanguageRegistry {
             }),
             language_server_download_dir: None,
             lsp_binary_status_tx: Default::default(),
-            dap_binary_status_tx: Default::default(),
             executor,
         };
         this.add(PLAIN_TEXT.clone());
@@ -984,10 +985,6 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name.0, status);
     }
 
-    pub fn update_dap_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.dap_binary_status_tx.send(server_name.0, status);
-    }
-
     pub fn next_language_server_id(&self) -> LanguageServerId {
         self.state.write().next_language_server_id()
     }
@@ -1042,12 +1039,6 @@ impl LanguageRegistry {
         &self,
     ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
-    }
-
-    pub fn dap_server_binary_statuses(
-        &self,
-    ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
-        self.dap_binary_status_tx.subscribe()
     }
 
     pub async fn delete_server_container(&self, name: LanguageServerName) {

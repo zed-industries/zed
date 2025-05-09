@@ -1,14 +1,24 @@
-use std::sync::Arc;
-use std::{rc::Rc, time::Duration};
+use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use file_icons::FileIcons;
-use futures::FutureExt;
-use gpui::{Animation, AnimationExt as _, Image, MouseButton, pulsating_between};
-use gpui::{ClickEvent, Task};
+use futures::FutureExt as _;
+use gpui::{
+    Animation, AnimationExt as _, AnyView, ClickEvent, Entity, Image, MouseButton, Task,
+    pulsating_between,
+};
 use language_model::LanguageModelImage;
+use project::Project;
+use prompt_store::PromptStore;
+use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
-use crate::context::{AssistantContext, ContextId, ContextKind, ImageContext};
+use crate::context::{
+    AgentContext, AgentContextHandle, ContextId, ContextKind, DirectoryContext,
+    DirectoryContextHandle, FetchedUrlContext, FileContext, FileContextHandle, ImageContext,
+    ImageStatus, RulesContext, RulesContextHandle, SelectionContext, SelectionContextHandle,
+    SymbolContext, SymbolContextHandle, TextThreadContext, TextThreadContextHandle, ThreadContext,
+    ThreadContextHandle,
+};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -73,9 +83,7 @@ impl ContextPill {
 
     pub fn id(&self) -> ElementId {
         match self {
-            Self::Added { context, .. } => {
-                ElementId::NamedInteger("context-pill".into(), context.id.0)
-            }
+            Self::Added { context, .. } => context.handle.element_id("context-pill".into()),
             Self::Suggested { .. } => "suggested-context-pill".into(),
         }
     }
@@ -168,16 +176,11 @@ impl RenderOnce for ContextPill {
                             .map(|element| match &context.status {
                                 ContextStatus::Ready => element
                                     .when_some(
-                                        context.render_preview.as_ref(),
-                                        |element, render_preview| {
-                                            element.hoverable_tooltip({
-                                                let render_preview = render_preview.clone();
-                                                move |_, cx| {
-                                                    cx.new(|_| ContextPillPreview {
-                                                        render_preview: render_preview.clone(),
-                                                    })
-                                                    .into()
-                                                }
+                                        context.render_hover.as_ref(),
+                                        |element, render_hover| {
+                                            let render_hover = render_hover.clone();
+                                            element.hoverable_tooltip(move |window, cx| {
+                                                render_hover(window, cx)
                                             })
                                         },
                                     )
@@ -199,21 +202,25 @@ impl RenderOnce for ContextPill {
                     )
                     .when_some(on_remove.as_ref(), |element, on_remove| {
                         element.child(
-                            IconButton::new(("remove", context.id.0), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .tooltip(Tooltip::text("Remove Context"))
-                                .on_click({
-                                    let on_remove = on_remove.clone();
-                                    move |event, window, cx| on_remove(event, window, cx)
-                                }),
+                            IconButton::new(
+                                context.handle.element_id("remove".into()),
+                                IconName::Close,
+                            )
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(Tooltip::text("Remove Context"))
+                            .on_click({
+                                let on_remove = on_remove.clone();
+                                move |event, window, cx| on_remove(event, window, cx)
+                            }),
                         )
                     })
                     .when_some(on_click.as_ref(), |element, on_click| {
                         let on_click = on_click.clone();
-                        element
-                            .cursor_pointer()
-                            .on_click(move |event, window, cx| on_click(event, window, cx))
+                        element.cursor_pointer().on_click(move |event, window, cx| {
+                            on_click(event, window, cx);
+                            cx.stop_propagation();
+                        })
                     })
                     .into_any_element()
             }
@@ -249,7 +256,10 @@ impl RenderOnce for ContextPill {
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
-                    element.on_click(move |event, window, cx| on_click(event, window, cx))
+                    element.on_click(move |event, window, cx| {
+                        on_click(event, window, cx);
+                        cx.stop_propagation();
+                    })
                 })
                 .into_any(),
         }
@@ -264,216 +274,480 @@ pub enum ContextStatus {
 
 #[derive(RegisterComponent)]
 pub struct AddedContext {
-    pub id: ContextId,
+    pub handle: AgentContextHandle,
     pub kind: ContextKind,
     pub name: SharedString,
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
     pub status: ContextStatus,
-    pub render_preview: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement + 'static>>,
+    pub render_hover: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
 impl AddedContext {
-    pub fn new(context: &AssistantContext, cx: &App) -> AddedContext {
+    /// Creates an `AddedContext` by retrieving relevant details of `AgentContext`. This returns a
+    /// `None` if `DirectoryContext` or `RulesContext` no longer exist.
+    ///
+    /// TODO: `None` cases are unremovable from `ContextStore` and so are a very minor memory leak.
+    pub fn new_pending(
+        handle: AgentContextHandle,
+        prompt_store: Option<&Entity<PromptStore>>,
+        project: &Project,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        match handle {
+            AgentContextHandle::File(handle) => Self::pending_file(handle, cx),
+            AgentContextHandle::Directory(handle) => Self::pending_directory(handle, project, cx),
+            AgentContextHandle::Symbol(handle) => Self::pending_symbol(handle, cx),
+            AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
+            AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
+            AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
+            AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
+            AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
+            AgentContextHandle::Image(handle) => Some(Self::image(handle)),
+        }
+    }
+
+    pub fn new_attached(context: &AgentContext, cx: &App) -> AddedContext {
         match context {
-            AssistantContext::File(file_context) => {
-                let full_path = file_context.context_buffer.full_path(cx);
-                let full_path_string: SharedString =
-                    full_path.to_string_lossy().into_owned().into();
-                let name = full_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned().into())
-                    .unwrap_or_else(|| full_path_string.clone());
-                let parent = full_path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned().into());
-                AddedContext {
-                    id: file_context.id,
-                    kind: ContextKind::File,
-                    name,
-                    parent,
-                    tooltip: Some(full_path_string),
-                    icon_path: FileIcons::get_icon(&full_path, cx),
-                    status: ContextStatus::Ready,
-                    render_preview: None,
-                }
-            }
+            AgentContext::File(context) => Self::attached_file(context, cx),
+            AgentContext::Directory(context) => Self::attached_directory(context),
+            AgentContext::Symbol(context) => Self::attached_symbol(context, cx),
+            AgentContext::Selection(context) => Self::attached_selection(context, cx),
+            AgentContext::FetchedUrl(context) => Self::fetched_url(context.clone()),
+            AgentContext::Thread(context) => Self::attached_thread(context),
+            AgentContext::TextThread(context) => Self::attached_text_thread(context),
+            AgentContext::Rules(context) => Self::attached_rules(context),
+            AgentContext::Image(context) => Self::image(context.clone()),
+        }
+    }
 
-            AssistantContext::Directory(directory_context) => {
-                let worktree = directory_context.worktree.read(cx);
-                // If the directory no longer exists, use its last known path.
-                let full_path = worktree
-                    .entry_for_id(directory_context.entry_id)
-                    .map_or_else(
-                        || directory_context.last_path.clone(),
-                        |entry| worktree.full_path(&entry.path).into(),
-                    );
-                let full_path_string: SharedString =
-                    full_path.to_string_lossy().into_owned().into();
-                let name = full_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned().into())
-                    .unwrap_or_else(|| full_path_string.clone());
-                let parent = full_path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned().into());
-                AddedContext {
-                    id: directory_context.id,
-                    kind: ContextKind::Directory,
-                    name,
-                    parent,
-                    tooltip: Some(full_path_string),
-                    icon_path: None,
-                    status: ContextStatus::Ready,
-                    render_preview: None,
-                }
-            }
+    fn pending_file(handle: FileContextHandle, cx: &App) -> Option<AddedContext> {
+        let full_path = handle.buffer.read(cx).file()?.full_path(cx);
+        Some(Self::file(handle, &full_path, cx))
+    }
 
-            AssistantContext::Symbol(symbol_context) => AddedContext {
-                id: symbol_context.id,
-                kind: ContextKind::Symbol,
-                name: symbol_context.context_symbol.id.name.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                status: ContextStatus::Ready,
-                render_preview: None,
+    fn attached_file(context: &FileContext, cx: &App) -> AddedContext {
+        Self::file(context.handle.clone(), &context.full_path, cx)
+    }
+
+    fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
+        let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
+        let name = full_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned().into())
+            .unwrap_or_else(|| full_path_string.clone());
+        let parent = full_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned().into());
+        AddedContext {
+            kind: ContextKind::File,
+            name,
+            parent,
+            tooltip: Some(full_path_string),
+            icon_path: FileIcons::get_icon(&full_path, cx),
+            status: ContextStatus::Ready,
+            render_hover: None,
+            handle: AgentContextHandle::File(handle),
+        }
+    }
+
+    fn pending_directory(
+        handle: DirectoryContextHandle,
+        project: &Project,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let worktree = project.worktree_for_entry(handle.entry_id, cx)?.read(cx);
+        let entry = worktree.entry_for_id(handle.entry_id)?;
+        let full_path = worktree.full_path(&entry.path);
+        Some(Self::directory(handle, &full_path))
+    }
+
+    fn attached_directory(context: &DirectoryContext) -> AddedContext {
+        Self::directory(context.handle.clone(), &context.full_path)
+    }
+
+    fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
+        let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
+        let name = full_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned().into())
+            .unwrap_or_else(|| full_path_string.clone());
+        let parent = full_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned().into());
+        AddedContext {
+            kind: ContextKind::Directory,
+            name,
+            parent,
+            tooltip: Some(full_path_string),
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: None,
+            handle: AgentContextHandle::Directory(handle),
+        }
+    }
+
+    fn pending_symbol(handle: SymbolContextHandle, cx: &App) -> Option<AddedContext> {
+        let excerpt =
+            ContextFileExcerpt::new(&handle.full_path(cx)?, handle.enclosing_line_range(cx), cx);
+        Some(AddedContext {
+            kind: ContextKind::Symbol,
+            name: handle.symbol.clone(),
+            parent: Some(excerpt.file_name_and_range.clone()),
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let handle = handle.clone();
+                Some(Rc::new(move |_, cx| {
+                    excerpt.hover_view(handle.text(cx), cx).into()
+                }))
             },
+            handle: AgentContextHandle::Symbol(handle),
+        })
+    }
 
-            AssistantContext::Selection(selection_context) => {
-                let full_path = selection_context.context_buffer.full_path(cx);
-                let mut full_path_string = full_path.to_string_lossy().into_owned();
-                let mut name = full_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| full_path_string.clone());
-
-                let line_range_text = format!(
-                    " ({}-{})",
-                    selection_context.line_range.start.row + 1,
-                    selection_context.line_range.end.row + 1
-                );
-
-                full_path_string.push_str(&line_range_text);
-                name.push_str(&line_range_text);
-
-                let parent = full_path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned().into());
-
-                AddedContext {
-                    id: selection_context.id,
-                    kind: ContextKind::Selection,
-                    name: name.into(),
-                    parent,
-                    tooltip: None,
-                    icon_path: FileIcons::get_icon(&full_path, cx),
-                    status: ContextStatus::Ready,
-                    render_preview: Some(Rc::new({
-                        let content = selection_context.context_buffer.text.clone();
-                        move |_, cx| {
-                            div()
-                                .id("context-pill-selection-preview")
-                                .overflow_scroll()
-                                .max_w_128()
-                                .max_h_96()
-                                .child(Label::new(content.clone()).buffer_font(cx))
-                                .into_any_element()
-                        }
-                    })),
-                }
-            }
-
-            AssistantContext::FetchedUrl(fetched_url_context) => AddedContext {
-                id: fetched_url_context.id,
-                kind: ContextKind::FetchedUrl,
-                name: fetched_url_context.url.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                status: ContextStatus::Ready,
-                render_preview: None,
+    fn attached_symbol(context: &SymbolContext, cx: &App) -> AddedContext {
+        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
+        AddedContext {
+            kind: ContextKind::Symbol,
+            name: context.handle.symbol.clone(),
+            parent: Some(excerpt.file_name_and_range.clone()),
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    excerpt.hover_view(text.clone(), cx).into()
+                }))
             },
+            handle: AgentContextHandle::Symbol(context.handle.clone()),
+        }
+    }
 
-            AssistantContext::Thread(thread_context) => AddedContext {
-                id: thread_context.id,
-                kind: ContextKind::Thread,
-                name: thread_context.summary(cx),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                status: if thread_context
-                    .thread
-                    .read(cx)
-                    .is_generating_detailed_summary()
-                {
-                    ContextStatus::Loading {
-                        message: "Summarizing…".into(),
-                    }
-                } else {
-                    ContextStatus::Ready
+    fn pending_selection(handle: SelectionContextHandle, cx: &App) -> Option<AddedContext> {
+        let excerpt = ContextFileExcerpt::new(&handle.full_path(cx)?, handle.line_range(cx), cx);
+        Some(AddedContext {
+            kind: ContextKind::Selection,
+            name: excerpt.file_name_and_range.clone(),
+            parent: excerpt.parent_name.clone(),
+            tooltip: None,
+            icon_path: excerpt.icon_path.clone(),
+            status: ContextStatus::Ready,
+            render_hover: {
+                let handle = handle.clone();
+                Some(Rc::new(move |_, cx| {
+                    excerpt.hover_view(handle.text(cx), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::Selection(handle),
+        })
+    }
+
+    fn attached_selection(context: &SelectionContext, cx: &App) -> AddedContext {
+        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
+        AddedContext {
+            kind: ContextKind::Selection,
+            name: excerpt.file_name_and_range.clone(),
+            parent: excerpt.parent_name.clone(),
+            tooltip: None,
+            icon_path: excerpt.icon_path.clone(),
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    excerpt.hover_view(text.clone(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::Selection(context.handle.clone()),
+        }
+    }
+
+    fn fetched_url(context: FetchedUrlContext) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::FetchedUrl,
+            name: context.url.clone(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: None,
+            handle: AgentContextHandle::FetchedUrl(context),
+        }
+    }
+
+    fn pending_thread(handle: ThreadContextHandle, cx: &App) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::Thread,
+            name: handle.title(cx),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: if handle.thread.read(cx).is_generating_detailed_summary() {
+                ContextStatus::Loading {
+                    message: "Summarizing…".into(),
+                }
+            } else {
+                ContextStatus::Ready
+            },
+            render_hover: {
+                let thread = handle.thread.clone();
+                Some(Rc::new(move |_, cx| {
+                    let text = thread.read(cx).latest_detailed_summary_or_text();
+                    ContextPillHover::new_text(text.clone(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::Thread(handle),
+        }
+    }
+
+    fn attached_thread(context: &ThreadContext) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::Thread,
+            name: context.title.clone(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    ContextPillHover::new_text(text.clone(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::Thread(context.handle.clone()),
+        }
+    }
+
+    fn pending_text_thread(handle: TextThreadContextHandle, cx: &App) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::TextThread,
+            name: handle.title(cx),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let context = handle.context.clone();
+                Some(Rc::new(move |_, cx| {
+                    let text = context.read(cx).to_xml(cx);
+                    ContextPillHover::new_text(text.into(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::TextThread(handle),
+        }
+    }
+
+    fn attached_text_thread(context: &TextThreadContext) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::TextThread,
+            name: context.title.clone(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    ContextPillHover::new_text(text.clone(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::TextThread(context.handle.clone()),
+        }
+    }
+
+    fn pending_rules(
+        handle: RulesContextHandle,
+        prompt_store: Option<&Entity<PromptStore>>,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let title = prompt_store
+            .as_ref()?
+            .read(cx)
+            .metadata(handle.prompt_id.into())?
+            .title
+            .unwrap_or_else(|| "Unnamed Rule".into());
+        Some(AddedContext {
+            kind: ContextKind::Rules,
+            name: title.clone(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: None,
+            handle: AgentContextHandle::Rules(handle),
+        })
+    }
+
+    fn attached_rules(context: &RulesContext) -> AddedContext {
+        let title = context
+            .title
+            .clone()
+            .unwrap_or_else(|| "Unnamed Rule".into());
+        AddedContext {
+            kind: ContextKind::Rules,
+            name: title,
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    ContextPillHover::new_text(text.clone(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::Rules(context.handle.clone()),
+        }
+    }
+
+    fn image(context: ImageContext) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::Image,
+            name: "Image".into(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: match context.status() {
+                ImageStatus::Loading => ContextStatus::Loading {
+                    message: "Loading…".into(),
                 },
-                render_preview: None,
-            },
-
-            AssistantContext::Rules(user_rules_context) => AddedContext {
-                id: user_rules_context.id,
-                kind: ContextKind::Rules,
-                name: user_rules_context.title.clone(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                status: ContextStatus::Ready,
-                render_preview: None,
-            },
-
-            AssistantContext::Image(image_context) => AddedContext {
-                id: image_context.id,
-                kind: ContextKind::Image,
-                name: "Image".into(),
-                parent: None,
-                tooltip: None,
-                icon_path: None,
-                status: if image_context.is_loading() {
-                    ContextStatus::Loading {
-                        message: "Loading…".into(),
-                    }
-                } else if image_context.is_error() {
-                    ContextStatus::Error {
-                        message: "Failed to load image".into(),
-                    }
-                } else {
-                    ContextStatus::Ready
+                ImageStatus::Error => ContextStatus::Error {
+                    message: "Failed to load image".into(),
                 },
-                render_preview: Some(Rc::new({
-                    let image = image_context.original_image.clone();
-                    move |_, _| {
+                ImageStatus::Ready => ContextStatus::Ready,
+            },
+            render_hover: Some(Rc::new({
+                let image = context.original_image.clone();
+                move |_, cx| {
+                    let image = image.clone();
+                    ContextPillHover::new(cx, move |_, _| {
                         gpui::img(image.clone())
                             .max_w_96()
                             .max_h_96()
                             .into_any_element()
-                    }
-                })),
-            },
+                    })
+                    .into()
+                }
+            })),
+            handle: AgentContextHandle::Image(context),
         }
     }
 }
 
-struct ContextPillPreview {
-    render_preview: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+#[derive(Debug, Clone)]
+struct ContextFileExcerpt {
+    pub file_name_and_range: SharedString,
+    pub full_path_and_range: SharedString,
+    pub parent_name: Option<SharedString>,
+    pub icon_path: Option<SharedString>,
 }
 
-impl Render for ContextPillPreview {
+impl ContextFileExcerpt {
+    pub fn new(full_path: &Path, line_range: Range<Point>, cx: &App) -> Self {
+        let full_path_string = full_path.to_string_lossy().into_owned();
+        let file_name = full_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| full_path_string.clone());
+
+        let line_range_text = format!(" ({}-{})", line_range.start.row + 1, line_range.end.row + 1);
+        let mut full_path_and_range = full_path_string;
+        full_path_and_range.push_str(&line_range_text);
+        let mut file_name_and_range = file_name;
+        file_name_and_range.push_str(&line_range_text);
+
+        let parent_name = full_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned().into());
+
+        let icon_path = FileIcons::get_icon(&full_path, cx);
+
+        ContextFileExcerpt {
+            file_name_and_range: file_name_and_range.into(),
+            full_path_and_range: full_path_and_range.into(),
+            parent_name,
+            icon_path,
+        }
+    }
+
+    fn hover_view(&self, text: SharedString, cx: &mut App) -> Entity<ContextPillHover> {
+        let icon_path = self.icon_path.clone();
+        let full_path_and_range = self.full_path_and_range.clone();
+        ContextPillHover::new(cx, move |_, cx| {
+            v_flex()
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .w_full()
+                        .max_w_full()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border.opacity(0.6))
+                        .children(
+                            icon_path
+                                .clone()
+                                .map(Icon::from_path)
+                                .map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)),
+                        )
+                        .child(
+                            // TODO: make this truncate on the left.
+                            Label::new(full_path_and_range.clone())
+                                .size(LabelSize::Small)
+                                .ml_1(),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("context-pill-hover-contents")
+                        .overflow_scroll()
+                        .max_w_128()
+                        .max_h_96()
+                        .child(Label::new(text.clone()).buffer_font(cx)),
+                )
+                .into_any_element()
+        })
+    }
+}
+
+struct ContextPillHover {
+    render_hover: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+}
+
+impl ContextPillHover {
+    fn new(
+        cx: &mut App,
+        render_hover: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Entity<Self> {
+        cx.new(|_| Self {
+            render_hover: Box::new(render_hover),
+        })
+    }
+
+    fn new_text(content: SharedString, cx: &mut App) -> Entity<Self> {
+        Self::new(cx, move |_, _| {
+            div()
+                .id("context-pill-hover-contents")
+                .overflow_scroll()
+                .max_w_128()
+                .max_h_96()
+                .child(content.clone())
+                .into_any_element()
+        })
+    }
+}
+
+impl Render for ContextPillHover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         tooltip_container(window, cx, move |this, window, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child((self.render_preview)(window, cx))
+                .child((self.render_hover)(window, cx))
         })
     }
 }
@@ -488,45 +762,40 @@ impl Component for AddedContext {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let mut next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
-            AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(0),
-                    original_image: Arc::new(Image::empty()),
-                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
-                }),
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                project_path: None,
+                original_image: Arc::new(Image::empty()),
+                image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+            }),
         );
 
         let image_loading = (
             "Loading",
-            AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(1),
-                    original_image: Arc::new(Image::empty()),
-                    image_task: cx
-                        .background_spawn(async move {
-                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
-                            Some(LanguageModelImage::empty())
-                        })
-                        .shared(),
-                }),
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                project_path: None,
+                original_image: Arc::new(Image::empty()),
+                image_task: cx
+                    .background_spawn(async move {
+                        smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                        Some(LanguageModelImage::empty())
+                    })
+                    .shared(),
+            }),
         );
 
         let image_error = (
             "Error",
-            AddedContext::new(
-                &AssistantContext::Image(ImageContext {
-                    id: ContextId(2),
-                    original_image: Arc::new(Image::empty()),
-                    image_task: Task::ready(None).shared(),
-                }),
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                project_path: None,
+                original_image: Arc::new(Image::empty()),
+                image_task: Task::ready(None).shared(),
+            }),
         );
 
         Some(

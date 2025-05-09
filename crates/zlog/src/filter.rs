@@ -7,7 +7,7 @@ use std::{
     usize,
 };
 
-use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config};
+use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};
 
 use log;
 
@@ -36,6 +36,15 @@ static mut LEVEL_ENABLED_MAX_STATIC: log::LevelFilter = LEVEL_ENABLED_MAX_DEFAUL
 // PERF: this doesn't need to be an atomic, we don't actually care about race conditions here
 pub static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
+const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    ("zbus", log::LevelFilter::Off),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    ("blade_graphics::hal::resource", log::LevelFilter::Off),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    ("naga::back::spv::writer", log::LevelFilter::Off),
+];
+
 pub fn init_env_filter(filter: env_config::EnvFilter) {
     if let Some(level_max) = filter.level_global {
         unsafe { LEVEL_ENABLED_MAX_STATIC = level_max }
@@ -50,19 +59,15 @@ pub fn is_possibly_enabled_level(level: log::Level) -> bool {
 }
 
 pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
-    if level <= unsafe { LEVEL_ENABLED_MAX_STATIC } {
-        // [FAST PATH]
-        // if the message is at or below the minimum printed log level
-        // (where error < warn < info etc) then always enable
-        return true;
-    }
+    // TODO: is_always_allowed_level that checks against LEVEL_ENABLED_MIN_CONFIG
     if !is_possibly_enabled_level(level) {
-        // [FAST PATH PT. 2]
+        // [FAST PATH]
         // if the message is above the maximum enabled log level
         // (where error < warn < info etc) then disable without checking
         // scope map
         return false;
     }
+    let is_enabled_by_default = level <= unsafe { LEVEL_ENABLED_MAX_STATIC };
     let global_scope_map = SCOPE_MAP.read().unwrap_or_else(|err| {
         SCOPE_MAP.clear_poison();
         return err.into_inner();
@@ -70,17 +75,16 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
 
     let Some(map) = global_scope_map.as_ref() else {
         // on failure, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
-        return false;
+        return is_enabled_by_default;
     };
 
     if map.is_empty() {
         // if no scopes are enabled, return false because it's not <= LEVEL_ENABLED_MAX_STATIC
-        return false;
+        return is_enabled_by_default;
     }
     let enabled_status = map.is_enabled(&scope, module_path, level);
     return match enabled_status {
-        // if it isn't configured, then it it's disabled because it's not <= LEVEL_ENABLED_MAX_STATIC
-        EnabledStatus::NotConfigured => false,
+        EnabledStatus::NotConfigured => is_enabled_by_default,
         EnabledStatus::Enabled => true,
         EnabledStatus::Disabled => false,
     };
@@ -92,7 +96,7 @@ pub(crate) fn refresh() {
 
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     let env_config = ENV_FILTER.get();
-    let map_new = ScopeMap::new_from_settings_and_env(settings, env_config);
+    let map_new = ScopeMap::new_from_settings_and_env(settings, env_config, DEFAULT_FILTERS);
     let mut level_enabled_max = unsafe { LEVEL_ENABLED_MAX_STATIC };
     for entry in &map_new.entries {
         if let Some(level) = entry.enabled {
@@ -111,7 +115,7 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     log::trace!("Log configuration updated");
 }
 
-fn level_filter_from_str(level_str: &String) -> Option<log::LevelFilter> {
+fn level_filter_from_str(level_str: &str) -> Option<log::LevelFilter> {
     use log::LevelFilter::*;
     let level = match level_str.to_ascii_lowercase().as_str() {
         "" => Trace,
@@ -135,7 +139,7 @@ fn level_filter_from_str(level_str: &String) -> Option<log::LevelFilter> {
     return Some(level);
 }
 
-fn scope_alloc_from_scope_str(scope_str: &String) -> Option<ScopeAlloc> {
+fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
     let mut scope_buf = [""; SCOPE_DEPTH_MAX];
     let mut index = 0;
     let mut scope_iter = scope_str.split(SCOPE_STRING_SEP_STR);
@@ -187,46 +191,57 @@ impl ScopeMap {
     pub fn new_from_settings_and_env(
         items_input_map: &HashMap<String, String>,
         env_config: Option<&env_config::EnvFilter>,
+        default_filters: &[(&str, log::LevelFilter)],
     ) -> Self {
-        let mut items = Vec::with_capacity(
-            items_input_map.len() + env_config.map_or(0, |c| c.directive_names.len()),
+        let mut items = Vec::<(ScopeAlloc, log::LevelFilter)>::with_capacity(
+            items_input_map.len()
+                + env_config.map_or(0, |c| c.directive_names.len())
+                + default_filters.len(),
         );
         let mut modules = Vec::with_capacity(4);
 
-        if let Some(env_filter) = env_config {
-            // TODO: parse on load instead of every reload
-            items.extend(
-                env_filter
-                    .directive_names
-                    .iter()
-                    .zip(env_filter.directive_levels.iter())
-                    .filter_map(|(scope_str, &level_filter)| {
-                        if items_input_map.get(scope_str).is_some() {
-                            return None;
-                        }
-                        if scope_str.contains("::") {
-                            modules.push((scope_str.clone(), level_filter));
-                            return None;
-                        }
-                        let scope = scope_alloc_from_scope_str(scope_str)?;
+        let env_filters = env_config.iter().flat_map(|env_filter| {
+            env_filter
+                .directive_names
+                .iter()
+                .zip(env_filter.directive_levels.iter())
+                .map(|(scope_str, level_filter)| (scope_str.as_str(), *level_filter))
+        });
 
-                        Some((scope, level_filter))
-                    }),
-            );
+        let new_filters = items_input_map
+            .into_iter()
+            .filter_map(|(scope_str, level_str)| {
+                let level_filter = level_filter_from_str(level_str)?;
+                Some((scope_str.as_str(), level_filter))
+            });
+
+        let all_filters = default_filters
+            .iter()
+            .cloned()
+            .chain(env_filters)
+            .chain(new_filters);
+
+        for (scope_str, level_filter) in all_filters {
+            if scope_str.contains("::") {
+                if let Some(idx) = modules.iter().position(|(module, _)| module == scope_str) {
+                    modules[idx].1 = level_filter;
+                } else {
+                    modules.push((scope_str.to_string(), level_filter));
+                }
+                continue;
+            }
+            let Some(scope) = scope_alloc_from_scope_str(scope_str) else {
+                continue;
+            };
+            if let Some(idx) = items
+                .iter()
+                .position(|(scope_existing, _)| scope_existing == &scope)
+            {
+                items[idx].1 = level_filter;
+            } else {
+                items.push((scope, level_filter));
+            }
         }
-        items.extend(
-            items_input_map
-                .into_iter()
-                .filter_map(|(scope_str, level_str)| {
-                    if scope_str.contains("::") {
-                        modules.push((scope_str.clone(), level_str.parse().ok()?));
-                        return None;
-                    }
-                    let level_filter = level_filter_from_str(&level_str)?;
-                    let scope = scope_alloc_from_scope_str(&scope_str)?;
-                    return Some((scope, level_filter));
-                }),
-        );
 
         items.sort_by(|a, b| a.0.cmp(&b.0));
         modules.sort_by(|(a_name, _), (b_name, _)| a_name.cmp(b_name));
@@ -345,12 +360,18 @@ impl ScopeMap {
             break 'search;
         }
 
-        if enabled.is_none() && !self.modules.is_empty() && module_path.is_some() {
-            let module_path = module_path.unwrap();
-            for (module, filter) in &self.modules {
-                if module == module_path {
-                    enabled.replace(*filter);
-                    break;
+        if let Some(module_path) = module_path {
+            if !self.modules.is_empty() {
+                let crate_name = private::extract_crate_name_from_module_path(module_path);
+                let is_scope_just_crate_name =
+                    scope[0].as_ref() == crate_name && scope[1].as_ref() == "";
+                if enabled.is_none() || is_scope_just_crate_name {
+                    for (module, filter) in &self.modules {
+                        if module == module_path {
+                            enabled.replace(*filter);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -376,7 +397,7 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        ScopeMap::new_from_settings_and_env(&hash_map, None)
+        ScopeMap::new_from_settings_and_env(&hash_map, None, &[])
     }
 
     #[test]
@@ -539,8 +560,18 @@ mod tests {
             ),
             EnabledStatus::NotConfigured
         );
+        // when scope is just crate name, more specific module path overrides it
         assert_eq!(
             map.is_enabled(&scope_from_scope_str("a"), Some("a::b::d"), Level::Trace),
+            EnabledStatus::Disabled,
+        );
+        // but when it is scoped, the scope overrides the module path
+        assert_eq!(
+            map.is_enabled(
+                &scope_from_scope_str("a.scope"),
+                Some("a::b::d"),
+                Level::Trace
+            ),
             EnabledStatus::Enabled,
         );
     }
@@ -550,7 +581,7 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        ScopeMap::new_from_settings_and_env(&hash_map, Some(env))
+        ScopeMap::new_from_settings_and_env(&hash_map, Some(env), &[])
     }
 
     #[test]
@@ -607,6 +638,155 @@ mod tests {
         assert_eq!(
             map.is_enabled(&scope_new(&["e", "f", "g", "h"]), None, log::Level::Trace),
             EnabledStatus::Disabled,
+        );
+    }
+
+    fn scope_map_from_all(
+        kv: &[(&str, &str)],
+        env: &env_config::EnvFilter,
+        default_filters: &[(&str, log::LevelFilter)],
+    ) -> ScopeMap {
+        let hash_map: HashMap<String, String> = kv
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        ScopeMap::new_from_settings_and_env(&hash_map, Some(env), default_filters)
+    }
+
+    #[test]
+    fn precedence() {
+        // Test precedence: kv > env > default
+
+        // Default filters - these should be overridden by env and kv when they overlap
+        let default_filters = &[
+            ("a.b.c", log::LevelFilter::Debug), // Should be overridden by env
+            ("p.q.r", log::LevelFilter::Info),  // Should be overridden by kv
+            ("x.y.z", log::LevelFilter::Warn),  // Not overridden
+            ("crate::module::default", log::LevelFilter::Error), // Module in default
+        ];
+
+        // Environment filters - these should override default but be overridden by kv
+        let env_filter =
+            env_config::parse("a.b.c=trace,p.q=debug,m.n.o=error,crate::module::env=debug")
+                .unwrap();
+
+        // Key-value filters (highest precedence) - these should override everything
+        let kv_filters = &[
+            ("p.q.r", "trace"),              // Overrides default
+            ("m.n.o", "warn"),               // Overrides env
+            ("j.k.l", "info"),               // New filter
+            ("crate::module::env", "trace"), // Overrides env for module
+            ("crate::module::kv", "trace"),  // New module filter
+        ];
+
+        let map = scope_map_from_all(kv_filters, &env_filter, default_filters);
+
+        // Test scope precedence
+        use log::Level;
+
+        // KV overrides all for scopes
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("p.q.r"), None, Level::Trace),
+            EnabledStatus::Enabled,
+            "KV should override default filters for scopes"
+        );
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("m.n.o"), None, Level::Warn),
+            EnabledStatus::Enabled,
+            "KV should override env filters for scopes"
+        );
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("m.n.o"), None, Level::Debug),
+            EnabledStatus::Disabled,
+            "KV correctly limits log level"
+        );
+
+        // ENV overrides default but not KV for scopes
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("a.b.c"), None, Level::Trace),
+            EnabledStatus::Enabled,
+            "ENV should override default filters for scopes"
+        );
+
+        // Default is used when no override exists for scopes
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("x.y.z"), None, Level::Warn),
+            EnabledStatus::Enabled,
+            "Default filters should work when not overridden"
+        );
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("x.y.z"), None, Level::Info),
+            EnabledStatus::Disabled,
+            "Default filters correctly limit log level"
+        );
+
+        // KV overrides all for modules
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::module::env"), Level::Trace),
+            EnabledStatus::Enabled,
+            "KV should override env filters for modules"
+        );
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::module::kv"), Level::Trace),
+            EnabledStatus::Enabled,
+            "KV module filters should work"
+        );
+
+        // ENV overrides default for modules
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::module::env"), Level::Debug),
+            EnabledStatus::Enabled,
+            "ENV should override default for modules"
+        );
+
+        // Default is used when no override exists for modules
+        assert_eq!(
+            map.is_enabled(
+                &scope_new(&[""]),
+                Some("crate::module::default"),
+                Level::Error
+            ),
+            EnabledStatus::Enabled,
+            "Default filters should work for modules"
+        );
+        assert_eq!(
+            map.is_enabled(
+                &scope_new(&[""]),
+                Some("crate::module::default"),
+                Level::Warn
+            ),
+            EnabledStatus::Disabled,
+            "Default filters correctly limit log level for modules"
+        );
+
+        // Test non-conflicting but similar paths
+
+        // Test that "a.b" and "a.b.c" don't conflict (different depth)
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("a.b.c.d"), None, Level::Trace),
+            EnabledStatus::Enabled,
+            "Scope a.b.c should inherit from a.b env filter"
+        );
+        assert_eq!(
+            map.is_enabled(&scope_from_scope_str("a.b.c"), None, Level::Trace),
+            EnabledStatus::Enabled,
+            "Scope a.b.c.d should use env filter level (trace)"
+        );
+
+        // Test that similar module paths don't conflict
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::module"), Level::Error),
+            EnabledStatus::NotConfigured,
+            "Module crate::module should not be affected by crate::module::default filter"
+        );
+        assert_eq!(
+            map.is_enabled(
+                &scope_new(&[""]),
+                Some("crate::module::default::sub"),
+                Level::Error
+            ),
+            EnabledStatus::NotConfigured,
+            "Module crate::module::default::sub should not be affected by crate::module::default filter"
         );
     }
 }

@@ -34,14 +34,12 @@ dashmap.workspace = true
 derive_more.workspace = true
 envy = "0.4.2"
 futures.workspace = true
-google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
 jsonwebtoken.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
-open_ai.workspace = true
 parking_lot.workspace = true
 prometheus = "0.14"
 prost.workspace = true
@@ -78,8 +76,8 @@ workspace-hack.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
-assistant = { workspace = true, features = ["test-support"] }
 assistant_context_editor.workspace = true
+assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-trait.workspace = true
@@ -128,6 +126,7 @@ serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 sqlx = { version = "0.8", features = ["sqlite"] }
+task.workspace = true
 theme.workspace = true
 unindent.workspace = true
 util.workspace = true

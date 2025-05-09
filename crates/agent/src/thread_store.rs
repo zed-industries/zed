@@ -5,13 +5,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use context_server::manager::ContextServerManager;
-use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use fs::Fs;
+use context_server::ContextServerId;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt as _, StreamExt as _};
@@ -22,15 +20,18 @@ use gpui::{
 use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
-use project::{Project, Worktree};
+use project::context_server_store::{ContextServerStatus, ContextServerStore};
+use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
-    ProjectContext, PromptBuilder, PromptId, PromptMetadata, PromptStore, PromptsUpdatedEvent,
-    RulesFileContext, UserPromptId, UserRulesContext, WorktreeContext,
+    ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
+    UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use ui::Window;
 use util::ResultExt as _;
 
+use crate::context_server_tool::ContextServerTool;
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
 };
@@ -58,13 +59,14 @@ impl SharedProjectContext {
     }
 }
 
+pub type TextThreadStore = assistant_context_editor::ContextStore;
+
 pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
     prompt_store: Option<Entity<PromptStore>>,
-    context_server_manager: Entity<ContextServerManager>,
-    context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
+    context_server_tool_ids: HashMap<ContextServerId, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
     project_context: SharedProjectContext,
     reload_system_prompt_tx: mpsc::Sender<()>,
@@ -82,12 +84,11 @@ impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
+        prompt_store: Option<Entity<PromptStore>>,
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
-            let prompt_store = prompt_store.await.ok();
             let (thread_store, ready_rx) = cx.update(|cx| {
                 let mut option_ready_rx = None;
                 let thread_store = cx.new(|cx| {
@@ -110,11 +111,6 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> (Self, oneshot::Receiver<()>) {
-        let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
-        let context_server_manager = cx.new(|cx| {
-            ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-        });
-
         let mut subscriptions = vec![
             cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
                 this.load_default_profile(cx);
@@ -161,7 +157,6 @@ impl ThreadStore {
             tools,
             prompt_builder,
             prompt_store,
-            context_server_manager,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
             project_context: SharedProjectContext::default(),
@@ -208,15 +203,15 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let project = self.project.read(cx);
-        let worktree_tasks = project
+        let worktrees = self
+            .project
+            .read(cx)
             .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        let worktree_tasks = worktrees
+            .into_iter()
             .map(|worktree| {
-                Self::load_worktree_info_for_system_prompt(
-                    project.fs().clone(),
-                    worktree.read(cx),
-                    cx,
-                )
+                Self::load_worktree_info_for_system_prompt(worktree, self.project.clone(), cx)
             })
             .collect::<Vec<_>>();
         let default_user_rules_task = match prompt_store {
@@ -277,13 +272,13 @@ impl ThreadStore {
     }
 
     fn load_worktree_info_for_system_prompt(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
+        worktree: Entity<Worktree>,
+        project: Entity<Project>,
+        cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
-        let root_name = worktree.root_name().into();
+        let root_name = worktree.read(cx).root_name().into();
 
-        let rules_task = Self::load_worktree_rules_file(fs, worktree, cx);
+        let rules_task = Self::load_worktree_rules_file(worktree, project, cx);
         let Some(rules_task) = rules_task else {
             return Task::ready((
                 WorktreeContext {
@@ -313,61 +308,51 @@ impl ThreadStore {
     }
 
     fn load_worktree_rules_file(
-        fs: Arc<dyn Fs>,
-        worktree: &Worktree,
-        cx: &App,
+        worktree: Entity<Worktree>,
+        project: Entity<Project>,
+        cx: &mut App,
     ) -> Option<Task<Result<RulesFileContext>>> {
+        let worktree_ref = worktree.read(cx);
+        let worktree_id = worktree_ref.id();
         let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
-                worktree
+                worktree_ref
                     .entry_for_path(name)
                     .filter(|entry| entry.is_file())
-                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
+                    .map(|entry| entry.path.clone())
             })
             .next();
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        selected_rules_file.map(|(path_in_worktree, abs_path)| {
-            let fs = fs.clone();
+        selected_rules_file.map(|path_in_worktree| {
+            let project_path = ProjectPath {
+                worktree_id,
+                path: path_in_worktree.clone(),
+            };
+            let buffer_task =
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+            let rope_task = cx.spawn(async move |cx| {
+                buffer_task.await?.read_with(cx, |buffer, cx| {
+                    let project_entry_id = buffer.entry_id(cx).context("buffer has no file")?;
+                    anyhow::Ok((project_entry_id, buffer.as_rope().clone()))
+                })?
+            });
+            // Build a string from the rope on a background thread.
             cx.background_spawn(async move {
-                let abs_path = abs_path?;
-                let text = fs.load(&abs_path).await.with_context(|| {
-                    format!("Failed to load assistant rules file {:?}", abs_path)
-                })?;
+                let (project_entry_id, rope) = rope_task.await?;
                 anyhow::Ok(RulesFileContext {
                     path_in_worktree,
-                    abs_path: abs_path.into(),
-                    text: text.trim().to_string(),
+                    text: rope.to_string().trim().to_string(),
+                    project_entry_id: project_entry_id.to_usize(),
                 })
             })
         })
     }
 
-    pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
-        self.context_server_manager.clone()
-    }
-
-    pub fn prompt_store(&self) -> Option<Entity<PromptStore>> {
-        self.prompt_store.clone()
-    }
-
-    pub fn load_rules(
-        &self,
-        prompt_id: UserPromptId,
-        cx: &App,
-    ) -> Task<Result<(PromptMetadata, String)>> {
-        let prompt_id = PromptId::User { uuid: prompt_id };
-        let Some(prompt_store) = self.prompt_store.as_ref() else {
-            return Task::ready(Err(anyhow!("Prompt store unexpectedly missing.")));
-        };
-        let prompt_store = prompt_store.read(cx);
-        let Some(metadata) = prompt_store.metadata(prompt_id) else {
-            return Task::ready(Err(anyhow!("User rules not found in library.")));
-        };
-        let text_task = prompt_store.load(prompt_id, cx);
-        cx.background_spawn(async move { Ok((metadata, text_task.await?)) })
+    pub fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
+        &self.prompt_store
     }
 
     pub fn tools(&self) -> Entity<ToolWorkingSet> {
@@ -379,14 +364,14 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn threads(&self) -> Vec<SerializedThreadMetadata> {
+    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+        self.threads.iter()
+    }
+
+    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
         let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
-    }
-
-    pub fn recent_threads(&self, limit: usize) -> Vec<SerializedThreadMetadata> {
-        self.threads().into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
@@ -404,18 +389,20 @@ impl ThreadStore {
     pub fn open_thread(
         &self,
         id: &ThreadId,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(async move |this, cx| {
+        let this = cx.weak_entity();
+        window.spawn(cx, async move |cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
-            let thread = this.update(cx, |this, cx| {
+            let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {
                     Thread::deserialize(
                         id.clone(),
@@ -424,6 +411,7 @@ impl ThreadStore {
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),
+                        window,
                         cx,
                     )
                 })
@@ -506,15 +494,37 @@ impl ThreadStore {
         });
 
         if profile.enable_all_context_servers {
-            for context_server in self.context_server_manager.read(cx).all_servers() {
+            for context_server_id in self
+                .project
+                .read(cx)
+                .context_server_store()
+                .read(cx)
+                .all_server_ids()
+            {
                 self.tools.update(cx, |tools, cx| {
                     tools.enable_source(
                         ToolSource::ContextServer {
-                            id: context_server.id().into(),
+                            id: context_server_id.0.into(),
                         },
                         cx,
                     );
                 });
+            }
+            // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
+            for (context_server_id, preset) in &profile.context_servers {
+                self.tools.update(cx, |tools, cx| {
+                    tools.disable(
+                        ToolSource::ContextServer {
+                            id: context_server_id.clone().into(),
+                        },
+                        &preset
+                            .tools
+                            .iter()
+                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool.clone()))
+                            .collect::<Vec<_>>(),
+                        cx,
+                    )
+                })
             }
         } else {
             for (context_server_id, preset) in &profile.context_servers {
@@ -537,7 +547,7 @@ impl ThreadStore {
 
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
         cx.subscribe(
-            &self.context_server_manager.clone(),
+            &self.project.read(cx).context_server_store(),
             Self::handle_context_server_event,
         )
         .detach();
@@ -545,68 +555,75 @@ impl ThreadStore {
 
     fn handle_context_server_event(
         &mut self,
-        context_server_manager: Entity<ContextServerManager>,
-        event: &context_server::manager::Event,
+        context_server_store: Entity<ContextServerStore>,
+        event: &project::context_server_store::Event,
         cx: &mut Context<Self>,
     ) {
         let tool_working_set = self.tools.clone();
         match event {
-            context_server::manager::Event::ServerStarted { server_id } => {
-                if let Some(server) = context_server_manager.read(cx).get_server(server_id) {
-                    let context_server_manager = context_server_manager.clone();
-                    cx.spawn({
-                        let server = server.clone();
-                        let server_id = server_id.clone();
-                        async move |this, cx| {
-                            let Some(protocol) = server.client() else {
-                                return;
-                            };
+            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
+                match status {
+                    ContextServerStatus::Running => {
+                        if let Some(server) =
+                            context_server_store.read(cx).get_running_server(server_id)
+                        {
+                            let context_server_manager = context_server_store.clone();
+                            cx.spawn({
+                                let server = server.clone();
+                                let server_id = server_id.clone();
+                                async move |this, cx| {
+                                    let Some(protocol) = server.client() else {
+                                        return;
+                                    };
 
-                            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                                if let Some(tools) = protocol.list_tools().await.log_err() {
-                                    let tool_ids = tool_working_set
-                                        .update(cx, |tool_working_set, _| {
-                                            tools
-                                                .tools
-                                                .into_iter()
-                                                .map(|tool| {
-                                                    log::info!(
-                                                        "registering context server tool: {:?}",
-                                                        tool.name
-                                                    );
-                                                    tool_working_set.insert(Arc::new(
-                                                        ContextServerTool::new(
-                                                            context_server_manager.clone(),
-                                                            server.id(),
-                                                            tool,
-                                                        ),
-                                                    ))
+                                    if protocol.capable(context_server::protocol::ServerCapability::Tools) {
+                                        if let Some(tools) = protocol.list_tools().await.log_err() {
+                                            let tool_ids = tool_working_set
+                                                .update(cx, |tool_working_set, _| {
+                                                    tools
+                                                        .tools
+                                                        .into_iter()
+                                                        .map(|tool| {
+                                                            log::info!(
+                                                                "registering context server tool: {:?}",
+                                                                tool.name
+                                                            );
+                                                            tool_working_set.insert(Arc::new(
+                                                                ContextServerTool::new(
+                                                                    context_server_manager.clone(),
+                                                                    server.id(),
+                                                                    tool,
+                                                                ),
+                                                            ))
+                                                        })
+                                                        .collect::<Vec<_>>()
                                                 })
-                                                .collect::<Vec<_>>()
-                                        })
-                                        .log_err();
+                                                .log_err();
 
-                                    if let Some(tool_ids) = tool_ids {
-                                        this.update(cx, |this, cx| {
-                                            this.context_server_tool_ids
-                                                .insert(server_id, tool_ids);
-                                            this.load_default_profile(cx);
-                                        })
-                                        .log_err();
+                                            if let Some(tool_ids) = tool_ids {
+                                                this.update(cx, |this, cx| {
+                                                    this.context_server_tool_ids
+                                                        .insert(server_id, tool_ids);
+                                                    this.load_default_profile(cx);
+                                                })
+                                                .log_err();
+                                            }
+                                        }
                                     }
                                 }
-                            }
+                            })
+                            .detach();
                         }
-                    })
-                    .detach();
-                }
-            }
-            context_server::manager::Event::ServerStopped { server_id } => {
-                if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
-                    tool_working_set.update(cx, |tool_working_set, _| {
-                        tool_working_set.remove(&tool_ids);
-                    });
-                    self.load_default_profile(cx);
+                    }
+                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+                        if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
+                            tool_working_set.update(cx, |tool_working_set, _| {
+                                tool_working_set.remove(&tool_ids);
+                            });
+                            self.load_default_profile(cx);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -636,15 +653,32 @@ pub struct SerializedThread {
     pub detailed_summary_state: DetailedSummaryState,
     #[serde(default)]
     pub exceeded_window_error: Option<ExceededWindowError>,
+    #[serde(default)]
+    pub model: Option<SerializedLanguageModel>,
+    #[serde(default)]
+    pub completion_mode: Option<CompletionMode>,
+    #[serde(default)]
+    pub profile: Option<AgentProfileId>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializedLanguageModel {
+    pub provider: String,
+    pub model: String,
 }
 
 impl SerializedThread {
-    pub const VERSION: &'static str = "0.1.0";
+    pub const VERSION: &'static str = "0.2.0";
 
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
         match saved_thread_json.get("version") {
             Some(serde_json::Value::String(version)) => match version.as_str() {
+                SerializedThreadV0_1_0::VERSION => {
+                    let saved_thread =
+                        serde_json::from_value::<SerializedThreadV0_1_0>(saved_thread_json)?;
+                    Ok(saved_thread.upgrade())
+                }
                 SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
                     saved_thread_json,
                 )?),
@@ -666,6 +700,38 @@ impl SerializedThread {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SerializedThreadV0_1_0(
+    // The structure did not change, so we are reusing the latest SerializedThread.
+    // When making the next version, make sure this points to SerializedThreadV0_2_0
+    SerializedThread,
+);
+
+impl SerializedThreadV0_1_0 {
+    pub const VERSION: &'static str = "0.1.0";
+
+    pub fn upgrade(self) -> SerializedThread {
+        debug_assert_eq!(SerializedThread::VERSION, "0.2.0");
+
+        let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
+
+        for message in self.0.messages {
+            if message.role == Role::User && !message.tool_results.is_empty() {
+                if let Some(last_message) = messages.last_mut() {
+                    debug_assert!(last_message.role == Role::Assistant);
+
+                    last_message.tool_results = message.tool_results;
+                    continue;
+                }
+            }
+
+            messages.push(message);
+        }
+
+        SerializedThread { messages, ..self.0 }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerializedMessage {
     pub id: MessageId,
@@ -678,6 +744,8 @@ pub struct SerializedMessage {
     pub tool_results: Vec<SerializedToolResult>,
     #[serde(default)]
     pub context: String,
+    #[serde(default)]
+    pub creases: Vec<SerializedCrease>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -710,6 +778,7 @@ pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: Arc<str>,
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -733,6 +802,9 @@ impl LegacySerializedThread {
             request_token_usage: Vec::new(),
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
+            model: None,
+            completion_mode: None,
+            profile: None,
         }
     }
 }
@@ -757,8 +829,17 @@ impl LegacySerializedMessage {
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
             context: String::new(),
+            creases: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SerializedCrease {
+    pub start: usize,
+    pub end: usize,
+    pub icon_path: SharedString,
+    pub label: SharedString,
 }
 
 struct GlobalThreadsDatabase(

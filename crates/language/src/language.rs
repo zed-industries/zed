@@ -26,7 +26,7 @@ pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexSet};
 use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -237,6 +237,14 @@ impl CachedLspAdapter {
     ) {
         self.adapter
             .process_diagnostics(params, server_id, existing_diagnostics)
+    }
+
+    pub fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, cx: &App) -> bool {
+        self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
+    }
+
+    pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        self.adapter.diagnostic_message_to_markdown(message)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -457,8 +465,17 @@ pub trait LspAdapter: 'static + Send + Sync {
     ) {
     }
 
+    /// When processing new `lsp::PublishDiagnosticsParams` diagnostics, whether to retain previous one(s) or not.
+    fn retain_old_diagnostic(&self, _previous_diagnostic: &Diagnostic, _cx: &App) -> bool {
+        false
+    }
+
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
+
+    fn diagnostic_message_to_markdown(&self, _message: &str) -> Option<String> {
+        None
+    }
 
     async fn labels_for_completions(
         self: Arc<Self>,
@@ -664,6 +681,10 @@ pub struct LanguageConfig {
     #[serde(default)]
     #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
+    /// If set to true, indicates the language uses significant whitespace/indentation
+    /// for syntax structure (like Python) rather than brackets/braces for code blocks.
+    #[serde(default)]
+    pub significant_indentation: bool,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
@@ -731,6 +752,9 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of preferred debuggers for this language.
+    #[serde(default)]
+    pub debuggers: IndexSet<SharedString>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -855,6 +879,8 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            debuggers: Default::default(),
+            significant_indentation: Default::default(),
         }
     }
 }
@@ -1893,6 +1919,9 @@ impl CodeLabel {
                 Kind::ENUM => grammar
                     .highlight_id_for_name("enum")
                     .or_else(|| grammar.highlight_id_for_name("type")),
+                Kind::ENUM_MEMBER => grammar
+                    .highlight_id_for_name("variant")
+                    .or_else(|| grammar.highlight_id_for_name("property")),
                 Kind::FIELD => grammar.highlight_id_for_name("property"),
                 Kind::FUNCTION => grammar.highlight_id_for_name("function"),
                 Kind::INTERFACE => grammar.highlight_id_for_name("type"),

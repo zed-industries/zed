@@ -12,13 +12,17 @@ use language::LanguageToolchainStore;
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
-use smol::{self, fs::File, lock::Mutex};
+use smol::{self, fs::File};
 use std::{
-    borrow::Borrow, collections::HashSet, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref,
-    path::PathBuf, sync::Arc,
+    borrow::Borrow,
+    ffi::OsStr,
+    fmt::Debug,
+    net::Ipv4Addr,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
-use task::{DebugTaskDefinition, TcpArgumentsTemplate};
-use util::ResultExt;
+use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -35,8 +39,7 @@ pub trait DapDelegate {
     fn node_runtime(&self) -> NodeRuntime;
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore>;
     fn fs(&self) -> Arc<dyn Fs>;
-    fn updated_adapters(&self) -> Arc<Mutex<HashSet<DebugAdapterName>>>;
-    fn update_status(&self, dap_name: DebugAdapterName, status: DapStatus);
+    fn output_to_console(&self, msg: String);
     fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
@@ -75,6 +78,11 @@ impl From<DebugAdapterName> for SharedString {
         name.0
     }
 }
+impl From<SharedString> for DebugAdapterName {
+    fn from(name: SharedString) -> Self {
+        DebugAdapterName(name)
+    }
+}
 
 impl<'a> From<&'a str> for DebugAdapterName {
     fn from(str: &'a str) -> DebugAdapterName {
@@ -82,7 +90,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TcpArguments {
     pub host: Ipv4Addr,
     pub port: u16,
@@ -109,7 +117,121 @@ impl TcpArguments {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Represents a debuggable binary/process (what process is going to be debugged and with what arguments).
+///
+/// We start off with a [DebugScenario], a user-facing type that additionally defines how a debug target is built; once
+/// an optional build step is completed, we turn it's result into a DebugTaskDefinition by running a locator (or using a user-provided task) and resolving task variables.
+/// Finally, a [DebugTaskDefinition] has to be turned into a concrete debugger invocation ([DebugAdapterBinary]).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(
+    any(feature = "test-support", test),
+    derive(serde::Deserialize, serde::Serialize)
+)]
+pub struct DebugTaskDefinition {
+    pub label: SharedString,
+    pub adapter: DebugAdapterName,
+    pub request: DebugRequest,
+    /// Additional initialization arguments to be sent on DAP initialization
+    pub initialize_args: Option<serde_json::Value>,
+    /// Whether to tell the debug adapter to stop on entry
+    pub stop_on_entry: Option<bool>,
+    /// Optional TCP connection information
+    ///
+    /// If provided, this will be used to connect to the debug adapter instead of
+    /// spawning a new debug adapter process. This is useful for connecting to a debug adapter
+    /// that is already running or is started by another process.
+    pub tcp_connection: Option<TcpArgumentsTemplate>,
+}
+
+impl DebugTaskDefinition {
+    pub fn cwd(&self) -> Option<&Path> {
+        if let DebugRequest::Launch(config) = &self.request {
+            config.cwd.as_ref().map(Path::new)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_scenario(&self) -> DebugScenario {
+        DebugScenario {
+            label: self.label.clone(),
+            adapter: self.adapter.clone().into(),
+            build: None,
+            request: Some(self.request.clone()),
+            stop_on_entry: self.stop_on_entry,
+            tcp_connection: self.tcp_connection.clone(),
+            initialize_args: self.initialize_args.clone(),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::DebugTaskDefinition {
+        proto::DebugTaskDefinition {
+            adapter: self.adapter.to_string(),
+            request: Some(match &self.request {
+                DebugRequest::Launch(config) => {
+                    proto::debug_task_definition::Request::DebugLaunchRequest(
+                        proto::DebugLaunchRequest {
+                            program: config.program.clone(),
+                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
+                            args: config.args.clone(),
+                            env: config
+                                .env
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                        },
+                    )
+                }
+                DebugRequest::Attach(attach_request) => {
+                    proto::debug_task_definition::Request::DebugAttachRequest(
+                        proto::DebugAttachRequest {
+                            process_id: attach_request.process_id.unwrap_or_default(),
+                        },
+                    )
+                }
+            }),
+            label: self.label.to_string(),
+            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
+            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
+            stop_on_entry: self.stop_on_entry,
+        }
+    }
+
+    pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
+        let request = proto
+            .request
+            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        Ok(Self {
+            label: proto.label.into(),
+            initialize_args: proto.initialize_args.map(|v| v.into()),
+            tcp_connection: proto
+                .tcp_connection
+                .map(TcpArgumentsTemplate::from_proto)
+                .transpose()?,
+            stop_on_entry: proto.stop_on_entry,
+            adapter: DebugAdapterName(proto.adapter.into()),
+            request: match request {
+                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
+                    DebugRequest::Attach(AttachRequest {
+                        process_id: Some(config.process_id),
+                    })
+                }
+
+                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
+                    DebugRequest::Launch(LaunchRequest {
+                        program: config.program,
+                        cwd: config.cwd.map(|cwd| cwd.into()),
+                        args: config.args,
+                        env: Default::default(),
+                    })
+                }
+            },
+        })
+    }
+}
+
+/// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
+#[derive(Debug, Clone, PartialEq)]
 pub struct DebugAdapterBinary {
     pub command: String,
     pub arguments: Vec<String>,
@@ -173,7 +295,7 @@ impl DebugAdapterBinary {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdapterVersion {
     pub tag_name: String,
     pub url: String,
@@ -215,6 +337,7 @@ pub async fn download_adapter_from_github(
         adapter_name,
         &github_version.url,
     );
+    delegate.output_to_console(format!("Downloading from {}...", github_version.url));
 
     let mut response = delegate
         .http_client()
@@ -294,86 +417,9 @@ pub trait DebugAdapter: 'static + Send + Sync {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        if delegate
-            .updated_adapters()
-            .lock()
-            .await
-            .contains(&self.name())
-        {
-            log::info!("Using cached debug adapter binary {}", self.name());
-
-            if let Some(binary) = self
-                .get_installed_binary(delegate, &config, user_installed_path.clone(), cx)
-                .await
-                .log_err()
-            {
-                return Ok(binary);
-            }
-
-            log::info!(
-                "Cached binary {} is corrupt falling back to install",
-                self.name()
-            );
-        }
-
-        log::info!("Getting latest version of debug adapter {}", self.name());
-        delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
-        if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-            log::info!(
-                "Installiing latest version of debug adapter {}",
-                self.name()
-            );
-            delegate.update_status(self.name(), DapStatus::Downloading);
-            match self.install_binary(version, delegate).await {
-                Ok(_) => {
-                    delegate.update_status(self.name(), DapStatus::None);
-                }
-                Err(error) => {
-                    delegate.update_status(
-                        self.name(),
-                        DapStatus::Failed {
-                            error: error.to_string(),
-                        },
-                    );
-
-                    return Err(error);
-                }
-            }
-
-            delegate
-                .updated_adapters()
-                .lock_arc()
-                .await
-                .insert(self.name());
-        }
-
-        self.get_installed_binary(delegate, &config, user_installed_path, cx)
-            .await
-    }
-
-    async fn fetch_latest_adapter_version(
-        &self,
-        delegate: &dyn DapDelegate,
-    ) -> Result<AdapterVersion>;
-
-    /// Installs the binary for the debug adapter.
-    /// This method is called when the adapter binary is not found or needs to be updated.
-    /// It should download and install the necessary files for the debug adapter to function.
-    async fn install_binary(
-        &self,
-        version: AdapterVersion,
-        delegate: &dyn DapDelegate,
-    ) -> Result<()>;
-
-    async fn get_installed_binary(
-        &self,
-        delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
-        user_installed_path: Option<PathBuf>,
-        cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 }
+
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeAdapter {}
 
@@ -399,6 +445,7 @@ impl FakeAdapter {
             } else {
                 None
             },
+            "raw_request": serde_json::to_value(config).unwrap()
         });
         let request = match config.request {
             DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
@@ -433,30 +480,5 @@ impl DebugAdapter for FakeAdapter {
             cwd: None,
             request_args: self.request_args(config),
         })
-    }
-
-    async fn fetch_latest_adapter_version(
-        &self,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<AdapterVersion> {
-        unimplemented!("fetch latest adapter version");
-    }
-
-    async fn install_binary(
-        &self,
-        _version: AdapterVersion,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        unimplemented!("install binary");
-    }
-
-    async fn get_installed_binary(
-        &self,
-        _: &dyn DapDelegate,
-        _: &DebugTaskDefinition,
-        _: Option<PathBuf>,
-        _: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        unimplemented!("get installed binary");
     }
 }

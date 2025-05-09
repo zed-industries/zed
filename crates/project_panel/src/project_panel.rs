@@ -1346,6 +1346,10 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
+            return;
+        }
+
         let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
@@ -1389,63 +1393,81 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(SelectedEntry {
-            worktree_id,
-            entry_id,
-        }) = self.selection
+        let Some((worktree_id, entry_id)) = self
+            .selection
+            .map(|entry| (entry.worktree_id, entry.entry_id))
+            .or_else(|| {
+                let entry_id = self.last_worktree_root_id?;
+                let worktree_id = self
+                    .project
+                    .read(cx)
+                    .worktree_for_entry(entry_id, cx)?
+                    .read(cx)
+                    .id();
+
+                self.selection = Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+
+                Some((worktree_id, entry_id))
+            })
+        else {
+            return;
+        };
+
+        let directory_id;
+        let new_entry_id = self.resolve_entry(entry_id);
+        if let Some((worktree, expanded_dir_ids)) = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .zip(self.expanded_dir_ids.get_mut(&worktree_id))
         {
-            let directory_id;
-            let new_entry_id = self.resolve_entry(entry_id);
-            if let Some((worktree, expanded_dir_ids)) = self
-                .project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
-            {
-                let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
-                    loop {
-                        if entry.is_dir() {
-                            if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                                expanded_dir_ids.insert(ix, entry.id);
-                            }
-                            directory_id = entry.id;
-                            break;
-                        } else {
-                            if let Some(parent_path) = entry.path.parent() {
-                                if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
-                                    entry = parent_entry;
-                                    continue;
-                                }
-                            }
-                            return;
+            let worktree = worktree.read(cx);
+            if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
+                loop {
+                    if entry.is_dir() {
+                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                            expanded_dir_ids.insert(ix, entry.id);
                         }
+                        directory_id = entry.id;
+                        break;
+                    } else {
+                        if let Some(parent_path) = entry.path.parent() {
+                            if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
+                                entry = parent_entry;
+                                continue;
+                            }
+                        }
+                        return;
                     }
-                } else {
-                    return;
-                };
+                }
             } else {
                 return;
             };
-            self.marked_entries.clear();
-            self.edit_state = Some(EditState {
-                worktree_id,
-                entry_id: directory_id,
-                leaf_entry_id: None,
-                is_dir,
-                processing_filename: None,
-                previously_focused: self.selection,
-                depth: 0,
-                validation_state: ValidationState::None,
-            });
-            self.filename_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-                window.focus(&editor.focus_handle(cx));
-            });
-            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
-            self.autoscroll(cx);
-            cx.notify();
-        }
+        } else {
+            return;
+        };
+
+        self.marked_entries.clear();
+        self.edit_state = Some(EditState {
+            worktree_id,
+            entry_id: directory_id,
+            leaf_entry_id: None,
+            is_dir,
+            processing_filename: None,
+            previously_focused: self.selection,
+            depth: 0,
+            validation_state: ValidationState::None,
+        });
+        self.filename_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+            window.focus(&editor.focus_handle(cx));
+        });
+        self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+        self.autoscroll(cx);
+        cx.notify();
     }
 
     fn unflatten_entry_id(&self, leaf_entry_id: ProjectEntryId) -> ProjectEntryId {
@@ -2837,13 +2859,7 @@ impl ProjectPanel {
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
                 let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
-                    let Some(path_name) = worktree_abs_path
-                        .file_name()
-                        .with_context(|| {
-                            format!("Worktree abs path has no file name, root entry: {entry:?}")
-                        })
-                        .log_err()
-                    else {
+                    let Some(path_name) = worktree_abs_path.file_name() else {
                         continue;
                     };
                     let path = ArcCow::Borrowed(Path::new(path_name));

@@ -20,7 +20,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
@@ -218,25 +218,9 @@ fn main() {
         };
     }
 
-    log::info!("========== starting zed ==========");
-
-    let app = Application::new().with_assets(Assets);
-
-    let system_id = app.background_executor().block(system_id()).ok();
-    let installation_id = app.background_executor().block(installation_id()).ok();
-    let session_id = Uuid::new_v4().to_string();
-    let session = app.background_executor().block(Session::new());
-    let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
-
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -247,6 +231,23 @@ fn main() {
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
     }
+
+    log::info!("========== starting zed ==========");
+
+    let app = Application::new().with_assets(Assets);
+
+    let system_id = app.background_executor().block(system_id()).ok();
+    let installation_id = app.background_executor().block(installation_id()).ok();
+    let session_id = Uuid::new_v4().to_string();
+    let session = app.background_executor().block(Session::new());
+
+    reliability::init_panic_hook(
+        app_version,
+        app_commit_sha.clone(),
+        system_id.as_ref().map(|id| id.to_string()),
+        installation_id.as_ref().map(|id| id.to_string()),
+        session_id.clone(),
+    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -353,7 +354,7 @@ fn main() {
             .as_ref()
             .and_then(|input| {
                 input
-                    .parse::<Uri>()
+                    .parse::<Url>()
                     .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                     .ok()
             })
@@ -377,7 +378,7 @@ fn main() {
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
-        cx.set_http_client(client.http_client().clone());
+        cx.set_http_client(client.http_client());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
@@ -502,16 +503,11 @@ fn main() {
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        assistant::init(
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder.clone(),
-            cx,
-        );
         agent::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             prompt_builder.clone(),
+            app_state.languages.clone(),
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);

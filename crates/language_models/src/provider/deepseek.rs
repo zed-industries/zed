@@ -9,9 +9,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -282,6 +283,10 @@ impl LanguageModel for DeepSeekLanguageModel {
         false
     }
 
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("deepseek/{}", self.model.id())
     }
@@ -324,7 +329,12 @@ impl LanguageModel for DeepSeekLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = into_deepseek(
             request,
             self.model.id().to_string(),
@@ -336,20 +346,22 @@ impl LanguageModel for DeepSeekLanguageModel {
             let stream = stream.await?;
             Ok(stream
                 .map(|result| {
-                    result.and_then(|response| {
-                        response
-                            .choices
-                            .first()
-                            .ok_or_else(|| anyhow!("Empty response"))
-                            .map(|choice| {
-                                choice
-                                    .delta
-                                    .content
-                                    .clone()
-                                    .unwrap_or_default()
-                                    .map(LanguageModelCompletionEvent::Text)
-                            })
-                    })
+                    result
+                        .and_then(|response| {
+                            response
+                                .choices
+                                .first()
+                                .ok_or_else(|| anyhow!("Empty response"))
+                                .map(|choice| {
+                                    choice
+                                        .delta
+                                        .content
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .map(LanguageModelCompletionEvent::Text)
+                                })
+                        })
+                        .map_err(LanguageModelCompletionError::Other)
                 })
                 .boxed())
         }

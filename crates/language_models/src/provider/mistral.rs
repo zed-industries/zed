@@ -8,9 +8,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter, Role,
 };
 
 use futures::stream::BoxStream;
@@ -302,6 +303,10 @@ impl LanguageModel for MistralLanguageModel {
         false
     }
 
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
@@ -344,7 +349,12 @@ impl LanguageModel for MistralLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = into_mistral(
             request,
             self.model.id().to_string(),
@@ -356,20 +366,22 @@ impl LanguageModel for MistralLanguageModel {
             let stream = stream.await?;
             Ok(stream
                 .map(|result| {
-                    result.and_then(|response| {
-                        response
-                            .choices
-                            .first()
-                            .ok_or_else(|| anyhow!("Empty response"))
-                            .map(|choice| {
-                                choice
-                                    .delta
-                                    .content
-                                    .clone()
-                                    .unwrap_or_default()
-                                    .map(LanguageModelCompletionEvent::Text)
-                            })
-                    })
+                    result
+                        .and_then(|response| {
+                            response
+                                .choices
+                                .first()
+                                .ok_or_else(|| anyhow!("Empty response"))
+                                .map(|choice| {
+                                    choice
+                                        .delta
+                                        .content
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .map(LanguageModelCompletionEvent::Text)
+                                })
+                        })
+                        .map_err(LanguageModelCompletionError::Other)
                 })
                 .boxed())
         }

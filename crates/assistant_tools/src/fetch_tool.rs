@@ -6,15 +6,15 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{AnyWindowHandle, App, AppContext as _, Entity, Task};
 use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownEscaped;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -134,7 +134,7 @@ impl Tool for FetchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<FetchToolInput>(input.clone()) {
-            Ok(input) => format!("Fetch {}", MarkdownString::escape(&input.url)),
+            Ok(input) => format!("Fetch {}", MarkdownEscaped(&input.url)),
             Err(_) => "Fetch URL".to_string(),
         }
     }
@@ -142,9 +142,11 @@ impl Tool for FetchTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<FetchToolInput>(input) {
@@ -165,7 +167,7 @@ impl Tool for FetchTool {
                     bail!("no textual content found");
                 }
 
-                Ok(text)
+                Ok(text.into())
             })
             .into()
     }

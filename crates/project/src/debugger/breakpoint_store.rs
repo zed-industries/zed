@@ -4,7 +4,7 @@
 use anyhow::{Result, anyhow};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
-use dap::client::SessionId;
+use dap::{StackFrameId, client::SessionId};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, proto::serialize_anchor as serialize_text_anchor};
@@ -16,6 +16,8 @@ use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
 use text::{Point, PointUtf16};
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
+
+use super::session::ThreadId;
 
 mod breakpoints_in_file {
     use language::{BufferEvent, DiskState};
@@ -108,10 +110,20 @@ enum BreakpointStoreMode {
     Local(LocalBreakpointStore),
     Remote(RemoteBreakpointStore),
 }
+
+#[derive(Clone, PartialEq)]
+pub struct ActiveStackFrame {
+    pub session_id: SessionId,
+    pub thread_id: ThreadId,
+    pub stack_frame_id: StackFrameId,
+    pub path: Arc<Path>,
+    pub position: text::Anchor,
+}
+
 pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    active_stack_frame: Option<(SessionId, Arc<Path>, text::Anchor)>,
+    active_stack_frame: Option<ActiveStackFrame>,
     // E.g ssh
     mode: BreakpointStoreMode,
 }
@@ -493,7 +505,7 @@ impl BreakpointStore {
             })
     }
 
-    pub fn active_position(&self) -> Option<&(SessionId, Arc<Path>, text::Anchor)> {
+    pub fn active_position(&self) -> Option<&ActiveStackFrame> {
         self.active_stack_frame.as_ref()
     }
 
@@ -504,22 +516,31 @@ impl BreakpointStore {
     ) {
         if let Some(session_id) = session_id {
             self.active_stack_frame
-                .take_if(|(id, _, _)| *id == session_id);
+                .take_if(|active_stack_frame| active_stack_frame.session_id == session_id);
         } else {
             self.active_stack_frame.take();
         }
 
-        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+        cx.emit(BreakpointStoreEvent::ClearDebugLines);
         cx.notify();
     }
 
-    pub fn set_active_position(
-        &mut self,
-        position: (SessionId, Arc<Path>, text::Anchor),
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_active_position(&mut self, position: ActiveStackFrame, cx: &mut Context<Self>) {
+        if self
+            .active_stack_frame
+            .as_ref()
+            .is_some_and(|active_position| active_position == &position)
+        {
+            return;
+        }
+
+        if self.active_stack_frame.is_some() {
+            cx.emit(BreakpointStoreEvent::ClearDebugLines);
+        }
+
         self.active_stack_frame = Some(position);
-        cx.emit(BreakpointStoreEvent::ActiveDebugLineChanged);
+
+        cx.emit(BreakpointStoreEvent::SetDebugLine);
         cx.notify();
     }
 
@@ -685,7 +706,8 @@ pub enum BreakpointUpdatedReason {
 }
 
 pub enum BreakpointStoreEvent {
-    ActiveDebugLineChanged,
+    SetDebugLine,
+    ClearDebugLines,
     BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
     BreakpointsCleared(Vec<Arc<Path>>),
 }

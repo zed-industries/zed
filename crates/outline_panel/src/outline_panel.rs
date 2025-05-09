@@ -646,7 +646,7 @@ struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakEntity<Editor>,
     _buffer_search_subscription: Subscription,
-    _editor_subscrpiption: Subscription,
+    _editor_subscription: Subscription,
 }
 
 #[derive(Debug)]
@@ -2962,7 +2962,7 @@ impl OutlinePanel {
         );
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
-            _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, window, cx),
+            _editor_subscription: subscribe_for_editor_events(&new_active_editor, window, cx),
             item_handle: new_active_item.downgrade_item(),
             active_editor: new_active_editor.downgrade(),
         });
@@ -4962,7 +4962,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(format!("'{}'", search_state.query))),
+                        .child(Label::new(search_state.query.to_string())),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
@@ -5028,7 +5028,7 @@ fn subscribe_for_editor_events(
                         .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     let mut ids = ids.iter().collect::<HashSet<_>>();
                     for excerpts in outline_panel.excerpts.values_mut() {
                         excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));

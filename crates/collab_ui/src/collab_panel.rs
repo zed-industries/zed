@@ -65,6 +65,15 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
+            if let Some(collab_panel) = workspace.panel::<CollabPanel>(cx) {
+                collab_panel.update(cx, |panel, cx| {
+                    panel.filter_editor.update(cx, |editor, cx| {
+                        if editor.snapshot(window, cx).is_focused() {
+                            editor.select_all(&Default::default(), window, cx);
+                        }
+                    });
+                })
+            }
         });
         workspace.register_action(|_, _: &OpenChannelNotes, window, cx| {
             let channel_id = ActiveCall::global(cx)
@@ -1454,7 +1463,9 @@ impl CollabPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if self.take_editing_state(window, cx) {
+        if cx.stop_active_drag(window) {
+            return;
+        } else if self.take_editing_state(window, cx) {
             window.focus(&self.filter_editor.focus_handle(cx));
         } else if !self.reset_filter_editor_text(window, cx) {
             self.focus_handle.focus(window);

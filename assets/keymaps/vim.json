@@ -50,6 +50,12 @@
       "] -": "vim::NextLesserIndent",
       "] +": "vim::NextGreaterIndent",
       "] =": "vim::NextSameIndent",
+      "] b": "pane::ActivateNextItem",
+      "[ b": "pane::ActivatePreviousItem",
+      "] shift-b": "pane::ActivateLastItem",
+      "[ shift-b": ["pane::ActivateItem", 0],
+      "] space": "vim::InsertEmptyLineBelow",
+      "[ space": "vim::InsertEmptyLineAbove",
       // Word motions
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
@@ -108,7 +114,11 @@
       "ctrl-e": "vim::LineDown",
       "ctrl-y": "vim::LineUp",
       // "g" commands
-      "g r": "vim::PushReplaceWithRegister",
+      "g shift-r": "vim::PushReplaceWithRegister",
+      "g r n": "editor::Rename",
+      "g r r": "editor::FindAllReferences",
+      "g r i": "editor::GoToImplementation",
+      "g r a": "editor::ToggleCodeActions",
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
       "g t": "pane::ActivateNextItem",
@@ -127,6 +137,7 @@
       "g <": ["editor::SelectPrevious", { "replace_newest": true }],
       "g a": "editor::SelectAllMatches",
       "g s": "outline::Toggle",
+      "g shift-o": "outline::Toggle",
       "g shift-s": "project_symbols::Toggle",
       "g .": "editor::ToggleCodeActions", // zed specific
       "g shift-a": "editor::FindAllReferences", // zed specific
@@ -305,7 +316,7 @@
       "!": "vim::ShellCommand",
       "i": ["vim::PushObject", { "around": false }],
       "a": ["vim::PushObject", { "around": true }],
-      "g r": ["vim::Paste", { "preserve_clipboard": true }],
+      "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
@@ -339,7 +350,8 @@
       "ctrl-shift-q": ["vim::PushLiteral", {}],
       "ctrl-r": "vim::PushRegister",
       "insert": "vim::ToggleReplace",
-      "ctrl-o": "vim::TemporaryNormal"
+      "ctrl-o": "vim::TemporaryNormal",
+      "ctrl-s": "editor::ShowSignatureHelp"
     }
   },
   {
@@ -504,12 +516,14 @@
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",
-      "q": "vim::AnyQuotes",
+      // "q": "vim::AnyQuotes",
+      "q": "vim::MiniQuotes",
       "|": "vim::VerticalBars",
       "(": "vim::Parentheses",
       ")": "vim::Parentheses",
       "b": "vim::Parentheses",
       // "b": "vim::AnyBrackets",
+      // "b": "vim::MiniBrackets",
       "[": "vim::SquareBrackets",
       "]": "vim::SquareBrackets",
       "r": "vim::SquareBrackets",
@@ -630,9 +644,10 @@
     }
   },
   {
-    "context": "vim_operator == gr",
+    "context": "vim_operator == gR",
     "bindings": {
-      "r": "vim::CurrentLine"
+      "r": "vim::CurrentLine",
+      "shift-r": "vim::CurrentLine"
     }
   },
   {
@@ -693,7 +708,7 @@
     }
   },
   {
-    "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,

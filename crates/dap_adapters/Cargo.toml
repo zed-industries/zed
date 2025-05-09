@@ -24,6 +24,7 @@ doctest = false
 anyhow.workspace = true
 async-trait.workspace = true
 dap.workspace = true
+futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 paths.workspace = true

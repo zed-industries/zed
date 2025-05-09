@@ -19,8 +19,8 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_watch as watch;
-use clock::Lamport;
 pub use clock::ReplicaId;
+use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -59,9 +59,9 @@ use text::operation_queue::OperationQueue;
 use text::*;
 pub use text::{
     Anchor, Bias, Buffer as TextBuffer, BufferId, BufferSnapshot as TextBufferSnapshot, Edit,
-    OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection, SelectionGoal,
-    Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
-    Transaction, TransactionId, Unclipped,
+    LineIndent, OffsetRangeExt, OffsetUtf16, Patch, Point, PointUtf16, Rope, Selection,
+    SelectionGoal, Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint,
+    ToPointUtf16, Transaction, TransactionId, Unclipped,
 };
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
@@ -69,7 +69,7 @@ use util::RandomCharIter;
 use util::{RangeExt, debug_panic, maybe};
 
 #[cfg(any(test, feature = "test-support"))]
-pub use {tree_sitter_rust, tree_sitter_typescript};
+pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
 
@@ -202,10 +202,13 @@ pub struct Diagnostic {
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
     pub code: Option<NumberOrString>,
+    pub code_description: Option<lsp::Url>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
     pub message: String,
+    /// The human-readable message (in markdown format)
+    pub markdown: Option<String>,
     /// An id that identifies the group to which this diagnostic belongs.
     ///
     /// When a language server produces a diagnostic with
@@ -2123,6 +2126,31 @@ impl Buffer {
         }
     }
 
+    pub fn set_agent_selections(
+        &mut self,
+        selections: Arc<[Selection<Anchor>]>,
+        line_mode: bool,
+        cursor_shape: CursorShape,
+        cx: &mut Context<Self>,
+    ) {
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.remote_selections.insert(
+            AGENT_REPLICA_ID,
+            SelectionSet {
+                selections: selections.clone(),
+                lamport_timestamp,
+                line_mode,
+                cursor_shape,
+            },
+        );
+        self.non_text_state_update_count += 1;
+        cx.notify();
+    }
+
+    pub fn remove_agent_selections(&mut self, cx: &mut Context<Self>) {
+        self.set_agent_selections(Arc::default(), false, Default::default(), cx);
+    }
+
     /// Replaces the buffer's entire text.
     pub fn set_text<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
     where
@@ -2130,6 +2158,14 @@ impl Buffer {
     {
         self.autoindent_requests.clear();
         self.edit([(0..self.len(), text)], None, cx)
+    }
+
+    /// Appends the given text to the end of the buffer.
+    pub fn append<T>(&mut self, text: T, cx: &mut Context<Self>) -> Option<clock::Lamport>
+    where
+        T: Into<Arc<str>>,
+    {
+        self.edit([(self.len()..self.len(), text)], None, cx)
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
@@ -2662,7 +2698,7 @@ impl Buffer {
         }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers: triggers.iter().cloned().collect(),
+                triggers: triggers.into_iter().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
                 server_id,
             },
@@ -2821,6 +2857,7 @@ impl BufferSnapshot {
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+        let significant_indentation = config.significant_indentation;
 
         // Find the suggested indentation ranges based on the syntax tree.
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
@@ -2840,6 +2877,7 @@ impl BufferSnapshot {
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
+            let mut outdent: Option<Point> = None;
 
             let config = &indent_configs[mat.grammar_index];
             for capture in mat.captures {
@@ -2851,16 +2889,23 @@ impl BufferSnapshot {
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
-                    outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
+                    let point = Point::from_ts_point(capture.node.start_position());
+                    outdent.get_or_insert(point);
+                    outdent_positions.push(point);
                 }
             }
 
             matches.advance();
+            // in case of significant indentation expand end to outdent position
+            let end = if significant_indentation {
+                outdent.or(end)
+            } else {
+                end
+            };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row {
+                if start.row == end.row && !significant_indentation {
                     continue;
                 }
-
                 let range = start..end;
                 match indent_ranges.binary_search_by_key(&range.start, |r| r.start) {
                     Err(ix) => indent_ranges.insert(ix, range),
@@ -2896,16 +2941,20 @@ impl BufferSnapshot {
             matches.advance();
         }
 
-        outdent_positions.sort();
-        for outdent_position in outdent_positions {
-            // find the innermost indent range containing this outdent_position
-            // set its end to the outdent position
-            if let Some(range_to_truncate) = indent_ranges
-                .iter_mut()
-                .filter(|indent_range| indent_range.contains(&outdent_position))
-                .next_back()
-            {
-                range_to_truncate.end = outdent_position;
+        // we don't use outdent positions to truncate in case of significant indentation
+        // rather we use them to expand (handled above)
+        if !significant_indentation {
+            outdent_positions.sort();
+            for outdent_position in outdent_positions {
+                // find the innermost indent range containing this outdent_position
+                // set its end to the outdent position
+                if let Some(range_to_truncate) = indent_ranges
+                    .iter_mut()
+                    .filter(|indent_range| indent_range.contains(&outdent_position))
+                    .next_back()
+                {
+                    range_to_truncate.end = outdent_position;
+                }
             }
         }
 
@@ -2975,8 +3024,14 @@ impl BufferSnapshot {
                 if range.start.row == prev_row && range.end > row_start {
                     indent_from_prev_row = true;
                 }
-                if range.end > prev_row_start && range.end <= row_start {
-                    outdent_to_row = outdent_to_row.min(range.start.row);
+                if significant_indentation && self.is_line_blank(row) && range.start.row == prev_row
+                {
+                    indent_from_prev_row = true;
+                }
+                if !significant_indentation || !self.is_line_blank(row) {
+                    if range.end > prev_row_start && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row);
+                    }
                 }
             }
 
@@ -3265,11 +3320,19 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range,
-            // and if the range is non-empty, extends beyond the start.
+            // Descend to the first leaf that touches the start of the range.
+            //
+            // If the range is non-empty and the current node ends exactly at the start,
+            // move to the next sibling to find a node that extends beyond the start.
+            //
+            // If the range is empty and the current node starts after the range position,
+            // move to the previous sibling to find the node that contains the position.
             while cursor.goto_first_child_for_byte(range.start).is_some() {
                 if !range.is_empty() && cursor.node().end_byte() == range.start {
                     cursor.goto_next_sibling();
+                }
+                if range.is_empty() && cursor.node().start_byte() > range.start {
+                    cursor.goto_previous_sibling();
                 }
             }
 
@@ -3325,6 +3388,36 @@ impl BufferSnapshot {
         }
 
         result
+    }
+
+    /// Returns the root syntax node within the given row
+    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node> {
+        let start_offset = position.to_offset(self);
+
+        let row = self.summary_for_anchor::<text::PointUtf16>(&position).row as usize;
+
+        let layer = self
+            .syntax
+            .layers_for_range(start_offset..start_offset, &self.text, true)
+            .next()?;
+
+        let mut cursor = layer.node().walk();
+
+        // Descend to the first leaf that touches the start of the range.
+        while cursor.goto_first_child_for_byte(start_offset).is_some() {
+            if cursor.node().end_byte() == start_offset {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the root node within the same row.
+        while cursor.goto_parent() {
+            if cursor.node().start_position().row != row {
+                break;
+            }
+        }
+
+        return Some(cursor.node());
     }
 
     /// Returns the outline for the buffer.
@@ -4533,8 +4626,10 @@ impl Default for Diagnostic {
         Self {
             source: Default::default(),
             code: None,
+            code_description: None,
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
+            markdown: None,
             group_id: 0,
             is_primary: false,
             is_disk_based: false,

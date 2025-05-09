@@ -1,15 +1,15 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
-use language_model::LanguageModelToolSchemaFormat;
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
@@ -34,7 +34,7 @@ impl Tool for CreateDirectoryTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -52,10 +52,7 @@ impl Tool for CreateDirectoryTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                format!(
-                    "Create directory {}",
-                    MarkdownString::inline_code(&input.path)
-                )
+                format!("Create directory {}", MarkdownInlineCode(&input.path))
             }
             Err(_) => "Create directory".to_string(),
         }
@@ -64,9 +61,11 @@ impl Tool for CreateDirectoryTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {
@@ -89,7 +88,7 @@ impl Tool for CreateDirectoryTool {
                 .await
                 .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
 
-            Ok(format!("Created directory {destination_path}"))
+            Ok(format!("Created directory {destination_path}").into())
         })
         .into()
     }

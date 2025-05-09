@@ -118,6 +118,13 @@ impl Settings for AutoUpdateSetting {
 
         Ok(Self(auto_update.0))
     }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting("update.mode", current, |s| match s {
+            "none" | "manual" => Some(AutoUpdateSettingContent(false)),
+            _ => Some(AutoUpdateSettingContent(true)),
+        });
+    }
 }
 
 #[derive(Default)]
@@ -328,9 +335,13 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.status == AutoUpdateStatus::Idle {
+            return false;
+        }
         self.status = AutoUpdateStatus::Idle;
         cx.notify();
+        true
     }
 
     // If you are packaging Zed and need to override the place it downloads SSH remotes from,

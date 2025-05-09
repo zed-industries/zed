@@ -1,6 +1,7 @@
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
+pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
@@ -23,14 +24,17 @@ mod project_tests;
 mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
+use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
-use task::DebugTaskDefinition;
 pub mod search_history;
 mod yarn;
 
 use crate::git_store::GitStore;
-pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
+pub use git_store::{
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -39,15 +43,12 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    adapters::{DebugAdapterBinary, TcpArguments},
-    client::DebugAdapterClient,
-};
+use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
-    breakpoint_store::BreakpointStore,
+    breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
@@ -57,7 +58,7 @@ use futures::future::join_all;
 use futures::{
     StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
-    future::try_join_all,
+    future::{Shared, try_join_all},
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -69,9 +70,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, Language, LanguageName, LanguageRegistry,
-    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
-    language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
+    Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -97,7 +98,6 @@ use snippet::Snippet;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    net::Ipv4Addr,
     ops::Range,
     path::{Component, Path, PathBuf},
     pin::pin,
@@ -107,7 +107,7 @@ use std::{
 };
 
 use task_store::TaskStore;
-use terminals::{SshCommand, Terminals, wrap_for_ssh};
+use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
@@ -140,7 +140,7 @@ const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
-pub trait ProjectItem {
+pub trait ProjectItem: 'static {
     fn try_open(
         project: &Entity<Project>,
         path: &ProjectPath,
@@ -184,6 +184,7 @@ pub struct Project {
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
     buffer_store: Entity<BufferStore>,
+    context_server_store: Entity<ContextServerStore>,
     image_store: Entity<ImageStore>,
     lsp_store: Entity<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -199,6 +200,13 @@ pub struct Project {
     environment: Entity<ProjectEnvironment>,
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
+    agent_location: Option<AgentLocation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentLocation {
+    pub buffer: WeakEntity<Buffer>,
+    pub position: Anchor,
 }
 
 #[derive(Default)]
@@ -306,7 +314,10 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    AgentLocationChanged,
 }
+
+pub struct AgentLocationChanged;
 
 pub enum DebugAdapterClientState {
     Starting(Task<Option<Arc<DebugAdapterClient>>>),
@@ -320,6 +331,13 @@ pub struct ProjectPath {
 }
 
 impl ProjectPath {
+    pub fn from_file(value: &dyn language::File, cx: &App) -> Self {
+        ProjectPath {
+            worktree_id: value.worktree_id(cx),
+            path: value.path().clone(),
+        }
+    }
+
     pub fn from_proto(p: proto::ProjectPath) -> Self {
         Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
@@ -828,8 +846,9 @@ impl Project {
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-        DapStore::init(&client);
+        DapStore::init(&client, cx);
         BreakpointStore::init(&client);
+        context_server_store::init(cx);
     }
 
     pub fn local(
@@ -849,6 +868,9 @@ impl Project {
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
             let toolchain_store = cx.new(|cx| {
@@ -872,7 +894,6 @@ impl Project {
                     client.http_client(),
                     node.clone(),
                     fs.clone(),
-                    languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
@@ -950,6 +971,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                context_server_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
@@ -981,6 +1003,8 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+
+                agent_location: None,
             }
         })
     }
@@ -1007,6 +1031,9 @@ impl Project {
                 cx.new(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1072,8 +1099,9 @@ impl Project {
             let dap_store = cx.new(|cx| {
                 DapStore::new_ssh(
                     SSH_PROJECT_ID,
-                    ssh_proto.clone(),
+                    ssh.clone(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
                     cx,
                 )
             });
@@ -1091,6 +1119,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                context_server_store,
                 breakpoint_store,
                 dap_store,
                 join_project_response_message_id: 0,
@@ -1101,9 +1130,10 @@ impl Project {
                     cx.on_release(Self::release),
                     cx.on_app_quit(|this, cx| {
                         let shutdown = this.ssh_client.take().and_then(|client| {
-                            client
-                                .read(cx)
-                                .shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+                            client.read(cx).shutdown_processes(
+                                Some(proto::ShutdownRemoteServer {}),
+                                cx.background_executor().clone(),
+                            )
                         });
 
                         cx.background_executor().spawn(async move {
@@ -1136,6 +1166,7 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+                agent_location: None,
             };
 
             // ssh -> local machine handlers
@@ -1160,7 +1191,7 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
-            DapStore::init(&ssh_proto);
+            DapStore::init(&ssh_proto, cx);
             GitStore::init(&ssh_proto);
 
             this
@@ -1248,6 +1279,8 @@ impl Project {
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
+        let context_server_store =
+            cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx))?;
 
         let environment = cx.new(|_| ProjectEnvironment::new(None))?;
 
@@ -1258,6 +1291,7 @@ impl Project {
                 remote_id,
                 client.clone().into(),
                 breakpoint_store.clone(),
+                worktree_store.clone(),
                 cx,
             )
         })?;
@@ -1340,6 +1374,7 @@ impl Project {
                 image_store,
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
+                context_server_store,
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
@@ -1374,6 +1409,7 @@ impl Project {
                 environment,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
+                agent_location: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -1437,9 +1473,10 @@ impl Project {
 
     fn release(&mut self, cx: &mut App) {
         if let Some(client) = self.ssh_client.take() {
-            let shutdown = client
-                .read(cx)
-                .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
+            let shutdown = client.read(cx).shutdown_processes(
+                Some(proto::ShutdownRemoteServer {}),
+                cx.background_executor().clone(),
+            );
 
             cx.background_spawn(async move {
                 if let Some(shutdown) = shutdown {
@@ -1461,79 +1498,6 @@ impl Project {
                 self.disconnected_from_host_internal(cx);
             }
         }
-    }
-
-    pub fn start_debug_session(
-        &mut self,
-        definition: DebugTaskDefinition,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Session>>> {
-        let Some(worktree) = self.worktrees(cx).find(|tree| tree.read(cx).is_visible()) else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
-        let ssh_client = self.ssh_client().clone();
-
-        let result = cx.spawn(async move |this, cx| {
-            let mut binary = this
-                .update(cx, |this, cx| {
-                    this.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.get_debug_adapter_binary(definition.clone(), cx)
-                    })
-                })?
-                .await?;
-
-            if let Some(ssh_client) = ssh_client {
-                let mut ssh_command = ssh_client.update(cx, |ssh, _| {
-                    anyhow::Ok(SshCommand {
-                        arguments: ssh
-                            .ssh_args()
-                            .ok_or_else(|| anyhow!("SSH arguments not found"))?,
-                    })
-                })??;
-
-                let mut connection = None;
-                if let Some(c) = binary.connection {
-                    let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
-                    let port = dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-
-                    ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
-                    connection = Some(TcpArguments {
-                        port: c.port,
-                        host: local_bind_addr,
-                        timeout: c.timeout,
-                    })
-                }
-
-                let (program, args) = wrap_for_ssh(
-                    &ssh_command,
-                    Some((&binary.command, &binary.arguments)),
-                    binary.cwd.as_deref(),
-                    binary.envs,
-                    None,
-                );
-
-                binary = DebugAdapterBinary {
-                    command: program,
-                    arguments: args,
-                    envs: HashMap::default(),
-                    cwd: None,
-                    connection,
-                    request_args: binary.request_args,
-                }
-            };
-
-            let ret = this
-                .update(cx, |project, cx| {
-                    project.dap_store.update(cx, |dap_store, cx| {
-                        dap_store.new_session(binary, definition, worktree.downgrade(), None, cx)
-                    })
-                })?
-                .1
-                .await;
-            ret
-        });
-        result
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1625,12 +1589,25 @@ impl Project {
         self.breakpoint_store.clone()
     }
 
+    pub fn active_debug_session(&self, cx: &App) -> Option<(Entity<Session>, ActiveStackFrame)> {
+        let active_position = self.breakpoint_store.read(cx).active_position()?;
+        let session = self
+            .dap_store
+            .read(cx)
+            .session_by_id(active_position.session_id)?;
+        Some((session, active_position.clone()))
+    }
+
     pub fn lsp_store(&self) -> Entity<LspStore> {
         self.lsp_store.clone()
     }
 
     pub fn worktree_store(&self) -> Entity<WorktreeStore> {
         self.worktree_store.clone()
+    }
+
+    pub fn context_server_store(&self) -> Entity<ContextServerStore> {
+        self.context_server_store.clone()
     }
 
     pub fn buffer_for_id(&self, remote_id: BufferId, cx: &App) -> Option<Entity<Buffer>> {
@@ -1667,6 +1644,27 @@ impl Project {
 
     pub fn cli_environment(&self, cx: &App) -> Option<HashMap<String, String>> {
         self.environment.read(cx).get_cli_environment()
+    }
+
+    pub fn buffer_environment<'a>(
+        &'a self,
+        buffer: &Entity<Buffer>,
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &'a mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_buffer_environment(&buffer, &worktree_store, cx)
+        })
+    }
+
+    pub fn directory_environment(
+        &self,
+        abs_path: Arc<Path>,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_directory_environment(abs_path, cx)
+        })
     }
 
     pub fn shell_environment_errors<'a>(
@@ -3558,6 +3556,59 @@ impl Project {
         })
     }
 
+    pub fn inline_values(
+        &mut self,
+        session: Entity<Session>,
+        active_stack_frame: ActiveStackFrame,
+        buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<InlayHint>>> {
+        let language_name = buffer_handle
+            .read(cx)
+            .language()
+            .map(|language| language.name().to_string());
+
+        let Some(inline_value_provider) = language_name
+            .and_then(|language| DapRegistry::global(cx).inline_value_provider(&language))
+        else {
+            return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
+        };
+
+        let snapshot = buffer_handle.read(cx).snapshot();
+
+        let root_node = snapshot.syntax_root_ancestor(range.end).unwrap();
+
+        let row = snapshot
+            .summary_for_anchor::<text::PointUtf16>(&range.end)
+            .row as usize;
+
+        let inline_value_locations = inline_value_provider.provide(
+            root_node,
+            snapshot
+                .text_for_range(Anchor::MIN..range.end)
+                .collect::<String>()
+                .as_str(),
+            row,
+        );
+
+        let stack_frame_id = active_stack_frame.stack_frame_id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |project, cx| {
+                project.dap_store().update(cx, |dap_store, cx| {
+                    dap_store.resolve_inline_value_locations(
+                        session,
+                        stack_frame_id,
+                        buffer_handle,
+                        inline_value_locations,
+                        cx,
+                    )
+                })
+            })?
+            .await
+        })
+    }
+
     pub fn inlay_hints<T: ToOffset>(
         &mut self,
         buffer_handle: Entity<Buffer>,
@@ -3855,11 +3906,7 @@ impl Project {
         })
     }
 
-    pub fn resolve_abs_path(
-        &self,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<ResolvedPath>> {
+    pub fn resolve_abs_path(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
@@ -4118,23 +4165,36 @@ impl Project {
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree_root_name = worktree.read(cx).root_name();
-            if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: relative_path.into(),
-                });
-            }
-        }
+        if path.is_absolute() {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_abs_path = worktree.read(cx).abs_path();
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree = worktree.read(cx);
-            if let Some(entry) = worktree.entry_for_path(path) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: entry.path.clone(),
-                });
+                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+        } else {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_root_name = worktree.read(cx).root_name();
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_path(path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
             }
         }
 
@@ -4858,6 +4918,46 @@ impl Project {
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         self.git_store.read(cx).status_for_buffer_id(buffer_id, cx)
     }
+
+    pub fn set_agent_location(
+        &mut self,
+        new_location: Option<AgentLocation>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(old_location) = self.agent_location.as_ref() {
+            old_location
+                .buffer
+                .update(cx, |buffer, cx| buffer.remove_agent_selections(cx))
+                .ok();
+        }
+
+        if let Some(location) = new_location.as_ref() {
+            location
+                .buffer
+                .update(cx, |buffer, cx| {
+                    buffer.set_agent_selections(
+                        Arc::from([language::Selection {
+                            id: 0,
+                            start: location.position,
+                            end: location.position,
+                            reversed: false,
+                            goal: language::SelectionGoal::None,
+                        }]),
+                        false,
+                        CursorShape::Hollow,
+                        cx,
+                    )
+                })
+                .ok();
+        }
+
+        self.agent_location = new_location;
+        cx.emit(Event::AgentLocationChanged);
+    }
+
+    pub fn agent_location(&self) -> Option<AgentLocation> {
+        self.agent_location.clone()
+    }
 }
 
 pub struct PathMatchCandidateSet {
@@ -5035,6 +5135,13 @@ impl ResolvedPath {
         }
     }
 
+    pub fn into_abs_path(self) -> Option<PathBuf> {
+        match self {
+            Self::AbsPath { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match self {
             Self::ProjectPath { project_path, .. } => Some(&project_path),
@@ -5080,18 +5187,29 @@ impl ProjectItem for Buffer {
 }
 
 impl Completion {
-    /// A key that can be used to sort completions when displaying
-    /// them to the user.
-    pub fn sort_key(&self) -> (usize, &str) {
-        const DEFAULT_KIND_KEY: usize = 2;
-        let kind_key = self
-            .source
+    pub fn kind(&self) -> Option<CompletionItemKind> {
+        self.source
             // `lsp::CompletionListItemDefaults` has no `kind` field
             .lsp_completion(false)
             .and_then(|lsp_completion| lsp_completion.kind)
+    }
+
+    pub fn label(&self) -> Option<String> {
+        self.source
+            .lsp_completion(false)
+            .map(|lsp_completion| lsp_completion.label.clone())
+    }
+
+    /// A key that can be used to sort completions when displaying
+    /// them to the user.
+    pub fn sort_key(&self) -> (usize, &str) {
+        const DEFAULT_KIND_KEY: usize = 3;
+        let kind_key = self
+            .kind()
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),
+                lsp::CompletionItemKind::CONSTANT => Some(2),
                 _ => None,
             })
             .unwrap_or(DEFAULT_KIND_KEY);

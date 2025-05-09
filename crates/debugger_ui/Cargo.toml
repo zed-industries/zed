@@ -15,11 +15,15 @@ doctest = false
 [features]
 test-support = [
     "dap/test-support",
+    "dap_adapters/test-support",
     "editor/test-support",
     "gpui/test-support",
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
+    "env_logger",
+    "unindent",
+    "debugger_tools"
 ]
 
 [dependencies]
@@ -28,6 +32,7 @@ client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 dap.workspace = true
+dap_adapters = { workspace = true, optional = true }
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
@@ -37,6 +42,8 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
 picker.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
@@ -53,9 +60,14 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
+env_logger = { workspace = true, optional = true }
+debugger_tools = { workspace = true, optional = true }
+unindent = { workspace = true, optional = true }
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
+dap_adapters = { workspace = true, features = ["test-support"] }
+debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
