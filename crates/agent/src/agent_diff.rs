@@ -1,6 +1,4 @@
-use crate::{
-    Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent, ui::AnimatedLabel,
-};
+use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent};
 use anyhow::Result;
 use assistant_settings::AssistantSettings;
 use buffer_diff::DiffHunkStatus;
