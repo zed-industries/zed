@@ -30,6 +30,9 @@ pub struct ListItem {
     /// A slot for content that appears on hover after the children
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
+    /// A slot for content that only renders on hover or focus,
+    /// This slot doesn't use any `visibility`-related approach to rendering elements inside of it.
+    end_slot_conditional: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -43,6 +46,7 @@ pub struct ListItem {
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
+    hovered: bool,
 }
 
 impl ListItem {
@@ -58,6 +62,7 @@ impl ListItem {
             start_slot: None,
             end_slot: None,
             end_hover_slot: None,
+            end_slot_conditional: None,
             toggle: None,
             inset: false,
             on_click: None,
@@ -71,6 +76,7 @@ impl ListItem {
             rounded: false,
             overflow_x: false,
             focused: None,
+            hovered: false,
         }
     }
 
@@ -158,6 +164,11 @@ impl ListItem {
         self
     }
 
+    pub fn end_slot_conditional<E: IntoElement>(mut self, element: impl Into<Option<E>>) -> Self {
+        self.end_slot_conditional = element.into().map(IntoElement::into_any_element);
+        self
+    }
+
     pub fn outlined(mut self) -> Self {
         self.outlined = true;
         self
@@ -175,6 +186,11 @@ impl ListItem {
 
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = Some(focused);
+        self
+    }
+
+    pub fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
         self
     }
 }
@@ -233,6 +249,27 @@ impl RenderOnce for ListItem {
                     })
             })
             .when(self.rounded, |this| this.rounded_sm())
+            // .on_hover(move |this, hovered, cx| {
+            //     this.hovered = *hovered;
+            //     // cx.notify();
+            //     this
+            // })
+            // .on_hover(cx.listener(|this, hovered, window, cx| {
+            //     if *hovered {
+            //         this.hovered = true;
+            //     } else {
+            //         this.hovered = false;
+            //     }
+            //     cx.notify();
+            //     this
+            // }))
+            // .on_hover(move |_this, hovered, _cx| {
+            //     // Simply use the hovered state directly
+            //     let is_hovered = *hovered;
+            //     // Update the condition for end_slot_conditional
+            //     // This will be checked later in the render tree
+            //     is_hovered
+            // })
             .child(
                 h_flex()
                     .id("inner_list_item")
@@ -340,6 +377,10 @@ impl RenderOnce for ListItem {
                                 .visible_on_hover("list_item")
                                 .child(end_hover_slot),
                         )
+                    })
+                    .when_some(self.end_slot_conditional, |this, container| {
+                        let should_show = self.selected || self.focused.is_some() || self.hovered;
+                        this.when(should_show, |this| this.child(container))
                     }),
             )
     }
