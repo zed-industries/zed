@@ -252,9 +252,31 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 path: Arc::from(Path::new(&action.filename)),
             };
 
-            editor
-                .save_as(project, project_path, window, cx)
-                .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
+            if project.read(cx).entry_for_path(&project_path, cx).is_some() {
+                let answer = window.prompt(
+                    gpui::PromptLevel::Critical,
+                    &format!("{} already exists. Do you want to replace it?", project_path.path.to_string_lossy()),
+                    Some(
+                        "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
+                    ),
+                    &["Replace", "Cancel"],
+                cx);
+                cx.spawn_in(window, async move |editor, cx| {
+                    if answer.await.ok() != Some(0) {
+                        return;
+                    }
+
+                    let _ = editor.update_in(cx, |editor, window, cx|{
+                        editor
+                            .save_as(project, project_path, window, cx)
+                            .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
+                    });
+                }).detach();
+            } else {
+                editor
+                    .save_as(project, project_path, window, cx)
+                    .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
+            }
         });
     });
 
