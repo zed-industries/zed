@@ -554,12 +554,7 @@ impl ToolCard for EditFileToolCard {
                                         this.error_expanded.take();
                                     } else {
                                         this.error_expanded = Some(cx.new(|cx| {
-                                            Markdown::new(
-                                                error_message.clone().into(),
-                                                None,
-                                                None,
-                                                cx,
-                                            )
+                                            Markdown::new(error_message.clone(), None, None, cx)
                                         }))
                                     }
                                     cx.notify();
