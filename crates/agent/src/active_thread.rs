@@ -1467,12 +1467,10 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+    fn move_up(&mut self, _: &MoveUp, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, state)) = self.editing_message.as_mut() {
             if state.context_picker_menu_handle.is_deployed() {
                 cx.propagate();
-            } else {
-                state.context_strip.focus_handle(cx).focus(window);
             }
         }
     }
