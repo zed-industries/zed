@@ -3,7 +3,7 @@
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use anyhow::{Result, anyhow};
 pub use breakpoints_in_file::BreakpointWithPosition;
-use breakpoints_in_file::BreakpointsInFile;
+use breakpoints_in_file::{BreakpointsInFile, StatefulBreakpoint};
 use collections::BTreeMap;
 use dap::{StackFrameId, client::SessionId};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
@@ -32,11 +32,23 @@ mod breakpoints_in_file {
         pub bp: Breakpoint,
     }
 
-    /// A breakpoint with per-session data about it's state.
-    #[derive(Clone, Debug, PartialEq, Eq)]
+    /// A breakpoint with per-session data about it's state (as seen by the Debug Adapter).
+    #[derive(Clone, Debug)]
     pub struct StatefulBreakpoint {
         pub bp: BreakpointWithPosition,
         pub session_state: HashMap<SessionId, BreakpointSessionState>,
+    }
+
+    impl StatefulBreakpoint {
+        pub(super) fn new(bp: BreakpointWithPosition) -> Self {
+            Self {
+                bp,
+                session_state: Default::default(),
+            }
+        }
+        pub(super) fn position(&self) -> &text::Anchor {
+            &self.bp.position
+        }
     }
 
     #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -49,7 +61,7 @@ mod breakpoints_in_file {
     pub(super) struct BreakpointsInFile {
         pub(super) buffer: Entity<Buffer>,
         // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
-        pub(super) breakpoints: Vec<BreakpointWithPosition>,
+        pub(super) breakpoints: Vec<StatefulBreakpoint>,
         _subscription: Arc<Subscription>,
     }
 
@@ -220,9 +232,14 @@ impl BreakpointStore {
                     let position =
                         language::proto::deserialize_anchor(breakpoint.position.clone()?)?;
                     let breakpoint = Breakpoint::from_proto(breakpoint)?;
-                    Some(BreakpointWithPosition {
+                    let bp = BreakpointWithPosition {
                         position,
                         bp: breakpoint,
+                    };
+
+                    Some(StatefulBreakpoint {
+                        bp,
+                        session_state: todo!(),
                     })
                 })
                 .collect();
@@ -287,7 +304,7 @@ impl BreakpointStore {
                         .breakpoints
                         .iter()
                         .filter_map(|breakpoint| {
-                            breakpoint.bp.to_proto(&path, &breakpoint.position)
+                            breakpoint.bp.bp.to_proto(&path, &breakpoint.position())
                         })
                         .collect(),
                 });
@@ -331,18 +348,21 @@ impl BreakpointStore {
                 let len_before = breakpoint_set.breakpoints.len();
                 breakpoint_set
                     .breakpoints
-                    .retain(|value| &breakpoint != value);
+                    .retain(|value| breakpoint != value.bp);
                 if len_before == breakpoint_set.breakpoints.len() {
                     // We did not remove any breakpoint, hence let's toggle one.
-                    breakpoint_set.breakpoints.push(breakpoint.clone());
+                    breakpoint_set
+                        .breakpoints
+                        .push(StatefulBreakpoint::new(breakpoint.clone()));
                 }
             }
             BreakpointEditAction::InvertState => {
-                if let Some(BreakpointWithPosition { bp, .. }) = breakpoint_set
+                if let Some(bp) = breakpoint_set
                     .breakpoints
                     .iter_mut()
-                    .find(|value| breakpoint == **value)
+                    .find(|value| breakpoint == value.bp)
                 {
+                    let bp = &mut bp.bp.bp;
                     if bp.is_enabled() {
                         bp.state = BreakpointState::Disabled;
                     } else {
@@ -350,38 +370,35 @@ impl BreakpointStore {
                     }
                 } else {
                     breakpoint.bp.state = BreakpointState::Disabled;
-                    breakpoint_set.breakpoints.push(breakpoint.clone());
+                    breakpoint_set
+                        .breakpoints
+                        .push(StatefulBreakpoint::new(breakpoint.clone()));
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
-                    let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(
-                        |BreakpointWithPosition {
-                             position: other_pos,
-                             bp: other_bp,
-                         }| {
-                            if breakpoint.position == *other_pos {
-                                Some(other_bp)
-                            } else {
-                                None
-                            }
-                        },
-                    );
+                    let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(|bp| {
+                        if breakpoint.position == *bp.position() {
+                            Some(&mut bp.bp.bp)
+                        } else {
+                            None
+                        }
+                    });
 
                     if let Some(found_bp) = found_bp {
                         found_bp.message = Some(log_message.clone());
                     } else {
                         breakpoint.bp.message = Some(log_message.clone());
                         // We did not remove any breakpoint, hence let's toggle one.
-                        breakpoint_set.breakpoints.push(breakpoint.clone());
+                        breakpoint_set
+                            .breakpoints
+                            .push(StatefulBreakpoint::new(breakpoint.clone()));
                     }
                 } else if breakpoint.bp.message.is_some() {
                     if let Some(position) = breakpoint_set
                         .breakpoints
                         .iter()
-                        .find_position(|other| {
-                            breakpoint.position == other.position && other.bp == breakpoint.bp
-                        })
+                        .find_position(|other| breakpoint == other.bp)
                         .map(|res| res.0)
                     {
                         breakpoint_set.breakpoints.remove(position);
@@ -393,8 +410,8 @@ impl BreakpointStore {
             BreakpointEditAction::EditHitCondition(hit_condition) => {
                 if !hit_condition.is_empty() {
                     let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(|other| {
-                        if breakpoint.position == other.position {
-                            Some(&mut other.bp)
+                        if breakpoint.position == *other.position() {
+                            Some(&mut other.bp.bp)
                         } else {
                             None
                         }
@@ -405,15 +422,15 @@ impl BreakpointStore {
                     } else {
                         breakpoint.bp.hit_condition = Some(hit_condition.clone());
                         // We did not remove any breakpoint, hence let's toggle one.
-                        breakpoint_set.breakpoints.push(breakpoint.clone());
+                        breakpoint_set
+                            .breakpoints
+                            .push(StatefulBreakpoint::new(breakpoint.clone()))
                     }
                 } else if breakpoint.bp.hit_condition.is_some() {
                     if let Some(position) = breakpoint_set
                         .breakpoints
                         .iter()
-                        .find_position(|bp| {
-                            breakpoint.position == bp.position && bp.bp == breakpoint.bp
-                        })
+                        .find_position(|bp| breakpoint == bp.bp)
                         .map(|res| res.0)
                     {
                         breakpoint_set.breakpoints.remove(position);
@@ -425,8 +442,8 @@ impl BreakpointStore {
             BreakpointEditAction::EditCondition(condition) => {
                 if !condition.is_empty() {
                     let found_bp = breakpoint_set.breakpoints.iter_mut().find_map(|other| {
-                        if breakpoint.position == other.position {
-                            Some(&mut other.bp)
+                        if breakpoint.position == *other.position() {
+                            Some(&mut other.bp.bp)
                         } else {
                             None
                         }
@@ -437,15 +454,15 @@ impl BreakpointStore {
                     } else {
                         breakpoint.bp.condition = Some(condition.clone());
                         // We did not remove any breakpoint, hence let's toggle one.
-                        breakpoint_set.breakpoints.push(breakpoint.clone());
+                        breakpoint_set
+                            .breakpoints
+                            .push(StatefulBreakpoint::new(breakpoint.clone()));
                     }
                 } else if breakpoint.bp.condition.is_some() {
                     if let Some(position) = breakpoint_set
                         .breakpoints
                         .iter()
-                        .find_position(|bp| {
-                            breakpoint.position == bp.position && bp.bp == breakpoint.bp
-                        })
+                        .find_position(|bp| breakpoint == bp.bp)
                         .map(|res| res.0)
                     {
                         breakpoint_set.breakpoints.remove(position);
@@ -476,7 +493,7 @@ impl BreakpointStore {
                     breakpoint_set
                         .breakpoints
                         .iter()
-                        .filter_map(|bp| bp.bp.to_proto(&abs_path, &bp.position))
+                        .filter_map(|bp| bp.bp.bp.to_proto(&abs_path, bp.position()))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -526,15 +543,18 @@ impl BreakpointStore {
             .and_then(|path| self.breakpoints.get(&path))
             .into_iter()
             .flat_map(move |file_breakpoints| {
-                file_breakpoints.breakpoints.iter().filter({
+                file_breakpoints.breakpoints.iter().filter_map({
                     let range = range.clone();
                     move |bp| {
                         if let Some(range) = &range {
-                            bp.position.cmp(&range.start, buffer_snapshot).is_ge()
-                                && bp.position.cmp(&range.end, buffer_snapshot).is_le()
-                        } else {
-                            true
+                            if bp.position().cmp(&range.start, buffer_snapshot).is_lt()
+                                || bp.position().cmp(&range.end, buffer_snapshot).is_gt()
+                            {
+                                return None;
+                            }
                         }
+
+                        Some(&bp.bp)
                     }
                 })
             })
@@ -591,8 +611,8 @@ impl BreakpointStore {
             breakpoints
                 .breakpoints
                 .iter()
-                .find(|bp| bp.position.summary::<Point>(&snapshot).row == row)
-                .map(|breakpoint| (breakpoints.buffer.clone(), breakpoint.clone()))
+                .find(|bp| bp.position().summary::<Point>(&snapshot).row == row)
+                .map(|breakpoint| (breakpoints.buffer.clone(), breakpoint.bp.clone()))
         })
     }
 
@@ -604,7 +624,8 @@ impl BreakpointStore {
                 bp.breakpoints
                     .iter()
                     .map(|bp| {
-                        let position = snapshot.summary_for_anchor::<PointUtf16>(&bp.position).row;
+                        let position = snapshot.summary_for_anchor::<PointUtf16>(bp.position()).row;
+                        let bp = &bp.bp;
                         SourceBreakpoint {
                             row: position,
                             path: path.clone(),
@@ -630,8 +651,9 @@ impl BreakpointStore {
                         .iter()
                         .map(|breakpoint| {
                             let position = snapshot
-                                .summary_for_anchor::<PointUtf16>(&breakpoint.position)
+                                .summary_for_anchor::<PointUtf16>(&breakpoint.position())
                                 .row;
+                            let breakpoint = &breakpoint.bp;
                             SourceBreakpoint {
                                 row: position,
                                 path: path.clone(),
@@ -695,7 +717,7 @@ impl BreakpointStore {
                         let position = snapshot.anchor_after(point);
                         breakpoints_for_file
                             .breakpoints
-                            .push(BreakpointWithPosition {
+                            .push(StatefulBreakpoint::new(BreakpointWithPosition {
                                 position,
                                 bp: Breakpoint {
                                     message: bp.message,
@@ -703,7 +725,7 @@ impl BreakpointStore {
                                     condition: bp.condition,
                                     hit_condition: bp.hit_condition,
                                 },
-                            })
+                            }))
                     }
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
