@@ -7453,8 +7453,10 @@ impl Element for EditorElement {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
                     if cx.has_flag::<DebuggerFeatureFlag>() {
-                        for display_row in breakpoint_rows.keys() {
-                            active_rows.entry(*display_row).or_default().breakpoint = true;
+                        for (display_row, (_, bp, state)) in &breakpoint_rows {
+                            if bp.is_enabled() && state.is_none_or(|s| s.verified) {
+                                active_rows.entry(*display_row).or_default().breakpoint = true;
+                            }
                         }
                     }
 
