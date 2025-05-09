@@ -4972,7 +4972,10 @@ impl Workspace {
 
         if let Some(location) = self.serialize_workspace_location(cx) {
             let breakpoints = self.project.update(cx, |project, cx| {
-                project.breakpoint_store().read(cx).all_breakpoints(cx)
+                project
+                    .breakpoint_store()
+                    .read(cx)
+                    .all_source_breakpoints(cx)
             });
 
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);

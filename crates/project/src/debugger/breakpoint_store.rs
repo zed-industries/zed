@@ -2,7 +2,7 @@
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use anyhow::{Result, anyhow};
-pub use breakpoints_in_file::BreakpointWithPosition;
+pub use breakpoints_in_file::{BreakpointSessionState, BreakpointWithPosition};
 use breakpoints_in_file::{BreakpointsInFile, StatefulBreakpoint};
 use collections::BTreeMap;
 use dap::{StackFrameId, client::SessionId};
@@ -15,6 +15,7 @@ use rpc::{
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
 use text::{Point, PointUtf16};
+use util::maybe;
 
 use crate::{Project, ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
 
@@ -54,8 +55,8 @@ mod breakpoints_in_file {
     #[derive(Clone, Debug, Hash, PartialEq, Eq)]
     pub struct BreakpointSessionState {
         /// Session-specific identifier for the breakpoint, as assigned by Debug Adapter.
-        id: Box<str>,
-        verified: bool,
+        pub id: u64,
+        pub verified: bool,
     }
     #[derive(Clone)]
     pub(super) struct BreakpointsInFile {
@@ -317,8 +318,24 @@ impl BreakpointStore {
         session_id: SessionId,
         abs_path: &Path,
 
-        it: impl Iterator<Item = (BreakpointWithPosition, bool)>,
+        it: impl Iterator<Item = (BreakpointWithPosition, BreakpointSessionState)>,
     ) {
+        maybe!({
+            let breakpoints = self.breakpoints.get_mut(abs_path)?;
+            for (breakpoint, state) in it {
+                if let Some(to_update) = breakpoints
+                    .breakpoints
+                    .iter_mut()
+                    .find(|bp| *bp.position() == breakpoint.position)
+                {
+                    to_update
+                        .session_state
+                        .entry(session_id)
+                        .insert_entry(state);
+                }
+            }
+            Some(())
+        });
     }
 
     pub fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -640,7 +657,18 @@ impl BreakpointStore {
             .unwrap_or_default()
     }
 
-    pub fn all_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
+    pub fn all_breakpoints(&self) -> BTreeMap<Arc<Path>, Vec<BreakpointWithPosition>> {
+        self.breakpoints
+            .iter()
+            .map(|(path, bp)| {
+                (
+                    path.clone(),
+                    bp.breakpoints.iter().map(|bp| bp.bp.clone()).collect(),
+                )
+            })
+            .collect()
+    }
+    pub fn all_source_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
         self.breakpoints
             .iter()
             .map(|(path, bp)| {

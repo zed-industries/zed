@@ -1,3 +1,5 @@
+use crate::debugger::breakpoint_store::BreakpointSessionState;
+
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
 };
@@ -271,8 +273,11 @@ impl LocalMode {
         cx: &App,
     ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         let mut breakpoint_tasks = Vec::new();
-        let breakpoints = breakpoint_store.read_with(cx, |store, cx| store.all_breakpoints(cx));
-
+        let breakpoints =
+            breakpoint_store.read_with(cx, |store, cx| store.all_source_breakpoints(cx));
+        let mut raw_breakpoints = breakpoint_store.read_with(cx, |this, cx| this.all_breakpoints());
+        debug_assert_eq!(raw_breakpoints.len(), breakpoints.len());
+        let session_id = self.client.id();
         for (path, breakpoints) in breakpoints {
             let breakpoints = if ignore_breakpoints {
                 vec![]
@@ -284,14 +289,46 @@ impl LocalMode {
                     .collect()
             };
 
-            breakpoint_tasks.push(
-                self.request(dap_command::SetBreakpoints {
+            let raw_breakpoints = raw_breakpoints
+                .remove(&path)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|bp| bp.bp.state.is_enabled());
+            let error_path = path.clone();
+            let send_request = self
+                .request(dap_command::SetBreakpoints {
                     source: client_source(&path),
                     source_modified: Some(false),
                     breakpoints,
                 })
-                .map(|result| result.map_err(|e| (path, e))),
-            );
+                .map(|result| result.map_err(move |e| (error_path, e)));
+
+            let task = cx.spawn({
+                let breakpoint_store = breakpoint_store.downgrade();
+                async move |cx| {
+                    let breakpoints = cx.background_spawn(send_request).await?;
+
+                    let breakpoints = breakpoints.into_iter().zip(raw_breakpoints).filter_map(
+                        |(dap_bp, zed_bp)| {
+                            Some((
+                                zed_bp,
+                                BreakpointSessionState {
+                                    id: dap_bp.id?,
+                                    verified: dap_bp.verified,
+                                },
+                            ))
+                        },
+                    );
+                    breakpoint_store
+                        .update(cx, |this, _| {
+                            this.mark_breakpoints_verified(session_id, &path, breakpoints);
+                        })
+                        .ok();
+
+                    Ok(())
+                }
+            });
+            breakpoint_tasks.push(task);
         }
 
         cx.background_spawn(async move {
