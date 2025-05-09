@@ -2234,7 +2234,7 @@ impl ActiveThread {
                 // Backdrop to dim out the whole thread below the editing user message
                 parent.relative().child(
                     div()
-                        .occlude()
+                        .stop_mouse_events_except_scroll()
                         .absolute()
                         .inset_0()
                         .size_full()
