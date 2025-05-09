@@ -5,23 +5,21 @@ use collections::{FxHashMap, FxHashSet};
 use itertools::Itertools;
 use util::ResultExt;
 use windows::Win32::{
-    Foundation::HANDLE,
+    Foundation::{HANDLE, HGLOBAL},
     System::{
         DataExchange::{
             CloseClipboard, CountClipboardFormats, EmptyClipboard, EnumClipboardFormats,
             GetClipboardData, GetClipboardFormatNameW, IsClipboardFormatAvailable, OpenClipboard,
             RegisterClipboardFormatW, SetClipboardData,
         },
-        Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
+        Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock},
         Ole::{CF_HDROP, CF_UNICODETEXT},
     },
     UI::Shell::{DragQueryFileW, HDROP},
 };
 use windows_core::PCWSTR;
 
-use crate::{
-    ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, SmartGlobal, hash,
-};
+use crate::{ClipboardEntry, ClipboardItem, ClipboardString, Image, ImageFormat, hash};
 
 // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
 const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
@@ -268,13 +266,10 @@ where
 }
 
 fn read_string_from_clipboard() -> Option<ClipboardEntry> {
-    let text = {
-        let global = SmartGlobal::from_raw_ptr(
-            unsafe { GetClipboardData(CF_UNICODETEXT.0 as u32).log_err() }?.0,
-        );
-        let text = PCWSTR(global.lock() as *const u16);
-        String::from_utf16_lossy(unsafe { text.as_wide() })
-    };
+    let text = with_clipboard_data(CF_UNICODETEXT.0 as u32, |global| {
+        let pcwstr = PCWSTR(global as *const u16);
+        String::from_utf16_lossy(unsafe { pcwstr.as_wide() })
+    })?;
     let Some(hash) = read_hash_from_clipboard() else {
         return Some(ClipboardEntry::String(ClipboardString::new(text)));
     };
@@ -295,25 +290,23 @@ fn read_hash_from_clipboard() -> Option<u64> {
     if unsafe { IsClipboardFormatAvailable(*CLIPBOARD_HASH_FORMAT).is_err() } {
         return None;
     }
-    let global =
-        SmartGlobal::from_raw_ptr(unsafe { GetClipboardData(*CLIPBOARD_HASH_FORMAT).log_err() }?.0);
-    let raw_ptr = global.lock() as *const u16;
-    let hash_bytes: [u8; 8] = unsafe {
-        std::slice::from_raw_parts(raw_ptr.cast::<u8>(), 8)
-            .to_vec()
-            .try_into()
-            .log_err()
-    }?;
-    Some(u64::from_ne_bytes(hash_bytes))
+    with_clipboard_data(*CLIPBOARD_HASH_FORMAT, |global| {
+        let hash_bytes: [u8; 8] = unsafe {
+            std::slice::from_raw_parts(global.cast::<u8>(), 8)
+                .to_vec()
+                .try_into()
+                .log_err()
+        }?;
+        Some(u64::from_ne_bytes(hash_bytes))
+    })?
 }
 
 fn read_metadata_from_clipboard() -> Option<String> {
     unsafe { IsClipboardFormatAvailable(*CLIPBOARD_METADATA_FORMAT).log_err()? };
-    let global = SmartGlobal::from_raw_ptr(
-        unsafe { GetClipboardData(*CLIPBOARD_METADATA_FORMAT).log_err() }?.0,
-    );
-    let text = PCWSTR(global.lock() as *const u16);
-    Some(String::from_utf16_lossy(unsafe { text.as_wide() }))
+    with_clipboard_data(*CLIPBOARD_METADATA_FORMAT, |global| {
+        let pcwstr = PCWSTR(global as *const u16);
+        String::from_utf16_lossy(unsafe { pcwstr.as_wide() })
+    })
 }
 
 fn read_image_from_clipboard(format: u32) -> Option<ClipboardEntry> {
@@ -327,27 +320,48 @@ fn format_number_to_image_format(format_number: u32) -> Option<&'static ImageFor
 }
 
 fn read_image_for_type(format_number: u32, format: ImageFormat) -> Option<ClipboardEntry> {
-    let global = SmartGlobal::from_raw_ptr(unsafe { GetClipboardData(format_number).log_err() }?.0);
-    let image_ptr = global.lock();
-    let iamge_size = global.size();
-    let bytes =
-        unsafe { std::slice::from_raw_parts(image_ptr as *mut u8 as _, iamge_size).to_vec() };
-    let id = hash(&bytes);
+    let (bytes, id) = with_clipboard_data_and_size(format_number, |global, size| {
+        let bytes = unsafe { std::slice::from_raw_parts(global as *mut u8 as _, size).to_vec() };
+        let id = hash(&bytes);
+        (bytes, id)
+    })?;
     Some(ClipboardEntry::Image(Image { format, bytes, id }))
 }
 
 fn read_files_from_clipboard() -> Option<ClipboardEntry> {
-    let global =
-        SmartGlobal::from_raw_ptr(unsafe { GetClipboardData(CF_HDROP.0 as u32).log_err() }?.0);
-    let hdrop = HDROP(global.lock());
-    let mut filenames = String::new();
-    with_file_names(hdrop, |file_name| {
-        filenames.push_str(&file_name);
-    });
+    let text = with_clipboard_data(CF_HDROP.0 as u32, |global| {
+        let hdrop = HDROP(global);
+        let mut filenames = String::new();
+        with_file_names(hdrop, |file_name| {
+            filenames.push_str(&file_name);
+        });
+        filenames
+    })?;
     Some(ClipboardEntry::String(ClipboardString {
-        text: filenames,
+        text,
         metadata: None,
     }))
+}
+
+fn with_clipboard_data<F, R>(format: u32, f: F) -> Option<R>
+where
+    F: FnOnce(*mut std::ffi::c_void) -> R,
+{
+    let global = unsafe { GetClipboardData(format).log_err() }?.0;
+    let result = f(global);
+    unsafe { GlobalUnlock(HGLOBAL(global)).log_err() };
+    Some(result)
+}
+
+fn with_clipboard_data_and_size<F, R>(format: u32, f: F) -> Option<R>
+where
+    F: FnOnce(*mut std::ffi::c_void, usize) -> R,
+{
+    let global = unsafe { GetClipboardData(format).log_err() }?.0;
+    let global_size = unsafe { GlobalSize(HGLOBAL(global)) };
+    let result = f(global, global_size);
+    unsafe { GlobalUnlock(HGLOBAL(global)).log_err() };
+    Some(result)
 }
 
 impl From<ImageFormat> for image::ImageFormat {
