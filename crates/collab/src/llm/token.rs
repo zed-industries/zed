@@ -66,7 +66,7 @@ impl LlmTokenClaims {
         let subscription_period =
             billing_subscription::Model::current_period(subscription, is_staff)
                 .map(|(start, end)| (start.naive_utc(), end.naive_utc()))
-                .ok_or_else(|| anyhow!("missing subscription period"))?;
+                .ok_or_else(|| anyhow!("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started."))?;
 
         let now = Utc::now();
         let claims = Self {
