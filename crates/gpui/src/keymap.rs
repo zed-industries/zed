@@ -147,20 +147,33 @@ impl Keymap {
         });
 
         let mut bindings: SmallVec<[(KeyBinding, usize); 1]> = SmallVec::new();
-        let mut is_pending_opt: Option<(bool, usize)> = None;
+
+        // (pending, is_no_action, depth)
+        let mut pending_info_opt: Option<(bool, bool, usize)> = None;
 
         'outer: for (binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
                 if self.binding_enabled(binding, &context_stack[0..depth]) {
+                    let is_no_action = is_no_action(&*binding.action);
                     // We only want to consider a binding pending if it has an action
                     // This, however, means that if we have both a NoAction binding and a binding
                     // with an action at the same depth, we should still set is_pending to true.
-                    if let Some(is_pending) = is_pending_opt.as_mut() {
-                        if !is_pending.0 && pending && is_pending.1 == depth {
-                            is_pending.0 = !is_no_action(&*binding.action);
+                    if let Some(pending_info) = pending_info_opt.as_mut() {
+                        let (already_pending, pending_is_no_action, pending_depth) = *pending_info;
+
+                        // We only want to change the pending status if it's not already pending AND if
+                        // the existing pending status was set by a NoAction binding. This avoids a NoAction
+                        // binding erroneously setting the pending status to true when a binding with an action
+                        // already set it to false
+                        if pending
+                            && !already_pending
+                            && pending_is_no_action
+                            && pending_depth == depth
+                        {
+                            pending_info.0 = !is_no_action;
                         }
                     } else {
-                        is_pending_opt = Some((pending && !is_no_action(&*binding.action), depth));
+                        pending_info_opt = Some((pending && !is_no_action, is_no_action, depth));
                     }
 
                     if !pending {
@@ -182,7 +195,7 @@ impl Keymap {
             })
             .collect();
 
-        (bindings, is_pending_opt.unwrap_or_default().0)
+        (bindings, pending_info_opt.unwrap_or_default().0)
     }
 
     /// Check if the given binding is enabled, given a certain key context.
