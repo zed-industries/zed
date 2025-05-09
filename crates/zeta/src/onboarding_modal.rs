@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
 use anyhow::Context as _;
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
@@ -246,6 +246,12 @@ impl Render for ZedPredictModal {
         let window_height = window.viewport_size().height;
         let max_height = window_height - px(200.);
 
+        let has_subscription_period = self.user_store.read(cx).subscription_period().is_some();
+        let plan = self.user_store.read(cx).current_plan().filter(|_| {
+            // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
+            has_subscription_period
+        });
+
         let base = v_flex()
             .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
@@ -377,6 +383,45 @@ impl Render for ZedPredictModal {
             };
 
             base.child(Label::new(copy).color(Color::Muted))
+                .child(h_flex().map(|parent| {
+                    if let Some(plan) = plan {
+                        parent.child(
+                            Checkbox::new("plan", ToggleState::Selected)
+                                .fill()
+                                .disabled(true)
+                                .label(format!(
+                                    "You get {} edit predictions through your {}.",
+                                    if plan == proto::Plan::Free {
+                                        "2,000"
+                                    } else {
+                                        "unlimited"
+                                    },
+                                    match plan {
+                                        proto::Plan::Free => "Zed Free plan",
+                                        proto::Plan::ZedPro => "Zed Pro plan",
+                                        proto::Plan::ZedProTrial => "Zed Pro trial",
+                                    }
+                                )),
+                        )
+                    } else {
+                        parent
+                            .child(
+                                Checkbox::new("plan-required", ToggleState::Unselected)
+                                    .fill()
+                                    .disabled(true)
+                                    .label("To get started with edit prediction"),
+                            )
+                            .child(
+                                Button::new("subscribe", "choose a plan")
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_size(IconSize::Indicator)
+                                    .icon_color(Color::Muted)
+                                    .on_click(|_event, _window, cx| {
+                                        cx.open_url(&zed_urls::account_url(cx));
+                                    }),
+                            )
+                    }
+                }))
                 .child(
                     h_flex()
                         .child(
@@ -447,7 +492,7 @@ impl Render for ZedPredictModal {
                         .w_full()
                         .child(
                             Button::new("accept-tos", "Enable Edit Prediction")
-                                .disabled(!self.terms_of_service)
+                                .disabled(plan.is_none() || !self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
