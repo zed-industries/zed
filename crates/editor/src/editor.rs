@@ -1721,7 +1721,7 @@ impl Editor {
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
             show_scrollbars: full_mode,
-            show_minimap: full_mode,
+            show_minimap: full_mode && EditorSettings::get_global(cx).minimap.minimap_enabled(),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
             show_line_numbers: None,
@@ -6138,8 +6138,8 @@ impl Editor {
         }
     }
 
-    pub fn supports_minimap(&self) -> bool {
-        self.mode.is_full()
+    pub fn supports_minimap(&self, cx: &App) -> bool {
+        self.mode.is_full() && self.is_singleton(cx)
     }
 
     fn edit_predictions_enabled_in_buffer(
@@ -15169,7 +15169,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if self.supports_minimap() {
+        if self.supports_minimap(cx) {
             self.set_show_minimap(!self.show_minimap, window, cx);
         }
     }
@@ -16645,13 +16645,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.show_minimap != show_minimap {
-            self.show_minimap = show_minimap;
-            if show_minimap {
+            if show_minimap && self.minimap.is_none() {
                 let minimap_settings = EditorSettings::get_global(cx).minimap;
-                self.minimap = self.create_minimap(minimap_settings, window, cx);
-            } else {
-                self.minimap = None;
+                self.minimap =
+                    self.create_minimap(minimap_settings.with_show_override(), window, cx);
             }
+            self.show_minimap = show_minimap;
             cx.notify();
         }
     }

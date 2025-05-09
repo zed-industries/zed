@@ -1539,7 +1539,7 @@ impl EditorElement {
             || minimap_width.is_zero()
             || matches!(
                 minimap_settings.show,
-                ShowMinimap::Never | ShowMinimap::Auto if scrollbar_layout.is_none_or(|layout| !layout.visible)
+                ShowMinimap::Auto if scrollbar_layout.is_none_or(|layout| !layout.visible)
             )
         {
             return None;
@@ -7161,11 +7161,10 @@ impl Element for EditorElement {
                         .editor
                         .read_with(cx, |editor, _| editor.minimap().is_some())
                         .then(|| match settings.minimap.show {
-                            ShowMinimap::Never => None,
-                            ShowMinimap::Always => Some(MinimapLayout::MINIMAP_WIDTH),
                             ShowMinimap::Auto => {
                                 scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH)
                             }
+                            _ => Some(MinimapLayout::MINIMAP_WIDTH),
                         })
                         .flatten()
                         .filter(|minimap_width| {
