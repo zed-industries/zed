@@ -1735,6 +1735,8 @@ impl GitPanel {
             }
         });
 
+        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -1772,8 +1774,9 @@ impl GitPanel {
                         cache: false,
                     }],
                     tools: Vec::new(),
+                    tool_choice: None,
                     stop: Vec::new(),
-                    temperature: None,
+                    temperature,
                 };
 
                 let stream = model.stream_completion_text(request, &cx);

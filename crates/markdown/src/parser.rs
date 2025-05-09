@@ -79,6 +79,7 @@ pub fn parse_markdown(
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
 
+                        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
                         let line_count = text[content_range.clone()]
                             .bytes()
                             .filter(|c| *c == b'\n')
@@ -535,6 +536,28 @@ mod tests {
             PARSE_OPTIONS.intersection(UNWANTED_OPTIONS),
             Options::empty()
         );
+    }
+
+    #[test]
+    fn test_html_comments() {
+        assert_eq!(
+            parse_markdown("  <!--\nrdoc-file=string.c\n-->\nReturns"),
+            (
+                vec![
+                    (2..30, Start(HtmlBlock)),
+                    (2..2, SubstitutedText("  ".into())),
+                    (2..7, Html),
+                    (7..26, Html),
+                    (26..30, Html),
+                    (2..30, End(MarkdownTagEnd::HtmlBlock)),
+                    (30..37, Start(Paragraph)),
+                    (30..37, Text),
+                    (30..37, End(MarkdownTagEnd::Paragraph))
+                ],
+                HashSet::new(),
+                HashSet::new()
+            )
+        )
     }
 
     #[test]

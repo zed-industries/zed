@@ -578,6 +578,7 @@ impl ExampleInstance {
                 }],
                 temperature: None,
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
             };
 
@@ -964,6 +965,15 @@ impl RequestMarkdown {
                             messages.push_str("**ERROR:**\n");
                         }
                         messages.push_str(&format!("{}\n\n", tool_result.content));
+
+                        if let Some(output) = tool_result.output.as_ref() {
+                            writeln!(
+                                messages,
+                                "**Debug Output**:\n\n```json\n{}\n```\n",
+                                serde_json::to_string_pretty(output).unwrap()
+                            )
+                            .unwrap();
+                        }
                     }
                 }
             }
