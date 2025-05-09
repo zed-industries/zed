@@ -471,6 +471,7 @@ impl Copilot {
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
     ) {
+        let _ = cx;
         let start_language_server = async {
             let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
@@ -527,8 +528,8 @@ impl Copilot {
 
             server
                 .on_notification::<WindowShowMessageRequest, _>({
-                    let this = this.clone();
-                    move |params, cx| {
+                    let this_ = this.clone();
+                    move |params, _| {
                         // TODO: Display the message in Zed's UI
 
                         // Log the message
@@ -870,7 +871,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        self.request_completions::<request::GetCompletions, _>(buffer, position, cx)
+        self.request_completions::<request::TextDocumentInlineCompletion, _>(buffer, position, cx)
     }
 
     pub fn completions_cycling<T>(
@@ -882,7 +883,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, cx)
+        self.request_completions::<request::TextDocumentInlineCompletion, _>(buffer, position, cx)
     }
 
     pub fn accept_completion(
@@ -939,8 +940,8 @@ impl Copilot {
     where
         R: 'static
             + lsp::request::Request<
-                Params = request::GetCompletionsParams,
-                Result = request::GetCompletionsResult,
+                Params = request::TextDocumentInlineCompletionParams,
+                Result = request::TextDocumentInlineCompletionResult,
             >,
         T: ToPointUtf16,
     {
@@ -966,28 +967,29 @@ impl Copilot {
         );
         let tab_size = settings.tab_size;
         let hard_tabs = settings.hard_tabs;
-        let relative_path = buffer
-            .file()
-            .map(|file| file.path().to_path_buf())
-            .unwrap_or_default();
+        // let relative_path = buffer
+        //     .file()
+        //     .map(|file| file.path().to_path_buf())
+        //     .unwrap_or_default();
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
-                .request::<R>(request::GetCompletionsParams {
-                    doc: request::GetCompletionsDocument {
-                        uri,
-                        tab_size: tab_size.into(),
-                        indent_size: 1,
-                        insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_string_lossy().into(),
-                        position: point_to_lsp(position),
+                .request::<R>(request::TextDocumentInlineCompletionParams {
+                    text_document: request::TextDocumentIdentifier {
+                        uri: uri.clone(),
                         version: version.try_into().unwrap(),
                     },
+                    formatting_options: request::FormattingOptions {
+                        tab_size: tab_size.into(),
+                        insert_spaces: !hard_tabs,
+                    },
+                    position: point_to_lsp(position),
+                    context: request::InlineCompletionContext { trigger_kind: 1 },
                 })
                 .await?;
             let completions = result
-                .completions
+                .items
                 .into_iter()
                 .map(|completion| {
                     let start = snapshot
@@ -995,9 +997,10 @@ impl Copilot {
                     let end =
                         snapshot.clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
                     Completion {
-                        uuid: completion.uuid,
+                        /// TODO: Use a better UUID generator
+                        uuid: "some random uuid".to_string(),
                         range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                        text: completion.text,
+                        text: completion.insert_text,
                     }
                 })
                 .collect();

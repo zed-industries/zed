@@ -340,19 +340,6 @@ impl lsp::notification::Notification for TextDocumentDidPartiallyAcceptCompletio
     const METHOD: &'static str = "textDocument/didPartiallyAcceptCompletion";
 }
 
-// Text Document Focus Notification
-pub enum TextDocumentDidFocus {}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TextDocumentDidFocusParams {
-    pub text_document: Option<TextDocumentIdentifier>,
-}
-
-impl lsp::notification::Notification for TextDocumentDidFocus {
-    type Params = TextDocumentDidFocusParams;
-    const METHOD: &'static str = "textDocument/didFocus";
-}
-
 // Panel Completions
 pub enum TextDocumentCopilotPanelCompletion {}
 
