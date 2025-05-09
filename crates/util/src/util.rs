@@ -259,7 +259,7 @@ where
 }
 
 #[cfg(unix)]
-pub fn load_shell_from_passwd() -> Result<()> {
+fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -309,6 +309,8 @@ pub fn load_shell_from_passwd() -> Result<()> {
 
 #[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
+    load_shell_from_passwd().log_err();
+
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
