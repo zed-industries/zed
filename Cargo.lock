@@ -19026,6 +19026,7 @@ dependencies = [
  "paths",
  "postage",
  "project",
+ "proto",
  "regex",
  "release_channel",
  "reqwest_client",
