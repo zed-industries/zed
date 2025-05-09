@@ -174,6 +174,73 @@ impl Focusable for ZedPredictModal {
 
 impl ModalView for ZedPredictModal {}
 
+impl ZedPredictModal {
+    fn render_data_collection_explanation(&self, cx: &Context<Self>) -> impl IntoElement {
+        fn label_item(label_text: impl Into<SharedString>) -> impl Element {
+            Label::new(label_text).color(Color::Muted).into_element()
+        }
+
+        fn info_item(label_text: impl Into<SharedString>) -> impl Element {
+            h_flex()
+                .items_start()
+                .gap_2()
+                .child(
+                    div()
+                        .mt_1p5()
+                        .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
+                )
+                .child(div().w_full().child(label_item(label_text)))
+        }
+
+        fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
+            first_line: E1,
+            second_line: E2,
+        ) -> impl Element {
+            v_flex()
+                .child(info_item(first_line))
+                .child(div().pl_5().child(second_line))
+        }
+
+        v_flex()
+            .mt_2()
+            .p_2()
+            .rounded_sm()
+            .bg(cx.theme().colors().editor_background.opacity(0.5))
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                div().child(
+                    Label::new("To improve edit predictions, please consider contributing to our open dataset based on your interactions within open source repositories.")
+                        .mb_1()
+                )
+            )
+            .child(info_item(
+                "We collect data exclusively from open source projects.",
+            ))
+            .child(info_item(
+                "Zed automatically detects if your project is open source.",
+            ))
+            .child(info_item("Toggle participation at any time via the status bar menu."))
+            .child(multiline_info_item(
+                "If turned on, this setting applies for all open source repositories",
+                label_item("you open in Zed.")
+            ))
+            .child(multiline_info_item(
+                "Files with sensitive data, like `.env`, are excluded by default",
+                h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .child(label_item("via the"))
+                    .child(
+                        Button::new("doc-link", "disabled_globs").on_click(
+                            cx.listener(Self::inline_completions_doc),
+                        ),
+                    )
+                    .child(label_item("setting.")),
+            ))
+    }
+}
+
 impl Render for ZedPredictModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_height = window.viewport_size().height;
@@ -309,31 +376,6 @@ impl Render for ZedPredictModal {
                 (IconName::ChevronDown, IconName::ChevronUp)
             };
 
-            fn label_item(label_text: impl Into<SharedString>) -> impl Element {
-                Label::new(label_text).color(Color::Muted).into_element()
-            }
-
-            fn info_item(label_text: impl Into<SharedString>) -> impl Element {
-                h_flex()
-                    .items_start()
-                    .gap_2()
-                    .child(
-                        div()
-                            .mt_1p5()
-                            .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
-                    )
-                    .child(div().w_full().child(label_item(label_text)))
-            }
-
-            fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
-                first_line: E1,
-                second_line: E2,
-            ) -> impl Element {
-                v_flex()
-                    .child(info_item(first_line))
-                    .child(div().pl_5().child(second_line))
-            }
-
             base.child(Label::new(copy).color(Color::Muted))
                 .child(
                     h_flex()
@@ -364,7 +406,9 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("Contribute to the open dataset when editing open source.")
+                                    .label(
+                                        "Contribute to the open dataset when editing open source.",
+                                    )
                                     .fill()
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
@@ -385,51 +429,15 @@ impl Render for ZedPredictModal {
                                             cx.notify();
 
                                             if this.data_collection_expanded {
-                                                onboarding_event!("Data Collection Learn More Clicked");
+                                                onboarding_event!(
+                                                    "Data Collection Learn More Clicked"
+                                                );
                                             }
                                         })),
                                 ),
                         )
                         .when(self.data_collection_expanded, |element| {
-                            element.child(
-                                v_flex()
-                                    .mt_2()
-                                    .p_2()
-                                    .rounded_sm()
-                                    .bg(cx.theme().colors().editor_background.opacity(0.5))
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border_variant)
-                                    .child(
-                                        div().child(
-                                            Label::new("To improve edit predictions, please consider contributing to our open dataset based on your interactions within open source repositories.")
-                                                .mb_1()
-                                        )
-                                    )
-                                    .child(info_item(
-                                        "We collect data exclusively from open source projects.",
-                                    ))
-                                    .child(info_item(
-                                        "Zed automatically detects if your project is open source.",
-                                    ))
-                                    .child(info_item("Toggle participation at any time via the status bar menu."))
-                                    .child(multiline_info_item(
-                                        "If turned on, this setting applies for all open source repositories",
-                                        label_item("you open in Zed.")
-                                    ))
-                                    .child(multiline_info_item(
-                                        "Files with sensitive data, like `.env`, are excluded by default",
-                                        h_flex()
-                                            .w_full()
-                                            .flex_wrap()
-                                            .child(label_item("via the"))
-                                            .child(
-                                                Button::new("doc-link", "disabled_globs").on_click(
-                                                    cx.listener(Self::inline_completions_doc),
-                                                ),
-                                            )
-                                            .child(label_item("setting.")),
-                                    )),
-                            )
+                            element.child(self.render_data_collection_explanation(cx))
                         }),
                 )
                 .child(
