@@ -3,13 +3,14 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
+use editor::Editor;
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{App, FocusHandle, actions};
+use gpui::{Action, App, FocusHandle, actions};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -20,6 +21,7 @@ pub mod branch_picker;
 mod commit_modal;
 pub mod commit_tooltip;
 mod commit_view;
+mod conflict_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -34,6 +36,11 @@ pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
 
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
+
+    cx.observe_new(|editor: &mut Editor, _, cx| {
+        conflict_view::register_editor(editor, editor.buffer().clone(), cx);
+    })
+    .detach();
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
@@ -108,7 +115,7 @@ pub fn init(cx: &mut App) {
             },
         );
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
-            cx.dispatch_action(&workspace::RestoreBanner);
+            window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
             window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
@@ -368,6 +375,7 @@ mod remote_button {
             })
             .anchor(Corner::TopRight)
     }
+
     #[allow(clippy::too_many_arguments)]
     fn split_button(
         id: SharedString,
@@ -441,8 +449,8 @@ mod remote_button {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Version Control")]
+/// A visual representation of a file's Git status.
+#[derive(IntoElement, RegisterComponent)]
 pub struct GitStatusIcon {
     status: FileStatus,
 }
@@ -484,8 +492,12 @@ impl RenderOnce for GitStatusIcon {
 }
 
 // View this component preview using `workspace: open component-preview`
-impl ComponentPreview for GitStatusIcon {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+impl Component for GitStatusIcon {
+    fn scope() -> ComponentScope {
+        ComponentScope::VersionControl
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         fn tracked_file_status(code: StatusCode) -> FileStatus {
             FileStatus::Tracked(git::status::TrackedStatus {
                 index_status: code,
@@ -502,17 +514,19 @@ impl ComponentPreview for GitStatusIcon {
         }
         .into();
 
-        v_flex()
-            .gap_6()
-            .children(vec![example_group(vec![
-                single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
-                single_example("Added", GitStatusIcon::new(added).into_any_element()),
-                single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
-                single_example(
-                    "Conflicted",
-                    GitStatusIcon::new(conflict).into_any_element(),
-                ),
-            ])])
-            .into_any_element()
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group(vec![
+                    single_example("Modified", GitStatusIcon::new(modified).into_any_element()),
+                    single_example("Added", GitStatusIcon::new(added).into_any_element()),
+                    single_example("Deleted", GitStatusIcon::new(deleted).into_any_element()),
+                    single_example(
+                        "Conflicted",
+                        GitStatusIcon::new(conflict).into_any_element(),
+                    ),
+                ])])
+                .into_any_element(),
+        )
     }
 }

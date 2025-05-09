@@ -1,32 +1,36 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
-use collections::{BTreeMap, HashSet};
+use collections::BTreeMap;
 use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use language::{Anchor, Buffer, BufferEvent, DiskState, Point};
+use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
+use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
 use util::RangeExt;
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
-    /// Buffers that user manually added to the context, and whose content has
-    /// changed since the model last saw them.
-    stale_buffers_in_context: HashSet<Entity<Buffer>>,
     /// Buffers that we want to notify the model about when they change.
     tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
     /// Has the model edited a file since it last checked diagnostics?
     edited_since_project_diagnostics_check: bool,
+    /// The project this action log is associated with
+    project: Entity<Project>,
 }
 
 impl ActionLog {
-    /// Creates a new, empty action log.
-    pub fn new() -> Self {
+    /// Creates a new, empty action log associated with the given project.
+    pub fn new(project: Entity<Project>) -> Self {
         Self {
-            stale_buffers_in_context: HashSet::default(),
             tracked_buffers: BTreeMap::default(),
             edited_since_project_diagnostics_check: false,
+            project,
         }
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     /// Notifies a diagnostics check
@@ -39,25 +43,41 @@ impl ActionLog {
         self.edited_since_project_diagnostics_check
     }
 
-    fn track_buffer(
+    fn track_buffer_internal(
         &mut self,
         buffer: Entity<Buffer>,
-        created: bool,
+        is_created: bool,
         cx: &mut Context<Self>,
     ) -> &mut TrackedBuffer {
         let tracked_buffer = self
             .tracked_buffers
             .entry(buffer.clone())
             .or_insert_with(|| {
+                let open_lsp_handle = self.project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&buffer, cx)
+                });
+
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let base_text;
                 let status;
                 let unreviewed_changes;
-                if created {
+                if is_created {
+                    let existing_file_content = if buffer
+                        .read(cx)
+                        .file()
+                        .map_or(false, |file| file.disk_state().exists())
+                    {
+                        Some(text_snapshot.as_rope().clone())
+                    } else {
+                        None
+                    };
+
                     base_text = Rope::default();
-                    status = TrackedBufferStatus::Created;
+                    status = TrackedBufferStatus::Created {
+                        existing_file_content,
+                    };
                     unreviewed_changes = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
@@ -76,6 +96,7 @@ impl ActionLog {
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
+                    _open_lsp_handle: open_lsp_handle,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
                         async move |this, cx| {
@@ -119,7 +140,7 @@ impl ActionLog {
         };
 
         match tracked_buffer.status {
-            TrackedBufferStatus::Created | TrackedBufferStatus::Modified => {
+            TrackedBufferStatus::Created { .. } | TrackedBufferStatus::Modified => {
                 if buffer
                     .read(cx)
                     .file()
@@ -141,7 +162,7 @@ impl ActionLog {
                     // resurrected externally, we want to clear the changes we
                     // were tracking and reset the buffer's state.
                     self.tracked_buffers.remove(&buffer);
-                    self.track_buffer(buffer, false, cx);
+                    self.track_buffer_internal(buffer, false, cx);
                 }
                 cx.notify();
             }
@@ -235,7 +256,7 @@ impl ActionLog {
                     .await;
 
                 diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(diff_snapshot, &buffer_snapshot, None, cx)
+                    diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx)
                 })?;
             }
             this.update(cx, |this, cx| {
@@ -256,21 +277,21 @@ impl ActionLog {
 
     /// Track a buffer as read, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer(buffer, false, cx);
+        self.track_buffer_internal(buffer, false, cx);
     }
 
-    /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer(buffer.clone(), true, cx);
-        self.buffer_edited(buffer, cx)
+    /// Mark a buffer as edited, so we can refresh it in the context
+    pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.edited_since_project_diagnostics_check = true;
+        self.tracked_buffers.remove(&buffer);
+        self.track_buffer_internal(buffer.clone(), true, cx);
     }
 
     /// Mark a buffer as edited, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
-        self.stale_buffers_in_context.insert(buffer.clone());
 
-        let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
@@ -278,9 +299,9 @@ impl ActionLog {
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
+        let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         match tracked_buffer.status {
-            TrackedBufferStatus::Created => {
+            TrackedBufferStatus::Created { .. } => {
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
             }
@@ -324,14 +345,14 @@ impl ActionLog {
                     {
                         true
                     } else {
-                        let old_bytes = tracked_buffer
+                        let old_range = tracked_buffer
                             .base_text
                             .point_to_offset(Point::new(edit.old.start, 0))
                             ..tracked_buffer.base_text.point_to_offset(cmp::min(
                                 Point::new(edit.old.end, 0),
                                 tracked_buffer.base_text.max_point(),
                             ));
-                        let new_bytes = tracked_buffer
+                        let new_range = tracked_buffer
                             .snapshot
                             .point_to_offset(Point::new(edit.new.start, 0))
                             ..tracked_buffer.snapshot.point_to_offset(cmp::min(
@@ -339,10 +360,10 @@ impl ActionLog {
                                 tracked_buffer.snapshot.max_point(),
                             ));
                         tracked_buffer.base_text.replace(
-                            old_bytes,
+                            old_range,
                             &tracked_buffer
                                 .snapshot
-                                .text_for_range(new_bytes)
+                                .text_for_range(new_range)
                                 .collect::<String>(),
                         );
                         delta += edit.new_len() as i32 - edit.old_len() as i32;
@@ -350,6 +371,117 @@ impl ActionLog {
                     }
                 });
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
+            }
+        }
+    }
+
+    pub fn reject_edits_in_ranges(
+        &mut self,
+        buffer: Entity<Buffer>,
+        buffer_ranges: Vec<Range<impl language::ToPoint>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
+            return Task::ready(Ok(()));
+        };
+
+        match &tracked_buffer.status {
+            TrackedBufferStatus::Created {
+                existing_file_content,
+            } => {
+                let task = if let Some(existing_file_content) = existing_file_content {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.start_transaction();
+                        buffer.set_text("", cx);
+                        for chunk in existing_file_content.chunks() {
+                            buffer.append(chunk, cx);
+                        }
+                        buffer.end_transaction(cx);
+                    });
+                    self.project
+                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+                } else {
+                    buffer
+                        .read(cx)
+                        .entry_id(cx)
+                        .and_then(|entry_id| {
+                            self.project
+                                .update(cx, |project, cx| project.delete_entry(entry_id, false, cx))
+                        })
+                        .unwrap_or(Task::ready(Ok(())))
+                };
+
+                self.tracked_buffers.remove(&buffer);
+                cx.notify();
+                task
+            }
+            TrackedBufferStatus::Deleted => {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text(tracked_buffer.base_text.to_string(), cx)
+                });
+                let save = self
+                    .project
+                    .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
+
+                // Clear all tracked changes for this buffer and start over as if we just read it.
+                self.tracked_buffers.remove(&buffer);
+                self.buffer_read(buffer.clone(), cx);
+                cx.notify();
+                save
+            }
+            TrackedBufferStatus::Modified => {
+                buffer.update(cx, |buffer, cx| {
+                    let mut buffer_row_ranges = buffer_ranges
+                        .into_iter()
+                        .map(|range| {
+                            range.start.to_point(buffer).row..range.end.to_point(buffer).row
+                        })
+                        .peekable();
+
+                    let mut edits_to_revert = Vec::new();
+                    for edit in tracked_buffer.unreviewed_changes.edits() {
+                        let new_range = tracked_buffer
+                            .snapshot
+                            .anchor_before(Point::new(edit.new.start, 0))
+                            ..tracked_buffer.snapshot.anchor_after(cmp::min(
+                                Point::new(edit.new.end, 0),
+                                tracked_buffer.snapshot.max_point(),
+                            ));
+                        let new_row_range = new_range.start.to_point(buffer).row
+                            ..new_range.end.to_point(buffer).row;
+
+                        let mut revert = false;
+                        while let Some(buffer_row_range) = buffer_row_ranges.peek() {
+                            if buffer_row_range.end < new_row_range.start {
+                                buffer_row_ranges.next();
+                            } else if buffer_row_range.start > new_row_range.end {
+                                break;
+                            } else {
+                                revert = true;
+                                break;
+                            }
+                        }
+
+                        if revert {
+                            let old_range = tracked_buffer
+                                .base_text
+                                .point_to_offset(Point::new(edit.old.start, 0))
+                                ..tracked_buffer.base_text.point_to_offset(cmp::min(
+                                    Point::new(edit.old.end, 0),
+                                    tracked_buffer.base_text.max_point(),
+                                ));
+                            let old_text = tracked_buffer
+                                .base_text
+                                .chunks_in_range(old_range)
+                                .collect::<String>();
+                            edits_to_revert.push((new_range, old_text));
+                        }
+                    }
+
+                    buffer.edit(edits_to_revert, None, cx);
+                });
+                self.project
+                    .update(cx, |project, cx| project.save_buffer(buffer, cx))
             }
         }
     }
@@ -390,11 +522,6 @@ impl ActionLog {
                         .map_or(false, |file| file.disk_state() != DiskState::Deleted)
             })
             .map(|(buffer, _)| buffer)
-    }
-
-    /// Takes and returns the set of buffers pending refresh, clearing internal state.
-    pub fn take_stale_buffers_in_context(&mut self) -> HashSet<Entity<Buffer>> {
-        std::mem::take(&mut self.stale_buffers_in_context)
     }
 }
 
@@ -514,14 +641,14 @@ fn point_to_row_edit(edit: Edit<Point>, old_text: &Rope, new_text: &Rope) -> Edi
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 enum ChangeAuthor {
     User,
     Agent,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
 enum TrackedBufferStatus {
-    Created,
+    Created { existing_file_content: Option<Rope> },
     Modified,
     Deleted,
 }
@@ -535,6 +662,7 @@ struct TrackedBuffer {
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
+    _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
 }
@@ -580,10 +708,31 @@ mod tests {
         }
     }
 
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_keep_edits(cx: &mut TestAppContext) {
-        let action_log = cx.new(|_| ActionLog::new());
-        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
@@ -648,8 +797,23 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_deletions(cx: &mut TestAppContext) {
-        let action_log = cx.new(|_| ActionLog::new());
-        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno\npqr", cx));
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({"file": "abc\ndef\nghi\njkl\nmno\npqr"}),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
@@ -718,8 +882,20 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_overlapping_user_edits(cx: &mut TestAppContext) {
-        let action_log = cx.new(|_| ActionLog::new());
-        let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
@@ -802,32 +978,25 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_creation(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-        });
-
-        let action_log = cx.new(|_| ActionLog::new());
+    async fn test_creating_files(cx: &mut TestAppContext) {
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/dir"), json!({})).await;
-
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let file_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
             .unwrap();
 
-        // Simulate file2 being recreated by a tool.
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(file_path, cx))
             .await
             .unwrap();
         cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| buffer.set_text("lorem", cx));
-            action_log.update(cx, |log, cx| log.will_create_buffer(buffer.clone(), cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
@@ -868,13 +1037,66 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_deleting_files(cx: &mut TestAppContext) {
+    async fn test_overwriting_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file1": "Lorem ipsum dolor"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("sit amet consecteur", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(0, 19),
+                    diff_status: DiffHunkStatusKind::Added,
+                    old_text: "".into(),
+                }],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(buffer.clone(), vec![2..5], cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _cx| buffer.text()),
+            "Lorem ipsum dolor"
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_deleting_files(cx: &mut TestAppContext) {
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -891,7 +1113,7 @@ mod tests {
             .read_with(cx, |project, cx| project.find_project_path("dir/file2", cx))
             .unwrap();
 
-        let action_log = cx.new(|_| ActionLog::new());
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let buffer1 = project
             .update(cx, |project, cx| {
                 project.open_buffer(file1_path.clone(), cx)
@@ -953,8 +1175,9 @@ mod tests {
             .update(cx, |project, cx| project.open_buffer(file2_path, cx))
             .await
             .unwrap();
+        action_log.update(cx, |log, cx| log.buffer_created(buffer2.clone(), cx));
         buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
-        action_log.update(cx, |log, cx| log.will_create_buffer(buffer2.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_edited(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
             .await
@@ -967,8 +1190,8 @@ mod tests {
                 buffer2.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 5),
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "ipsum\n".into(),
+                    diff_status: DiffHunkStatusKind::Added,
+                    old_text: "".into(),
                 }],
             )]
         );
@@ -981,15 +1204,350 @@ mod tests {
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
+    #[gpui::test(iterations = 10)]
+    async fn test_reject_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E\nXYZ")], None, cx)
+                    .unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndE\nXYZf\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(5, 3),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
+                    }
+                ],
+            )]
+        );
+
+        // If the rejected range doesn't overlap with any hunk, we ignore it.
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(4, 0)..Point::new(4, 0)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndE\nXYZf\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(5, 3),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
+                    }
+                ],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..Point::new(1, 0)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndef\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(4, 0)..Point::new(4, 3),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "mno".into(),
+                }],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(4, 0)..Point::new(4, 0)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndef\nghi\njkl\nmno"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reject_multiple_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "abc\ndef\nghi\njkl\nmno"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E\nXYZ")], None, cx)
+                    .unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(5, 2)..Point::new(5, 3), "O")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndE\nXYZf\nghi\njkl\nmnO"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(5, 3),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
+                    }
+                ],
+            )]
+        );
+
+        action_log.update(cx, |log, cx| {
+            let range_1 = buffer.read(cx).anchor_before(Point::new(0, 0))
+                ..buffer.read(cx).anchor_before(Point::new(1, 0));
+            let range_2 = buffer.read(cx).anchor_before(Point::new(5, 0))
+                ..buffer.read(cx).anchor_before(Point::new(5, 3));
+
+            log.reject_edits_in_ranges(buffer.clone(), vec![range_1, range_2], cx)
+                .detach();
+            assert_eq!(
+                buffer.read_with(cx, |buffer, _| buffer.text()),
+                "abc\ndef\nghi\njkl\nmno"
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndef\nghi\njkl\nmno"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reject_deleted_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": "content"}))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path.clone(), cx))
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| {
+                project.delete_file(file_path.clone(), false, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(!fs.is_file(path!("/dir/file").as_ref()).await);
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(0, 0),
+                    diff_status: DiffHunkStatusKind::Deleted,
+                    old_text: "content".into(),
+                }]
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..Point::new(0, 0)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.text()), "content");
+        assert!(fs.is_file(path!("/dir/file").as_ref()).await);
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_reject_created_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("dir/new_file", cx)
+            })
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("content", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(0, 7),
+                    diff_status: DiffHunkStatusKind::Added,
+                    old_text: "".into(),
+                }],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(
+                    buffer.clone(),
+                    vec![Point::new(0, 0)..Point::new(0, 11)],
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(!fs.is_file(path!("/dir/new_file").as_ref()).await);
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
     #[gpui::test(iterations = 100)]
     async fn test_random_diffs(mut rng: StdRng, cx: &mut TestAppContext) {
+        init_test(cx);
+
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(20);
 
-        let action_log = cx.new(|_| ActionLog::new());
         let text = RandomCharIter::new(&mut rng).take(50).collect::<String>();
-        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({"file": text})).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file", cx))
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
         action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
@@ -997,9 +1555,19 @@ mod tests {
                 0..25 => {
                     action_log.update(cx, |log, cx| {
                         let range = buffer.read(cx).random_byte_range(0, &mut rng);
-                        log::info!("keeping all edits in range {:?}", range);
+                        log::info!("keeping edits in range {:?}", range);
                         log.keep_edits_in_range(buffer.clone(), range, cx)
                     });
+                }
+                25..50 => {
+                    action_log
+                        .update(cx, |log, cx| {
+                            let range = buffer.read(cx).random_byte_range(0, &mut rng);
+                            log::info!("rejecting edits in range {:?}", range);
+                            log.reject_edits_in_ranges(buffer.clone(), vec![range], cx)
+                        })
+                        .await
+                        .unwrap();
                 }
                 _ => {
                     let is_agent_change = rng.gen_bool(0.5);
@@ -1032,7 +1600,7 @@ mod tests {
             log::info!("quiescing...");
             cx.run_until_parked();
             action_log.update(cx, |log, cx| {
-                let tracked_buffer = log.track_buffer(buffer.clone(), false, cx);
+                let tracked_buffer = log.tracked_buffers.get(&buffer).unwrap();
                 let mut old_text = tracked_buffer.base_text.clone();
                 let new_text = buffer.read(cx).as_rope();
                 for edit in tracked_buffer.unreviewed_changes.edits() {

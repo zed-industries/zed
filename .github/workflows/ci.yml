@@ -114,7 +114,9 @@ jobs:
     timeout-minutes: 60
     name: Check workspace-hack crate
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -131,13 +133,13 @@ jobs:
       - name: Check workspace-hack Cargo.toml is up-to-date
         run: |
           cargo hakari generate --diff || {
-            echo "To fix, run script/update-workspace-hack";
+            echo "To fix, run script/update-workspace-hack or script/update-workspace-hack.ps1";
             false
           }
       - name: Check all crates depend on workspace-hack
         run: |
           cargo hakari manage-deps --dry-run || {
-            echo "To fix, run script/update-workspace-hack"
+            echo "To fix, run script/update-workspace-hack or script/update-workspace-hack.ps1"
             false
           }
 
@@ -160,8 +162,18 @@ jobs:
         working-directory: ./docs
         run: |
           pnpm dlx prettier@${PRETTIER_VERSION} . --check || {
-            echo "To fix, run from the root of the zed repo:"
+            echo "To fix, run from the root of the Zed repo:"
             echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
+            false
+          }
+        env:
+          PRETTIER_VERSION: 3.5.0
+
+      - name: Prettier Check on default.json
+        run: |
+          pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --check || {
+            echo "To fix, run from the root of the Zed repo:"
+            echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
             false
           }
         env:
@@ -223,7 +235,7 @@ jobs:
 
       - name: Check for new vulnerable dependencies
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
+        uses: actions/dependency-review-action@67d4f4bd7a9b17a0db54d2a7519187c65e339de8 # v4
         with:
           license-check: false
 
@@ -463,6 +475,7 @@ jobs:
       - job_spec
       - style
       - migration_checks
+      # run_tests: If adding required tests, add them here and to script below.
       - workspace_hack
       - linux_tests
       - build_remote_server
@@ -480,11 +493,14 @@ jobs:
 
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
+            [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }
             [[ "${{ needs.macos_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "macOS tests failed"; }
             [[ "${{ needs.linux_tests.result }}"          != 'success' ]] && { RET_CODE=1; echo "Linux tests failed"; }
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
             [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
             [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
+            # This check is intentionally disabled. See: https://github.com/zed-industries/zed/pull/28431
+            # [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration Checks failed"; }
           fi
           if [[ "$RET_CODE" -eq 0 ]]; then
             echo "All tests passed successfully!"
@@ -513,7 +529,7 @@ jobs:
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "18"
 
@@ -588,7 +604,7 @@ jobs:
     timeout-minutes: 60
     name: Linux x86_x64 release bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2004
+      - buildjet-16vcpu-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     if: |
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
@@ -616,26 +632,23 @@ jobs:
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
-      - name: Upload Linux bundle to workflow run if main branch or specific label
+      - name: Upload Artifact to Workflow - zed (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: |
-          github.ref == 'refs/heads/main'
-          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
 
-      - name: Upload Linux remote server to workflow run if main branch or specific label
+      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: |
-          github.ref == 'refs/heads/main'
-          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.gz
           path: target/zed-remote-server-linux-x86_64.gz
 
-      - name: Upload app bundle to release
+      - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
@@ -674,29 +687,26 @@ jobs:
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel
 
-      - name: Create and upload Linux .tar.gz bundle
+      - name: Create and upload Linux .tar.gz bundles
         run: script/bundle-linux
 
-      - name: Upload Linux bundle to workflow run if main branch or specific label
+      - name: Upload Artifact to Workflow - zed (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: |
-          github.ref == 'refs/heads/main'
-          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
           path: target/release/zed-*.tar.gz
 
-      - name: Upload Linux remote server to workflow run if main branch or specific label
+      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: |
-          github.ref == 'refs/heads/main'
-          || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.gz
           path: target/zed-remote-server-linux-aarch64.gz
 
-      - name: Upload app bundle to release
+      - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
@@ -705,6 +715,51 @@ jobs:
             target/release/zed-linux-aarch64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  nix-build:
+    timeout-minutes: 60
+    name: Nix Build
+    continue-on-error: true
+    if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    strategy:
+      fail-fast: false
+      matrix:
+        system:
+          - os: x86 Linux
+            runner: buildjet-16vcpu-ubuntu-2204
+            install_nix: true
+          - os: arm Mac
+            runner: [macOS, ARM64, test]
+            install_nix: false
+    runs-on: ${{ matrix.system.runner }}
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+      - name: Set path
+        if: ${{ ! matrix.system.install_nix }}
+        run: |
+          echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
+          echo "/Users/administrator/.nix-profile/bin" >> $GITHUB_PATH
+
+      - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2 # v31
+        if: ${{ matrix.system.install_nix }}
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
+        with:
+          name: zed-industries
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: true
+      - run: nix build .#debug
+      - name: Limit /nix/store to 50GB
+        run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
   auto-release-preview:
     name: Auto release preview

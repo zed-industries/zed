@@ -1,12 +1,14 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
-use dap::DapRegistry;
+
+use debugger_ui::debugger_panel::DebugPanel;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     AppContext as _, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal as _,
+    VisualContext,
 };
 use http_client::BlockedHttpClient;
 use language::{
@@ -24,6 +26,7 @@ use project::{
 };
 use remote::SshRemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
+use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
@@ -86,7 +89,6 @@ async fn test_sharing_an_ssh_remote_project(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
@@ -254,7 +256,6 @@ async fn test_ssh_collaboration_git_branches(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
@@ -283,7 +284,7 @@ async fn test_ssh_collaboration_git_branches(
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
 
     let branches_b = cx_b
-        .update(|cx| repo_b.read(cx).branches())
+        .update(|cx| repo_b.update(cx, |repo_b, _cx| repo_b.branches()))
         .await
         .unwrap()
         .unwrap();
@@ -292,15 +293,19 @@ async fn test_ssh_collaboration_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(&branches_b, &branches_set);
 
-    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
-        .await
-        .unwrap()
-        .unwrap();
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repo_b, _cx| {
+            repo_b.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     executor.run_until_parked();
 
@@ -321,22 +326,22 @@ async fn test_ssh_collaboration_git_branches(
         })
     });
 
-    assert_eq!(server_branch.name, branches[2]);
+    assert_eq!(server_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .create_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repo_b, _cx| {
+            repo_b.create_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
     .unwrap();
 
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .change_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repo_b, _cx| {
+            repo_b.change_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
@@ -361,7 +366,7 @@ async fn test_ssh_collaboration_git_branches(
         })
     });
 
-    assert_eq!(server_branch.name, "totally-new-branch");
+    assert_eq!(server_branch.name(), "totally-new-branch");
 
     // Remove the git repository and check that all participants get the update.
     remote_fs
@@ -456,7 +461,6 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 http_client: remote_http_client,
                 node_runtime: NodeRuntime::unavailable(),
                 languages,
-                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,
@@ -574,4 +578,113 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         buffer_text.to_string() + "\n" + prettier_format_suffix + "\n" + prettier_format_suffix,
         "Prettier formatting was not applied to client buffer after host's request"
     );
+}
+
+#[gpui::test]
+async fn test_remote_server_debugger(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+    executor: BackgroundExecutor,
+) {
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+        command_palette_hooks::init(cx);
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "lib.rs": "fn one() -> usize { 1 }"
+            }),
+        )
+        .await;
+
+    // User A connects to the remote project via SSH.
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let _headless_project = server_cx.new(|cx| {
+        client::init_settings(cx);
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+            },
+            cx,
+        )
+    });
+
+    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let mut server = TestServer::start(server_cx.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    cx_a.update(|cx| {
+        debugger_ui::init(cx);
+        command_palette_hooks::init(cx);
+    });
+    let (project_a, _) = client_a
+        .build_ssh_project(path!("/code"), client_ssh.clone(), cx_a)
+        .await;
+
+    let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let debugger_panel = workspace
+        .update_in(cx_a, |_workspace, window, cx| {
+            cx.spawn_in(window, DebugPanel::load)
+        })
+        .await
+        .unwrap();
+
+    workspace.update_in(cx_a, |workspace, window, cx| {
+        workspace.add_panel(debugger_panel, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    let debug_panel = workspace
+        .update(cx_a, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+        .unwrap();
+
+    let workspace_window = cx_a
+        .window_handle()
+        .downcast::<workspace::Workspace>()
+        .unwrap();
+
+    let session = debugger_ui::tests::start_debug_session(&workspace_window, cx_a, |_| {}).unwrap();
+    cx_a.run_until_parked();
+    debug_panel.update(cx_a, |debug_panel, cx| {
+        assert_eq!(
+            debug_panel.active_session().unwrap().read(cx).session(cx),
+            session
+        )
+    });
+
+    session.update(cx_a, |session, _| {
+        assert_eq!(session.binary().command, "ssh");
+    });
+
+    let shutdown_session = workspace.update(cx_a, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.dap_store().update(cx, |dap_store, cx| {
+                dap_store.shutdown_session(session.read(cx).session_id(), cx)
+            })
+        })
+    });
+
+    client_ssh.update(cx_a, |a, _| {
+        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
+    });
+
+    shutdown_session.await.unwrap();
 }

@@ -53,7 +53,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
     }
 
     fn database_path(&self) -> PathBuf {
-        paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
+        paths::data_dir().join("docs/rust/rustdoc-db.1.mdb")
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
@@ -79,7 +79,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
 
         *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
 
-        Ok(workspace_crates.iter().cloned().collect())
+        Ok(workspace_crates.into_iter().collect())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
@@ -144,7 +144,7 @@ impl IndexedDocsProvider for DocsDotRsProvider {
     }
 
     fn database_path(&self) -> PathBuf {
-        paths::support_dir().join("docs/rust/docs-rs-db.1.mdb")
+        paths::data_dir().join("docs/rust/docs-rs-db.1.mdb")
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {

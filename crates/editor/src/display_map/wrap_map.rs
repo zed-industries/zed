@@ -1,10 +1,10 @@
 use super::{
     Highlights,
-    fold_map::FoldRows,
+    fold_map::{Chunk, FoldRows},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
-use language::{Chunk, Point};
+use language::Point;
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
 use std::sync::LazyLock;
@@ -454,6 +454,7 @@ impl WrapSnapshot {
                 }
 
                 let mut line = String::new();
+                let mut line_fragments = Vec::new();
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
@@ -462,15 +463,26 @@ impl WrapSnapshot {
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
-                    while let Some(chunk) =
-                        remaining.take().or_else(|| chunks.next().map(|c| c.text))
-                    {
-                        if let Some(ix) = chunk.find('\n') {
-                            line.push_str(&chunk[..ix + 1]);
-                            remaining = Some(&chunk[ix + 1..]);
+                    while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
+                        if let Some(ix) = chunk.text.find('\n') {
+                            let (prefix, suffix) = chunk.text.split_at(ix + 1);
+                            line_fragments.push(gpui::LineFragment::text(prefix));
+                            line.push_str(prefix);
+                            remaining = Some(Chunk {
+                                text: suffix,
+                                ..chunk
+                            });
                             break;
                         } else {
-                            line.push_str(chunk)
+                            if let Some(width) =
+                                chunk.renderer.as_ref().and_then(|r| r.measured_width)
+                            {
+                                line_fragments
+                                    .push(gpui::LineFragment::element(width, chunk.text.len()));
+                            } else {
+                                line_fragments.push(gpui::LineFragment::text(chunk.text));
+                            }
+                            line.push_str(chunk.text);
                         }
                     }
 
@@ -479,7 +491,7 @@ impl WrapSnapshot {
                     }
 
                     let mut prev_boundary_ix = 0;
-                    for boundary in line_wrapper.wrap_line(&line, wrap_width) {
+                    for boundary in line_wrapper.wrap_line(&line_fragments, wrap_width) {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];
                         push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
                         edit_transforms.push(Transform::wrap(boundary.next_indent));
@@ -494,6 +506,7 @@ impl WrapSnapshot {
                     }
 
                     line.clear();
+                    line_fragments.clear();
                     yield_now().await;
                 }
 
@@ -1173,7 +1186,7 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         test::test_font,
     };
-    use gpui::{px, test::observe};
+    use gpui::{LineFragment, px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
@@ -1228,8 +1241,7 @@ mod tests {
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
         let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
-        let unwrapped_text = tabs_snapshot.text();
-        let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
+        let expected_text = wrap_text(&tabs_snapshot, wrap_width, &mut line_wrapper);
 
         let (wrap_map, _) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, wrap_width, cx));
@@ -1246,9 +1258,10 @@ mod tests {
 
         let actual_text = initial_snapshot.text();
         assert_eq!(
-            actual_text, expected_text,
+            actual_text,
+            expected_text,
             "unwrapped text is: {:?}",
-            unwrapped_text
+            tabs_snapshot.text()
         );
         log::info!("Wrapped text: {:?}", actual_text);
 
@@ -1311,8 +1324,7 @@ mod tests {
             let (tabs_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
             log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-            let unwrapped_text = tabs_snapshot.text();
-            let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
+            let expected_text = wrap_text(&tabs_snapshot, wrap_width, &mut line_wrapper);
             let (mut snapshot, wrap_edits) =
                 wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot.clone(), tab_edits, cx));
             snapshot.check_invariants();
@@ -1328,8 +1340,9 @@ mod tests {
             }
 
             if !wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
-                let (mut wrapped_snapshot, wrap_edits) =
-                    wrap_map.update(cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
+                let (mut wrapped_snapshot, wrap_edits) = wrap_map.update(cx, |map, cx| {
+                    map.sync(tabs_snapshot.clone(), Vec::new(), cx)
+                });
                 let actual_text = wrapped_snapshot.text();
                 let actual_longest_row = wrapped_snapshot.longest_row();
                 log::info!("Wrapping finished: {:?}", actual_text);
@@ -1337,9 +1350,10 @@ mod tests {
                 wrapped_snapshot.verify_chunks(&mut rng);
                 edits.push((wrapped_snapshot.clone(), wrap_edits));
                 assert_eq!(
-                    actual_text, expected_text,
+                    actual_text,
+                    expected_text,
                     "unwrapped text is: {:?}",
-                    unwrapped_text
+                    tabs_snapshot.text()
                 );
 
                 let mut summary = TextSummary::default();
@@ -1425,19 +1439,19 @@ mod tests {
     }
 
     fn wrap_text(
-        unwrapped_text: &str,
+        tab_snapshot: &TabSnapshot,
         wrap_width: Option<Pixels>,
         line_wrapper: &mut LineWrapper,
     ) -> String {
         if let Some(wrap_width) = wrap_width {
             let mut wrapped_text = String::new();
-            for (row, line) in unwrapped_text.split('\n').enumerate() {
+            for (row, line) in tab_snapshot.text().split('\n').enumerate() {
                 if row > 0 {
-                    wrapped_text.push('\n')
+                    wrapped_text.push('\n');
                 }
 
                 let mut prev_ix = 0;
-                for boundary in line_wrapper.wrap_line(line, wrap_width) {
+                for boundary in line_wrapper.wrap_line(&[LineFragment::text(&line)], wrap_width) {
                     wrapped_text.push_str(&line[prev_ix..boundary.ix]);
                     wrapped_text.push('\n');
                     wrapped_text.push_str(&" ".repeat(boundary.next_indent as usize));
@@ -1445,9 +1459,10 @@ mod tests {
                 }
                 wrapped_text.push_str(&line[prev_ix..]);
             }
+
             wrapped_text
         } else {
-            unwrapped_text.to_string()
+            tab_snapshot.text()
         }
     }
 

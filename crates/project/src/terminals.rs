@@ -9,19 +9,15 @@ use smol::channel::bounded;
 use std::{
     borrow::Cow,
     env::{self},
-    iter,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, ShellBuilder, SpawnInTerminal};
+use task::{DEFAULT_REMOTE_SHELL, Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
     terminal_settings::{self, TerminalSettings, VenvSettings},
 };
 use util::ResultExt;
-
-// #[cfg(target_os = "macos")]
-// use std::os::unix::ffi::OsStrExt;
 
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
@@ -35,20 +31,20 @@ pub enum TerminalKind {
     Shell(Option<PathBuf>),
     /// Run a task.
     Task(SpawnInTerminal),
-    /// Run a debug terminal.
-    Debug {
-        command: Option<String>,
-        args: Vec<String>,
-        envs: HashMap<String, String>,
-        cwd: PathBuf,
-        title: Option<String>,
-    },
 }
 
 /// SshCommand describes how to connect to a remote server
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshCommand {
-    arguments: Vec<String>,
+    pub arguments: Vec<String>,
+}
+
+impl SshCommand {
+    pub fn add_port_forwarding(&mut self, local_port: u16, host: String, remote_port: u16) {
+        self.arguments.push("-L".to_string());
+        self.arguments
+            .push(format!("{}:{}:{}", local_port, host, remote_port));
+    }
 }
 
 impl Project {
@@ -101,7 +97,6 @@ impl Project {
                     self.active_project_directory(cx)
                 }
             }
-            TerminalKind::Debug { cwd, .. } => Some(Arc::from(cwd.as_path())),
         };
 
         let mut settings_location = None;
@@ -205,7 +200,6 @@ impl Project {
                     this.active_project_directory(cx)
                 }
             }
-            TerminalKind::Debug { cwd, .. } => Some(Arc::from(cwd.as_path())),
         };
         let ssh_details = this.ssh_details(cx);
 
@@ -239,7 +233,6 @@ impl Project {
         };
 
         let mut python_venv_activate_command = None;
-        let debug_terminal = matches!(kind, TerminalKind::Debug { .. });
 
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
@@ -335,27 +328,6 @@ impl Project {
                     }
                 }
             }
-            TerminalKind::Debug {
-                command,
-                args,
-                envs,
-                title,
-                ..
-            } => {
-                env.extend(envs);
-
-                let shell = if let Some(program) = command {
-                    Shell::WithArguments {
-                        program,
-                        args,
-                        title_override: Some(title.unwrap_or("Debug Terminal".into()).into()),
-                    }
-                } else {
-                    settings.shell.clone()
-                };
-
-                (None, shell)
-            }
         };
         TerminalBuilder::new(
             local_path.map(|path| path.to_path_buf()),
@@ -369,7 +341,6 @@ impl Project {
             ssh_details.is_some(),
             window,
             completion_tx,
-            debug_terminal,
             cx,
         )
         .map(|builder| {
@@ -543,7 +514,7 @@ impl Project {
         terminal_handle: &Entity<Terminal>,
         cx: &mut App,
     ) {
-        terminal_handle.update(cx, |terminal, _| terminal.input_bytes(command.into_bytes()));
+        terminal_handle.update(cx, |terminal, _| terminal.input(command));
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
@@ -551,7 +522,7 @@ impl Project {
     }
 }
 
-fn wrap_for_ssh(
+pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
     path: Option<&Path>,
@@ -559,9 +530,14 @@ fn wrap_for_ssh(
     venv_directory: Option<&Path>,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
-        let command = Cow::Borrowed(command.as_str());
+        // DEFAULT_REMOTE_SHELL is '"${SHELL:-sh}"' so must not be escaped
+        let command: Option<Cow<str>> = if command == DEFAULT_REMOTE_SHELL {
+            Some(command.into())
+        } else {
+            shlex::try_quote(command).ok()
+        };
         let args = args.iter().filter_map(|arg| shlex::try_quote(arg).ok());
-        iter::once(command).chain(args).join(" ")
+        command.into_iter().chain(args).join(" ")
     } else {
         "exec ${SHELL:-sh} -l".to_string()
     };

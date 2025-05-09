@@ -91,7 +91,7 @@ fn view_release_notes_locally(
 
                             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-                            let tab_description = SharedString::from(body.title.to_string());
+                            let tab_content = SharedString::from(body.title.to_string());
                             let editor = cx.new(|cx| {
                                 Editor::for_multibuffer(buffer, Some(project), window, cx)
                             });
@@ -102,7 +102,7 @@ fn view_release_notes_locally(
                                     editor,
                                     workspace_handle,
                                     language_registry,
-                                    Some(tab_description),
+                                    tab_content,
                                     window,
                                     cx,
                                 );
@@ -155,6 +155,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                                 }
                                 cx.emit(DismissEvent);
                             })
+                            .show_suppress_button(false)
                         })
                     },
                 );

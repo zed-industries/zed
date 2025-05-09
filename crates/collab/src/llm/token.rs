@@ -1,6 +1,6 @@
-use crate::Cents;
-use crate::db::user;
-use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::db::billing_subscription::SubscriptionKind;
+use crate::db::{billing_subscription, user};
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::{Config, db::billing_preference};
 use anyhow::{Result, anyhow};
 use chrono::{NaiveDateTime, Utc};
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
+use zed_llm_client::Plan;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,11 +25,19 @@ pub struct LlmTokenClaims {
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
-    pub has_predict_edits_feature_flag: bool,
-    pub has_llm_subscription: bool,
-    pub max_monthly_spend_in_cents: u32,
-    pub custom_llm_monthly_allowance_in_cents: Option<u32>,
-    pub plan: rpc::proto::Plan,
+    #[serde(default)]
+    pub use_llm_request_queue: bool,
+    pub plan: Plan,
+    #[serde(default)]
+    pub has_extended_trial: bool,
+    #[serde(default)]
+    pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
+    #[serde(default)]
+    pub enable_model_request_overages: bool,
+    #[serde(default)]
+    pub model_request_overages_spend_limit_in_cents: u32,
+    #[serde(default)]
+    pub can_use_web_search_tool: bool,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -39,8 +48,7 @@ impl LlmTokenClaims {
         is_staff: bool,
         billing_preferences: Option<billing_preference::Model>,
         feature_flags: &Vec<String>,
-        has_llm_subscription: bool,
-        plan: rpc::proto::Plan,
+        subscription: Option<billing_subscription::Model>,
         system_id: Option<String>,
         config: &Config,
     ) -> Result<String> {
@@ -66,18 +74,38 @@ impl LlmTokenClaims {
             bypass_account_age_check: feature_flags
                 .iter()
                 .any(|flag| flag == "bypass-account-age-check"),
-            has_predict_edits_feature_flag: feature_flags
+            can_use_web_search_tool: true,
+            use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
+            plan: if is_staff {
+                Plan::ZedPro
+            } else {
+                subscription
+                    .as_ref()
+                    .and_then(|subscription| subscription.kind)
+                    .map_or(Plan::Free, |kind| match kind {
+                        SubscriptionKind::ZedFree => Plan::Free,
+                        SubscriptionKind::ZedPro => Plan::ZedPro,
+                        SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+                    })
+            },
+            has_extended_trial: feature_flags
                 .iter()
-                .any(|flag| flag == "predict-edits"),
-            has_llm_subscription,
-            max_monthly_spend_in_cents: billing_preferences
-                .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
-                    preferences.max_monthly_llm_usage_spending_in_cents as u32
+                .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG),
+            subscription_period: billing_subscription::Model::current_period(
+                subscription,
+                is_staff,
+            )
+            .map(|(start, end)| (start.naive_utc(), end.naive_utc())),
+            enable_model_request_overages: billing_preferences
+                .as_ref()
+                .map_or(false, |preferences| {
+                    preferences.model_request_overages_enabled
                 }),
-            custom_llm_monthly_allowance_in_cents: user
-                .custom_llm_monthly_allowance_in_cents
-                .map(|allowance| allowance as u32),
-            plan,
+            model_request_overages_spend_limit_in_cents: billing_preferences
+                .as_ref()
+                .map_or(0, |preferences| {
+                    preferences.model_request_overages_spend_limit_in_cents as u32
+                }),
         };
 
         Ok(jsonwebtoken::encode(
@@ -107,12 +135,6 @@ impl LlmTokenClaims {
                 }
             }
         }
-    }
-
-    pub fn free_tier_monthly_spending_limit(&self) -> Cents {
-        self.custom_llm_monthly_allowance_in_cents
-            .map(Cents)
-            .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT)
     }
 }
 

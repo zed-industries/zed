@@ -1,0 +1,123 @@
+syntax = "proto3";
+package zed.messages;
+
+message UpdateInviteInfo {
+    string url = 1;
+    uint32 count = 2;
+}
+
+message GetPrivateUserInfo {}
+
+message GetPrivateUserInfoResponse {
+    string metrics_id = 1;
+    bool staff = 2;
+    repeated string flags = 3;
+    optional uint64 accepted_tos_at = 4;
+}
+
+enum Plan {
+    Free = 0;
+    ZedPro = 1;
+    ZedProTrial = 2;
+}
+
+message UpdateUserPlan {
+    Plan plan = 1;
+    optional uint64 trial_started_at = 2;
+    optional bool is_usage_based_billing_enabled = 3;
+    optional SubscriptionUsage usage = 4;
+    optional SubscriptionPeriod subscription_period = 5;
+}
+
+message SubscriptionPeriod {
+    uint64 started_at = 1;
+    uint64 ended_at = 2;
+}
+
+message SubscriptionUsage {
+    uint32 model_requests_usage_amount = 1;
+    UsageLimit model_requests_usage_limit = 2;
+    uint32 edit_predictions_usage_amount = 3;
+    UsageLimit edit_predictions_usage_limit = 4;
+}
+
+message UsageLimit {
+    oneof variant {
+        Limited limited = 1;
+        Unlimited unlimited = 2;
+    }
+
+    message Limited {
+        uint32 limit = 1;
+    }
+
+    message Unlimited {}
+}
+
+message AcceptTermsOfService {}
+
+message AcceptTermsOfServiceResponse {
+    uint64 accepted_tos_at = 1;
+}
+
+message ShutdownRemoteServer {}
+
+message Toast {
+    uint64 project_id = 1;
+    string notification_id = 2;
+    string message = 3;
+}
+
+message HideToast {
+    uint64 project_id = 1;
+    string notification_id = 2;
+}
+
+message OpenServerSettings {
+    uint64 project_id = 1;
+}
+
+message GetPanicFiles {
+}
+
+message GetPanicFilesResponse {
+    repeated string file_contents = 2;
+}
+
+message Extension {
+    string id = 1;
+    string version = 2;
+    bool dev = 3;
+}
+
+message SyncExtensions {
+    repeated Extension extensions = 1;
+}
+
+message SyncExtensionsResponse {
+    string tmp_dir = 1;
+    repeated Extension missing_extensions = 2;
+}
+
+message InstallExtension {
+    Extension extension = 1;
+    string tmp_dir = 2;
+}
+
+message AskPassRequest {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    uint64 askpass_id = 4;
+    string prompt = 5;
+}
+
+message AskPassResponse {
+    string response = 1;
+}
+
+message GetSupermavenApiKey {}
+
+message GetSupermavenApiKeyResponse {
+    string api_key = 1;
+}

@@ -46,15 +46,15 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
-strum.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace.workspace = true
 workspace-hack.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }

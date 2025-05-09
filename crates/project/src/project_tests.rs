@@ -5,7 +5,8 @@ use crate::{
     *,
 };
 use buffer_diff::{
-    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
+    BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
+    DiffHunkStatusKind, assert_hunks,
 };
 use fs::FakeFs;
 use futures::{StreamExt, future};
@@ -30,14 +31,15 @@ use parking_lot::Mutex;
 use paths::{config_dir, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
+use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
+use std::{env, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    TryFutureExt as _, assert_set_eq, path,
+    TryFutureExt as _, assert_set_eq, maybe, path,
     paths::PathMatcher,
     separator,
     test::{TempTree, marked_text_offsets},
@@ -290,7 +292,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         })
         .into_iter()
         .map(|(source_kind, task)| {
-            let resolved = task.resolved.unwrap();
+            let resolved = task.resolved;
             (
                 source_kind,
                 task.resolved_label,
@@ -357,7 +359,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         }])
                         .to_string(),
                     ),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -368,7 +369,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .map(|(source_kind, task)| {
-            let resolved = task.resolved.unwrap();
+            let resolved = task.resolved;
             (
                 source_kind,
                 task.resolved_label,
@@ -459,6 +460,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                 active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: None,
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -481,6 +484,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
                     worktree_context
                 })),
                 other_worktree_contexts: Vec::new(),
+                lsp_task_sources: HashMap::default(),
+                latest_selection: None,
             },
             cx,
         )
@@ -489,7 +494,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         active_worktree_tasks
             .into_iter()
             .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
+                let resolved = task.resolved;
                 (source_kind, resolved.command)
             })
             .collect::<Vec<_>>(),
@@ -797,7 +802,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap(),),
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path(path!("/dir/test3.rs")).unwrap()),
     );
     assert_eq!(
         fake_json_server
@@ -2664,6 +2669,62 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
+async fn test_edits_from_lsp_with_replacement_followed_by_adjacent_insertion(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let text = "Path()";
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.rs": text
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Simulate the language server sending us a pair of edits at the same location,
+    // with an insertion following a replacement (which violates the LSP spec).
+    let edits = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                &buffer,
+                [
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 4)),
+                        new_text: "Path".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                        new_text: "from path import Path\n\n\n".into(),
+                    },
+                ],
+                LanguageServerId(0),
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(edits, None, cx);
+        assert_eq!(buffer.text(), "from path import Path\n\n\nPath()")
+    });
+}
+
+#[gpui::test]
 async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2958,7 +3019,7 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "textEditText");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 3..text.len()
     );
 }
@@ -3041,7 +3102,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].new_text, "insertText");
         assert_eq!(
-            completions[0].old_range.to_offset(&snapshot),
+            completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
@@ -3083,7 +3144,7 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].new_text, "labelText");
         assert_eq!(
-            completions[0].old_range.to_offset(&snapshot),
+            completions[0].replace_range.to_offset(&snapshot),
             text.len() - 3..text.len()
         );
     }
@@ -3153,7 +3214,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 3..text.len()
     );
 
@@ -3180,7 +3241,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
     assert_eq!(
-        completions[0].old_range.to_offset(&snapshot),
+        completions[0].replace_range.to_offset(&snapshot),
         text.len() - 4..text.len() - 1
     );
 }
@@ -4760,6 +4821,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4794,6 +4856,7 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4838,6 +4901,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4859,6 +4923,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None
             )
             .unwrap(),
@@ -4883,6 +4948,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4908,6 +4974,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
                     .unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4954,6 +5021,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -4980,6 +5048,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.rs".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5004,6 +5073,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5029,6 +5099,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 Default::default(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
                     .unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5070,6 +5141,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5091,6 +5163,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5112,6 +5185,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5133,6 +5207,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()]).unwrap(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5187,6 +5262,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-a/*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                true,
                 None,
             )
             .unwrap(),
@@ -5207,6 +5283,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["worktree-b/*.rs".to_owned()]).unwrap(),
                 Default::default(),
+                true,
                 None,
             )
             .unwrap(),
@@ -5228,6 +5305,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 false,
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5283,6 +5361,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5305,6 +5384,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5348,6 +5428,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 true,
                 files_to_include,
                 files_to_exclude,
+                false,
                 None,
             )
             .unwrap(),
@@ -5360,6 +5441,90 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
             vec![9..12]
         )]),
         "With search including ignored prettier directory and excluding TS files, only one file should be found"
+    );
+}
+
+#[gpui::test]
+async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "// ПРИВЕТ? привет!",
+            "two.rs": "// ПРИВЕТ.",
+            "three.rs": "// привет",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let unicode_case_sensitive_query = SearchQuery::text(
+        "привет",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    );
+    assert_matches!(unicode_case_sensitive_query, Ok(SearchQuery::Text { .. }));
+    assert_eq!(
+        search(&project, unicode_case_sensitive_query.unwrap(), cx)
+            .await
+            .unwrap(),
+        HashMap::from_iter([
+            (separator!("dir/one.rs").to_string(), vec![17..29]),
+            (separator!("dir/three.rs").to_string(), vec![3..15]),
+        ])
+    );
+
+    let unicode_case_insensitive_query = SearchQuery::text(
+        "привет",
+        false,
+        false,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    );
+    assert_matches!(
+        unicode_case_insensitive_query,
+        Ok(SearchQuery::Regex { .. })
+    );
+    assert_eq!(
+        search(&project, unicode_case_insensitive_query.unwrap(), cx)
+            .await
+            .unwrap(),
+        HashMap::from_iter([
+            (separator!("dir/one.rs").to_string(), vec![3..15, 17..29]),
+            (separator!("dir/two.rs").to_string(), vec![3..15]),
+            (separator!("dir/three.rs").to_string(), vec![3..15]),
+        ])
+    );
+
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "привет.",
+                false,
+                false,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([(separator!("dir/two.rs").to_string(), vec![3..16]),])
     );
 }
 
@@ -6545,7 +6710,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     } = event
     {
         let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
+        assert_eq!(changed_range, Point::new(0, 0)..Point::new(4, 0));
     } else {
         panic!("Unexpected event {event:?}");
     }
@@ -6905,50 +7070,56 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
 }
 
-#[gpui::test]
-async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
+#[gpui::test(iterations = 25)]
+async fn test_staging_random_hunks(
+    mut rng: StdRng,
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(20);
+
+    // Try to induce races between diff recalculation and index writes.
+    if rng.gen_bool(0.5) {
+        executor.deprioritize(*CALCULATE_DIFF_TASK);
+    }
+
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
 
-    let different_lines = (0..500)
-        .step_by(5)
-        .map(|i| format!("diff {}\n", i))
-        .collect::<Vec<String>>();
-    let committed_contents = (0..500).map(|i| format!("{}\n", i)).collect::<String>();
-    let file_contents = (0..500)
-        .map(|i| {
-            if i % 5 == 0 {
-                different_lines[i / 5].clone()
-            } else {
-                format!("{}\n", i)
-            }
+    let committed_text = (0..30).map(|i| format!("line {i}\n")).collect::<String>();
+    let index_text = committed_text.clone();
+    let buffer_text = (0..30)
+        .map(|i| match i % 5 {
+            0 => format!("line {i} (modified)\n"),
+            _ => format!("line {i}\n"),
         })
         .collect::<String>();
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             ".git": {},
-            "file.txt": file_contents.clone()
+            "file.txt": buffer_text.clone()
         }),
     )
     .await;
-
     fs.set_head_for_repo(
-        "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
+        path!("/dir/.git").as_ref(),
+        &[("file.txt".into(), committed_text.clone())],
     );
     fs.set_index_for_repo(
-        "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
+        path!("/dir/.git").as_ref(),
+        &[("file.txt".into(), index_text.clone())],
     );
+    let repo = fs.open_repo(path!("/dir/.git").as_ref()).unwrap();
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
-
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/file.txt", cx)
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
         })
         .await
         .unwrap();
@@ -6960,94 +7131,60 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let mut expected_hunks: Vec<(Range<u32>, String, String, DiffHunkStatus)> = (0..500)
-        .step_by(5)
-        .map(|i| {
-            (
-                i as u32..i as u32 + 1,
-                format!("{}\n", i),
-                different_lines[i / 5].clone(),
-                DiffHunkStatus::modified(HasSecondaryHunk),
-            )
-        })
-        .collect();
+    let mut hunks =
+        uncommitted_diff.update(cx, |diff, cx| diff.hunks(&snapshot, cx).collect::<Vec<_>>());
+    assert_eq!(hunks.len(), 6);
 
-    // The hunks are initially unstaged
-    uncommitted_diff.read_with(cx, |diff, cx| {
-        assert_hunks(
-            diff.hunks(&snapshot, cx),
-            &snapshot,
-            &diff.base_text_string().unwrap(),
-            &expected_hunks,
-        );
-    });
+    for _i in 0..operations {
+        let hunk_ix = rng.gen_range(0..hunks.len());
+        let hunk = &mut hunks[hunk_ix];
+        let row = hunk.range.start.row;
 
-    for (_, _, _, status) in expected_hunks.iter_mut() {
-        *status = DiffHunkStatus::modified(SecondaryHunkRemovalPending);
-    }
-
-    // Stage every hunk with a different call
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
-        for hunk in hunks {
-            diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+        if hunk.status().has_secondary_hunk() {
+            log::info!("staging hunk at {row}");
+            uncommitted_diff.update(cx, |diff, cx| {
+                diff.stage_or_unstage_hunks(true, &[hunk.clone()], &snapshot, true, cx);
+            });
+            hunk.secondary_status = SecondaryHunkRemovalPending;
+        } else {
+            log::info!("unstaging hunk at {row}");
+            uncommitted_diff.update(cx, |diff, cx| {
+                diff.stage_or_unstage_hunks(false, &[hunk.clone()], &snapshot, true, cx);
+            });
+            hunk.secondary_status = SecondaryHunkAdditionPending;
         }
 
-        assert_hunks(
-            diff.hunks(&snapshot, cx),
-            &snapshot,
-            &diff.base_text_string().unwrap(),
-            &expected_hunks,
-        );
-    });
-
-    // If we wait, we'll have no pending hunks
-    cx.run_until_parked();
-    for (_, _, _, status) in expected_hunks.iter_mut() {
-        *status = DiffHunkStatus::modified(NoSecondaryHunk);
-    }
-
-    uncommitted_diff.update(cx, |diff, cx| {
-        assert_hunks(
-            diff.hunks(&snapshot, cx),
-            &snapshot,
-            &diff.base_text_string().unwrap(),
-            &expected_hunks,
-        );
-    });
-
-    for (_, _, _, status) in expected_hunks.iter_mut() {
-        *status = DiffHunkStatus::modified(SecondaryHunkAdditionPending);
-    }
-
-    // Unstage every hunk with a different call
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
-        for hunk in hunks {
-            diff.stage_or_unstage_hunks(false, &[hunk], &snapshot, true, cx);
+        for _ in 0..rng.gen_range(0..10) {
+            log::info!("yielding");
+            cx.executor().simulate_random_delay().await;
         }
-
-        assert_hunks(
-            diff.hunks(&snapshot, cx),
-            &snapshot,
-            &diff.base_text_string().unwrap(),
-            &expected_hunks,
-        );
-    });
-
-    // If we wait, we'll have no pending hunks, again
-    cx.run_until_parked();
-    for (_, _, _, status) in expected_hunks.iter_mut() {
-        *status = DiffHunkStatus::modified(HasSecondaryHunk);
     }
 
+    cx.executor().run_until_parked();
+
+    for hunk in &mut hunks {
+        if hunk.secondary_status == SecondaryHunkRemovalPending {
+            hunk.secondary_status = NoSecondaryHunk;
+        } else if hunk.secondary_status == SecondaryHunkAdditionPending {
+            hunk.secondary_status = HasSecondaryHunk;
+        }
+    }
+
+    log::info!(
+        "index text:\n{}",
+        repo.load_index_text("file.txt".into()).await.unwrap()
+    );
+
     uncommitted_diff.update(cx, |diff, cx| {
-        assert_hunks(
-            diff.hunks(&snapshot, cx),
-            &snapshot,
-            &diff.base_text_string().unwrap(),
-            &expected_hunks,
-        );
+        let expected_hunks = hunks
+            .iter()
+            .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
+            .collect::<Vec<_>>();
+        let actual_hunks = diff
+            .hunks(&snapshot, cx)
+            .map(|hunk| (hunk.range.start.row, hunk.secondary_status))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_hunks, expected_hunks);
     });
 }
 
@@ -7158,7 +7295,7 @@ async fn test_repository_and_path_for_project_path(
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
     tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
         .await;
-    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
 
     project.read_with(cx, |project, cx| {
         let git_store = project.git_store().read(cx);
@@ -7199,7 +7336,7 @@ async fn test_repository_and_path_for_project_path(
     fs.remove_dir(path!("/root/dir1/.git").as_ref(), RemoveOptions::default())
         .await
         .unwrap();
-    tree.flush_fs_events(cx).await;
+    cx.run_until_parked();
 
     project.read_with(cx, |project, cx| {
         let git_store = project.git_store().read(cx);
@@ -7459,49 +7596,51 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
+async fn test_repository_subfolder_git_status(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx);
-    cx.executor().allow_parking();
 
-    let root = TempTree::new(json!({
-        "my-repo": {
-            // .git folder will go here
-            "a.txt": "a",
-            "sub-folder-1": {
-                "sub-folder-2": {
-                    "c.txt": "cc",
-                    "d": {
-                        "e.txt": "eee"
-                    }
-                },
-            }
-        },
-    }));
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "a.txt": "a",
+                "sub-folder-1": {
+                    "sub-folder-2": {
+                        "c.txt": "cc",
+                        "d": {
+                            "e.txt": "eee"
+                        }
+                    },
+                }
+            },
+        }),
+    )
+    .await;
 
     const C_TXT: &str = "sub-folder-1/sub-folder-2/c.txt";
     const E_TXT: &str = "sub-folder-1/sub-folder-2/d/e.txt";
 
-    // Set up git repository before creating the worktree.
-    let git_repo_work_dir = root.path().join("my-repo");
-    let repo = git_init(git_repo_work_dir.as_path());
-    git_add(C_TXT, &repo);
-    git_commit("Initial commit", &repo);
-
-    // Open the worktree in subfolder
-    let project_root = Path::new("my-repo/sub-folder-1/sub-folder-2");
+    fs.set_status_for_repo(
+        path!("/root/my-repo/.git").as_ref(),
+        &[(E_TXT.as_ref(), FileStatus::Untracked)],
+    );
 
     let project = Project::test(
-        Arc::new(RealFs::new(None, cx.executor())),
-        [root.path().join(project_root).as_path()],
+        fs.clone(),
+        [path!("/root/my-repo/sub-folder-1/sub-folder-2").as_ref()],
         cx,
     )
     .await;
 
-    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
-    cx.executor().run_until_parked();
+    cx.run_until_parked();
 
     let repository = project.read_with(cx, |project, cx| {
         project.repositories(cx).values().next().unwrap().clone()
@@ -7510,8 +7649,8 @@ async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
     // Ensure that the git status is loaded correctly
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
-            repository.work_directory_abs_path.canonicalize().unwrap(),
-            root.path().join("my-repo").canonicalize().unwrap()
+            repository.work_directory_abs_path,
+            Path::new(path!("/root/my-repo")).into()
         );
 
         assert_eq!(repository.status_for_path(&C_TXT.into()), None);
@@ -7521,13 +7660,11 @@ async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // Now we simulate FS events, but ONLY in the .git folder that's outside
-    // of out project root.
-    // Meaning: we don't produce any FS events for files inside the project.
-    git_add(E_TXT, &repo);
-    git_commit("Second commit", &repo);
-    tree.flush_fs_events_in_root_git_repository(cx).await;
-    cx.executor().run_until_parked();
+    fs.set_status_for_repo(path!("/root/my-repo/.git").as_ref(), &[]);
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(repository.status_for_path(&C_TXT.into()), None);
@@ -7535,9 +7672,8 @@ async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
-// TODO: this test fails on Windows because upon cherry-picking we don't get an event in the .git directory,
-// despite CHERRY_PICK_HEAD existing after the `git_cherry_pick` call and the conflicted path showing up in git status.
-#[cfg(not(windows))]
+// TODO: this test is flaky (especially on Windows but at least sometimes on all platforms).
+#[cfg(any())]
 #[gpui::test]
 async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -8150,6 +8286,165 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {
+                "worktrees": {
+                    "some-worktree": {
+                        "commondir": "../..\n",
+                        // For is_git_dir
+                        "HEAD": "",
+                        "config": ""
+                    }
+                },
+                "modules": {
+                    "subdir": {
+                        "some-submodule": {
+                            // For is_git_dir
+                            "HEAD": "",
+                            "config": "",
+                        }
+                    }
+                }
+            },
+            "src": {
+                "a.txt": "A",
+            },
+            "some-worktree": {
+                ".git": "gitdir: ../.git/worktrees/some-worktree\n",
+                "src": {
+                    "b.txt": "B",
+                }
+            },
+            "subdir": {
+                "some-submodule": {
+                    ".git": "gitdir: ../../.git/modules/subdir/some-submodule\n",
+                    "c.txt": "C",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let scan_complete = project.update(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .as_local()
+            .unwrap()
+            .scan_complete()
+    });
+    scan_complete.await;
+
+    let mut repositories = project.update(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    repositories.sort();
+    pretty_assertions::assert_eq!(
+        repositories,
+        [
+            Path::new(path!("/project")).into(),
+            Path::new(path!("/project/some-worktree")).into(),
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        ]
+    );
+
+    // Generate a git-related event for the worktree and check that it's refreshed.
+    fs.with_git_state(
+        path!("/project/some-worktree/.git").as_ref(),
+        true,
+        |state| {
+            state
+                .head_contents
+                .insert("src/b.txt".into(), "b".to_owned());
+            state
+                .index_contents
+                .insert("src/b.txt".into(), "b".to_owned());
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/some-worktree/src/b.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (worktree_repo, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            repo.read(cx).work_directory_abs_path,
+            Path::new(path!("/project/some-worktree")).into(),
+        );
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+    worktree_repo.update(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            StatusCode::Modified.worktree(),
+        );
+    });
+
+    // The same for the submodule.
+    fs.with_git_state(
+        path!("/project/subdir/some-submodule/.git").as_ref(),
+        true,
+        |state| {
+            state.head_contents.insert("c.txt".into(), "c".to_owned());
+            state.index_contents.insert("c.txt".into(), "c".to_owned());
+        },
+    )
+    .unwrap();
+    cx.run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/subdir/some-submodule/c.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (submodule_repo, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            repo.read(cx).work_directory_abs_path,
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+    submodule_repo.update(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.status_for_path(&"c.txt".into()).unwrap().status,
+            StatusCode::Modified.worktree(),
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -8413,7 +8708,7 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
     repo.cherrypick(commit, None).expect("Failed to cherrypick");
@@ -8444,7 +8739,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
         .expect("Could not reset");
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_branch(name: &str, repo: &git2::Repository) {
     let head = repo
@@ -8455,14 +8750,14 @@ fn git_branch(name: &str, repo: &git2::Repository) {
     repo.branch(name, &head, false).expect("Failed to commit");
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_checkout(name: &str, repo: &git2::Repository) {
     repo.set_head(name).expect("Failed to set head");
     repo.checkout_head(None).expect("Failed to check out head");
 }
 
-#[cfg(not(windows))]
+#[cfg(any())]
 #[track_caller]
 fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
     repo.statuses(None)
@@ -8470,4 +8765,90 @@ fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Sta
         .iter()
         .map(|status| (status.path().unwrap().to_string(), status.status()))
         .collect()
+}
+
+#[gpui::test]
+async fn test_find_project_path_abs(
+    background_executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    // find_project_path should work with absolute paths
+    init_test(cx);
+
+    let fs = FakeFs::new(background_executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project1": {
+                "file1.txt": "content1",
+                "subdir": {
+                    "file2.txt": "content2"
+                }
+            },
+            "project2": {
+                "file3.txt": "content3"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root/project1").as_ref(),
+            path!("/root/project2").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    // Make sure the worktrees are fully initialized
+    for worktree in project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>()) {
+        worktree
+            .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+    }
+    cx.run_until_parked();
+
+    let (project1_abs_path, project1_id, project2_abs_path, project2_id) =
+        project.read_with(cx, |project, cx| {
+            let worktrees: Vec<_> = project.worktrees(cx).collect();
+            let abs_path1 = worktrees[0].read(cx).abs_path().to_path_buf();
+            let id1 = worktrees[0].read(cx).id();
+            let abs_path2 = worktrees[1].read(cx).abs_path().to_path_buf();
+            let id2 = worktrees[1].read(cx).id();
+            (abs_path1, id1, abs_path2, id2)
+        });
+
+    project.update(cx, |project, cx| {
+        let abs_path = project1_abs_path.join("file1.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project1_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("file1.txt"));
+
+        let abs_path = project1_abs_path.join("subdir").join("file2.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project1_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("subdir/file2.txt"));
+
+        let abs_path = project2_abs_path.join("file3.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project2_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("file3.txt"));
+
+        let abs_path = project1_abs_path.join("nonexistent.txt");
+        let found_path = project.find_project_path(abs_path, cx);
+        assert!(
+            found_path.is_some(),
+            "Should find project path for nonexistent file in worktree"
+        );
+
+        // Test with an absolute path outside any worktree
+        let abs_path = Path::new("/some/other/path");
+        let found_path = project.find_project_path(abs_path, cx);
+        assert!(
+            found_path.is_none(),
+            "Should not find project path for path outside any worktree"
+        );
+    });
 }

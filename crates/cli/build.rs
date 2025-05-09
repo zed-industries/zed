@@ -7,8 +7,6 @@ fn main() {
 
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
-        // Weakly link ScreenCaptureKit to ensure can be used on macOS 10.15+.
-        println!("cargo:rustc-link-arg=-Wl,-weak_framework,ScreenCaptureKit");
     }
 
     // Populate git sha environment variable if git is available

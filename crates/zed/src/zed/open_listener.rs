@@ -103,7 +103,7 @@ impl OpenRequest {
         let mut parts = request_path.split('/');
         if parts.next() == Some("channel") {
             if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').last() {
+                if let Some(id_str) = slug.split('-').next_back() {
                     if let Ok(channel_id) = id_str.parse::<u64>() {
                         let Some(next) = parts.next() else {
                             self.join_channel = Some(channel_id);
@@ -151,7 +151,7 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
 
-    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
         if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -261,6 +261,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 env,
+                user_data_dir: _, // Ignore user_data_dir
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -529,8 +530,8 @@ pub async fn derive_paths_with_position(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use super::*;
+    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
     use cli::{
         CliResponse,
         ipc::{self},
@@ -538,10 +539,33 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
+    use std::sync::Arc;
     use util::path;
     use workspace::{AppState, Workspace};
 
-    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
+    #[gpui::test]
+    fn test_parse_ssh_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        cx.update(|cx| {
+            SshSettings::register(cx);
+        });
+        let request =
+            cx.update(|cx| OpenRequest::parse(vec!["ssh://me@localhost:/".into()], cx).unwrap());
+        assert_eq!(
+            request.ssh_connection.unwrap(),
+            SshConnectionOptions {
+                host: "localhost".into(),
+                username: Some("me".into()),
+                port: None,
+                password: None,
+                args: None,
+                port_forwards: None,
+                nickname: None,
+                upload_binary_over_ssh: false,
+            }
+        );
+        assert_eq!(request.open_paths, vec!["/"]);
+    }
 
     #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {

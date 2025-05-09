@@ -6,8 +6,8 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, CursorStyle, DismissEvent, Element, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListAlignment,
+    AnyElement, App, AsyncWindowContext, ClickEvent, Context, CursorStyle, DismissEvent, Element,
+    Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ListAlignment,
     ListScrollEvent, ListState, ParentElement, Render, StatefulInteractiveElement, Styled, Task,
     WeakEntity, Window, actions, div, img, list, px,
 };
@@ -22,7 +22,9 @@ use ui::{
     Avatar, Button, Icon, IconButton, IconName, Label, Tab, Tooltip, h_flex, prelude::*, v_flex,
 };
 use util::{ResultExt, TryFutureExt};
-use workspace::notifications::{Notification as WorkspaceNotification, NotificationId};
+use workspace::notifications::{
+    Notification as WorkspaceNotification, NotificationId, SuppressEvent,
+};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -809,19 +811,50 @@ impl NotificationToast {
 }
 
 impl Render for NotificationToast {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let user = self.actor.clone();
+
+        let suppress = window.modifiers().shift;
+        let (close_id, close_icon) = if suppress {
+            ("suppress", IconName::Minimize)
+        } else {
+            ("close", IconName::Close)
+        };
 
         h_flex()
             .id("notification_panel_toast")
             .elevation_3(cx)
             .p_2()
-            .gap_2()
+            .justify_between()
             .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))
+            .on_modifiers_changed(cx.listener(|_, _, _, cx| cx.notify()))
             .child(
-                IconButton::new("close", IconName::Close)
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                IconButton::new(close_id, close_icon)
+                    .tooltip(move |window, cx| {
+                        if suppress {
+                            Tooltip::for_action(
+                                "Suppress.\nClose with click.",
+                                &workspace::SuppressNotification,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            Tooltip::for_action(
+                                "Close.\nSuppress with shift-click",
+                                &menu::Cancel,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                        if suppress {
+                            cx.emit(SuppressEvent);
+                        } else {
+                            cx.emit(DismissEvent);
+                        }
+                    })),
             )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.focus_notification_panel(window, cx);
@@ -831,3 +864,4 @@ impl Render for NotificationToast {
 }
 
 impl EventEmitter<DismissEvent> for NotificationToast {}
+impl EventEmitter<SuppressEvent> for NotificationToast {}

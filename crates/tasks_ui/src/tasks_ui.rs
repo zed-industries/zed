@@ -1,22 +1,20 @@
-use std::collections::HashMap;
 use std::path::Path;
 
+use collections::HashMap;
 use editor::Editor;
-use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
-use modal::{TaskOverrides, TasksModal};
-use project::{Location, TaskContexts, Worktree};
-use task::{RevealTarget, TaskContext, TaskId, TaskModal, TaskVariables, VariableName};
-use workspace::tasks::schedule_task;
-use workspace::{Start, Workspace, tasks::schedule_resolved_task};
+use modal::TaskOverrides;
+use project::{Location, TaskContexts, TaskSourceKind, Worktree};
+use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
+use workspace::Workspace;
 
 mod modal;
 
-pub use modal::{Rerun, Spawn};
+pub use modal::{Rerun, ShowAttachModal, Spawn, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, _: Option<&mut Window>, _: &mut Context<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
@@ -49,15 +47,15 @@ pub fn init(cx: &mut App) {
                                 let task_contexts = task_contexts.await;
                                 let default_context = TaskContext::default();
                                 workspace
-                                    .update_in(cx, |workspace, _, cx| {
-                                        schedule_task(
-                                            workspace,
+                                    .update_in(cx, |workspace, window, cx| {
+                                        workspace.schedule_task(
                                             task_source_kind,
                                             &original_task,
                                             task_contexts
                                                 .active_context()
                                                 .unwrap_or(&default_context),
                                             false,
+                                            window,
                                             cx,
                                         )
                                     })
@@ -65,38 +63,27 @@ pub fn init(cx: &mut App) {
                             })
                             .detach()
                         } else {
-                            if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
-                                if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                    resolved.allow_concurrent_runs = allow_concurrent_runs;
-                                }
-                                if let Some(use_new_terminal) = action.use_new_terminal {
-                                    resolved.use_new_terminal = use_new_terminal;
-                                }
+                            let resolved = &mut last_scheduled_task.resolved;
+
+                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                                resolved.allow_concurrent_runs = allow_concurrent_runs;
+                            }
+                            if let Some(use_new_terminal) = action.use_new_terminal {
+                                resolved.use_new_terminal = use_new_terminal;
                             }
 
-                            schedule_resolved_task(
-                                workspace,
+                            workspace.schedule_resolved_task(
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
+                                window,
                                 cx,
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
+                        toggle_modal(workspace, None, window, cx).detach();
                     };
                 });
-
-            let Some(window) = window else {
-                return;
-            };
-
-            cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
-                workspace.register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    crate::toggle_modal(workspace, None, task::TaskModal::DebugModal, window, cx)
-                        .detach();
-                });
-            });
         },
     )
     .detach();
@@ -116,23 +103,35 @@ fn spawn_task_or_modal(
             let overrides = reveal_target.map(|reveal_target| TaskOverrides {
                 reveal_target: Some(reveal_target),
             });
-            spawn_task_with_name(task_name.clone(), overrides, window, cx).detach_and_log_err(cx)
+            let name = task_name.clone();
+            spawn_tasks_filtered(move |(_, task)| task.label.eq(&name), overrides, window, cx)
+                .detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => toggle_modal(
-            workspace,
-            *reveal_target,
-            TaskModal::ScriptModal,
-            window,
-            cx,
-        )
-        .detach(),
+        Spawn::ByTag {
+            task_tag,
+            reveal_target,
+        } => {
+            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
+                reveal_target: Some(reveal_target),
+            });
+            let tag = task_tag.clone();
+            spawn_tasks_filtered(
+                move |(_, task)| task.tags.contains(&tag),
+                overrides,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx)
+        }
+        Spawn::ViaModal { reveal_target } => {
+            toggle_modal(workspace, *reveal_target, window, cx).detach()
+        }
     }
 }
 
 pub fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
-    task_type: TaskModal,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
@@ -155,7 +154,6 @@ pub fn toggle_modal(
                                 reveal_target: Some(target),
                             }),
                             workspace_handle,
-                            task_type,
                             window,
                             cx,
                         )
@@ -168,18 +166,21 @@ pub fn toggle_modal(
     }
 }
 
-fn spawn_task_with_name(
-    name: String,
+fn spawn_tasks_filtered<F>(
+    mut predicate: F,
     overrides: Option<TaskOverrides>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> Task<anyhow::Result<()>> {
+) -> Task<anyhow::Result<()>>
+where
+    F: FnMut((&TaskSourceKind, &TaskTemplate)) -> bool + 'static,
+{
     cx.spawn_in(window, async move |workspace, cx| {
         let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
             task_contexts(workspace, window, cx)
         })?;
         let task_contexts = task_contexts.await;
-        let tasks = workspace.update(cx, |workspace, cx| {
+        let mut tasks = workspace.update(cx, |workspace, cx| {
             let Some(task_inventory) = workspace
                 .project()
                 .read(cx)
@@ -206,25 +207,32 @@ fn spawn_task_with_name(
         })?;
 
         let did_spawn = workspace
-            .update(cx, |workspace, cx| {
-                let (task_source_kind, mut target_task) =
-                    tasks.into_iter().find(|(_, task)| task.label == name)?;
-                if let Some(overrides) = &overrides {
-                    if let Some(target_override) = overrides.reveal_target {
-                        target_task.reveal_target = target_override;
-                    }
-                }
+            .update_in(cx, |workspace, window, cx| {
                 let default_context = TaskContext::default();
                 let active_context = task_contexts.active_context().unwrap_or(&default_context);
-                schedule_task(
-                    workspace,
-                    task_source_kind,
-                    &target_task,
-                    active_context,
-                    false,
-                    cx,
-                );
-                Some(())
+
+                tasks.retain_mut(|(task_source_kind, target_task)| {
+                    if predicate((task_source_kind, target_task)) {
+                        if let Some(overrides) = &overrides {
+                            if let Some(target_override) = overrides.reveal_target {
+                                target_task.reveal_target = target_override;
+                            }
+                        }
+                        workspace.schedule_task(
+                            task_source_kind.clone(),
+                            target_task,
+                            active_context,
+                            false,
+                            window,
+                            cx,
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                if tasks.is_empty() { None } else { Some(()) }
             })?
             .is_some();
         if !did_spawn {
@@ -246,7 +254,11 @@ fn spawn_task_with_name(
     })
 }
 
-fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Task<TaskContexts> {
+pub fn task_contexts(
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
     let active_worktree = active_item
         .as_ref()
@@ -282,6 +294,17 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
         })
     });
 
+    let lsp_task_sources = active_editor
+        .as_ref()
+        .map(|active_editor| active_editor.update(cx, |editor, cx| editor.lsp_task_sources(cx)))
+        .unwrap_or_default();
+
+    let latest_selection = active_editor.as_ref().map(|active_editor| {
+        active_editor.update(cx, |editor, _| {
+            editor.selections.newest_anchor().head().text_anchor
+        })
+    });
+
     let mut worktree_abs_paths = workspace
         .worktrees(cx)
         .filter(|worktree| is_visible_directory(worktree, cx))
@@ -293,6 +316,9 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
 
     cx.background_spawn(async move {
         let mut task_contexts = TaskContexts::default();
+
+        task_contexts.lsp_task_sources = lsp_task_sources;
+        task_contexts.latest_selection = latest_selection;
 
         if let Some(editor_context_task) = editor_context_task {
             if let Some(editor_context) = editor_context_task.await {

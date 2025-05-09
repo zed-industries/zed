@@ -468,15 +468,9 @@ impl Matches {
                 path: found_path.clone(),
                 panel_match: None,
             };
-            self.matches
-                .extend(currently_opened.into_iter().map(path_to_entry));
 
-            self.matches.extend(
-                history_items
-                    .into_iter()
-                    .filter(|found_path| Some(*found_path) != currently_opened)
-                    .map(path_to_entry),
-            );
+            self.matches
+                .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
 
@@ -587,7 +581,16 @@ impl Matches {
             let filename_str = filename.to_string_lossy();
 
             if let Some(filename_pos) = path_str.rfind(&*filename_str) {
-                return panel_match.0.positions[0] >= filename_pos;
+                if panel_match.0.positions[0] >= filename_pos {
+                    let mut prev_position = panel_match.0.positions[0];
+                    for p in &panel_match.0.positions[1..] {
+                        if *p != prev_position + 1 {
+                            return false;
+                        }
+                        prev_position = *p;
+                    }
+                    return true;
+                }
             }
         }
 
@@ -819,7 +822,6 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
-
         cx: &mut Context<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
@@ -846,7 +848,7 @@ impl FileFinderDelegate {
             );
 
             self.selected_index = selected_match.map_or_else(
-                || self.calculate_selected_index(),
+                || self.calculate_selected_index(cx),
                 |m| {
                     self.matches
                         .position(&m, self.currently_opened_path.as_ref())
@@ -1089,12 +1091,14 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self) -> usize {
-        if let Some(Match::History { path, .. }) = self.matches.get(0) {
-            if Some(path) == self.currently_opened_path.as_ref() {
-                let elements_after_first = self.matches.len() - 1;
-                if elements_after_first > 0 {
-                    return 1;
+    fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
+        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search {
+            if let Some(Match::History { path, .. }) = self.matches.get(0) {
+                if Some(path) == self.currently_opened_path.as_ref() {
+                    let elements_after_first = self.matches.len() - 1;
+                    if elements_after_first > 0 {
+                        return 1;
+                    }
                 }
             }
         }

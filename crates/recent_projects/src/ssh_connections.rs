@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
@@ -13,7 +13,7 @@ use gpui::{
 };
 
 use language::CursorShape;
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
@@ -125,6 +125,8 @@ impl Settings for SshSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub struct SshPrompt {
@@ -182,7 +184,6 @@ impl SshPrompt {
     ) {
         let theme = ThemeSettings::get_global(cx);
 
-        let mut text_style = window.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),
@@ -192,7 +193,6 @@ impl SshPrompt {
             ..Default::default()
         };
 
-        text_style.refine(&refinement);
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
@@ -202,12 +202,8 @@ impl SshPrompt {
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
-            ..Default::default()
-        };
-        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
+
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));
@@ -231,7 +227,26 @@ impl SshPrompt {
 }
 
 impl Render for SshPrompt {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = ThemeSettings::get_global(cx);
+
+        let mut text_style = window.text_style();
+        let refinement = TextStyleRefinement {
+            font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
+            color: Some(cx.theme().colors().editor_foreground),
+            background_color: Some(gpui::transparent_black()),
+            ..Default::default()
+        };
+
+        text_style.refine(&refinement);
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
+        };
+
         v_flex()
             .key_context("PasswordPrompt")
             .py_2()
@@ -266,7 +281,7 @@ impl Render for SshPrompt {
                     div()
                         .size_full()
                         .overflow_hidden()
-                        .child(prompt.0.clone())
+                        .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
             })
@@ -550,19 +565,38 @@ pub async fn open_ssh_project(
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
-        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
+        let workspace_position = cx
+            .update(|cx| {
+                workspace::ssh_workspace_position_from_db(
+                    connection_options.host.clone(),
+                    connection_options.port,
+                    connection_options.username.clone(),
+                    &paths,
+                    cx,
+                )
+            })?
+            .await
+            .context("fetching ssh workspace position from db")?;
+
+        let mut options =
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+        options.window_bounds = workspace_position.window_bounds;
+
         cx.open_window(options, |window, cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
                 app_state.node_runtime.clone(),
                 app_state.user_store.clone(),
                 app_state.languages.clone(),
-                app_state.debug_adapters.clone(),
                 app_state.fs.clone(),
                 None,
                 cx,
             );
-            cx.new(|cx| Workspace::new(None, project, app_state.clone(), window, cx))
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                workspace.centered_layout = workspace_position.centered_layout;
+                workspace
+            })
         })?
     };
 
@@ -620,7 +654,7 @@ pub async fn open_ssh_project(
             .ok();
 
         if let Err(e) = did_open_ssh_project {
-            log::error!("Failed to open project: {:?}", e);
+            log::error!("Failed to open project: {e:?}");
             let response = window
                 .update(cx, |_, window, cx| {
                     window.prompt(

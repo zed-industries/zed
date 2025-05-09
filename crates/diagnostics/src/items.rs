@@ -9,7 +9,7 @@ use language::Diagnostic;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
-use crate::{Deploy, ProjectDiagnosticsEditor};
+use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
@@ -94,6 +94,11 @@ impl Render for DiagnosticIndicator {
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
+                            if this.summary.error_count == 0 && this.summary.warning_count > 0 {
+                                cx.update_default_global(
+                                    |show_warnings: &mut IncludeWarnings, _| show_warnings.0 = true,
+                                );
+                            }
                             workspace.update(cx, |workspace, cx| {
                                 ProjectDiagnosticsEditor::deploy(
                                     workspace,

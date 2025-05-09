@@ -5,6 +5,7 @@ use crate::{
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
 use std::sync::Arc;
+use util::maybe;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
@@ -17,20 +18,41 @@ impl Global for GlobalLanguageModelRegistry {}
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
-    active_model: Option<ActiveModel>,
-    editor_model: Option<ActiveModel>,
+    default_model: Option<ConfiguredModel>,
+    default_fast_model: Option<ConfiguredModel>,
+    inline_assistant_model: Option<ConfiguredModel>,
+    commit_message_model: Option<ConfiguredModel>,
+    thread_summary_model: Option<ConfiguredModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
 }
 
-pub struct ActiveModel {
-    provider: Arc<dyn LanguageModelProvider>,
-    model: Option<Arc<dyn LanguageModel>>,
+pub struct SelectedModel {
+    pub provider: LanguageModelProviderId,
+    pub model: LanguageModelId,
+}
+
+#[derive(Clone)]
+pub struct ConfiguredModel {
+    pub provider: Arc<dyn LanguageModelProvider>,
+    pub model: Arc<dyn LanguageModel>,
+}
+
+impl ConfiguredModel {
+    pub fn is_same_as(&self, other: &ConfiguredModel) -> bool {
+        self.model.id() == other.model.id() && self.provider.id() == other.provider.id()
+    }
+
+    pub fn is_provided_by_zed(&self) -> bool {
+        self.provider.id().0 == crate::ZED_CLOUD_PROVIDER_ID
+    }
 }
 
 pub enum Event {
-    ActiveModelChanged,
-    EditorModelChanged,
+    DefaultModelChanged,
+    InlineAssistantModelChanged,
+    CommitMessageModelChanged,
+    ThreadSummaryModelChanged,
     ProviderStateChanged,
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
@@ -54,7 +76,11 @@ impl LanguageModelRegistry {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
             let model = fake_provider.provided_models(cx)[0].clone();
-            registry.set_active_model(Some(model), cx);
+            let configured_model = ConfiguredModel {
+                provider: Arc::new(fake_provider.clone()),
+                model,
+            };
+            registry.set_default_model(Some(configured_model), cx);
             registry
         });
         cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -114,133 +140,165 @@ impl LanguageModelRegistry {
         self.providers.get(id).cloned()
     }
 
-    pub fn select_active_model(
+    pub fn select_default_model(&mut self, model: Option<&SelectedModel>, cx: &mut Context<Self>) {
+        let configured_model = model.and_then(|model| self.select_model(model, cx));
+        self.set_default_model(configured_model, cx);
+    }
+
+    pub fn select_inline_assistant_model(
         &mut self,
-        provider: &LanguageModelProviderId,
-        model_id: &LanguageModelId,
+        model: Option<&SelectedModel>,
         cx: &mut Context<Self>,
     ) {
-        let Some(provider) = self.provider(provider) else {
-            return;
-        };
-
-        let models = provider.provided_models(cx);
-        if let Some(model) = models.iter().find(|model| &model.id() == model_id).cloned() {
-            self.set_active_model(Some(model), cx);
-        }
+        let configured_model = model.and_then(|model| self.select_model(model, cx));
+        self.set_inline_assistant_model(configured_model, cx);
     }
 
-    pub fn select_editor_model(
+    pub fn select_commit_message_model(
         &mut self,
-        provider: &LanguageModelProviderId,
-        model_id: &LanguageModelId,
+        model: Option<&SelectedModel>,
         cx: &mut Context<Self>,
     ) {
-        let Some(provider) = self.provider(provider) else {
-            return;
-        };
-
-        let models = provider.provided_models(cx);
-        if let Some(model) = models.iter().find(|model| &model.id() == model_id).cloned() {
-            self.set_editor_model(Some(model), cx);
-        }
+        let configured_model = model.and_then(|model| self.select_model(model, cx));
+        self.set_commit_message_model(configured_model, cx);
     }
 
-    pub fn set_active_provider(
+    pub fn select_thread_summary_model(
         &mut self,
-        provider: Option<Arc<dyn LanguageModelProvider>>,
+        model: Option<&SelectedModel>,
         cx: &mut Context<Self>,
     ) {
-        self.active_model = provider.map(|provider| ActiveModel {
-            provider,
-            model: None,
-        });
-        cx.emit(Event::ActiveModelChanged);
-    }
-
-    pub fn set_active_model(
-        &mut self,
-        model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(model) = model {
-            let provider_id = model.provider_id();
-            if let Some(provider) = self.providers.get(&provider_id).cloned() {
-                self.active_model = Some(ActiveModel {
-                    provider,
-                    model: Some(model),
-                });
-                cx.emit(Event::ActiveModelChanged);
-            } else {
-                log::warn!("Active model's provider not found in registry");
-            }
-        } else {
-            self.active_model = None;
-            cx.emit(Event::ActiveModelChanged);
-        }
-    }
-
-    pub fn set_editor_model(
-        &mut self,
-        model: Option<Arc<dyn LanguageModel>>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(model) = model {
-            let provider_id = model.provider_id();
-            if let Some(provider) = self.providers.get(&provider_id).cloned() {
-                self.editor_model = Some(ActiveModel {
-                    provider,
-                    model: Some(model),
-                });
-                cx.emit(Event::EditorModelChanged);
-            } else {
-                log::warn!("Active model's provider not found in registry");
-            }
-        } else {
-            self.editor_model = None;
-            cx.emit(Event::EditorModelChanged);
-        }
-    }
-
-    pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {
-        #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
-            return None;
-        }
-
-        Some(self.active_model.as_ref()?.provider.clone())
-    }
-
-    pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
-        self.active_model.as_ref()?.model.clone()
-    }
-
-    pub fn editor_model(&self) -> Option<Arc<dyn LanguageModel>> {
-        self.editor_model.as_ref()?.model.clone()
+        let configured_model = model.and_then(|model| self.select_model(model, cx));
+        self.set_thread_summary_model(configured_model, cx);
     }
 
     /// Selects and sets the inline alternatives for language models based on
     /// provider name and id.
     pub fn select_inline_alternative_models(
         &mut self,
-        alternatives: impl IntoIterator<Item = (LanguageModelProviderId, LanguageModelId)>,
+        alternatives: impl IntoIterator<Item = SelectedModel>,
         cx: &mut Context<Self>,
     ) {
-        let mut selected_alternatives = Vec::new();
+        self.inline_alternatives = alternatives
+            .into_iter()
+            .flat_map(|alternative| {
+                self.select_model(&alternative, cx)
+                    .map(|configured_model| configured_model.model)
+            })
+            .collect::<Vec<_>>();
+    }
 
-        for (provider_id, model_id) in alternatives {
-            if let Some(provider) = self.providers.get(&provider_id) {
-                if let Some(model) = provider
-                    .provided_models(cx)
-                    .iter()
-                    .find(|m| m.id() == model_id)
-                {
-                    selected_alternatives.push(model.clone());
-                }
-            }
+    pub fn select_model(
+        &mut self,
+        selected_model: &SelectedModel,
+        cx: &mut Context<Self>,
+    ) -> Option<ConfiguredModel> {
+        let provider = self.provider(&selected_model.provider)?;
+        let model = provider
+            .provided_models(cx)
+            .iter()
+            .find(|model| model.id() == selected_model.model)?
+            .clone();
+        Some(ConfiguredModel { provider, model })
+    }
+
+    pub fn set_default_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
+        match (self.default_model.as_ref(), model.as_ref()) {
+            (Some(old), Some(new)) if old.is_same_as(new) => {}
+            (None, None) => {}
+            _ => cx.emit(Event::DefaultModelChanged),
+        }
+        self.default_fast_model = maybe!({
+            let provider = &model.as_ref()?.provider;
+            let fast_model = provider.default_fast_model(cx)?;
+            Some(ConfiguredModel {
+                provider: provider.clone(),
+                model: fast_model,
+            })
+        });
+        self.default_model = model;
+    }
+
+    pub fn set_inline_assistant_model(
+        &mut self,
+        model: Option<ConfiguredModel>,
+        cx: &mut Context<Self>,
+    ) {
+        match (self.inline_assistant_model.as_ref(), model.as_ref()) {
+            (Some(old), Some(new)) if old.is_same_as(new) => {}
+            (None, None) => {}
+            _ => cx.emit(Event::InlineAssistantModelChanged),
+        }
+        self.inline_assistant_model = model;
+    }
+
+    pub fn set_commit_message_model(
+        &mut self,
+        model: Option<ConfiguredModel>,
+        cx: &mut Context<Self>,
+    ) {
+        match (self.commit_message_model.as_ref(), model.as_ref()) {
+            (Some(old), Some(new)) if old.is_same_as(new) => {}
+            (None, None) => {}
+            _ => cx.emit(Event::CommitMessageModelChanged),
+        }
+        self.commit_message_model = model;
+    }
+
+    pub fn set_thread_summary_model(
+        &mut self,
+        model: Option<ConfiguredModel>,
+        cx: &mut Context<Self>,
+    ) {
+        match (self.thread_summary_model.as_ref(), model.as_ref()) {
+            (Some(old), Some(new)) if old.is_same_as(new) => {}
+            (None, None) => {}
+            _ => cx.emit(Event::ThreadSummaryModelChanged),
+        }
+        self.thread_summary_model = model;
+    }
+
+    pub fn default_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
         }
 
-        self.inline_alternatives = selected_alternatives;
+        self.default_model.clone()
+    }
+
+    pub fn inline_assistant_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
+        self.inline_assistant_model
+            .clone()
+            .or_else(|| self.default_model.clone())
+    }
+
+    pub fn commit_message_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
+        self.commit_message_model
+            .clone()
+            .or_else(|| self.default_model.clone())
+    }
+
+    pub fn thread_summary_model(&self) -> Option<ConfiguredModel> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
+        self.thread_summary_model
+            .clone()
+            .or_else(|| self.default_fast_model.clone())
+            .or_else(|| self.default_model.clone())
     }
 
     /// The models to use for inline assists. Returns the union of the active

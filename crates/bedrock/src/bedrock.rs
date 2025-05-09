@@ -1,21 +1,28 @@
 mod models;
 
+use std::collections::HashMap;
 use std::pin::Pin;
 
-use anyhow::{Context, Error, Result, anyhow};
+use anyhow::{Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
-    ContentBlock as BedrockInnerContent, SpecificToolChoice as BedrockSpecificTool,
-    ToolChoice as BedrockToolChoice, ToolInputSchema as BedrockToolInputSchema,
-    ToolSpecification as BedrockTool,
+    AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
+    ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
+    ToolConfiguration as BedrockToolConfig, ToolInputSchema as BedrockToolInputSchema,
+    ToolSpecification as BedrockToolSpec,
 };
+pub use aws_smithy_types::Blob as BedrockBlob;
 use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::{
     ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
-    Message as BedrockMessage, ResponseStream as BedrockResponseStream,
+    ImageBlock as BedrockImageBlock, Message as BedrockMessage,
+    ReasoningContentBlock as BedrockThinkingBlock, ReasoningTextBlock as BedrockThinkingTextBlock,
+    ResponseStream as BedrockResponseStream, ToolResultBlock as BedrockToolResultBlock,
+    ToolResultContentBlock as BedrockToolResultContentBlock,
+    ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,
 };
 use futures::stream::{self, BoxStream, Stream};
 use serde::{Deserialize, Serialize};
@@ -24,25 +31,6 @@ use thiserror::Error;
 
 pub use crate::models::*;
 
-pub async fn complete(
-    client: &bedrock::Client,
-    request: Request,
-) -> Result<BedrockResponse, BedrockError> {
-    let response = bedrock::Client::converse(client)
-        .model_id(request.model.clone())
-        .set_messages(request.messages.into())
-        .send()
-        .await
-        .context("failed to send request to Bedrock");
-
-    match response {
-        Ok(output) => output
-            .output
-            .ok_or_else(|| BedrockError::Other(anyhow!("no output"))),
-        Err(err) => Err(BedrockError::Other(err)),
-    }
-}
-
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
@@ -50,11 +38,32 @@ pub async fn stream_completion(
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, Error> {
     handle
         .spawn(async move {
-            let response = bedrock::Client::converse_stream(&client)
+            let mut response = bedrock::Client::converse_stream(&client)
                 .model_id(request.model.clone())
-                .set_messages(request.messages.into())
-                .send()
-                .await;
+                .set_messages(request.messages.into());
+
+            if let Some(Thinking::Enabled {
+                budget_tokens: Some(budget_tokens),
+            }) = request.thinking
+            {
+                response =
+                    response.additional_model_request_fields(Document::Object(HashMap::from([(
+                        "thinking".to_string(),
+                        Document::from(HashMap::from([
+                            ("type".to_string(), Document::String("enabled".to_string())),
+                            (
+                                "budget_tokens".to_string(),
+                                Document::Number(AwsNumber::PosInt(budget_tokens)),
+                            ),
+                        ])),
+                    )])));
+            }
+
+            if request.tools.is_some() && !request.tools.as_ref().unwrap().tools.is_empty() {
+                response = response.set_tool_config(request.tools);
+            }
+
+            let response = response.send().await;
 
             match response {
                 Ok(output) => {
@@ -65,7 +74,7 @@ pub async fn stream_completion(
                         >,
                     > = Box::pin(stream::unfold(output.stream, |mut stream| async move {
                         match stream.recv().await {
-                            Ok(Some(output)) => Some((Ok(output), stream)),
+                            Ok(Some(output)) => Some(({ Ok(output) }, stream)),
                             Ok(None) => None,
                             Err(err) => {
                                 Some((
@@ -135,13 +144,18 @@ pub fn value_to_aws_document(value: &Value) -> Document {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Thinking {
+    Enabled { budget_tokens: Option<u64> },
+}
+
 #[derive(Debug)]
 pub struct Request {
     pub model: String,
     pub max_tokens: u32,
     pub messages: Vec<BedrockMessage>,
-    pub tools: Vec<BedrockTool>,
-    pub tool_choice: Option<BedrockToolChoice>,
+    pub tools: Option<BedrockToolConfig>,
+    pub thinking: Option<Thinking>,
     pub system: Option<String>,
     pub metadata: Option<Metadata>,
     pub stop_sequences: Vec<String>,

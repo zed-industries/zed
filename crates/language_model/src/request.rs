@@ -3,14 +3,16 @@ use std::sync::Arc;
 
 use crate::role::Role;
 use crate::{LanguageModelToolUse, LanguageModelToolUseId};
+use anyhow::Result;
 use base64::write::EncoderWriter;
 use gpui::{
-    App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, SharedString, Size, Task,
+    App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
 };
-use image::{DynamicImage, ImageDecoder, codecs::png::PngEncoder, imageops::resize};
+use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
+use zed_llm_client::CompletionMode;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct LanguageModelImage {
@@ -32,28 +34,34 @@ impl std::fmt::Debug for LanguageModelImage {
 const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
 
 impl LanguageModelImage {
-    pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
-        cx.background_spawn(async move {
-            match data.format() {
-                gpui::ImageFormat::Png
-                | gpui::ImageFormat::Jpeg
-                | gpui::ImageFormat::Webp
-                | gpui::ImageFormat::Gif => {}
-                _ => return None,
-            };
+    pub fn empty() -> Self {
+        Self {
+            source: "".into(),
+            size: size(DevicePixels(0), DevicePixels(0)),
+        }
+    }
 
-            let image = image::codecs::png::PngDecoder::new(Cursor::new(data.bytes())).log_err()?;
-            let (width, height) = image.dimensions();
+    pub fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<Self>> {
+        cx.background_spawn(async move {
+            let image_bytes = Cursor::new(data.bytes());
+            let dynamic_image = match data.format() {
+                ImageFormat::Png => image::codecs::png::PngDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Jpeg => image::codecs::jpeg::JpegDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Webp => image::codecs::webp::WebPDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                ImageFormat::Gif => image::codecs::gif::GifDecoder::new(image_bytes)
+                    .and_then(image::DynamicImage::from_decoder),
+                _ => return None,
+            }
+            .log_err()?;
+
+            let width = dynamic_image.width();
+            let height = dynamic_image.height();
             let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
 
-            let mut base64_image = Vec::new();
-
-            {
-                let mut base64_encoder = EncoderWriter::new(
-                    Cursor::new(&mut base64_image),
-                    &base64::engine::general_purpose::STANDARD,
-                );
-
+            let base64_image = {
                 if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32
                     || image_size.height.0 > ANTHROPIC_SIZE_LIMT as i32
                 {
@@ -64,22 +72,18 @@ impl LanguageModelImage {
                         },
                         image_size,
                     );
-                    let image = DynamicImage::from_decoder(image).log_err()?.resize(
+                    let resized_image = dynamic_image.resize(
                         new_bounds.size.width.0 as u32,
                         new_bounds.size.height.0 as u32,
                         image::imageops::FilterType::Triangle,
                     );
 
-                    let mut png = Vec::new();
-                    image
-                        .write_with_encoder(PngEncoder::new(&mut png))
-                        .log_err()?;
-
-                    base64_encoder.write_all(png.as_slice()).log_err()?;
+                    encode_as_base64(data, resized_image)
                 } else {
-                    base64_encoder.write_all(data.bytes()).log_err()?;
+                    encode_as_base64(data, dynamic_image)
                 }
             }
+            .log_err()?;
 
             // SAFETY: The base64 encoder should not produce non-UTF8.
             let source = unsafe { String::from_utf8_unchecked(base64_image) };
@@ -88,68 +92,6 @@ impl LanguageModelImage {
                 size: image_size,
                 source: source.into(),
             })
-        })
-    }
-
-    /// Resolves image into an LLM-ready format (base64).
-    pub fn from_render_image(data: &RenderImage) -> Option<Self> {
-        let image_size = data.size(0);
-
-        let mut bytes = data.as_bytes(0).unwrap_or(&[]).to_vec();
-        // Convert from BGRA to RGBA.
-        for pixel in bytes.chunks_exact_mut(4) {
-            pixel.swap(2, 0);
-        }
-        let mut image = image::RgbaImage::from_vec(
-            image_size.width.0 as u32,
-            image_size.height.0 as u32,
-            bytes,
-        )
-        .expect("We already know this works");
-
-        // https://docs.anthropic.com/en/docs/build-with-claude/vision
-        if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32
-            || image_size.height.0 > ANTHROPIC_SIZE_LIMT as i32
-        {
-            let new_bounds = ObjectFit::ScaleDown.get_bounds(
-                gpui::Bounds {
-                    origin: point(px(0.0), px(0.0)),
-                    size: size(px(ANTHROPIC_SIZE_LIMT), px(ANTHROPIC_SIZE_LIMT)),
-                },
-                image_size,
-            );
-
-            image = resize(
-                &image,
-                new_bounds.size.width.0 as u32,
-                new_bounds.size.height.0 as u32,
-                image::imageops::FilterType::Triangle,
-            );
-        }
-
-        let mut png = Vec::new();
-
-        image
-            .write_with_encoder(PngEncoder::new(&mut png))
-            .log_err()?;
-
-        let mut base64_image = Vec::new();
-
-        {
-            let mut base64_encoder = EncoderWriter::new(
-                Cursor::new(&mut base64_image),
-                &base64::engine::general_purpose::STANDARD,
-            );
-
-            base64_encoder.write_all(png.as_slice()).log_err()?;
-        }
-
-        // SAFETY: The base64 encoder should not produce non-UTF8.
-        let source = unsafe { String::from_utf8_unchecked(base64_image) };
-
-        Some(LanguageModelImage {
-            size: image_size,
-            source: source.into(),
         })
     }
 
@@ -164,17 +106,42 @@ impl LanguageModelImage {
     }
 }
 
+fn encode_as_base64(data: Arc<Image>, image: image::DynamicImage) -> Result<Vec<u8>> {
+    let mut base64_image = Vec::new();
+    {
+        let mut base64_encoder = EncoderWriter::new(
+            Cursor::new(&mut base64_image),
+            &base64::engine::general_purpose::STANDARD,
+        );
+        if data.format() == ImageFormat::Png {
+            base64_encoder.write_all(data.bytes())?;
+        } else {
+            let mut png = Vec::new();
+            image.write_with_encoder(PngEncoder::new(&mut png))?;
+
+            base64_encoder.write_all(png.as_slice())?;
+        }
+    }
+    Ok(base64_image)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
     pub content: Arc<str>,
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
     Text(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    RedactedThinking(Vec<u8>),
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
@@ -204,6 +171,8 @@ impl LanguageModelRequestMessage {
         let mut buffer = String::new();
         for string in self.content.iter().filter_map(|content| match content {
             MessageContent::Text(text) => Some(text.as_str()),
+            MessageContent::Thinking { text, .. } => Some(text.as_str()),
+            MessageContent::RedactedThinking(_) => None,
             MessageContent::ToolResult(tool_result) => Some(tool_result.content.as_ref()),
             MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
         }) {
@@ -214,18 +183,16 @@ impl LanguageModelRequestMessage {
     }
 
     pub fn contents_empty(&self) -> bool {
-        self.content.is_empty()
-            || self
-                .content
-                .first()
-                .map(|content| match content {
-                    MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-                    MessageContent::ToolResult(tool_result) => {
-                        tool_result.content.chars().all(|c| c.is_whitespace())
-                    }
-                    MessageContent::ToolUse(_) | MessageContent::Image(_) => true,
-                })
-                .unwrap_or(false)
+        self.content.iter().all(|content| match content {
+            MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::ToolResult(tool_result) => {
+                tool_result.content.chars().all(|c| c.is_whitespace())
+            }
+            MessageContent::RedactedThinking(_)
+            | MessageContent::ToolUse(_)
+            | MessageContent::Image(_) => false,
+        })
     }
 }
 
@@ -236,10 +203,21 @@ pub struct LanguageModelRequestTool {
     pub input_schema: serde_json::Value,
 }
 
+#[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
+pub enum LanguageModelToolChoice {
+    Auto,
+    Any,
+    None,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct LanguageModelRequest {
+    pub thread_id: Option<String>,
+    pub prompt_id: Option<String>,
+    pub mode: Option<CompletionMode>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
+    pub tool_choice: Option<LanguageModelToolChoice>,
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
 }

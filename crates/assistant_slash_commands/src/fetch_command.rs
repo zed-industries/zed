@@ -55,11 +55,14 @@ impl FetchSlashCommand {
         let content_type = content_type
             .to_str()
             .context("invalid Content-Type header")?;
-        let content_type = match content_type {
-            "text/html" => ContentType::Html,
-            "text/plain" => ContentType::Plaintext,
-            "application/json" => ContentType::Json,
-            _ => ContentType::Html,
+        let content_type = if content_type.starts_with("text/html") {
+            ContentType::Html
+        } else if content_type.starts_with("text/plain") {
+            ContentType::Plaintext
+        } else if content_type.starts_with("application/json") {
+            ContentType::Json
+        } else {
+            ContentType::Html
         };
 
         match content_type {

@@ -4,12 +4,18 @@ grammar = "bash"
 path_suffixes = ["sh", "bash", "bashrc", "bash_profile", "bash_aliases", "bash_logout", "bats", "profile", "zsh", "zshrc", "zshenv", "zsh_profile", "zsh_aliases", "zsh_histfile", "zlogin", "zprofile", ".env", "PKGBUILD", "APKBUILD"]
 line_comments = ["# "]
 first_line_pattern = '^#!.*\b(?:ash|bash|bats|dash|sh|zsh)\b'
+autoclose_before = "}])"
 brackets = [
     { start = "[", end = "]", close = true, newline = false },
     { start = "(", end = ")", close = true, newline = true },
     { start = "{", end = "}", close = true, newline = true },
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
     { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
+    { start = "do", end = "done", close = false, newline = true, not_in = ["comment", "string"] },
+    { start = "then", end = "fi", close = false, newline = true, not_in = ["comment", "string"] },
+    { start = "then", end = "else", close = false, newline = true, not_in = ["comment", "string"] },
+    { start = "then", end = "elif", close = false, newline = true, not_in = ["comment", "string"] },
+    { start = "in", end = "esac", close = false, newline = true, not_in = ["comment", "string"] },
 ]
 
 ### WARN: the following is not working when you insert an `elif` just before an else

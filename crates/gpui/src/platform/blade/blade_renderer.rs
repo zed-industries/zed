@@ -453,7 +453,10 @@ impl BladeRenderer {
         }
     }
 
-    #[cfg_attr(any(target_os = "macos", feature = "wayland"), allow(dead_code))]
+    #[cfg_attr(
+        any(target_os = "macos", feature = "wayland", target_os = "windows"),
+        allow(dead_code)
+    )]
     pub fn viewport_size(&self) -> gpu::Extent {
         self.surface_config.size
     }
@@ -766,6 +769,7 @@ impl BladeRenderer {
                                                     >,
                                             )
                                             .unwrap(),
+                                            gpu::TexelAspects::COLOR,
                                         ),
                                         gpu::TextureView::from_metal_texture(
                                             &objc2::rc::Retained::retain(
@@ -777,6 +781,7 @@ impl BladeRenderer {
                                                     >,
                                             )
                                             .unwrap(),
+                                            gpu::TexelAspects::COLOR,
                                         ),
                                     )
                                 };

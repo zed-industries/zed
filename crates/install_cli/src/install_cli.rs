@@ -1,11 +1,16 @@
-use anyhow::{Result, anyhow};
-use gpui::{AsyncApp, actions};
+use anyhow::{Context as _, Result, anyhow};
+use client::ZED_URL_SCHEME;
+use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
+use release_channel::ReleaseChannel;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use util::ResultExt;
+use workspace::notifications::{DetachAndPromptErr, NotificationId};
+use workspace::{Toast, Workspace};
 
 actions!(cli, [Install, RegisterZedScheme]);
 
-pub async fn install_cli(cx: &AsyncApp) -> Result<PathBuf> {
+async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
     let link_path = Path::new("/usr/local/bin/zed");
     let bin_dir_path = link_path.parent().unwrap();
@@ -55,4 +60,48 @@ pub async fn install_cli(cx: &AsyncApp) -> Result<PathBuf> {
     } else {
         Err(anyhow!("error running osascript"))
     }
+}
+
+pub async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
+    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
+        .await
+}
+
+pub fn install_cli(window: &mut Window, cx: &mut Context<Workspace>) {
+    const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            let prompt = cx.prompt(
+                PromptLevel::Warning,
+                "CLI should already be installed",
+                Some(LINUX_PROMPT_DETAIL),
+                &["Ok"],
+            );
+            cx.background_spawn(prompt).detach();
+            return Ok(());
+        }
+        let path = install_script(cx.deref())
+            .await
+            .context("error creating CLI symlink")?;
+
+        workspace.update_in(cx, |workspace, _, cx| {
+            struct InstalledZedCli;
+
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<InstalledZedCli>(),
+                    format!(
+                        "Installed `zed` to {}. You can launch {} from your terminal.",
+                        path.to_string_lossy(),
+                        ReleaseChannel::global(cx).display_name()
+                    ),
+                ),
+                cx,
+            )
+        })?;
+        register_zed_scheme(&cx).await.log_err();
+        Ok(())
+    })
+    .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);
 }

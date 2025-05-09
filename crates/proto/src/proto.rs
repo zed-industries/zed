@@ -5,194 +5,19 @@ mod macros;
 mod typed_envelope;
 
 pub use error::*;
-pub use typed_envelope::*;
-
 pub use prost::{DecodeError, Message};
-use serde::Serialize;
 use std::{
-    any::{Any, TypeId},
     cmp,
-    fmt::{self, Debug},
+    fmt::Debug,
     iter, mem,
-    path::{Path, PathBuf},
-    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
 pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 pub const SSH_PROJECT_ID: u64 = 0;
-
-pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
-    const NAME: &'static str;
-    const PRIORITY: MessagePriority;
-    fn into_envelope(
-        self,
-        id: u32,
-        responding_to: Option<u32>,
-        original_sender_id: Option<PeerId>,
-    ) -> Envelope;
-    fn from_envelope(envelope: Envelope) -> Option<Self>;
-}
-
-pub trait EntityMessage: EnvelopedMessage {
-    type Entity;
-    fn remote_entity_id(&self) -> u64;
-}
-
-pub trait RequestMessage: EnvelopedMessage {
-    type Response: EnvelopedMessage;
-}
-
-pub trait AnyTypedEnvelope: 'static + Send + Sync {
-    fn payload_type_id(&self) -> TypeId;
-    fn payload_type_name(&self) -> &'static str;
-    fn as_any(&self) -> &dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
-    fn is_background(&self) -> bool;
-    fn original_sender_id(&self) -> Option<PeerId>;
-    fn sender_id(&self) -> PeerId;
-    fn message_id(&self) -> u32;
-}
-
-pub enum MessagePriority {
-    Foreground,
-    Background,
-}
-
-impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
-    fn payload_type_id(&self) -> TypeId {
-        TypeId::of::<T>()
-    }
-
-    fn payload_type_name(&self) -> &'static str {
-        T::NAME
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
-        self
-    }
-
-    fn is_background(&self) -> bool {
-        matches!(T::PRIORITY, MessagePriority::Background)
-    }
-
-    fn original_sender_id(&self) -> Option<PeerId> {
-        self.original_sender_id
-    }
-
-    fn sender_id(&self) -> PeerId {
-        self.sender_id
-    }
-
-    fn message_id(&self) -> u32 {
-        self.message_id
-    }
-}
-
-impl PeerId {
-    pub fn from_u64(peer_id: u64) -> Self {
-        let owner_id = (peer_id >> 32) as u32;
-        let id = peer_id as u32;
-        Self { owner_id, id }
-    }
-
-    pub fn as_u64(self) -> u64 {
-        ((self.owner_id as u64) << 32) | (self.id as u64)
-    }
-}
-
-impl Copy for PeerId {}
-
-impl Eq for PeerId {}
-
-impl Ord for PeerId {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.owner_id
-            .cmp(&other.owner_id)
-            .then_with(|| self.id.cmp(&other.id))
-    }
-}
-
-impl PartialOrd for PeerId {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl std::hash::Hash for PeerId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.owner_id.hash(state);
-        self.id.hash(state);
-    }
-}
-
-impl fmt::Display for PeerId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}", self.owner_id, self.id)
-    }
-}
-
-pub trait FromProto {
-    fn from_proto(proto: String) -> Self;
-}
-
-pub trait ToProto {
-    fn to_proto(self) -> String;
-}
-
-impl FromProto for PathBuf {
-    #[cfg(target_os = "windows")]
-    fn from_proto(proto: String) -> Self {
-        proto.split("/").collect()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn from_proto(proto: String) -> Self {
-        PathBuf::from(proto)
-    }
-}
-
-impl FromProto for Arc<Path> {
-    fn from_proto(proto: String) -> Self {
-        PathBuf::from_proto(proto).into()
-    }
-}
-
-impl ToProto for PathBuf {
-    #[cfg(target_os = "windows")]
-    fn to_proto(self) -> String {
-        self.components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn to_proto(self) -> String {
-        self.to_string_lossy().to_string()
-    }
-}
-
-impl ToProto for &Path {
-    #[cfg(target_os = "windows")]
-    fn to_proto(self) -> String {
-        self.components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn to_proto(self) -> String {
-        self.to_string_lossy().to_string()
-    }
-}
 
 messages!(
     (AcceptTermsOfService, Foreground),
@@ -224,11 +49,7 @@ messages!(
     (ChannelMessageUpdate, Foreground),
     (CloseBuffer, Foreground),
     (Commit, Background),
-    (ComputeEmbeddings, Background),
-    (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountLanguageModelTokens, Background),
-    (CountLanguageModelTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -257,8 +78,6 @@ messages!(
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
-    (GetCachedEmbeddings, Background),
-    (GetCachedEmbeddingsResponse, Background),
     (GetChannelMembers, Foreground),
     (GetChannelMembersResponse, Foreground),
     (GetChannelMessages, Background),
@@ -346,8 +165,15 @@ messages!(
     (LspExtExpandMacroResponse, Background),
     (LspExtOpenDocs, Background),
     (LspExtOpenDocsResponse, Background),
+    (LspExtRunnables, Background),
+    (LspExtRunnablesResponse, Background),
     (LspExtSwitchSourceHeader, Background),
     (LspExtSwitchSourceHeaderResponse, Background),
+    (LspExtGoToParentModule, Background),
+    (LspExtGoToParentModuleResponse, Background),
+    (LspExtCancelFlycheck, Background),
+    (LspExtRunFlycheck, Background),
+    (LspExtClearFlycheck, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
     (MultiLspQuery, Background),
@@ -400,6 +226,7 @@ messages!(
     (RespondToChannelInvite, Foreground),
     (RespondToContactRequest, Foreground),
     (RestartLanguageServers, Foreground),
+    (StopLanguageServers, Background),
     (RoomUpdated, Foreground),
     (SaveBuffer, Foreground),
     (SendChannelMessage, Background),
@@ -474,6 +301,11 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
+    (GetDebugAdapterBinary, Background),
+    (DebugAdapterBinary, Background),
+    (RunDebugLocators, Background),
+    (DebugRequest, Background),
+    (LogToDebugConsole, Background),
 );
 
 request_messages!(
@@ -487,7 +319,6 @@ request_messages!(
     (CancelCall, Ack),
     (Commit, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (ComputeEmbeddings, ComputeEmbeddingsResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -500,7 +331,6 @@ request_messages!(
     (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
-    (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
     (GetChannelMembers, GetChannelMembersResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannelMessagesById, GetChannelMessagesResponse),
@@ -548,7 +378,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
@@ -588,15 +417,21 @@ request_messages!(
     (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
+    (LspExtRunnables, LspExtRunnablesResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
     (MultiLspQuery, MultiLspQueryResponse),
     (RestartLanguageServers, Ack),
+    (StopLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
+    (LspExtGoToParentModule, LspExtGoToParentModuleResponse),
+    (LspExtCancelFlycheck, Ack),
+    (LspExtRunFlycheck, Ack),
+    (LspExtClearFlycheck, Ack),
     (AddWorktree, AddWorktreeResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
@@ -630,6 +465,8 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
+    (GetDebugAdapterBinary, DebugAdapterBinary),
+    (RunDebugLocators, DebugRequest),
 );
 
 entity_messages!(
@@ -674,6 +511,7 @@ entity_messages!(
     LoadCommitDiff,
     MultiLspQuery,
     RestartLanguageServers,
+    StopLanguageServers,
     OnTypeFormatting,
     OpenNewBuffer,
     OpenBufferById,
@@ -709,12 +547,17 @@ entity_messages!(
     UpdateWorktreeSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
+    LspExtRunnables,
     AdvertiseContexts,
     OpenContext,
     CreateContext,
     UpdateContext,
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
+    LspExtGoToParentModule,
+    LspExtCancelFlycheck,
+    LspExtRunFlycheck,
+    LspExtClearFlycheck,
     LanguageServerLog,
     Toast,
     HideToast,
@@ -747,6 +590,9 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
+    RunDebugLocators,
+    GetDebugAdapterBinary,
+    LogToDebugConsole,
 );
 
 entity_messages!(
@@ -946,6 +792,8 @@ mod tests {
     #[test]
     #[cfg(target_os = "windows")]
     fn test_proto() {
+        use std::path::PathBuf;
+
         fn generate_proto_path(path: PathBuf) -> PathBuf {
             let proto = path.to_proto();
             PathBuf::from_proto(proto)

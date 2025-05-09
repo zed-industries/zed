@@ -163,9 +163,8 @@ impl AudioStack {
         sample_rate: u32,
         num_channels: u32,
     ) -> Result<()> {
-        let mut default_change_listener = DeviceChangeListener::new(false)?;
-
         loop {
+            let mut device_change_listener = DeviceChangeListener::new(false)?;
             let (output_device, output_config) = default_device(false)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
@@ -225,7 +224,7 @@ impl AudioStack {
                 end_on_drop_rx.recv().ok();
             });
 
-            default_change_listener.next().await;
+            device_change_listener.next().await;
             drop(end_on_drop_tx)
         }
     }
@@ -236,8 +235,8 @@ impl AudioStack {
         sample_rate: u32,
         num_channels: u32,
     ) -> Result<()> {
-        let mut default_change_listener = DeviceChangeListener::new(true)?;
         loop {
+            let mut device_change_listener = DeviceChangeListener::new(true)?;
             let (device, config) = default_device(true)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
@@ -310,7 +309,7 @@ impl AudioStack {
                 .log_err();
             });
 
-            default_change_listener.next().await;
+            device_change_listener.next().await;
             drop(end_on_drop_tx)
         }
     }
@@ -337,7 +336,7 @@ pub(crate) async fn capture_local_video_track(
     .await?;
 
     let capture_stream = capture_source
-        .stream({
+        .stream(cx.foreground_executor(), {
             let track_source = track_source.clone();
             Box::new(move |frame| {
                 if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
@@ -621,7 +620,49 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use libwebrtc::native::yuv_helper::argb_to_nv12;
+    use livekit::webrtc::prelude::NV12Buffer;
+    match frame.0 {
+        scap::frame::Frame::BGRx(frame) => {
+            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
+            let (stride_y, stride_uv) = buffer.strides();
+            let (data_y, data_uv) = buffer.data_mut();
+            argb_to_nv12(
+                &frame.data,
+                frame.width as u32 * 4,
+                data_y,
+                stride_y,
+                data_uv,
+                stride_uv,
+                frame.width,
+                frame.height,
+            );
+            Some(buffer)
+        }
+        scap::frame::Frame::YUVFrame(yuvframe) => {
+            let mut buffer = NV12Buffer::with_strides(
+                yuvframe.width as u32,
+                yuvframe.height as u32,
+                yuvframe.luminance_stride as u32,
+                yuvframe.chrominance_stride as u32,
+            );
+            let (luminance, chrominance) = buffer.data_mut();
+            luminance.copy_from_slice(yuvframe.luminance_bytes.as_slice());
+            chrominance.copy_from_slice(yuvframe.chrominance_bytes.as_slice());
+            Some(buffer)
+        }
+        _ => {
+            log::error!(
+                "Expected BGRx or YUV frame from scap screen capture but got some other format."
+            );
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     None as Option<Box<dyn VideoBuffer>>
 }
@@ -646,6 +687,7 @@ mod macos {
         rx: UnboundedReceiver<()>,
         callback: Box<PropertyListenerCallbackWrapper>,
         input: bool,
+        device_id: AudioObjectID, // Store the device ID to properly remove listeners
     }
 
     trait _AssertSend: Send {}
@@ -672,7 +714,9 @@ mod macos {
                 tx.unbounded_send(()).ok();
             })));
 
-            unsafe {
+            // Get the current default device ID
+            let device_id = unsafe {
+                // Listen for default device changes
                 coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
                     kAudioObjectSystemObject,
                     &AudioObjectPropertyAddress {
@@ -687,12 +731,78 @@ mod macos {
                     Some(property_listener_handler_shim),
                     &*callback as *const _ as *mut _,
                 ))?;
-            }
+
+                // Also listen for changes to the device configuration
+                let device_id = if input {
+                    let mut input_device: AudioObjectID = 0;
+                    let mut prop_size = std::mem::size_of::<AudioObjectID>() as u32;
+                    let result = coreaudio::sys::AudioObjectGetPropertyData(
+                        kAudioObjectSystemObject,
+                        &AudioObjectPropertyAddress {
+                            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                            mScope: kAudioObjectPropertyScopeGlobal,
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        0,
+                        std::ptr::null(),
+                        &mut prop_size as *mut _,
+                        &mut input_device as *mut _ as *mut _,
+                    );
+                    if result != 0 {
+                        log::warn!("Failed to get default input device ID");
+                        0
+                    } else {
+                        input_device
+                    }
+                } else {
+                    let mut output_device: AudioObjectID = 0;
+                    let mut prop_size = std::mem::size_of::<AudioObjectID>() as u32;
+                    let result = coreaudio::sys::AudioObjectGetPropertyData(
+                        kAudioObjectSystemObject,
+                        &AudioObjectPropertyAddress {
+                            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                            mScope: kAudioObjectPropertyScopeGlobal,
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        0,
+                        std::ptr::null(),
+                        &mut prop_size as *mut _,
+                        &mut output_device as *mut _ as *mut _,
+                    );
+                    if result != 0 {
+                        log::warn!("Failed to get default output device ID");
+                        0
+                    } else {
+                        output_device
+                    }
+                };
+
+                if device_id != 0 {
+                    // Listen for format changes on the device
+                    coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
+                        device_id,
+                        &AudioObjectPropertyAddress {
+                            mSelector: coreaudio::sys::kAudioDevicePropertyStreamFormat,
+                            mScope: if input {
+                                coreaudio::sys::kAudioObjectPropertyScopeInput
+                            } else {
+                                coreaudio::sys::kAudioObjectPropertyScopeOutput
+                            },
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        Some(property_listener_handler_shim),
+                        &*callback as *const _ as *mut _,
+                    ))?;
+                }
+
+                device_id
+            };
 
             Ok(Self {
                 rx,
                 callback,
                 input,
+                device_id,
             })
         }
     }
@@ -700,6 +810,7 @@ mod macos {
     impl Drop for CoreAudioDefaultDeviceChangeListener {
         fn drop(&mut self) {
             unsafe {
+                // Remove the system-level property listener
                 AudioObjectRemovePropertyListener(
                     kAudioObjectSystemObject,
                     &AudioObjectPropertyAddress {
@@ -714,6 +825,24 @@ mod macos {
                     Some(property_listener_handler_shim),
                     &*self.callback as *const _ as *mut _,
                 );
+
+                // Remove the device-specific property listener if we have a valid device ID
+                if self.device_id != 0 {
+                    AudioObjectRemovePropertyListener(
+                        self.device_id,
+                        &AudioObjectPropertyAddress {
+                            mSelector: coreaudio::sys::kAudioDevicePropertyStreamFormat,
+                            mScope: if self.input {
+                                coreaudio::sys::kAudioObjectPropertyScopeInput
+                            } else {
+                                coreaudio::sys::kAudioObjectPropertyScopeOutput
+                            },
+                            mElement: kAudioObjectPropertyElementMaster,
+                        },
+                        Some(property_listener_handler_shim),
+                        &*self.callback as *const _ as *mut _,
+                    );
+                }
             }
         }
     }

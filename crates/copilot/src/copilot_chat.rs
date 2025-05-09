@@ -33,12 +33,18 @@ pub enum Model {
     Gpt4o,
     #[serde(alias = "gpt-4", rename = "gpt-4")]
     Gpt4,
+    #[serde(alias = "gpt-4.1", rename = "gpt-4.1")]
+    Gpt4_1,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
     #[serde(alias = "o1", rename = "o1")]
     O1,
     #[serde(alias = "o1-mini", rename = "o3-mini")]
     O3Mini,
+    #[serde(alias = "o3", rename = "o3")]
+    O3,
+    #[serde(alias = "o4-mini", rename = "o4-mini")]
+    O4Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,
     #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
@@ -50,18 +56,27 @@ pub enum Model {
     Claude3_7SonnetThinking,
     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
     Gemini20Flash,
+    #[serde(alias = "gemini-2.5-pro", rename = "gemini-2.5-pro")]
+    Gemini25Pro,
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_7Sonnet
+    }
+
     pub fn uses_streaming(&self) -> bool {
         match self {
             Self::Gpt4o
             | Self::Gpt4
+            | Self::Gpt4_1
             | Self::Gpt3_5Turbo
+            | Self::O3
+            | Self::O4Mini
             | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking => true,
-            Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
+            Self::O3Mini | Self::O1 | Self::Gemini20Flash | Self::Gemini25Pro => false,
         }
     }
 
@@ -69,13 +84,17 @@ impl Model {
         match id {
             "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
+            "gpt-4.1" => Ok(Self::Gpt4_1),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
+            "o3" => Ok(Self::O3),
+            "o4-mini" => Ok(Self::O4Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
             "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
             "claude-3.7-sonnet-thought" => Ok(Self::Claude3_7SonnetThinking),
             "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
+            "gemini-2.5-pro" => Ok(Self::Gemini25Pro),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
@@ -84,13 +103,17 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
+            Self::Gpt4_1 => "gpt-4.1",
             Self::Gpt4o => "gpt-4o",
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
+            Self::O3 => "o3",
+            Self::O4Mini => "o4-mini",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
             Self::Claude3_7Sonnet => "claude-3-7-sonnet",
             Self::Claude3_7SonnetThinking => "claude-3.7-sonnet-thought",
             Self::Gemini20Flash => "gemini-2.0-flash-001",
+            Self::Gemini25Pro => "gemini-2.5-pro",
         }
     }
 
@@ -98,13 +121,17 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
+            Self::Gpt4_1 => "GPT-4.1",
             Self::Gpt4o => "GPT-4o",
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
+            Self::O3 => "o3",
+            Self::O4Mini => "o4-mini",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
+            Self::Gemini25Pro => "Gemini 2.5 Pro",
         }
     }
 
@@ -112,13 +139,17 @@ impl Model {
         match self {
             Self::Gpt4o => 64_000,
             Self::Gpt4 => 32_768,
+            Self::Gpt4_1 => 128_000,
             Self::Gpt3_5Turbo => 12_288,
             Self::O3Mini => 64_000,
             Self::O1 => 20_000,
+            Self::O3 => 128_000,
+            Self::O4Mini => 128_000,
             Self::Claude3_5Sonnet => 200_000,
             Self::Claude3_7Sonnet => 90_000,
             Self::Claude3_7SonnetThinking => 90_000,
-            Model::Gemini20Flash => 128_000,
+            Self::Gemini20Flash => 128_000,
+            Self::Gemini25Pro => 128_000,
         }
     }
 }
@@ -131,25 +162,70 @@ pub struct Request {
     pub temperature: f32,
     pub model: Model,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
-impl Request {
-    pub fn new(model: Model, messages: Vec<ChatMessage>) -> Self {
-        Self {
-            intent: true,
-            n: 1,
-            stream: model.uses_streaming(),
-            temperature: 0.1,
-            model,
-            messages,
-        }
-    }
+#[derive(Serialize, Deserialize)]
+pub struct Function {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tool {
+    Function { function: Function },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    None,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ChatMessage {
-    pub role: Role,
-    pub content: String,
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum ChatMessage {
+    Assistant {
+        content: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
+    },
+    User {
+        content: String,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -172,6 +248,21 @@ pub struct ResponseChoice {
 pub struct ResponseDelta {
     pub content: Option<String>,
     pub role: Option<Role>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -385,7 +476,8 @@ async fn stream_completion(
 
     let is_streaming = request.stream;
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {
@@ -413,9 +505,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.is_empty()
-                                    || response.choices.first().unwrap().finish_reason.is_some()
-                                {
+                                if response.choices.is_empty() {
                                     None
                                 } else {
                                     Some(Ok(response))

@@ -8,7 +8,7 @@ use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
 use workspace::{Item, Workspace};
 
 use crate::{
-    AssistantPanelDelegate, ContextStore, DEFAULT_TAB_TITLE, RemoteContextMetadata,
+    AgentPanelDelegate, ContextStore, DEFAULT_TAB_TITLE, RemoteContextMetadata,
     SavedContextMetadata,
 };
 
@@ -70,19 +70,19 @@ impl ContextHistory {
     ) {
         let SavedContextPickerEvent::Confirmed(context) = event;
 
-        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
+        let Some(agent_panel_delegate) = <dyn AgentPanelDelegate>::try_global(cx) else {
             return;
         };
 
         self.workspace
             .update(cx, |workspace, cx| match context {
                 ContextMetadata::Remote(metadata) => {
-                    assistant_panel_delegate
+                    agent_panel_delegate
                         .open_remote_context(workspace, metadata.id.clone(), window, cx)
                         .detach_and_log_err(cx);
                 }
                 ContextMetadata::Saved(metadata) => {
-                    assistant_panel_delegate
+                    agent_panel_delegate
                         .open_saved_context(workspace, metadata.path.clone(), window, cx)
                         .detach_and_log_err(cx);
                 }
@@ -108,8 +108,8 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("History".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "History".into()
     }
 }
 

@@ -1,8 +1,9 @@
 use gpui::App;
 use language::CursorShape;
+use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, VsCodeSettings};
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -10,12 +11,12 @@ pub struct EditorSettings {
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
-    pub selection_highlight_debounce: u64,
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
+    pub minimap: Minimap,
     pub gutter: Gutter,
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
@@ -40,6 +41,9 @@ pub struct EditorSettings {
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub jupyter: Jupyter,
     pub hide_mouse: Option<HideMouseMode>,
+    pub snippet_sort_order: SnippetSortOrder,
+    #[serde(default)]
+    pub diagnostics_max_severity: Option<DiagnosticSeverity>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -101,6 +105,7 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,
     pub selections_menu: bool,
+    pub agent_review: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -115,10 +120,30 @@ pub struct Scrollbar {
     pub axes: ScrollbarAxes,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct Minimap {
+    pub show: ShowMinimap,
+    pub thumb: MinimapThumb,
+    pub thumb_border: MinimapThumbBorder,
+    pub current_line_highlight: Option<CurrentLineHighlight>,
+}
+
+impl Minimap {
+    pub fn minimap_enabled(&self) -> bool {
+        self.show != ShowMinimap::Never
+    }
+
+    pub fn with_show_override(self) -> Self {
+        Self {
+            show: ShowMinimap::Always,
+            ..self
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
     pub line_numbers: bool,
-    pub code_actions: bool,
     pub runnables: bool,
     pub breakpoints: bool,
     pub folds: bool,
@@ -139,6 +164,53 @@ pub enum ShowScrollbar {
     Always,
     /// Never show the scrollbar.
     Never,
+}
+
+/// When to show the minimap in the editor.
+///
+/// Default: never
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowMinimap {
+    /// Follow the visibility of the scrollbar.
+    Auto,
+    /// Always show the minimap.
+    Always,
+    /// Never show the minimap.
+    #[default]
+    Never,
+}
+
+/// When to show the minimap thumb.
+///
+/// Default: always
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapThumb {
+    /// Show the minimap thumb only when the mouse is hovering over the minimap.
+    Hover,
+    /// Always show the minimap thumb.
+    #[default]
+    Always,
+}
+
+/// Defines the border style for the minimap's scrollbar thumb.
+///
+/// Default: left_open
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapThumbBorder {
+    /// Displays a border on all sides of the thumb.
+    Full,
+    /// Displays a border on all sides except the left side of the thumb.
+    #[default]
+    LeftOpen,
+    /// Displays a border on all sides except the right side of the thumb.
+    RightOpen,
+    /// Displays a border only on the left side of the thumb.
+    LeftOnly,
+    /// Displays the thumb without any border.
+    None,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -240,6 +312,21 @@ pub enum HideMouseMode {
     OnTypingAndMovement,
 }
 
+/// Determines how snippets are sorted relative to other completion items.
+///
+/// Default: inline
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnippetSortOrder {
+    /// Place snippets at the top of the completion list
+    Top,
+    /// Sort snippets normally using the default comparison logic
+    #[default]
+    Inline,
+    /// Place snippets at the bottom of the completion list
+    Bottom,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -255,6 +342,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: on_typing_and_movement
     pub hide_mouse: Option<HideMouseMode>,
+    /// Determines how snippets are sorted relative to other completion items.
+    ///
+    /// Default: inline
+    pub snippet_sort_order: Option<SnippetSortOrder>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all
@@ -263,10 +354,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub selection_highlight: Option<bool>,
-    /// The debounce delay before querying highlights based on the selected text.
-    ///
-    /// Default: 75
-    pub selection_highlight_debounce: Option<u64>,
     /// The debounce delay before querying highlights from the language
     /// server based on the current cursor location.
     ///
@@ -285,6 +372,8 @@ pub struct EditorSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
     pub scrollbar: Option<ScrollbarContent>,
+    /// Minimap related settings
+    pub minimap: Option<MinimapContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
     /// Whether the editor will scroll beyond the last line.
@@ -372,6 +461,19 @@ pub struct EditorSettingsContent {
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
+
+    /// Which level to use to filter out diagnostics displayed in the editor.
+    ///
+    /// Affects the editor rendering only, and does not interrupt
+    /// the functionality of diagnostics fetching and project diagnostics editor.
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// Diagnostics are only shown when file icons are also active.
+    ///
+    /// Shows all diagnostics if not specified.
+    ///
+    /// Default: warning
+    #[serde(default)]
+    pub diagnostics_max_severity: Option<DiagnosticSeverity>,
 }
 
 // Toolbar related settings
@@ -385,15 +487,19 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub quick_actions: Option<bool>,
-
-    /// Whether to show the selections menu in the editor toolbar
+    /// Whether to show the selections menu in the editor toolbar.
     ///
     /// Default: true
     pub selections_menu: Option<bool>,
+    /// Whether to display Agent review buttons in the editor toolbar.
+    /// Only applicable while reviewing a file edited by the Agent.
+    ///
+    /// Default: true
+    pub agent_review: Option<bool>,
 }
 
 /// Scrollbar related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -427,8 +533,32 @@ pub struct ScrollbarContent {
     pub axes: Option<ScrollbarAxesContent>,
 }
 
-/// Forcefully enable or disable the scrollbar for each axis
+/// Minimap related settings
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct MinimapContent {
+    /// When to show the minimap in the editor.
+    ///
+    /// Default: never
+    pub show: Option<ShowMinimap>,
+
+    /// When to show the minimap thumb.
+    ///
+    /// Default: always
+    pub thumb: Option<MinimapThumb>,
+
+    /// Defines the border style for the minimap's scrollbar thumb.
+    ///
+    /// Default: left_open
+    pub thumb_border: Option<MinimapThumbBorder>,
+
+    /// How to highlight the current line in the minimap.
+    ///
+    /// Default: inherits editor line highlights setting
+    pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+}
+
+/// Forcefully enable or disable the scrollbar for each axis
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
     ///
@@ -448,10 +578,6 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
-    /// Whether to show code action buttons in the gutter.
-    ///
-    /// Default: true
-    pub code_actions: Option<bool>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true
@@ -479,5 +605,165 @@ impl Settings for EditorSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.enum_setting(
+            "editor.cursorBlinking",
+            &mut current.cursor_blink,
+            |s| match s {
+                "blink" | "phase" | "expand" | "smooth" => Some(true),
+                "solid" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.cursorStyle",
+            &mut current.cursor_shape,
+            |s| match s {
+                "block" => Some(CursorShape::Block),
+                "block-outline" => Some(CursorShape::Hollow),
+                "line" | "line-thin" => Some(CursorShape::Bar),
+                "underline" | "underline-thin" => Some(CursorShape::Underline),
+                _ => None,
+            },
+        );
+
+        vscode.enum_setting(
+            "editor.renderLineHighlight",
+            &mut current.current_line_highlight,
+            |s| match s {
+                "gutter" => Some(CurrentLineHighlight::Gutter),
+                "line" => Some(CurrentLineHighlight::Line),
+                "all" => Some(CurrentLineHighlight::All),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting(
+            "editor.selectionHighlight",
+            &mut current.selection_highlight,
+        );
+        vscode.bool_setting("editor.hover.enabled", &mut current.hover_popover_enabled);
+        vscode.u64_setting("editor.hover.delay", &mut current.hover_popover_delay);
+
+        let mut gutter = GutterContent::default();
+        vscode.enum_setting(
+            "editor.showFoldingControls",
+            &mut gutter.folds,
+            |s| match s {
+                "always" | "mouseover" => Some(true),
+                "never" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.lineNumbers",
+            &mut gutter.line_numbers,
+            |s| match s {
+                "on" | "relative" => Some(true),
+                "off" => Some(false),
+                _ => None,
+            },
+        );
+        if let Some(old_gutter) = current.gutter.as_mut() {
+            if gutter.folds.is_some() {
+                old_gutter.folds = gutter.folds
+            }
+            if gutter.line_numbers.is_some() {
+                old_gutter.line_numbers = gutter.line_numbers
+            }
+        } else {
+            if gutter != GutterContent::default() {
+                current.gutter = Some(gutter)
+            }
+        }
+        if let Some(b) = vscode.read_bool("editor.scrollBeyondLastLine") {
+            current.scroll_beyond_last_line = Some(if b {
+                ScrollBeyondLastLine::OnePage
+            } else {
+                ScrollBeyondLastLine::Off
+            })
+        }
+
+        let mut scrollbar_axes = ScrollbarAxesContent::default();
+        vscode.enum_setting(
+            "editor.scrollbar.horizontal",
+            &mut scrollbar_axes.horizontal,
+            |s| match s {
+                "auto" | "visible" => Some(true),
+                "hidden" => Some(false),
+                _ => None,
+            },
+        );
+        vscode.enum_setting(
+            "editor.scrollbar.vertical",
+            &mut scrollbar_axes.horizontal,
+            |s| match s {
+                "auto" | "visible" => Some(true),
+                "hidden" => Some(false),
+                _ => None,
+            },
+        );
+
+        if scrollbar_axes != ScrollbarAxesContent::default() {
+            let scrollbar_settings = current.scrollbar.get_or_insert_default();
+            let axes_settings = scrollbar_settings.axes.get_or_insert_default();
+
+            if let Some(vertical) = scrollbar_axes.vertical {
+                axes_settings.vertical = Some(vertical);
+            }
+            if let Some(horizontal) = scrollbar_axes.horizontal {
+                axes_settings.horizontal = Some(horizontal);
+            }
+        }
+
+        // TODO: check if this does the int->float conversion?
+        vscode.f32_setting(
+            "editor.cursorSurroundingLines",
+            &mut current.vertical_scroll_margin,
+        );
+        vscode.f32_setting(
+            "editor.mouseWheelScrollSensitivity",
+            &mut current.scroll_sensitivity,
+        );
+        if Some("relative") == vscode.read_string("editor.lineNumbers") {
+            current.relative_line_numbers = Some(true);
+        }
+
+        vscode.enum_setting(
+            "editor.find.seedSearchStringFromSelection",
+            &mut current.seed_search_query_from_cursor,
+            |s| match s {
+                "always" => Some(SeedQuerySetting::Always),
+                "selection" => Some(SeedQuerySetting::Selection),
+                "never" => Some(SeedQuerySetting::Never),
+                _ => None,
+            },
+        );
+        vscode.bool_setting("search.smartCase", &mut current.use_smartcase_search);
+        vscode.enum_setting(
+            "editor.multiCursorModifier",
+            &mut current.multi_cursor_modifier,
+            |s| match s {
+                "ctrlCmd" => Some(MultiCursorModifier::CmdOrCtrl),
+                "alt" => Some(MultiCursorModifier::Alt),
+                _ => None,
+            },
+        );
+
+        vscode.bool_setting(
+            "editor.parameterHints.enabled",
+            &mut current.auto_signature_help,
+        );
+        vscode.bool_setting(
+            "editor.parameterHints.enabled",
+            &mut current.show_signature_help_after_edits,
+        );
+
+        if let Some(use_ignored) = vscode.read_bool("search.useIgnoreFiles") {
+            let search = current.search.get_or_insert_default();
+            search.include_ignored = use_ignored;
+        }
     }
 }
