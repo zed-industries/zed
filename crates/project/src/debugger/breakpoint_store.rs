@@ -640,7 +640,18 @@ impl BreakpointStore {
         })
     }
 
-    pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SourceBreakpoint> {
+    pub fn breakpoints_from_path(&self, path: &Arc<Path>) -> Vec<BreakpointWithPosition> {
+        self.breakpoints
+            .get(path)
+            .map(|bp| bp.breakpoints.iter().map(|bp| bp.bp.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn source_breakpoints_from_path(
+        &self,
+        path: &Arc<Path>,
+        cx: &App,
+    ) -> Vec<SourceBreakpoint> {
         self.breakpoints
             .get(path)
             .map(|bp| {

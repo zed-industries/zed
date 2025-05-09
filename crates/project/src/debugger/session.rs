@@ -222,7 +222,9 @@ impl LocalMode {
     ) -> Task<()> {
         let breakpoints =
             breakpoint_store
-                .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
+                .read_with(cx, |store, cx| {
+                    store.source_breakpoints_from_path(&abs_path, cx)
+                })
                 .into_iter()
                 .filter(|bp| bp.state.is_enabled())
                 .chain(self.tmp_breakpoint.iter().filter_map(|breakpoint| {
@@ -231,17 +233,42 @@ impl LocalMode {
                 .map(Into::into)
                 .collect();
 
+        let raw_breakpoints = breakpoint_store
+            .read(cx)
+            .breakpoints_from_path(&abs_path)
+            .into_iter()
+            .filter(|bp| bp.bp.state.is_enabled())
+            .collect::<Vec<_>>();
+
         let task = self.request(dap_command::SetBreakpoints {
             source: client_source(&abs_path),
             source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
             breakpoints,
         });
-
-        cx.background_spawn(async move {
-            match task.await {
-                Ok(_) => {}
-                Err(err) => log::warn!("Set breakpoints request failed for path: {}", err),
+        let session_id = self.client.id();
+        let breakpoint_store = breakpoint_store.downgrade();
+        cx.spawn(async move |cx| match cx.background_spawn(task).await {
+            Ok(breakpoints) => {
+                let breakpoints =
+                    breakpoints
+                        .into_iter()
+                        .zip(raw_breakpoints)
+                        .filter_map(|(dap_bp, zed_bp)| {
+                            Some((
+                                zed_bp,
+                                BreakpointSessionState {
+                                    id: dap_bp.id?,
+                                    verified: dap_bp.verified,
+                                },
+                            ))
+                        });
+                breakpoint_store
+                    .update(cx, |this, _| {
+                        this.mark_breakpoints_verified(session_id, &abs_path, breakpoints);
+                    })
+                    .ok();
             }
+            Err(err) => log::warn!("Set breakpoints request failed for path: {}", err),
         })
     }
 
