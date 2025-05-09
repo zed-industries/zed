@@ -1,5 +1,4 @@
 use std::fmt::Display;
-use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -118,50 +117,21 @@ impl ThreadHistory {
     }
 
     fn update_all_entries(&mut self, cx: &mut Context<Self>) {
-        let old_entries = mem::take(&mut self.all_entries);
-        let previously_selected_entry = old_entries.get(self.selected_index);
-
-        self.all_entries = self
+        let new_entries: Arc<Vec<HistoryEntry>> = self
             .history_store
             .update(cx, |store, cx| store.entries(cx))
             .into();
 
-        self.update_separated_items(cx);
-
-        match &self.search_state {
-            SearchState::Empty => {
-                if self.selected_index >= self.all_entries.len() {
-                    self.set_selected_entry_index(self.all_entries.len().saturating_sub(1), cx);
-                } else if let Some(prev) = previously_selected_entry {
-                    if let Some(new_ix) = self.all_entries.iter().position(|probe| probe == prev) {
-                        self.set_selected_entry_index(new_ix, cx);
-                    }
-                }
-            }
-            SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
-                self.search(query.clone(), cx);
-            }
-        }
-        cx.notify();
-    }
-
-    fn update_separated_items(&mut self, cx: &mut Context<Self>) {
         self._separated_items_task.take();
-        let all_entries = self.all_entries.clone();
 
-        let mut items = mem::take(&mut self.separated_items);
-        let mut indexes = mem::take(&mut self.separated_item_indexes);
-        items.clear();
-        indexes.clear();
-        // We know there's going to be at least one bucket separator
-        items.reserve(all_entries.len() + 1);
-        indexes.reserve(all_entries.len() + 1);
+        let mut items = Vec::with_capacity(new_entries.len() + 1);
+        let mut indexes = Vec::with_capacity(new_entries.len() + 1);
 
         let bg_task = cx.background_spawn(async move {
             let mut bucket = None;
             let today = Local::now().naive_local().date();
 
-            for (index, entry) in all_entries.iter().enumerate() {
+            for (index, entry) in new_entries.iter().enumerate() {
                 let entry_date = entry
                     .updated_at()
                     .with_timezone(&Local)
@@ -180,14 +150,41 @@ impl ThreadHistory {
                     format: entry_bucket.into(),
                 });
             }
-            (items, indexes)
+            (new_entries, items, indexes)
         });
 
         let task = cx.spawn(async move |this, cx| {
-            let (items, indexes) = bg_task.await;
+            let (new_entries, items, indexes) = bg_task.await;
             this.update(cx, |this, cx| {
+                let previously_selected_entry =
+                    this.all_entries.get(this.selected_index).map(|e| e.id());
+
+                this.all_entries = new_entries;
                 this.separated_items = items;
                 this.separated_item_indexes = indexes;
+
+                match &this.search_state {
+                    SearchState::Empty => {
+                        if this.selected_index >= this.all_entries.len() {
+                            this.set_selected_entry_index(
+                                this.all_entries.len().saturating_sub(1),
+                                cx,
+                            );
+                        } else if let Some(prev_id) = previously_selected_entry {
+                            if let Some(new_ix) = this
+                                .all_entries
+                                .iter()
+                                .position(|probe| probe.id() == prev_id)
+                            {
+                                this.set_selected_entry_index(new_ix, cx);
+                            }
+                        }
+                    }
+                    SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
+                        this.search(query.clone(), cx);
+                    }
+                }
+
                 cx.notify();
             })
             .log_err();
