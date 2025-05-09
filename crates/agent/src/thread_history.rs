@@ -664,40 +664,40 @@ impl RenderOnce for PastThread {
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)
             .start_slot(
-                div().max_w_4_5().child(
-                    HighlightedLabel::new(summary, self.highlight_positions)
-                        .size(LabelSize::Small)
-                        .truncate(),
-                ),
-            )
-            .end_slot(
                 h_flex()
-                    .gap_1p5()
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(
+                        HighlightedLabel::new(summary, self.highlight_positions)
+                            .size(LabelSize::Small)
+                            .truncate(),
+                    )
                     .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
                             .size(LabelSize::XSmall),
-                    )
-                    .child(
-                        IconButton::new("delete", IconName::TrashAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |window, cx| {
-                                Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
-                            })
-                            .on_click({
-                                let agent_panel = self.agent_panel.clone();
-                                let id = self.thread.id.clone();
-                                move |_event, _window, cx| {
-                                    agent_panel
-                                        .update(cx, |this, cx| {
-                                            this.delete_thread(&id, cx).detach_and_log_err(cx);
-                                        })
-                                        .ok();
-                                }
-                            }),
                     ),
+            )
+            .end_slot_conditional(
+                IconButton::new("delete", IconName::TrashAlt)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .tooltip(move |window, cx| {
+                        Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                    })
+                    .on_click({
+                        let agent_panel = self.agent_panel.clone();
+                        let id = self.thread.id.clone();
+                        move |_event, _window, cx| {
+                            agent_panel
+                                .update(cx, |this, cx| {
+                                    this.delete_thread(&id, cx).detach_and_log_err(cx);
+                                })
+                                .ok();
+                        }
+                    }),
             )
             .on_click({
                 let agent_panel = self.agent_panel.clone();
@@ -757,41 +757,40 @@ impl RenderOnce for PastContext {
         .toggle_state(self.selected)
         .spacing(ListItemSpacing::Sparse)
         .start_slot(
-            div().max_w_4_5().child(
-                HighlightedLabel::new(summary, self.highlight_positions)
-                    .size(LabelSize::Small)
-                    .truncate(),
-            ),
-        )
-        .end_slot(
             h_flex()
-                .gap_1p5()
+                .w_full()
+                .gap_2()
+                .justify_between()
+                .child(
+                    HighlightedLabel::new(summary, self.highlight_positions)
+                        .size(LabelSize::Small)
+                        .truncate(),
+                )
                 .child(
                     Label::new(context_timestamp)
                         .color(Color::Muted)
                         .size(LabelSize::XSmall),
-                )
-                .child(
-                    IconButton::new("delete", IconName::TrashAlt)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
-                        })
-                        .on_click({
-                            let agent_panel = self.agent_panel.clone();
-                            let path = self.context.path.clone();
-                            move |_event, _window, cx| {
-                                agent_panel
-                                    .update(cx, |this, cx| {
-                                        this.delete_context(path.clone(), cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
                 ),
+        )
+        .end_slot_conditional(
+            IconButton::new("delete", IconName::TrashAlt)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
+                })
+                .on_click({
+                    let agent_panel = self.agent_panel.clone();
+                    let path = self.context.path.clone();
+                    move |_event, _window, cx| {
+                        agent_panel
+                            .update(cx, |this, cx| {
+                                this.delete_context(path.clone(), cx).detach_and_log_err(cx);
+                            })
+                            .ok();
+                    }
+                }),
         )
         .on_click({
             let agent_panel = self.agent_panel.clone();

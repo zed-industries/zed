@@ -2212,7 +2212,7 @@ impl AgentPanel {
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
-                                Label::new("Past Interactions")
+                                Label::new("Recent")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
