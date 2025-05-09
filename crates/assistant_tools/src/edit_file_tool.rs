@@ -1,6 +1,6 @@
 use crate::{
     Templates,
-    edit_agent::{EditAgent, EditAgentOutputEvent},
+    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
     schema::json_schema_for,
 };
 use anyhow::{Result, anyhow};
@@ -87,6 +87,7 @@ pub struct EditFileToolOutput {
     pub original_path: PathBuf,
     pub new_text: String,
     pub old_text: String,
+    pub raw_output: Option<EditAgentOutput>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -247,7 +248,7 @@ impl Tool for EditFileTool {
                     EditAgentOutputEvent::OldTextNotFound(_) => hallucinated_old_text = true,
                 }
             }
-            output.await?;
+            let agent_output = output.await?;
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
@@ -267,6 +268,7 @@ impl Tool for EditFileTool {
                 original_path: project_path.path.to_path_buf(),
                 new_text: new_text.clone(),
                 old_text: old_text.clone(),
+                raw_output: Some(agent_output),
             };
 
             if let Some(card) = card_clone {
