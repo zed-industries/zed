@@ -185,7 +185,6 @@ impl AgentConfiguration {
                                     .icon_position(IconPosition::Start)
                                     .icon(IconName::Plus)
                                     .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Filled)
                                     .layer(ElevationIndex::ModalSurface)
                                     .label_size(LabelSize::Small)
                                     .on_click(cx.listener({
