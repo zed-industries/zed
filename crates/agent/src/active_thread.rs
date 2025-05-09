@@ -16,7 +16,7 @@ use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet};
-use editor::actions::{MoveUp, Paste};
+use editor::actions::{MoveDown, Paste};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
 use gpui::{
@@ -1467,11 +1467,11 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+    fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, state)) = self.editing_message.as_mut() {
             if state.context_picker_menu_handle.is_deployed() {
                 cx.propagate();
-            } else {
+            } else if state.context_strip.read(cx).has_context_items(cx) {
                 state.context_strip.focus_handle(cx).focus(window);
             }
         }
@@ -1719,7 +1719,7 @@ impl ActiveThread {
             .key_context("EditMessageEditor")
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
-            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::move_down))
             .on_action(cx.listener(Self::cancel_editing_message))
             .on_action(cx.listener(Self::confirm_editing_message))
             .capture_action(cx.listener(Self::paste))
