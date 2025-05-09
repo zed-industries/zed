@@ -358,6 +358,34 @@ mod tests {
         let space_w_w_editor = keymap.bindings_for_input(&space_w_w, &editor_workspace_context());
         assert!(space_w_w_editor.0.is_empty());
         assert_eq!(space_w_w_editor.1, false);
+
+        // Now test what happens if we have another binding defined AFTER the NoAction
+        // that should result in pending
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+            KeyBinding::new("space w x", ActionAlpha {}, Some("editor")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, true);
+
+        // Now test what happens if we have another binding defined BEFORE the NoAction
+        // that should result in pending
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w x", ActionAlpha {}, Some("editor")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+        ];
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, true);
     }
 
     #[test]
