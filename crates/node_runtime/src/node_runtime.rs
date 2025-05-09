@@ -281,23 +281,6 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn node_environment_path(&self) -> Result<OsString> {
-        let node_binary = self.installation_path.join(Self::NODE_PATH);
-        let mut env_path = vec![
-            node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf(),
-        ];
-
-        if let Some(existing_path) = std::env::var_os("PATH") {
-            let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-            env_path.append(&mut paths);
-        }
-
-        std::env::join_paths(env_path).context("failed to create PATH env variable")
-    }
-
     async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Box<dyn NodeRuntimeTrait>> {
         log::info!("Node runtime install_if_needed");
 
@@ -385,6 +368,27 @@ impl ManagedNodeRuntime {
     }
 }
 
+fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
+    let existing_path = env::var_os("PATH");
+    let node_bin_dir = node_binary.parent().map(|dir| dir.as_os_str());
+    match (existing_path, node_bin_dir) {
+        (Some(existing_path), Some(node_bin_dir)) => {
+            if let Ok(joined) = env::join_paths(
+                [PathBuf::from(node_bin_dir)]
+                    .into_iter()
+                    .chain(env::split_paths(&existing_path)),
+            ) {
+                Some(joined)
+            } else {
+                Some(existing_path)
+            }
+        }
+        (Some(existing_path), None) => Some(existing_path),
+        (None, Some(node_bin_dir)) => Some(node_bin_dir.to_owned()),
+        _ => None,
+    }
+}
+
 #[async_trait::async_trait]
 impl NodeRuntimeTrait for ManagedNodeRuntime {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait> {
@@ -405,7 +409,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let attempt = || async move {
             let node_binary = self.installation_path.join(Self::NODE_PATH);
             let npm_file = self.installation_path.join(Self::NPM_PATH);
-            let env_path = self.node_environment_path().await?;
+            let env_path = path_with_node_binary_prepended(&node_binary).unwrap_or_default();
 
             if smol::fs::metadata(&node_binary).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
@@ -545,9 +549,10 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     ) -> anyhow::Result<Output> {
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
         let mut command = util::command::new_smol_command(self.npm.clone());
+        let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
         command
             .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
@@ -659,14 +664,14 @@ fn configure_npm_command(
     #[cfg(windows)]
     {
         // SYSTEMROOT is a critical environment variables for Windows.
-        if let Some(val) = std::env::var("SYSTEMROOT")
+        if let Some(val) = env::var("SYSTEMROOT")
             .context("Missing environment variable: SYSTEMROOT!")
             .log_err()
         {
             command.env("SYSTEMROOT", val);
         }
         // Without ComSpec, the post-install will always fail.
-        if let Some(val) = std::env::var("ComSpec")
+        if let Some(val) = env::var("ComSpec")
             .context("Missing environment variable: ComSpec!")
             .log_err()
         {
