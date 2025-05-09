@@ -15,7 +15,7 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, future};
+use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
@@ -54,9 +54,6 @@ use zed::{
     handle_settings_file_changes, initialize_workspace, inline_completion_registry,
     open_paths_with_positions,
 };
-
-#[cfg(unix)]
-use util::{load_login_shell_environment, load_shell_from_passwd};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -303,15 +300,16 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    #[cfg(unix)]
+    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                load_shell_from_passwd().log_err();
-                load_login_shell_environment().log_err();
+                #[cfg(unix)]
+                util::load_login_shell_environment().log_err();
+                shell_env_loaded_tx.send(()).ok();
             })
             .detach()
-    };
+    }
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
@@ -386,7 +384,7 @@ fn main() {
         cx.observe_global::<SettingsStore>(move |cx| {
             let settings = &ProjectSettings::get_global(cx).node;
             let options = NodeBinaryOptions {
-                allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+                allow_path_lookup: !settings.ignore_system_version,
                 // TODO: Expose this setting
                 allow_binary_download: true,
                 use_paths: settings.path.as_ref().map(|node_path| {
@@ -407,7 +405,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
