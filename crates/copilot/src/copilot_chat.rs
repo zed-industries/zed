@@ -18,6 +18,12 @@ pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/cha
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 pub const COPILOT_CHAT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 
+// Copilot's base model; defined by Microsoft in premium requests table
+// This will be moved to the front of the Copilot model list, and will be used for
+// 'fast' requests (e.g. title generation)
+// https://docs.github.com/en/copilot/managing-copilot/monitoring-usage-and-entitlements/about-premium-requests
+const DEFAULT_MODEL_ID: &str = "gpt-4.1";
+
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -395,7 +401,7 @@ impl CopilotChat {
 async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
     let all_models = request_models(api_token, client).await?;
 
-    let models: Vec<Model> = all_models
+    let mut models: Vec<Model> = all_models
         .into_iter()
         .filter(|model| model.model_picker_enabled)
         .filter(|model| {
@@ -410,6 +416,13 @@ async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Ve
         // models, which are likely the best choice (e.g. gpt-4o rather than gpt-4o-2024-11-20)
         .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
         .collect();
+
+    if let Some(default_model_position) =
+        models.iter().position(|model| model.id == DEFAULT_MODEL_ID)
+    {
+        let default_model = models.remove(default_model_position);
+        models.insert(0, default_model);
+    }
 
     Ok(models)
 }

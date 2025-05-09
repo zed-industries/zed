@@ -20,9 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolSchemaFormat,
-    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
