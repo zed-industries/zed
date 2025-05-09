@@ -155,7 +155,7 @@ pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
     #[serde(default)]
-    pub filter: Option<String>,
+    pub included_files: Option<String>,
 }
 
 impl_actions!(
@@ -202,7 +202,7 @@ impl DeploySearch {
     pub fn find() -> Self {
         Self {
             replace_enabled: false,
-            filter: None,
+            included_files: None,
         }
     }
 }
@@ -3119,7 +3119,7 @@ fn default_render_tab_bar_buttons(
                                 "Search Project",
                                 DeploySearch {
                                     replace_enabled: false,
-                                    filter: None,
+                                    included_files: None,
                                 }
                                 .boxed_clone(),
                             )
