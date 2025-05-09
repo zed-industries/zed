@@ -15,7 +15,9 @@ use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ItemHandle, Workspace};
+
+use crate::StackFrameViewer;
 
 use super::RunningState;
 
@@ -294,12 +296,22 @@ impl StackFrameList {
                     let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
                         anyhow!("Could not select a stack frame for unnamed buffer")
                     })?;
+
+                    let open_preview = !workspace
+                        .item_of_type::<StackFrameViewer>(cx)
+                        .map(|viewer| {
+                            workspace
+                                .active_item(cx)
+                                .is_some_and(|item| item.item_id() == viewer.item_id())
+                        })
+                        .unwrap_or_default();
+
                     anyhow::Ok(workspace.open_path_preview(
                         project_path,
                         None,
-                        false,
                         true,
                         true,
+                        open_preview,
                         window,
                         cx,
                     ))

@@ -7,8 +7,9 @@ use new_session_modal::NewSessionModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
 use session::DebugSession;
 use settings::Settings;
+use stack_frame_editor::StackFrameViewer;
 use util::maybe;
-use workspace::{ShutdownDebugAdapters, Workspace};
+use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;
@@ -42,6 +43,7 @@ actions!(
         FocusModules,
         FocusLoadedSources,
         FocusTerminal,
+        ExpandStackFrames,
     ]
 );
 
@@ -145,6 +147,30 @@ pub fn init(cx: &mut App) {
                                 store.shutdown_sessions(cx).detach();
                             })
                         })
+                    },
+                )
+                .register_action(
+                    |workspace: &mut Workspace, _: &ExpandStackFrames, window, cx| {
+                        let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                            return;
+                        };
+
+                        if let Some(existing) = workspace.item_of_type::<StackFrameViewer>(cx) {
+                            let is_active = workspace
+                                .active_item(cx)
+                                .is_some_and(|item| item.item_id() == existing.item_id());
+                            workspace.activate_item(&existing, true, !is_active, window, cx);
+                        } else {
+                            let stack_frame_editor = debug_panel.read(cx).stack_frame_viewer();
+
+                            workspace.add_item_to_active_pane(
+                                Box::new(stack_frame_editor),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        }
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {

@@ -1,9 +1,10 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
+use crate::stack_frame_editor::StackFrameViewer;
 use crate::{
-    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
+    ClearAllBreakpoints, Continue, Detach, ExpandStackFrames, FocusBreakpointList, FocusConsole,
+    FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
+    StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
 use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
@@ -64,17 +65,22 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    stack_frame_viewer: Entity<StackFrameViewer>,
     fs: Arc<dyn Fs>,
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
+
+            let stack_frame_viewer = cx.new(|cx| {
+                StackFrameViewer::new(workspace.weak_handle(), project.clone(), window, cx)
+            });
 
             let debug_panel = Self {
                 size: px(300.),
@@ -85,6 +91,7 @@ impl DebugPanel {
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
+                stack_frame_viewer,
                 fs: workspace.app_state().fs.clone(),
             };
 
@@ -121,6 +128,7 @@ impl DebugPanel {
             TypeId::of::<StepOver>(),
             TypeId::of::<StepInto>(),
             TypeId::of::<StepOut>(),
+            TypeId::of::<ExpandStackFrames>(),
             TypeId::of::<editor::actions::DebuggerRunToCursor>(),
             TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
         ];
@@ -411,6 +419,11 @@ impl DebugPanel {
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
     }
+
+    pub(crate) fn stack_frame_viewer(&self) -> Entity<StackFrameViewer> {
+        self.stack_frame_viewer.clone()
+    }
+
     fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
@@ -989,7 +1002,10 @@ impl DebugPanel {
                 this.go_to_selected_stack_frame(window, cx);
             });
         });
-        self.active_session = Some(session_item);
+        self.active_session = Some(session_item.clone());
+        self.stack_frame_viewer.update(cx, |viewer, cx| {
+            viewer.set_active_session(session_item, window, cx)
+        });
         cx.notify();
     }
 }
