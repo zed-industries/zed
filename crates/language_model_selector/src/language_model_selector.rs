@@ -702,3 +702,183 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{future::BoxFuture, stream::BoxStream};
+    use gpui::{AsyncApp, TestAppContext, http_client};
+    use language_model::{
+        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+        LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+        LanguageModelRequest,
+    };
+    use ui::IconName;
+
+    #[derive(Clone)]
+    struct TestLanguageModel {
+        name: LanguageModelName,
+        id: LanguageModelId,
+        provider_id: LanguageModelProviderId,
+        provider_name: LanguageModelProviderName,
+    }
+
+    impl TestLanguageModel {
+        fn new(name: &str, provider: &str) -> Self {
+            Self {
+                name: LanguageModelName::from(name.to_string()),
+                id: LanguageModelId::from(name.to_string()),
+                provider_id: LanguageModelProviderId::from(provider.to_string()),
+                provider_name: LanguageModelProviderName::from(provider.to_string()),
+            }
+        }
+    }
+
+    impl LanguageModel for TestLanguageModel {
+        fn id(&self) -> LanguageModelId {
+            self.id.clone()
+        }
+
+        fn name(&self) -> LanguageModelName {
+            self.name.clone()
+        }
+
+        fn provider_id(&self) -> LanguageModelProviderId {
+            self.provider_id.clone()
+        }
+
+        fn provider_name(&self) -> LanguageModelProviderName {
+            self.provider_name.clone()
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn telemetry_id(&self) -> String {
+            format!("{}/{}", self.provider_id.0, self.name.0)
+        }
+
+        fn max_token_count(&self) -> usize {
+            1000
+        }
+
+        fn count_tokens(
+            &self,
+            _: LanguageModelRequest,
+            _: &App,
+        ) -> BoxFuture<'static, http_client::Result<usize>> {
+            unimplemented!()
+        }
+
+        fn stream_completion(
+            &self,
+            _: LanguageModelRequest,
+            _: &AsyncApp,
+        ) -> BoxFuture<
+            'static,
+            http_client::Result<
+                BoxStream<
+                    'static,
+                    http_client::Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                >,
+            >,
+        > {
+            unimplemented!()
+        }
+    }
+
+    fn create_models(model_specs: Vec<(&str, &str)>) -> Vec<ModelInfo> {
+        model_specs
+            .into_iter()
+            .map(|(provider, name)| ModelInfo {
+                model: Arc::new(TestLanguageModel::new(name, provider)),
+                icon: IconName::Ai,
+            })
+            .collect()
+    }
+
+    fn assert_models_eq(result: Vec<ModelInfo>, expected: Vec<&str>) {
+        assert_eq!(
+            result.len(),
+            expected.len(),
+            "Number of models doesn't match"
+        );
+
+        for (i, expected_name) in expected.iter().enumerate() {
+            assert_eq!(
+                result[i].model.telemetry_id(),
+                *expected_name,
+                "Model at position {} doesn't match expected model",
+                i
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_exact_match(cx: &mut TestAppContext) {
+        let models = create_models(vec![
+            ("zed", "Claude 3.7 Sonnet"),
+            ("zed", "Claude 3.7 Sonnet Thinking"),
+            ("zed", "gpt-4.1"),
+            ("zed", "gpt-4.1-nano"),
+            ("openai", "gpt-3.5-turbo"),
+            ("openai", "gpt-4.1"),
+            ("openai", "gpt-4.1-nano"),
+            ("ollama", "mistral"),
+            ("ollama", "deepseek"),
+        ]);
+        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+
+        // The order of models should be maintained, case doesn't matter
+        let results = matcher.exact_search("GPT-4.1");
+        assert_models_eq(
+            results,
+            vec![
+                "zed/gpt-4.1",
+                "zed/gpt-4.1-nano",
+                "openai/gpt-4.1",
+                "openai/gpt-4.1-nano",
+            ],
+        );
+    }
+
+    #[gpui::test]
+    fn test_fuzzy_match(cx: &mut TestAppContext) {
+        let models = create_models(vec![
+            ("zed", "Claude 3.7 Sonnet"),
+            ("zed", "Claude 3.7 Sonnet Thinking"),
+            ("zed", "gpt-4.1"),
+            ("zed", "gpt-4.1-nano"),
+            ("openai", "gpt-3.5-turbo"),
+            ("openai", "gpt-4.1"),
+            ("openai", "gpt-4.1-nano"),
+            ("ollama", "mistral"),
+            ("ollama", "deepseek"),
+        ]);
+        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+
+        // Results should preserve models order whenever possible.
+        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
+        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // so it should appear first in the results.
+        let results = matcher.fuzzy_search("41");
+        assert_models_eq(
+            results,
+            vec![
+                "zed/gpt-4.1",
+                "openai/gpt-4.1",
+                "zed/gpt-4.1-nano",
+                "openai/gpt-4.1-nano",
+            ],
+        );
+
+        // Model provider should be searchable as well
+        let results = matcher.fuzzy_search("oll"); // meaning "ollama"
+        assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
+
+        // Fuzzy search
+        let results = matcher.fuzzy_search("z4n"); // meaning "ollama"
+        assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+    }
+}

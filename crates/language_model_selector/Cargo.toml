@@ -11,11 +11,19 @@ workspace = true
 [lib]
 path = "src/language_model_selector.rs"
 
+[features]
+test-support = [
+    "gpui/test-support",
+    # "language/test-support"
+]
+
 [dependencies]
 collections.workspace = true
 feature_flags.workspace = true
+futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+# language.workspace = true
 language_model.workspace = true
 log.workspace = true
 ordered-float.workspace = true
@@ -24,3 +32,7 @@ proto.workspace = true
 ui.workspace = true
 workspace-hack.workspace = true
 zed_actions.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, "features" = ["test-support"] }
+language_model = { workspace = true, "features" = ["test-support"] }

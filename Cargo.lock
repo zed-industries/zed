@@ -7813,6 +7813,7 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "feature_flags",
+ "futures 0.3.31",
  "fuzzy",
  "gpui",
  "language_model",
