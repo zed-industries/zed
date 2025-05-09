@@ -30,6 +30,7 @@ pub fn key_to_native(key: &str) -> Cow<str> {
     let code = match key {
         "space" => SPACE_KEY,
         "backspace" => BACKSPACE_KEY,
+        "escape" => ESCAPE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
         "left" => NSLeftArrowFunctionKey,

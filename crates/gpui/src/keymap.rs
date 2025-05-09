@@ -206,12 +206,15 @@ impl Keymap {
         bindings.pop()
     }
 
-    /// Like `bindings_to_display_from_bindings` but takes a `DoubleEndedIterator` and returns a
-    /// reference.
-    pub fn binding_to_display_from_bindings_iterator<'a>(
-        mut bindings: impl DoubleEndedIterator<Item = &'a KeyBinding>,
+    /// Returns the first binding present in the iterator, which tends to be the
+    /// default binding without any key context. This is useful for cases where no
+    /// key context is available on binding display. Otherwise, bindings with a
+    /// more specific key context would take precedence and result in a
+    /// potentially invalid keybind being returned.
+    pub fn default_binding_from_bindings_iterator<'a>(
+        mut bindings: impl Iterator<Item = &'a KeyBinding>,
     ) -> Option<&'a KeyBinding> {
-        bindings.next_back()
+        bindings.next()
     }
 }
 
