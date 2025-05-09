@@ -399,7 +399,11 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(provider) = self.edit_prediction_provider.as_ref() {
+        if let Some(provider) = self
+            .edit_prediction_provider
+            .as_ref()
+            .filter(|p| p.name() == "zed-predict")
+        {
             let usage = provider.usage(cx).or_else(|| {
                 let user_store = self.user_store.read(cx);
 
