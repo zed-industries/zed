@@ -4,7 +4,7 @@ use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, WeakEntity, Window};
 use language::LineEnding;
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
@@ -107,7 +107,7 @@ impl Tool for TerminalTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -656,7 +656,7 @@ mod tests {
             TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
-                &[],
+                Arc::default(),
                 project.clone(),
                 action_log.clone(),
                 model,
@@ -691,7 +691,7 @@ mod tests {
             let headless_result = TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
-                &[],
+                Arc::default(),
                 project.clone(),
                 action_log.clone(),
                 model.clone(),

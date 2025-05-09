@@ -352,6 +352,13 @@ pub(crate) fn new_debugger_pane(
                     .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .on_action(|_: &menu::Cancel, window, cx| {
+                        if cx.stop_active_drag(window) {
+                            return;
+                        } else {
+                            cx.propagate();
+                        }
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -731,28 +738,35 @@ impl RunningState {
                         (task, None)
                     }
                 };
+                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                    anyhow::bail!("Could not resolve task variables within a debug scenario");
+                };
+
                 let locator_name = if let Some(locator_name) = locator_name {
                     debug_assert!(request.is_none());
                     Some(locator_name)
                 } else if request.is_none() {
                     dap_store
                         .update(cx, |this, cx| {
-                            this.debug_scenario_for_build_task(task.clone(), adapter.clone(), cx)
-                                .and_then(|scenario| match scenario.build {
+                            this.debug_scenario_for_build_task(
+                                task.original_task().clone(),
+                                adapter.clone().into(),
+                                task.display_label().to_owned().into(),
+                                cx,
+                            )
+                            .and_then(|scenario| {
+                                match scenario.build {
                                     Some(BuildTaskDefinition::Template {
                                         locator_name, ..
                                     }) => locator_name,
                                     _ => None,
-                                })
+                                }
+                            })
                         })
                         .ok()
                         .flatten()
                 } else {
                     None
-                };
-
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
-                    anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
                 let builder = ShellBuilder::new(is_local, &task.resolved.shell);
@@ -857,7 +871,7 @@ impl RunningState {
 
                     dap::DebugRequest::Launch(new_launch_request)
                 }
-                request @ dap::DebugRequest::Attach(_) => request,
+                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
             };
             Ok(DebugTaskDefinition {
                 label,

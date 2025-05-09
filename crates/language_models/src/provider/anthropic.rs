@@ -15,7 +15,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, MessageContent,
+    RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -420,6 +421,14 @@ impl LanguageModel for AnthropicModel {
         true
     }
 
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
     }
@@ -620,7 +629,11 @@ pub fn into_anthropic(
                 input_schema: tool.input_schema,
             })
             .collect(),
-        tool_choice: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,
+            LanguageModelToolChoice::None => anthropic::ToolChoice::None,
+        }),
         metadata: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),

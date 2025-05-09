@@ -466,6 +466,7 @@ impl CodegenAlternative {
                 prompt_id: None,
                 mode: None,
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
                 temperature,
                 messages: vec![request_message],

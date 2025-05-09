@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
+use assistant_settings::{AssistantSettings, CompletionMode};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -359,7 +359,6 @@ pub struct Thread {
     >,
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
-    configured_profile: Option<AgentProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,9 +379,6 @@ impl Thread {
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
-        let assistant_settings = AssistantSettings::get_global(cx);
-        let profile_id = &assistant_settings.default_profile;
-        let configured_profile = assistant_settings.profiles.get(profile_id).cloned();
 
         Self {
             id: ThreadId::new(),
@@ -425,7 +421,6 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            configured_profile,
         }
     }
 
@@ -472,13 +467,6 @@ impl Thread {
         let completion_mode = serialized
             .completion_mode
             .unwrap_or_else(|| AssistantSettings::get_global(cx).preferred_completion_mode);
-
-        let configured_profile = serialized.profile.and_then(|profile| {
-            AssistantSettings::get_global(cx)
-                .profiles
-                .get(&profile)
-                .cloned()
-        });
 
         Self {
             id,
@@ -553,7 +541,6 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            configured_profile,
         }
     }
 
@@ -606,19 +593,6 @@ impl Thread {
 
     pub fn set_configured_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
         self.configured_model = model;
-        cx.notify();
-    }
-
-    pub fn configured_profile(&self) -> Option<AgentProfile> {
-        self.configured_profile.clone()
-    }
-
-    pub fn set_configured_profile(
-        &mut self,
-        profile: Option<AgentProfile>,
-        cx: &mut Context<Self>,
-    ) {
-        self.configured_profile = profile;
         cx.notify();
     }
 
@@ -1126,10 +1100,6 @@ impl Thread {
                         provider: model.provider.id().0.to_string(),
                         model: model.model.id().0.to_string(),
                     }),
-                profile: this
-                    .configured_profile
-                    .as_ref()
-                    .map(|profile| AgentProfileId(profile.name.clone().into())),
                 completion_mode: Some(this.completion_mode),
             })
         })
@@ -1183,6 +1153,7 @@ impl Thread {
             mode: None,
             messages: vec![],
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: AssistantSettings::temperature_for_model(&model, cx),
         };
@@ -1227,6 +1198,7 @@ impl Thread {
             }));
         }
 
+        let mut message_ix_to_cache = None;
         for message in &self.messages {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
@@ -1263,19 +1235,57 @@ impl Thread {
                 };
             }
 
-            self.tool_use
-                .attach_tool_uses(message.id, &mut request_message);
+            let mut cache_message = true;
+            let mut tool_results_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+            };
+            for (tool_use, tool_result) in self.tool_use.tool_results(message.id) {
+                if let Some(tool_result) = tool_result {
+                    request_message
+                        .content
+                        .push(MessageContent::ToolUse(tool_use.clone()));
+                    tool_results_message
+                        .content
+                        .push(MessageContent::ToolResult(LanguageModelToolResult {
+                            tool_use_id: tool_use.id.clone(),
+                            tool_name: tool_result.tool_name.clone(),
+                            is_error: tool_result.is_error,
+                            content: if tool_result.content.is_empty() {
+                                // Surprisingly, the API fails if we return an empty string here.
+                                // It thinks we are sending a tool use without a tool result.
+                                "<Tool returned an empty string>".into()
+                            } else {
+                                tool_result.content.clone()
+                            },
+                            output: None,
+                        }));
+                } else {
+                    cache_message = false;
+                    log::debug!(
+                        "skipped tool use {:?} because it is still pending",
+                        tool_use
+                    );
+                }
+            }
 
+            if cache_message {
+                message_ix_to_cache = Some(request.messages.len());
+            }
             request.messages.push(request_message);
 
-            if let Some(tool_results_message) = self.tool_use.tool_results_message(message.id) {
+            if !tool_results_message.content.is_empty() {
+                if cache_message {
+                    message_ix_to_cache = Some(request.messages.len());
+                }
                 request.messages.push(tool_results_message);
             }
         }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
-        if let Some(last) = request.messages.last_mut() {
-            last.cache = true;
+        if let Some(message_ix_to_cache) = message_ix_to_cache {
+            request.messages[message_ix_to_cache].cache = true;
         }
 
         self.attached_tracked_files_state(&mut request.messages, cx);
@@ -1302,6 +1312,7 @@ impl Thread {
             mode: None,
             messages: vec![],
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: AssistantSettings::temperature_for_model(model, cx),
         };
@@ -1918,8 +1929,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = self.to_completion_request(model.clone(), cx);
-        let messages = Arc::new(request.messages);
+        let request = Arc::new(self.to_completion_request(model.clone(), cx));
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -1937,7 +1947,7 @@ impl Thread {
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
-                        messages.clone(),
+                        request.clone(),
                         tool,
                     );
                     cx.emit(ThreadEvent::ToolConfirmationNeeded);
@@ -1946,7 +1956,7 @@ impl Thread {
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
-                        &messages,
+                        request.clone(),
                         tool,
                         model.clone(),
                         window,
@@ -2041,21 +2051,14 @@ impl Thread {
         tool_use_id: LanguageModelToolUseId,
         ui_text: impl Into<SharedString>,
         input: serde_json::Value,
-        messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let task = self.spawn_tool_use(
-            tool_use_id.clone(),
-            messages,
-            input,
-            tool,
-            model,
-            window,
-            cx,
-        );
+        let task =
+            self.spawn_tool_use(tool_use_id.clone(), request, input, tool, model, window, cx);
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
@@ -2063,7 +2066,7 @@ impl Thread {
     fn spawn_tool_use(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
         model: Arc<dyn LanguageModel>,
@@ -2077,7 +2080,7 @@ impl Thread {
         } else {
             tool.run(
                 input,
-                messages,
+                request,
                 self.project.clone(),
                 self.action_log.clone(),
                 model,
@@ -2463,6 +2466,13 @@ impl Thread {
 
                 writeln!(markdown, "**\n")?;
                 writeln!(markdown, "{}", tool_result.content)?;
+                if let Some(output) = tool_result.output.as_ref() {
+                    writeln!(
+                        markdown,
+                        "\n\nDebug Output:\n\n```json\n{}\n```\n",
+                        serde_json::to_string_pretty(output)?
+                    )?;
+                }
             }
         }
 

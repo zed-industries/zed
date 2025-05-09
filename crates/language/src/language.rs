@@ -666,7 +666,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
+#[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -694,20 +694,12 @@ pub struct LanguageConfig {
     pub auto_indent_on_paste: Option<bool>,
     /// A regex that is used to determine whether the indentation level should be
     /// increased in the following line.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_regex",
-        serialize_with = "serialize_regex"
-    )]
+    #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub increase_indent_pattern: Option<Regex>,
     /// A regex that is used to determine whether the indentation level should be
     /// decreased in the following line.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_regex",
-        serialize_with = "serialize_regex"
-    )]
+    #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
     /// A list of characters that trigger the automatic insertion of a closing
@@ -762,7 +754,7 @@ pub struct LanguageConfig {
     pub completion_query_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
     #[serde(default)]
-    pub debuggers: IndexSet<String>,
+    pub debuggers: IndexSet<SharedString>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -781,7 +773,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
+#[derive(Clone, Deserialize, JsonSchema)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -822,7 +814,7 @@ pub struct LanguageScope {
     override_id: Option<u32>,
 }
 
-#[derive(Clone, Deserialize, Default, Debug, JsonSchema, Serialize)]
+#[derive(Clone, Deserialize, Default, Debug, JsonSchema)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
@@ -836,6 +828,8 @@ pub struct LanguageConfigOverride {
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
+    #[serde(default)]
+    pub prefer_label_for_snippet: Option<bool>,
 }
 
 #[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
@@ -949,7 +943,7 @@ pub struct FakeLspAdapter {
 ///
 /// This struct includes settings for defining which pairs of characters are considered brackets and
 /// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
-#[derive(Clone, Debug, Default, JsonSchema, Serialize)]
+#[derive(Clone, Debug, Default, JsonSchema)]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
@@ -999,7 +993,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
 /// an opening bracket or to a newline character insertion in between `start` and `end` characters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema)]
 pub struct BracketPair {
     /// Starting substring for a bracket.
     pub start: String,
@@ -1794,6 +1788,18 @@ impl LanguageScope {
                 .map(|o| &o.completion_query_characters),
             Some(&self.language.config.completion_query_characters),
         )
+    }
+
+    /// Returns whether to prefer snippet `label` over `new_text` to replace text when
+    /// completion is accepted.
+    ///
+    /// In cases like when cursor is in string or renaming existing function,
+    /// you don't want to expand function signature instead just want function name
+    /// to replace existing one.
+    pub fn prefers_label_for_snippet_in_completion(&self) -> bool {
+        self.config_override()
+            .and_then(|o| o.prefer_label_for_snippet)
+            .unwrap_or(false)
     }
 
     /// Returns a list of bracket pairs for a given language with an additional
