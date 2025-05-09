@@ -82,8 +82,6 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
-  // Layout mode of the bottom dock. Defaults to "contained"
-  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -96,6 +94,13 @@
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
     "right_padding": 0.2
+  },
+  // Workspace layout settings
+  "layout": {
+    // Whether to hide or show the layout menu button. Defaults to true
+    "button": true,
+    // Layout mode of the bottom dock. Defaults to "contained"
+    "bottom_dock": "contained"
   },
   // All settings related to the image viewer.
   "image_viewer": {

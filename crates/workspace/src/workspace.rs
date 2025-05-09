@@ -104,7 +104,8 @@ use ui::prelude::*;
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, Layout, RestoreOnStartupBehavior, TabBarSettings,
+    WorkspaceSettings,
 };
 use zed_actions::feedback::FileBugReport;
 
@@ -1154,7 +1155,8 @@ impl Workspace {
         )
         .detach();
 
-        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let ws = WorkspaceSettings::get_global(cx);
+        let bottom_dock_layout = ws.layout.bottom_dock.unwrap_or_default();
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
@@ -1477,7 +1479,7 @@ impl Workspace {
     ) {
         let fs = self.project().read(cx).fs();
         settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
-            content.bottom_dock_layout = Some(layout);
+            content.layout.get_or_insert(Layout::default()).bottom_dock = Some(layout);
         });
 
         self.bottom_dock_layout = layout;
