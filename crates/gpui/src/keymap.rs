@@ -147,14 +147,19 @@ impl Keymap {
         });
 
         let mut bindings: SmallVec<[(KeyBinding, usize); 1]> = SmallVec::new();
-        let mut is_pending = None;
+        let mut is_pending_opt: Option<(bool, usize)> = None;
 
         'outer: for (binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
                 if self.binding_enabled(binding, &context_stack[0..depth]) {
-                    if is_pending.is_none() {
-                        is_pending = Some(pending && !is_no_action(&*binding.action))
+                    if let Some(is_pending) = is_pending_opt.as_mut() {
+                        if !is_pending.0 && pending && is_pending.1 == depth {
+                            is_pending.0 = !is_no_action(&*binding.action);
+                        }
+                    } else {
+                        is_pending_opt = Some((pending && !is_no_action(&*binding.action), depth));
                     }
+
                     if !pending {
                         bindings.push((binding.clone(), depth));
                         continue 'outer;
@@ -174,7 +179,7 @@ impl Keymap {
             })
             .collect();
 
-        (bindings, is_pending.unwrap_or_default())
+        (bindings, is_pending_opt.unwrap_or_default().0)
     }
 
     /// Check if the given binding is enabled, given a certain key context.
