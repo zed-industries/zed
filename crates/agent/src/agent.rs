@@ -85,6 +85,7 @@ actions!(
         KeepAll,
         Follow,
         ResetTrialUpsell,
+        Close,
     ]
 );
 

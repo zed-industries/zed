@@ -62,10 +62,10 @@ use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHist
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
-    AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
-    Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker,
-    ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, Close, ContextStore, DeleteRecentlyOpenThread,
+    ExpandMessageEditor, Follow, InlineAssistant, NewTextThread, NewThread,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialUpsell, TextThreadStore,
+    ThreadEvent, ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -156,6 +156,11 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
                     set_trial_upsell_dismissed(false, cx);
+                })
+                .register_action(|workspace, _: &Close, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| panel.close_panel(window, cx));
+                    }
                 });
         },
     )
@@ -367,6 +372,10 @@ pub struct AgentPanel {
 }
 
 impl AgentPanel {
+    fn close_panel(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(PanelEvent::Close);
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         self.pending_serialization = Some(cx.background_spawn(async move {

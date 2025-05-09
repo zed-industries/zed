@@ -242,6 +242,7 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
+      "ctrl-w": "agent::Close",
       "ctrl-shift-o": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",

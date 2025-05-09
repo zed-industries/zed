@@ -288,6 +288,7 @@
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
+      "cmd-w": "agent::Close",
       "cmd-shift-o": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
