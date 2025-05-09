@@ -154,6 +154,8 @@ pub struct RevealInProjectPanel {
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 impl_actions!(
@@ -200,6 +202,7 @@ impl DeploySearch {
     pub fn find() -> Self {
         Self {
             replace_enabled: false,
+            filter: None,
         }
     }
 }
@@ -3113,6 +3116,7 @@ fn default_render_tab_bar_buttons(
                                 "Search Project",
                                 DeploySearch {
                                     replace_enabled: false,
+                                    filter: None,
                                 }
                                 .boxed_clone(),
                             )
