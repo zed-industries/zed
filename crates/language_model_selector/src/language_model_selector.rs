@@ -878,7 +878,7 @@ mod tests {
         );
 
         // Model provider should be searchable as well
-        let results = matcher.fuzzy_search("oll"); // meaning "ollama"
+        let results = matcher.fuzzy_search("ol"); // meaning "ollama"
         assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
 
         // Fuzzy search
