@@ -46,8 +46,9 @@ impl editor::Addon for ConflictAddon {
 
 pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mut Context<Editor>) {
     // Only show conflict UI for singletons and in the project diff.
-    if !editor.buffer().read(cx).is_singleton()
-        && !editor.buffer().read(cx).all_diff_hunks_expanded()
+    if !editor.mode().is_full()
+        || (!editor.buffer().read(cx).is_singleton()
+            && !editor.buffer().read(cx).all_diff_hunks_expanded())
     {
         return;
     }
@@ -296,6 +297,7 @@ fn conflicts_updated(
                 move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
             }),
             priority: 0,
+            render_in_minimap: true,
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
@@ -386,7 +388,7 @@ fn render_conflict_buttons(
     h_flex()
         .h(cx.line_height)
         .items_end()
-        .ml(cx.gutter_dimensions.width)
+        .ml(cx.margins.gutter.width)
         .id(cx.block_id)
         .gap_0p5()
         .child(

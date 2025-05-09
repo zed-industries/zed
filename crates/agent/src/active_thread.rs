@@ -1,3 +1,4 @@
+use crate::AgentPanel;
 use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
@@ -6,12 +7,11 @@ use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
     ThreadFeedback,
 };
-use crate::thread_store::{RulesLoadingError, ThreadStore};
+use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
-use crate::{AssistantPanel, OpenActiveThreadAsMarkdown};
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
@@ -35,7 +35,7 @@ use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
 use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
-use settings::{Settings as _, update_settings_file};
+use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
@@ -56,6 +56,7 @@ pub struct ActiveThread {
     context_store: Entity<ContextStore>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     thread: Entity<Thread>,
     workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
@@ -175,7 +176,7 @@ fn parse_markdown(
     cx.new(|cx| Markdown::new(text, Some(language_registry), None, cx))
 }
 
-fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
     let colors = cx.theme().colors();
     let ui_font_size = TextSize::Default.rems(cx);
@@ -711,11 +712,20 @@ fn open_markdown_link(
                 .detach_and_log_err(cx);
         }
         Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
-            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel
                         .open_thread_by_id(&thread_id, window, cx)
                         .detach_and_log_err(cx)
+                });
+            }
+        }),
+        Some(MentionLink::TextThread(path)) => workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel
+                        .open_saved_prompt_editor(path, window, cx)
+                        .detach_and_log_err(cx);
                 });
             }
         }),
@@ -743,6 +753,7 @@ impl ActiveThread {
     pub fn new(
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
+        text_thread_store: Entity<TextThreadStore>,
         context_store: Entity<ContextStore>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
@@ -753,6 +764,7 @@ impl ActiveThread {
             cx.observe(&thread, |_, _, cx| cx.notify()),
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
             cx.subscribe(&thread_store, Self::handle_rules_loading_error),
+            cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
         ];
 
         let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
@@ -765,6 +777,7 @@ impl ActiveThread {
         let mut this = Self {
             language_registry,
             thread_store,
+            text_thread_store,
             context_store,
             thread: thread.clone(),
             workspace,
@@ -842,6 +855,18 @@ impl ActiveThread {
         self.editing_message
             .as_ref()
             .map(|(id, state)| (*id, state.last_estimated_token_count.unwrap_or(0)))
+    }
+
+    pub fn context_store(&self) -> &Entity<ContextStore> {
+        &self.context_store
+    }
+
+    pub fn thread_store(&self) -> &Entity<ThreadStore> {
+        &self.thread_store
+    }
+
+    pub fn text_thread_store(&self) -> &Entity<TextThreadStore> {
+        &self.text_thread_store
     }
 
     fn push_message(
@@ -1070,6 +1095,22 @@ impl ActiveThread {
                     cx,
                 );
             }
+            ThreadEvent::MissingToolUse {
+                tool_use_id,
+                ui_text,
+            } => {
+                self.render_tool_use_markdown(
+                    tool_use_id.clone(),
+                    ui_text,
+                    "",
+                    self.thread
+                        .read(cx)
+                        .output_for_tool(tool_use_id)
+                        .map(|output| output.clone().into())
+                        .unwrap_or("".into()),
+                    cx,
+                );
+            }
         }
     }
 
@@ -1170,8 +1211,7 @@ impl ActiveThread {
 
                                             if let Some(workspace) = workspace_handle.upgrade() {
                                                 workspace.update(_cx, |workspace, cx| {
-                                                    workspace
-                                                        .focus_panel::<AssistantPanel>(window, cx);
+                                                    workspace.focus_panel::<AgentPanel>(window, cx);
                                                 });
                                             }
                                         })
@@ -1245,6 +1285,7 @@ impl ActiveThread {
             self.workspace.clone(),
             self.context_store.downgrade(),
             self.thread_store.downgrade(),
+            self.text_thread_store.downgrade(),
             window,
             cx,
         );
@@ -1266,6 +1307,7 @@ impl ActiveThread {
                 self.context_store.clone(),
                 self.workspace.clone(),
                 Some(self.thread_store.downgrade()),
+                Some(self.text_thread_store.downgrade()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 window,
@@ -1369,8 +1411,12 @@ impl ActiveThread {
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
+                        tool_choice: None,
                         stop: vec![],
-                        temperature: None,
+                        temperature: AssistantSettings::temperature_for_model(
+                            &configured_model.model,
+                            cx,
+                        ),
                     };
 
                     Some(configured_model.model.count_tokens(request, cx))
@@ -1648,12 +1694,14 @@ impl ActiveThread {
     fn render_edit_message_editor(
         &self,
         state: &EditingMessageState,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
-        let font_size = TextSize::Small.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.75;
+        let font_size = TextSize::Small
+            .rems(cx)
+            .to_pixels(settings.agent_font_size(cx));
+        let line_height = font_size * 1.75;
 
         let colors = cx.theme().colors();
 
@@ -1732,13 +1780,19 @@ impl ActiveThread {
         let colors = cx.theme().colors();
         let editor_bg_color = colors.editor_background;
 
-        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::FileCode)
-            .shape(ui::IconButtonShape::Square)
+        let open_as_markdown = IconButton::new(("open-as-markdown", ix), IconName::DocumentText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
-            .on_click(|_, window, cx| {
-                window.dispatch_action(Box::new(OpenActiveThreadAsMarkdown), cx)
+            .on_click({
+                let thread = self.thread.clone();
+                let workspace = self.workspace.clone();
+                move |_, window, cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        open_active_thread_as_markdown(thread.clone(), workspace, window, cx)
+                            .detach_and_log_err(cx);
+                    }
+                }
             });
 
         // For all items that should be aligned with the LLM's response.
@@ -1751,13 +1805,16 @@ impl ActiveThread {
             .mt_1()
             .py_2()
             .px(RESPONSE_PADDING_X)
-            .gap_1()
+            .mr_1()
+            .opacity(0.4)
+            .hover(|style| style.opacity(1.))
+            .gap_1p5()
             .flex_wrap()
             .justify_end();
         let feedback_items = match self.thread.read(cx).message_feedback(message_id) {
             Some(feedback) => feedback_container
                 .child(
-                    div().mr_1().visible_on_hover("feedback_container").child(
+                    div().visible_on_hover("feedback_container").child(
                         Label::new(match feedback {
                             ThreadFeedback::Positive => "Thanks for your feedback!",
                             ThreadFeedback::Negative => {
@@ -1770,11 +1827,8 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
-                        .pr_1()
-                        .gap_1()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
-                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Accent,
@@ -1792,7 +1846,6 @@ impl ActiveThread {
                         )
                         .child(
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
-                                .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(match feedback {
                                     ThreadFeedback::Positive => Color::Ignored,
@@ -1813,7 +1866,7 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(
-                    div().mr_1().visible_on_hover("feedback_container").child(
+                    div().visible_on_hover("feedback_container").child(
                         Label::new(
                             "Rating the thread sends all of your current conversation to the Zed team.",
                         )
@@ -1823,13 +1876,10 @@ impl ActiveThread {
                 )
                 .child(
                     h_flex()
-                        .pr_1()
-                        .gap_1()
                         .child(
                             IconButton::new(("feedback-thumbs-up", ix), IconName::ThumbsUp)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Helpful Response"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
@@ -1844,7 +1894,6 @@ impl ActiveThread {
                             IconButton::new(("feedback-thumbs-down", ix), IconName::ThumbsDown)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
-                                .shape(ui::IconButtonShape::Square)
                                 .tooltip(Tooltip::text("Not Helpful"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.handle_feedback_click(
@@ -2023,7 +2072,7 @@ impl ActiveThread {
         v_flex()
             .w_full()
             .map(|parent| {
-                if let Some(checkpoint) = checkpoint.filter(|_| is_generating) {
+                if let Some(checkpoint) = checkpoint.filter(|_| !is_generating) {
                     let mut is_pending = false;
                     let mut error = None;
                     if let Some(last_restore_checkpoint) =
@@ -3203,15 +3252,18 @@ impl ActiveThread {
             .map(|tool_use| tool_use.status.clone())
         {
             self.thread.update(cx, |thread, cx| {
-                thread.run_tool(
-                    c.tool_use_id.clone(),
-                    c.ui_text.clone(),
-                    c.input.clone(),
-                    &c.messages,
-                    c.tool.clone(),
-                    Some(window.window_handle()),
-                    cx,
-                );
+                if let Some(configured) = thread.get_or_init_configured_model(cx) {
+                    thread.run_tool(
+                        c.tool_use_id.clone(),
+                        c.ui_text.clone(),
+                        c.input.clone(),
+                        c.request.clone(),
+                        c.tool.clone(),
+                        configured.model,
+                        Some(window.window_handle()),
+                        cx,
+                    );
+                }
             });
         }
     }
@@ -3366,6 +3418,60 @@ impl Render for ActiveThread {
     }
 }
 
+pub(crate) fn open_active_thread_as_markdown(
+    thread: Entity<Thread>,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let markdown_language_task = workspace
+        .read(cx)
+        .app_state()
+        .languages
+        .language_for_name("Markdown");
+
+    window.spawn(cx, async move |cx| {
+        let markdown_language = markdown_language_task.await?;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let thread = thread.read(cx);
+            let markdown = thread.to_markdown(cx)?;
+            let thread_summary = thread
+                .summary()
+                .map(|summary| summary.to_string())
+                .unwrap_or_else(|| "Thread".to_string());
+
+            let project = workspace.project().clone();
+
+            if !project.read(cx).is_local() {
+                anyhow::bail!("failed to open active thread as markdown in remote project");
+            }
+
+            let buffer = project.update(cx, |project, cx| {
+                project.create_local_buffer(&markdown, Some(markdown_language), cx)
+            });
+            let buffer =
+                cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(thread_summary.clone()));
+
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    let mut editor =
+                        Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                    editor.set_breadcrumb_header(thread_summary);
+                    editor
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
+
+            anyhow::Ok(())
+        })??;
+        anyhow::Ok(())
+    })
+}
+
 pub(crate) fn open_context(
     context: &AgentContextHandle,
     workspace: Entity<Workspace>,
@@ -3418,15 +3524,22 @@ pub(crate) fn open_context(
         }
 
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
-            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    let thread_id = thread_context.thread.read(cx).id().clone();
-                    panel
-                        .open_thread_by_id(&thread_id, window, cx)
-                        .detach_and_log_err(cx)
+                    panel.open_thread(thread_context.thread.clone(), window, cx);
                 });
             }
         }),
+
+        AgentContextHandle::TextThread(text_thread_context) => {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel.open_prompt_editor(text_thread_context.context.clone(), window, cx)
+                    });
+                }
+            })
+        }
 
         AgentContextHandle::Rules(rules_context) => window.dispatch_action(
             Box::new(OpenRulesLibrary {

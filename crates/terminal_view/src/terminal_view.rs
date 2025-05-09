@@ -8,16 +8,18 @@ use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHi
 use gpui::{
     AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
     KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, anchored, deferred, div, impl_actions,
+    Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
+    impl_actions,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
 use project::{Entry, Metadata, Project, search::SearchQuery, terminals::TerminalKind};
 use schemars::JsonSchema;
+use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
-    ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState, TaskStatus,
-    Terminal, TerminalBounds, ToggleViMode,
+    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp,
+    ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState,
+    TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     alacritty_terminal::{
         index::Point,
         term::{TermMode, search::RegexSearch},
@@ -57,10 +59,6 @@ use std::{
     time::Duration,
 };
 
-const REGEX_SPECIAL_CHARS: &[char] = &[
-    '\\', '.', '*', '+', '?', '|', '(', ')', '[', ']', '{', '}', '^', '$',
-];
-
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
@@ -74,6 +72,8 @@ pub struct SendText(String);
 
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
 pub struct SendKeystroke(String);
+
+actions!(terminal, [RerunTask]);
 
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
@@ -111,11 +111,12 @@ pub struct TerminalView {
     context_menu: Option<(Entity<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_state: bool,
+    embedded: bool,
     blinking_terminal_enabled: bool,
     cwd_serialized: bool,
     blinking_paused: bool,
     blink_epoch: usize,
-    hover_target_tooltip: Option<String>,
+    hover: Option<HoverTarget>,
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
     show_breadcrumbs: bool,
@@ -127,6 +128,12 @@ pub struct TerminalView {
     hide_scrollbar_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
+}
+
+#[derive(Debug)]
+struct HoverTarget {
+    tooltip: String,
+    hovered_word: HoveredWord,
 }
 
 impl EventEmitter<Event> for TerminalView {}
@@ -162,6 +169,7 @@ impl TerminalView {
         workspace: WeakEntity<Workspace>,
         workspace_id: Option<WorkspaceId>,
         project: WeakEntity<Project>,
+        embedded: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -198,8 +206,9 @@ impl TerminalView {
             blinking_terminal_enabled: false,
             blinking_paused: false,
             blink_epoch: 0,
-            hover_target_tooltip: None,
+            hover: None,
             hover_tooltip_update: Task::ready(()),
+            embedded,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -329,6 +338,18 @@ impl TerminalView {
         cx.notify();
     }
 
+    fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
+        let task = self
+            .terminal
+            .update(cx, |terminal, _| {
+                terminal
+                    .task()
+                    .map(|task| terminal_rerun_override(&task.id))
+            })
+            .unwrap_or_default();
+        window.dispatch_action(Box::new(task), cx);
+    }
+
     fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
         self.scroll_top = px(0.);
         self.terminal.update(cx, |term, _| term.clear());
@@ -381,7 +402,6 @@ impl TerminalView {
                 return;
             }
         }
-
         self.terminal.update(cx, |term, _| term.scroll_wheel(event));
     }
 
@@ -822,19 +842,22 @@ impl TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(Tooltip::text("Rerun task"))
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action("Rerun task", &RerunTask, window, cx)
+                })
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::Rerun {
-                            task_id: Some(task_id.0.clone()),
-                            allow_concurrent_runs: Some(true),
-                            use_new_terminal: Some(false),
-                            reevaluate_context: false,
-                        }),
-                        cx,
-                    );
+                    window.dispatch_action(Box::new(terminal_rerun_override(&task_id)), cx);
                 }),
         )
+    }
+}
+
+fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
+    zed_actions::Rerun {
+        task_id: Some(task.0.clone()),
+        allow_concurrent_runs: Some(true),
+        use_new_terminal: Some(false),
+        reevaluate_context: false,
     }
 }
 
@@ -883,54 +906,79 @@ fn subscribe_for_terminal_events(
                 }
 
                 Event::NewNavigationTarget(maybe_navigation_target) => {
-                    match maybe_navigation_target.as_ref() {
-                        None => {
-                            terminal_view.hover_target_tooltip = None;
-                            terminal_view.hover_tooltip_update = Task::ready(());
-                        }
-                        Some(MaybeNavigationTarget::Url(url)) => {
-                            terminal_view.hover_target_tooltip = Some(url.clone());
-                            terminal_view.hover_tooltip_update = Task::ready(());
-                        }
-                        Some(MaybeNavigationTarget::PathLike(path_like_target)) => {
-                            let valid_files_to_open_task = possible_open_target(
-                                &workspace,
-                                &path_like_target.terminal_dir,
-                                &path_like_target.maybe_path,
-                                cx,
-                            );
-
-                            terminal_view.hover_tooltip_update =
-                                cx.spawn(async move |terminal_view, cx| {
-                                    let file_to_open = valid_files_to_open_task.await;
-                                    terminal_view
-                                        .update(cx, |terminal_view, _| match file_to_open {
-                                            Some(
-                                                OpenTarget::File(path, _)
-                                                | OpenTarget::Worktree(path, _),
-                                            ) => {
-                                                terminal_view.hover_target_tooltip =
-                                                    Some(path.to_string(|path| {
-                                                        path.to_string_lossy().to_string()
-                                                    }));
-                                            }
-                                            None => {
-                                                terminal_view.hover_target_tooltip = None;
-                                            }
-                                        })
-                                        .ok();
+                    match maybe_navigation_target
+                        .as_ref()
+                        .zip(terminal.read(cx).last_content.last_hovered_word.as_ref())
+                    {
+                        Some((MaybeNavigationTarget::Url(url), hovered_word)) => {
+                            if Some(hovered_word)
+                                != terminal_view
+                                    .hover
+                                    .as_ref()
+                                    .map(|hover| &hover.hovered_word)
+                            {
+                                terminal_view.hover = Some(HoverTarget {
+                                    tooltip: url.clone(),
+                                    hovered_word: hovered_word.clone(),
                                 });
+                                terminal_view.hover_tooltip_update = Task::ready(());
+                                cx.notify();
+                            }
+                        }
+                        Some((MaybeNavigationTarget::PathLike(path_like_target), hovered_word)) => {
+                            if Some(hovered_word)
+                                != terminal_view
+                                    .hover
+                                    .as_ref()
+                                    .map(|hover| &hover.hovered_word)
+                            {
+                                let valid_files_to_open_task = possible_open_target(
+                                    &workspace,
+                                    &path_like_target.terminal_dir,
+                                    &path_like_target.maybe_path,
+                                    cx,
+                                );
+                                let hovered_word = hovered_word.clone();
+
+                                terminal_view.hover = None;
+                                terminal_view.hover_tooltip_update =
+                                    cx.spawn(async move |terminal_view, cx| {
+                                        let file_to_open = valid_files_to_open_task.await;
+                                        terminal_view
+                                            .update(cx, |terminal_view, _| match file_to_open {
+                                                Some(
+                                                    OpenTarget::File(path, _)
+                                                    | OpenTarget::Worktree(path, _),
+                                                ) => {
+                                                    terminal_view.hover = Some(HoverTarget {
+                                                        tooltip: path.to_string(|path| {
+                                                            path.to_string_lossy().to_string()
+                                                        }),
+                                                        hovered_word,
+                                                    });
+                                                }
+                                                None => {
+                                                    terminal_view.hover = None;
+                                                }
+                                            })
+                                            .ok();
+                                    });
+                                cx.notify();
+                            }
+                        }
+                        None => {
+                            terminal_view.hover = None;
+                            terminal_view.hover_tooltip_update = Task::ready(());
+                            cx.notify();
                         }
                     }
-
-                    cx.notify()
                 }
 
                 Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                     MaybeNavigationTarget::Url(url) => cx.open_url(url),
 
                     MaybeNavigationTarget::PathLike(path_like_target) => {
-                        if terminal_view.hover_target_tooltip.is_none() {
+                        if terminal_view.hover.is_none() {
                             return;
                         }
                         let task_workspace = workspace.clone();
@@ -1256,26 +1304,16 @@ fn possible_open_target(
     })
 }
 
-fn regex_to_literal(regex: &str) -> String {
-    regex
-        .chars()
-        .flat_map(|c| {
-            if REGEX_SPECIAL_CHARS.contains(&c) {
-                vec!['\\', c]
-            } else {
-                vec![c]
-            }
-        })
-        .collect()
-}
-
-pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
-    let query = query.as_str();
-    if query == "." {
-        return None;
+fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
+    let str = query.as_str();
+    if query.is_regex() {
+        if str == "." {
+            return None;
+        }
+        RegexSearch::new(str).ok()
+    } else {
+        RegexSearch::new(&regex::escape(str)).ok()
     }
-    let searcher = RegexSearch::new(query);
-    searcher.ok()
 }
 
 impl TerminalView {
@@ -1341,6 +1379,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::toggle_vi_mode))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
+            .on_action(cx.listener(TerminalView::rerun_task))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1377,6 +1416,7 @@ impl Render for TerminalView {
                         focused,
                         self.should_show_cursor(focused, cx),
                         self.block_below_cursor.clone(),
+                        self.embedded,
                     ))
                     .when_some(self.render_scrollbar(cx), |div, scrollbar| {
                         div.child(scrollbar)
@@ -1502,6 +1542,7 @@ impl Item for TerminalView {
                 self.workspace.clone(),
                 workspace_id,
                 self.project.clone(),
+                false,
                 window,
                 cx,
             )
@@ -1659,6 +1700,7 @@ impl SerializableItem for TerminalView {
                         workspace,
                         Some(workspace_id),
                         project.downgrade(),
+                        false,
                         window,
                         cx,
                     )
@@ -1735,24 +1777,7 @@ impl SearchableItem for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {
-        let searcher = match &*query {
-            SearchQuery::Text { .. } => regex_search_for_query(
-                &(SearchQuery::text(
-                    regex_to_literal(query.as_str()),
-                    query.whole_word(),
-                    query.case_sensitive(),
-                    query.include_ignored(),
-                    query.files_to_include().clone(),
-                    query.files_to_exclude().clone(),
-                    false,
-                    None,
-                )
-                .unwrap()),
-            ),
-            SearchQuery::Regex { .. } => regex_search_for_query(&query),
-        };
-
-        if let Some(s) = searcher {
+        if let Some(s) = regex_search_for_query(&query) {
             self.terminal()
                 .update(cx, |term, cx| term.find_matches(s, cx))
         } else {
@@ -2046,15 +2071,5 @@ mod tests {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
-    }
-
-    #[test]
-    fn escapes_only_special_characters() {
-        assert_eq!(regex_to_literal(r"test(\w)"), r"test\(\\w\)".to_string());
-    }
-
-    #[test]
-    fn empty_string_stays_empty() {
-        assert_eq!(regex_to_literal(""), "".to_string());
     }
 }

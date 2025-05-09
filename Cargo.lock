@@ -56,13 +56,13 @@ dependencies = [
  "assistant_context_editor",
  "assistant_settings",
  "assistant_slash_command",
+ "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
  "buffer_diff",
  "chrono",
  "client",
  "collections",
- "command_palette_hooks",
  "component",
  "context_server",
  "convert_case 0.8.0",
@@ -79,6 +79,7 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
+ "indexed_docs",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
@@ -106,6 +107,7 @@ dependencies = [
  "rope",
  "rules_library",
  "schemars",
+ "search",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -124,6 +126,7 @@ dependencies = [
  "time_format",
  "ui",
  "ui_input",
+ "urlencoding",
  "util",
  "uuid",
  "workspace",
@@ -470,69 +473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assistant_context_editor",
- "assistant_settings",
- "assistant_slash_command",
- "assistant_slash_commands",
- "assistant_tool",
- "async-watch",
- "client",
- "collections",
- "command_palette_hooks",
- "context_server",
- "ctor",
- "db",
- "editor",
- "env_logger 0.11.8",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indexed_docs",
- "indoc",
- "language",
- "language_model",
- "language_model_selector",
- "languages",
- "log",
- "lsp",
- "menu",
- "multi_buffer",
- "parking_lot",
- "pretty_assertions",
- "project",
- "prompt_store",
- "proto",
- "rand 0.8.5",
- "rope",
- "rules_library",
- "schemars",
- "search",
- "serde",
- "serde_json_lenient",
- "settings",
- "smol",
- "streaming_diff",
- "telemetry",
- "telemetry_events",
- "terminal",
- "terminal_view",
- "text",
- "theme",
- "tree-sitter-md",
- "ui",
- "unindent",
- "util",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
@@ -546,7 +486,6 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -574,7 +513,6 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "strum 0.27.1",
  "telemetry_events",
  "text",
  "theme",
@@ -594,8 +532,8 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "collections",
  "deepseek",
- "feature_flags",
  "fs",
  "gpui",
  "indexmap",
@@ -607,9 +545,11 @@ dependencies = [
  "paths",
  "schemars",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "settings",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -735,7 +675,11 @@ dependencies = [
  "language_model",
  "language_models",
  "linkme",
+ "log",
+ "markdown",
  "open",
+ "paths",
+ "portable-pty",
  "pretty_assertions",
  "project",
  "rand 0.8.5",
@@ -759,9 +703,11 @@ dependencies = [
  "unindent",
  "util",
  "web_search",
+ "which 6.0.3",
  "workspace",
  "workspace-hack",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
@@ -1324,9 +1270,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19b756939cb2f8dc900aa6dcd505e6e2428e9cae7ff7b028c49e3946efa70878"
+checksum = "93fcc8f365936c834db5514fc45aee5b1202d677e6b40e48468aaaa8183ca8c7"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -1334,9 +1280,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.28.2"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa9b6986f250236c27e5a204062434a773a13243d2ffc2955f37bdba4c5c6a1"
+checksum = "61b1d86e7705efe1be1b569bab41d4fa1e14e220b60a160f78de2db687add079"
 dependencies = [
  "bindgen 0.69.5",
  "cc",
@@ -1959,7 +1905,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "log",
@@ -2468,7 +2414,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2497,7 +2443,7 @@ dependencies = [
  "maybe-owned",
  "rustix 1.0.5",
  "rustix-linux-procfs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -2996,8 +2942,8 @@ name = "collab"
 version = "0.44.0"
 dependencies = [
  "anyhow",
- "assistant",
  "assistant_context_editor",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",
@@ -3231,6 +3177,7 @@ dependencies = [
  "gpui",
  "linkme",
  "parking_lot",
+ "strum 0.27.1",
  "theme",
  "workspace-hack",
 ]
@@ -3246,6 +3193,7 @@ dependencies = [
  "collections",
  "component",
  "db",
+ "futures 0.3.31",
  "gpui",
  "languages",
  "log",
@@ -3255,6 +3203,7 @@ dependencies = [
  "serde",
  "ui",
  "ui_input",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -3324,40 +3273,19 @@ name = "context_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_tool",
  "async-trait",
  "collections",
- "command_palette_hooks",
- "context_server_settings",
- "extension",
  "futures 0.3.31",
  "gpui",
- "icons",
- "language_model",
  "log",
  "parking_lot",
  "postage",
- "project",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "url",
- "util",
- "workspace-hack",
-]
-
-[[package]]
-name = "context_server_settings"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "gpui",
  "schemars",
  "serde",
  "serde_json",
- "settings",
+ "smol",
+ "url",
+ "util",
  "workspace-hack",
 ]
 
@@ -3991,7 +3919,7 @@ version = "3.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "697b5419f348fd5ae2478e8018cb016c00a5881c7f46c717de98ffd135a5651c"
 dependencies = [
- "nix",
+ "nix 0.29.0",
  "windows-sys 0.59.0",
 ]
 
@@ -4079,7 +4007,6 @@ dependencies = [
  "http_client",
  "language",
  "log",
- "lsp-types",
  "node_runtime",
  "parking_lot",
  "paths",
@@ -4112,9 +4039,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dap",
+ "futures 0.3.31",
  "gpui",
  "language",
- "lsp-types",
  "paths",
  "serde",
  "serde_json",
@@ -4259,6 +4186,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "dap",
+ "dap_adapters",
  "db",
  "debugger_tools",
  "editor",
@@ -4271,6 +4199,7 @@ dependencies = [
  "log",
  "menu",
  "parking_lot",
+ "paths",
  "picker",
  "pretty_assertions",
  "project",
@@ -4966,7 +4895,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "976dd42dc7e85965fe702eb8164f21f450704bdde31faefd6471dba214cb594e"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5015,6 +4944,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "anyhow",
+ "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-trait",
@@ -5024,7 +4954,6 @@ dependencies = [
  "clap",
  "client",
  "collections",
- "context_server",
  "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
@@ -5177,7 +5106,6 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
- "context_server_settings",
  "ctor",
  "env_logger 0.11.8",
  "extension",
@@ -5307,7 +5235,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5686,7 +5614,7 @@ checksum = "94e7099f6313ecacbe1256e8ff9d617b75d1bcb16a6fddef94866d225a01a14a"
 dependencies = [
  "io-lifetimes",
  "rustix 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7310,6 +7238,7 @@ dependencies = [
  "lsp",
  "paths",
  "project",
+ "proto",
  "regex",
  "serde_json",
  "settings",
@@ -7317,6 +7246,7 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -7404,7 +7334,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7477,7 +7407,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi 0.5.0",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7806,6 +7736,7 @@ dependencies = [
  "tree-sitter-html",
  "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-python",
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -7913,6 +7844,7 @@ dependencies = [
  "partial-json-fixer",
  "project",
  "proto",
+ "release_channel",
  "schemars",
  "serde",
  "serde_json",
@@ -8132,7 +8064,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -8585,6 +8517,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "base64 0.22.1",
  "env_logger 0.11.8",
  "gpui",
  "language",
@@ -9075,6 +9008,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags 2.9.0",
+ "cfg-if",
+ "cfg_aliases 0.1.1",
+ "libc",
+]
 
 [[package]]
 name = "nix"
@@ -10900,6 +10845,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "portable-pty"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "downcast-rs",
+ "filedescriptor",
+ "lazy_static",
+ "libc",
+ "log",
+ "nix 0.28.0",
+ "serial2",
+ "shared_library",
+ "shell-words",
+ "winapi",
+ "winreg 0.10.1",
+]
+
+[[package]]
 name = "postage"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11074,6 +11040,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "context_server",
  "dap",
  "dap_adapters",
  "env_logger 0.11.8",
@@ -11278,7 +11245,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.1",
  "heck 0.5.0",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "log",
  "multimap 0.10.0",
  "once_cell",
@@ -11311,7 +11278,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
@@ -11531,7 +11498,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11987,6 +11954,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "assistant_tool",
+ "assistant_tools",
  "async-watch",
  "backtrace",
  "cargo_toml",
@@ -12009,6 +11978,7 @@ dependencies = [
  "http_client",
  "language",
  "language_extension",
+ "language_model",
  "languages",
  "libc",
  "log",
@@ -12578,7 +12548,7 @@ dependencies = [
  "itoa",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12591,7 +12561,7 @@ dependencies = [
  "errno 0.3.11",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12712,7 +12682,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13311,6 +13281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serial2"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7d1d08630509d69f90eff4afcd02c3bd974d979225cbd815ff5942351b14375"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "session"
 version = "0.1.0"
 dependencies = [
@@ -13408,6 +13389,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
+]
+
+[[package]]
+name = "shared_library"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9e7e0f2bfae24d8a5b5a66c5b257a83c7412304311512a0c054cd5e619da11"
+dependencies = [
+ "lazy_static",
+ "libc",
 ]
 
 [[package]]
@@ -14461,7 +14452,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes",
  "rustix 0.38.44",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -14622,7 +14613,7 @@ dependencies = [
  "getrandom 0.3.2",
  "once_cell",
  "rustix 1.0.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -14702,6 +14693,7 @@ dependencies = [
  "log",
  "project",
  "rand 0.8.5",
+ "regex",
  "schemars",
  "search",
  "serde",
@@ -15038,7 +15030,6 @@ dependencies = [
  "client",
  "collections",
  "db",
- "feature_flags",
  "gpui",
  "http_client",
  "notifications",
@@ -17166,7 +17157,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -17766,6 +17757,15 @@ dependencies = [
 
 [[package]]
 name = "winreg"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
+name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
@@ -17817,7 +17817,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.9.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -18102,6 +18102,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "menu",
  "node_runtime",
  "parking_lot",
  "postage",
@@ -18201,7 +18202,6 @@ dependencies = [
  "idna",
  "indexmap",
  "inout",
- "itertools 0.12.1",
  "itertools 0.13.0",
  "lazy_static",
  "libc",
@@ -18216,7 +18216,7 @@ dependencies = [
  "miniz_oxide",
  "mio",
  "naga",
- "nix",
+ "nix 0.29.0",
  "nom",
  "num-bigint",
  "num-bigint-dig",
@@ -18593,7 +18593,7 @@ dependencies = [
  "futures-core",
  "futures-lite 2.6.0",
  "hex",
- "nix",
+ "nix 0.29.0",
  "ordered-stream",
  "serde",
  "serde_repr",
@@ -18637,7 +18637,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.186.0"
+version = "0.187.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18645,7 +18645,6 @@ dependencies = [
  "ashpd",
  "askpass",
  "assets",
- "assistant",
  "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",
@@ -18706,7 +18705,7 @@ dependencies = [
  "menu",
  "migrator",
  "mimalloc",
- "nix",
+ "nix 0.29.0",
  "node_runtime",
  "notifications",
  "outline",
@@ -18827,9 +18826,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.7.4"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2adf9bc80def4ec93c190f06eb78111865edc2576019a9753eaef6fd7bc3b72c"
+checksum = "a23b2fd00776b0c55072f389654910ceb501eb0083d7f78905ab0e5cc86949ec"
 dependencies = [
  "anyhow",
  "serde",

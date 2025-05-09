@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::{HashSet, IndexMap};
-use feature_flags::{Assistant2FeatureFlag, ZedProFeatureFlag};
+use feature_flags::ZedProFeatureFlag;
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
@@ -15,9 +15,12 @@ use proto::Plan;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 action_with_deprecated_aliases!(
-    assistant,
+    agent,
     ToggleModelSelector,
-    ["assistant2::ToggleModelSelector"]
+    [
+        "assistant::ToggleModelSelector",
+        "assistant2::ToggleModelSelector"
+    ]
 );
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
@@ -594,13 +597,10 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
-                            let configure_action = if cx.has_flag::<Assistant2FeatureFlag>() {
-                                zed_actions::agent::OpenConfiguration.boxed_clone()
-                            } else {
-                                zed_actions::assistant::ShowConfiguration.boxed_clone()
-                            };
-
-                            window.dispatch_action(configure_action, cx);
+                            window.dispatch_action(
+                                zed_actions::agent::OpenConfiguration.boxed_clone(),
+                                cx,
+                            );
                         }),
                 )
                 .into_any(),

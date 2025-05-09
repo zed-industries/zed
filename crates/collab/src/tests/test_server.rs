@@ -307,6 +307,7 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
+            assistant_settings::init(cx);
         });
 
         client
@@ -709,6 +710,7 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        cx.run_until_parked();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 

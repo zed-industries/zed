@@ -1,6 +1,7 @@
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 use anyhow::Result;
-use assistant_tools::StreamingEditFileToolInput;
+use assistant_settings::AgentProfileId;
+use assistant_tools::EditFileToolInput;
 use async_trait::async_trait;
 
 pub struct CommentTranslation;
@@ -14,6 +15,7 @@ impl Example for CommentTranslation {
             revision: "504d084e29bce4f60614bc702e91af7f7d9e60ad".to_string(),
             language_server: None,
             max_assertions: Some(1),
+            profile_id: AgentProfileId::default(),
         }
     }
 
@@ -32,8 +34,7 @@ impl Example for CommentTranslation {
             for message in thread.messages() {
                 for tool_use in thread.tool_uses_for_message(message.id, cx) {
                     if tool_use.name == "edit_file" {
-                        let input: StreamingEditFileToolInput =
-                            serde_json::from_value(tool_use.input)?;
+                        let input: EditFileToolInput = serde_json::from_value(tool_use.input)?;
                         if input.create_or_overwrite {
                             create_or_overwrite_count += 1;
                         }

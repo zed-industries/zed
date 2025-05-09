@@ -52,7 +52,7 @@ struct Args {
     /// Model provider to use.
     #[arg(long, default_value = "anthropic")]
     provider: String,
-    #[arg(long, value_delimiter = ',', default_value = "rs,ts")]
+    #[arg(long, value_delimiter = ',', default_value = "rs,ts,py")]
     languages: Vec<String>,
     /// How many times to run each example.
     #[arg(long, default_value = "8")]
@@ -426,7 +426,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
-    context_server::init(cx);
     prompt_store::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);

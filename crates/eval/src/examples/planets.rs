@@ -1,4 +1,5 @@
 use anyhow::Result;
+use assistant_settings::AgentProfileId;
 use assistant_tool::Tool;
 use assistant_tools::{OpenTool, TerminalTool};
 use async_trait::async_trait;
@@ -16,6 +17,7 @@ impl Example for Planets {
             revision: "59e49c75214f60b4dc4a45092292061c8c26ce27".to_string(), // so effectively a blank project.
             language_server: None,
             max_assertions: None,
+            profile_id: AgentProfileId::default(),
         }
     }
 
@@ -36,7 +38,7 @@ impl Example for Planets {
         for tool_use in response.tool_uses() {
             if tool_use.name == OpenTool.name() {
                 open_tool_uses += 1;
-            } else if tool_use.name == TerminalTool.name() {
+            } else if tool_use.name == TerminalTool::NAME {
                 terminal_tool_uses += 1;
             }
         }

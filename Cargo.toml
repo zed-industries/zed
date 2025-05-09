@@ -6,7 +6,6 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant",
     "crates/assistant_context_editor",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
@@ -34,7 +33,6 @@ members = [
     "crates/component",
     "crates/component_preview",
     "crates/context_server",
-    "crates/context_server_settings",
     "crates/copilot",
     "crates/credentials_provider",
     "crates/dap",
@@ -215,7 +213,6 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant = { path = "crates/assistant" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
@@ -243,7 +240,6 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
-context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
@@ -494,6 +490,7 @@ pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", re
 pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
@@ -611,7 +608,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.7.4"
+zed_llm_client = "0.8.0"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
