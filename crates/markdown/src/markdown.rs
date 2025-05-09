@@ -223,6 +223,7 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
+        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
         let count = s
             .bytes()
             .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
