@@ -1348,7 +1348,7 @@ impl Pane {
 
     pub fn close_other_items(
         &mut self,
-        item_id_to_skip: EntityId,
+        excluded_item_id: EntityId,
         action: &CloseOtherItems,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1362,7 +1362,7 @@ impl Pane {
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            move |item_id| item_id != item_id_to_skip && !non_closeable_items.contains(&item_id),
+            move |item_id| item_id != excluded_item_id && !non_closeable_items.contains(&item_id),
         ))
     }
 
