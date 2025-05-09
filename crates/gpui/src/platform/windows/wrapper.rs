@@ -1,11 +1,6 @@
 use std::ops::Deref;
 
-use util::ResultExt;
-use windows::Win32::{
-    Foundation::{HANDLE, HGLOBAL},
-    System::Memory::{GlobalLock, GlobalSize, GlobalUnlock},
-    UI::WindowsAndMessaging::HCURSOR,
-};
+use windows::Win32::{Foundation::HANDLE, UI::WindowsAndMessaging::HCURSOR};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SafeHandle {
