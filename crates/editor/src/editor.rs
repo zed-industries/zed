@@ -198,7 +198,7 @@ use theme::{
 };
 use ui::{
     ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Key, Tooltip, h_flex, prelude::*,
+    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -6998,6 +6998,7 @@ impl Editor {
         state: Option<BreakpointSessionState>,
         cx: &mut Context<Self>,
     ) -> IconButton {
+        let is_rejected = state.is_some_and(|s| !s.verified);
         // Is it a breakpoint that shows up when hovering over gutter?
         let (is_phantom, collides_with_existing) = self.gutter_breakpoint_indicator.0.map_or(
             (false, false),
@@ -7023,8 +7024,8 @@ impl Editor {
 
             let color = if is_phantom {
                 Color::Hint
-            } else if let Some(state) = state.filter(|s| !s.verified) {
-                Color::Accent
+            } else if is_rejected {
+                Color::Disabled
             } else {
                 Color::Debugger
             };
@@ -7052,9 +7053,18 @@ impl Editor {
         }
         let primary_text = SharedString::from(primary_text);
         let focus_handle = self.focus_handle.clone();
+
+        let meta = if is_rejected {
+            "No executable code is associated with this line."
+        } else {
+            "Right-click for more options."
+        };
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
+            .when(is_rejected, |this| {
+                this.indicator(Indicator::icon(Icon::new(IconName::Warning)).color(Color::Warning))
+            })
             .icon_color(color)
             .style(ButtonStyle::Transparent)
             .on_click(cx.listener({
@@ -7086,14 +7096,7 @@ impl Editor {
                 );
             }))
             .tooltip(move |window, cx| {
-                Tooltip::with_meta_in(
-                    primary_text.clone(),
-                    None,
-                    "Right-click for more options",
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+                Tooltip::with_meta_in(primary_text.clone(), None, meta, &focus_handle, window, cx)
             })
     }
 
