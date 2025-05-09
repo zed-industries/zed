@@ -492,7 +492,7 @@ impl Render for ZedPredictModal {
                         .w_full()
                         .child(
                             Button::new("accept-tos", "Enable Edit Prediction")
-                                .disabled(!self.terms_of_service)
+                                .disabled(plan.is_none() || !self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
