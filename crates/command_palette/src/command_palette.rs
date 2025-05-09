@@ -342,7 +342,11 @@ impl PickerDelegate for CommandPaletteDelegate {
                     }
 
                     // Re-sort by adjusted score
-                    matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+                    matches.sort_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
 
                     matches
                 };
