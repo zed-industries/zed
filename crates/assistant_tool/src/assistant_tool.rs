@@ -90,6 +90,13 @@ impl ToolResultContent {
             ToolResultContent::Image(image) => image.is_empty(),
         }
     }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            ToolResultContent::Text(str) => Some(str),
+            ToolResultContent::Image(_) => None,
+        }
+    }
 }
 
 impl From<String> for ToolResultOutput {

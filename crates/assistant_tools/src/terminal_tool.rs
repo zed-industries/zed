@@ -665,8 +665,8 @@ mod tests {
             )
         });
 
-        let output = result.output.await.log_err().map(|output| output.content);
-        assert_eq!(output, Some("Command executed successfully.".into()));
+        let output = result.output.await.log_err().unwrap().content;
+        assert_eq!(output.as_str().unwrap(), "Command executed successfully.");
     }
 
     #[gpui::test]
@@ -699,12 +699,8 @@ mod tests {
                 cx,
             );
             cx.spawn(async move |_| {
-                let output = headless_result
-                    .output
-                    .await
-                    .log_err()
-                    .map(|output| output.content);
-                assert_eq!(output, expected);
+                let output = headless_result.output.await.log_err().unwrap().content;
+                assert_eq!(output.as_str().map(|o| o.to_string()), expected);
             })
         };
 
