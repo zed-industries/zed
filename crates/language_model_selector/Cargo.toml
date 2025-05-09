@@ -14,7 +14,6 @@ path = "src/language_model_selector.rs"
 [features]
 test-support = [
     "gpui/test-support",
-    # "language/test-support"
 ]
 
 [dependencies]
@@ -23,7 +22,6 @@ feature_flags.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-# language.workspace = true
 language_model.workspace = true
 log.workspace = true
 ordered-float.workspace = true

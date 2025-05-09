@@ -711,7 +711,7 @@ mod tests {
     use language_model::{
         LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
         LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-        LanguageModelRequest,
+        LanguageModelRequest, LanguageModelToolChoice,
     };
     use ui::IconName;
 
@@ -752,6 +752,10 @@ mod tests {
         }
 
         fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
             false
         }
 
@@ -878,7 +882,7 @@ mod tests {
         assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
 
         // Fuzzy search
-        let results = matcher.fuzzy_search("z4n"); // meaning "ollama"
+        let results = matcher.fuzzy_search("z4n");
         assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
     }
 }
