@@ -319,7 +319,7 @@ impl ChatPanel {
             None => {
                 return div().child(
                     h_flex()
-                        .text_ui_xs(cx)
+                        .text_ui_xs()
                         .my_0p5()
                         .px_0p5()
                         .gap_x_1()
@@ -354,7 +354,7 @@ impl ChatPanel {
         div().child(
             h_flex()
                 .id(message_element_id)
-                .text_ui_xs(cx)
+                .text_ui_xs()
                 .my_0p5()
                 .px_0p5()
                 .gap_x_1()
@@ -504,7 +504,7 @@ impl ChatPanel {
                             this.child(
                                 h_flex()
                                     .gap_2()
-                                    .text_ui_sm(cx)
+                                    .text_ui_sm()
                                     .child(
                                         Avatar::new(message.sender.avatar_uri.clone())
                                             .size(rems(1.)),
@@ -541,7 +541,7 @@ impl ChatPanel {
                         el.child(
                             v_flex()
                                 .w_full()
-                                .text_ui_sm(cx)
+                                .text_ui_sm()
                                 .id(element_id)
                                 .child(text.element("body".into(), window, cx)),
                         )
@@ -564,7 +564,7 @@ impl ChatPanel {
                                 div()
                                     .px_1()
                                     .rounded_sm()
-                                    .text_ui_xs(cx)
+                                    .text_ui_xs()
                                     .bg(cx.theme().colors().background)
                                     .child("New messages"),
                             )
@@ -1011,7 +1011,7 @@ impl Render for ChatPanel {
                 el.child(
                     h_flex()
                         .px_2()
-                        .text_ui_xs(cx)
+                        .text_ui_xs()
                         .justify_between()
                         .border_t_1()
                         .border_color(cx.theme().colors().border)

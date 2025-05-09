@@ -182,7 +182,7 @@ pub fn tooltip_container<V, ContentsBuilder: FnOnce(Div, &mut Window, &mut Conte
         v_flex()
             .elevation_2(cx)
             .font(ui_font)
-            .text_ui(cx)
+            .text_ui()
             .text_color(cx.theme().colors().text)
             .py_1()
             .px_2()

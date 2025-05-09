@@ -287,7 +287,7 @@ impl RenderOnce for Key {
         let single_char = self.key.len() == 1;
         let size = self
             .size
-            .unwrap_or_else(|| TextSize::default().rems(cx).into());
+            .unwrap_or_else(|| TextSize::default().rems().into());
 
         div()
             .py_0()

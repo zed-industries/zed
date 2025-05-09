@@ -244,7 +244,7 @@ impl BlameRenderer for GitBlameRenderer {
                     v_flex()
                         .elevation_2(cx)
                         .font(ui_font)
-                        .text_ui(cx)
+                        .text_ui()
                         .text_color(cx.theme().colors().text)
                         .py_1()
                         .px_2()

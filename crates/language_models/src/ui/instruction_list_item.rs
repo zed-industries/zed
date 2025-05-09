@@ -1,4 +1,4 @@
-use gpui::{AnyElement, IntoElement, ParentElement, SharedString};
+use gpui::{IntoElement, ParentElement, SharedString};
 use ui::{ListItem, prelude::*};
 
 /// A reusable list item component for adding LLM provider configuration instructions
@@ -38,16 +38,29 @@ impl IntoElement for InstructionListItem {
             (self.button_label, self.button_link)
         {
             let link = button_link.clone();
-            h_flex().flex_wrap().child(Label::new(self.label)).child(
-                Button::new("link-button", button_label)
-                    .style(ButtonStyle::Subtle)
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .on_click(move |_, _window, cx| cx.open_url(&link)),
-            )
+            h_flex()
+                .flex_wrap()
+                .child(
+                    div()
+                        .w_full()
+                        .text_ui_sm()
+                        .overflow_x_hidden()
+                        .child(self.label),
+                )
+                .child(
+                    Button::new("link-button", button_label)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ArrowUpRight)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, _window, cx| cx.open_url(&link)),
+                )
         } else {
-            div().child(Label::new(self.label))
+            div()
+                .w_full()
+                .text_ui_sm()
+                .overflow_x_hidden()
+                .child(self.label)
         };
 
         div()

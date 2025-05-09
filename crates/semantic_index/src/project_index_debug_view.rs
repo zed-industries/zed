@@ -149,7 +149,7 @@ impl ProjectIndexDebugView {
         let chunk = &state.chunks[ix];
 
         div()
-            .text_ui(cx)
+            .text_ui()
             .w_full()
             .font(buffer_font)
             .child(

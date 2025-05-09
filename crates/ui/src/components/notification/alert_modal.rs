@@ -43,7 +43,7 @@ impl RenderOnce for AlertModal {
             .p_5()
             .child(
                 v_flex()
-                    .text_ui(cx)
+                    .text_ui()
                     .text_color(Color::Muted.color(cx))
                     .gap_1()
                     .child(Headline::new(self.title).size(HeadlineSize::Small))
