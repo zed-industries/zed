@@ -15,9 +15,9 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, future};
+use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Application, AsyncApp, Task, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -303,15 +303,18 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    #[cfg(unix)]
-    if !stdout_is_a_pty() {
+    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+    if !stdout_is_a_pty() && cfg!(unix) {
         app.background_executor()
             .spawn(async {
                 load_shell_from_passwd().log_err();
                 load_login_shell_environment().log_err();
+                shell_env_loaded_tx.send(()).ok();
             })
             .detach()
-    };
+    } else {
+        shell_env_loaded_tx.send(()).ok();
+    }
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
@@ -407,7 +410,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());

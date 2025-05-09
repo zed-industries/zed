@@ -4,19 +4,18 @@ use anyhow::{Context, Result, anyhow, bail};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::AsyncReadExt;
+use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{HttpClient, Url};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
-use std::env;
-use std::ffi::OsString;
-use std::io;
-use std::process::{Output, Stdio};
 use std::{
-    env::consts,
+    env::{self, consts},
+    ffi::OsString,
+    io,
     path::{Path, PathBuf},
+    process::{Output, Stdio},
     sync::Arc,
 };
 use util::ResultExt;
@@ -38,11 +37,13 @@ struct NodeRuntimeState {
     instance: Option<Box<dyn NodeRuntimeTrait>>,
     last_options: Option<NodeBinaryOptions>,
     options: async_watch::Receiver<Option<NodeBinaryOptions>>,
+    shell_env_loaded: Shared<oneshot::Receiver<()>>,
 }
 
 impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
+        shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: async_watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
@@ -50,6 +51,7 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options,
+            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
         })))
     }
 
@@ -59,6 +61,7 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options: async_watch::channel(Some(NodeBinaryOptions::default())).1,
+            shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }
 
@@ -83,6 +86,7 @@ impl NodeRuntime {
         }
 
         if options.allow_path_lookup {
+            state.shell_env_loaded.clone().await.ok();
             if let Some(instance) = SystemNodeRuntime::detect().await {
                 state.instance = Some(instance.boxed_clone());
                 return Ok(instance);
