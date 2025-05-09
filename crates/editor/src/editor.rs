@@ -8760,7 +8760,10 @@ impl Editor {
             .any(|selection| {
                 let cursor = selection.head();
                 let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
-                cursor.column == current_indent.len
+                let final_column_in_line = snapshot
+                    .buffer_line_for_row(MultiBufferRow(cursor.row))
+                    .map_or(0, |(_, range)| range.end.column);
+                cursor.column == current_indent.len && final_column_in_line != cursor.column
             });
 
         let mut edits = Vec::new();
