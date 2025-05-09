@@ -23,7 +23,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use request::StatusNotification;
+use request::{DidChangeStatus, WindowShowMessageRequest};
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::{
@@ -500,7 +500,41 @@ impl Copilot {
             )?;
 
             server
-                .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
+                .on_notification::<DidChangeStatus, _>({
+                    let this = this.clone();
+                    move |params, cx| {
+                        // Convert didChangeStatus to appropriate SignInStatus and update
+                        let sign_in_status = match params.kind.as_str() {
+                            "Error" => Some(request::SignInStatus::NotAuthorized {
+                                user: String::new(),
+                            }),
+                            "Normal" => Some(request::SignInStatus::AlreadySignedIn {
+                                user: String::new(),
+                            }),
+                            "Inactive" | "Warning" => None, // Don't change auth status for these
+                            _ => None,
+                        };
+
+                        if let Some(status) = sign_in_status {
+                            this.update(cx, |this, cx| {
+                                this.update_sign_in_status(status, cx);
+                            })
+                            .ok();
+                        }
+                    }
+                })
+                .detach();
+
+            server
+                .on_notification::<WindowShowMessageRequest, _>({
+                    let this = this.clone();
+                    move |params, cx| {
+                        // TODO: Display the message in Zed's UI
+
+                        // Log the message
+                        log::info!("Copilot {}: {}", params.type_.as_str(), params.message);
+                    }
+                })
                 .detach();
 
             let configuration = lsp::DidChangeConfigurationParams {
