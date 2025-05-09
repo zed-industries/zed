@@ -597,10 +597,7 @@ impl BladeRenderer {
                         let mut encoder = pass.with(&self.pipelines.paths);
                         for path in paths {
                             let sprites = [PathSprite {
-                                bounds: path
-                                    .bounds
-                                    .map_origin(|origin| origin.floor())
-                                    .map_size(|size| size.ceil()),
+                                bounds: path.bounds,
                                 color: path.color,
                             }];
 
@@ -610,7 +607,7 @@ impl BladeRenderer {
                                 .map(|v| PathVertex {
                                     xy_position: v.xy_position,
                                     content_mask: ContentMask {
-                                        bounds: path.bounds,
+                                        bounds: path.content_mask.bounds,
                                     },
                                 })
                                 .collect::<Vec<_>>();
