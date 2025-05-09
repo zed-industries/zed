@@ -55,9 +55,6 @@ use zed::{
     open_paths_with_positions,
 };
 
-#[cfg(unix)]
-use util::{load_login_shell_environment, load_shell_from_passwd};
-
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -304,16 +301,14 @@ fn main() {
     );
 
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-    if !stdout_is_a_pty() && cfg!(unix) {
+    if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                load_shell_from_passwd().log_err();
-                load_login_shell_environment().log_err();
+                #[cfg(unix)]
+                util::load_login_shell_environment().log_err();
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
-    } else {
-        shell_env_loaded_tx.send(()).ok();
     }
 
     app.on_open_urls({
