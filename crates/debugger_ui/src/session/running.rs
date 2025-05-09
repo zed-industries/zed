@@ -44,9 +44,10 @@ use task::{
 use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
-    DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div,
+    h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -351,6 +352,13 @@ pub(crate) fn new_debugger_pane(
                     .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .on_action(|_: &menu::Cancel, window, cx| {
+                        if cx.stop_active_drag(window) {
+                            return;
+                        } else {
+                            cx.propagate();
+                        }
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -730,28 +738,35 @@ impl RunningState {
                         (task, None)
                     }
                 };
+                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                    anyhow::bail!("Could not resolve task variables within a debug scenario");
+                };
+
                 let locator_name = if let Some(locator_name) = locator_name {
                     debug_assert!(request.is_none());
                     Some(locator_name)
                 } else if request.is_none() {
                     dap_store
                         .update(cx, |this, cx| {
-                            this.debug_scenario_for_build_task(task.clone(), adapter.clone(), cx)
-                                .and_then(|scenario| match scenario.build {
+                            this.debug_scenario_for_build_task(
+                                task.original_task().clone(),
+                                adapter.clone().into(),
+                                task.display_label().to_owned().into(),
+                                cx,
+                            )
+                            .and_then(|scenario| {
+                                match scenario.build {
                                     Some(BuildTaskDefinition::Template {
                                         locator_name, ..
                                     }) => locator_name,
                                     _ => None,
-                                })
+                                }
+                            })
                         })
                         .ok()
                         .flatten()
                 } else {
                     None
-                };
-
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
-                    anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
                 let builder = ShellBuilder::new(is_local, &task.resolved.shell);
@@ -856,7 +871,7 @@ impl RunningState {
 
                     dap::DebugRequest::Launch(new_launch_request)
                 }
-                request @ dap::DebugRequest::Attach(_) => request,
+                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
             };
             Ok(DebugTaskDefinition {
                 label,
@@ -1420,11 +1435,7 @@ impl RunningState {
         });
     }
 
-    #[expect(
-        unused,
-        reason = "Support for disconnecting a client is not wired through yet"
-    )]
-    pub fn disconnect_client(&self, cx: &mut Context<Self>) {
+    pub fn detach_client(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.disconnect_client(cx);
         });
@@ -1442,6 +1453,7 @@ impl RunningState {
         cx: &mut Context<'_, RunningState>,
     ) -> DropdownMenu {
         let state = cx.entity();
+        let session_terminated = self.session.read(cx).is_terminated();
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
         let selected_thread_name = threads
             .iter()
@@ -1464,6 +1476,7 @@ impl RunningState {
                 this
             }),
         )
+        .disabled(session_terminated)
     }
 
     fn default_pane_layout(

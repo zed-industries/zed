@@ -193,22 +193,22 @@ pub struct DebugScenario {
     /// Name of the debug task
     pub label: SharedString,
     /// A task to run prior to spawning the debuggee.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildTaskDefinition>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialize_args: Option<serde_json::Value>,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_on_entry: Option<bool>,
 }
 

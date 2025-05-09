@@ -28,7 +28,7 @@ use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
 use workspace::{SaveIntent, notifications::NotifyResultExt};
-use zed_actions::RevealTarget;
+use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
     ToggleMarksView, ToggleRegistersView, Vim,
@@ -888,6 +888,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
         VimCommand::str(("map", ""), "vim::OpenDefaultKeymap"),
+        VimCommand::new(("h", "elp"), OpenDocs),
     ]
 }
 

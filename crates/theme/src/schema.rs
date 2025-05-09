@@ -358,6 +358,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "scrollbar.thumb.hover_background")]
     pub scrollbar_thumb_hover_background: Option<String>,
 
+    /// The color of the scrollbar thumb whilst being actively dragged.
+    #[serde(rename = "scrollbar.thumb.active_background")]
+    pub scrollbar_thumb_active_background: Option<String>,
+
     /// The border color of the scrollbar thumb.
     #[serde(rename = "scrollbar.thumb.border")]
     pub scrollbar_thumb_border: Option<String>,
@@ -622,6 +626,15 @@ impl ThemeColorsContent {
             .editor_document_highlight_read_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok());
+        let scrollbar_thumb_background = self
+            .scrollbar_thumb_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or_else(|| {
+                self.deprecated_scrollbar_thumb_background
+                    .as_ref()
+                    .and_then(|color| try_parse_color(color).ok())
+            });
         ThemeColorsRefinement {
             border,
             border_variant: self
@@ -805,19 +818,16 @@ impl ThemeColorsContent {
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok())
                 .or(border),
-            scrollbar_thumb_background: self
-                .scrollbar_thumb_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok())
-                .or_else(|| {
-                    self.deprecated_scrollbar_thumb_background
-                        .as_ref()
-                        .and_then(|color| try_parse_color(color).ok())
-                }),
+            scrollbar_thumb_background,
             scrollbar_thumb_hover_background: self
                 .scrollbar_thumb_hover_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            scrollbar_thumb_active_background: self
+                .scrollbar_thumb_active_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_background),
             scrollbar_thumb_border: self
                 .scrollbar_thumb_border
                 .as_ref()

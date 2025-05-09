@@ -5,13 +5,15 @@ use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
-    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
+    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleDiagnostics, ToggleGoToLine,
+    ToggleInlineDiagnostics,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
     Action, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
+use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
@@ -91,8 +93,10 @@ impl Render for QuickActionBar {
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
-        let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
+        let supports_diagnostics = editor_value.mode().is_full();
+        let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
+        let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
         let git_blame_inline_enabled = editor_value.git_blame_inline_enabled();
         let show_git_blame_gutter = editor_value.show_git_blame_gutter();
         let auto_signature_help_enabled = editor_value.auto_signature_help_enabled(cx);
@@ -101,6 +105,8 @@ impl Render for QuickActionBar {
         let show_edit_predictions = editor_value.edit_predictions_enabled();
         let edit_predictions_enabled_at_cursor =
             editor_value.edit_predictions_enabled_at_cursor(cx);
+        let supports_minimap = editor_value.supports_minimap();
+        let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
 
         let focus_handle = editor_value.focus_handle(cx);
 
@@ -244,22 +250,21 @@ impl Render for QuickActionBar {
                                         }
                                     }
                                 );
-
                             }
 
-                            if supports_inline_diagnostics {
+                            if supports_diagnostics {
                                 menu = menu.toggleable_entry(
-                                    "Inline Diagnostics",
-                                    inline_diagnostics_enabled,
+                                    "Diagnostics",
+                                    diagnostics_enabled,
                                     IconPosition::Start,
-                                    Some(editor::actions::ToggleInlineDiagnostics.boxed_clone()),
+                                    Some(ToggleDiagnostics.boxed_clone()),
                                     {
                                         let editor = editor.clone();
                                         move |window, cx| {
                                             editor
                                                 .update(cx, |editor, cx| {
-                                                    editor.toggle_inline_diagnostics(
-                                                        &editor::actions::ToggleInlineDiagnostics,
+                                                    editor.toggle_diagnostics(
+                                                        &ToggleDiagnostics,
                                                         window,
                                                         cx,
                                                     );
@@ -268,6 +273,46 @@ impl Render for QuickActionBar {
                                         }
                                     },
                                 );
+
+                                if supports_inline_diagnostics {
+                                    menu = menu.toggleable_entry(
+                                        "Inline Diagnostics",
+                                        inline_diagnostics_enabled,
+                                        IconPosition::Start,
+                                        Some(ToggleInlineDiagnostics.boxed_clone()),
+                                        {
+                                            let editor = editor.clone();
+                                            move |window, cx| {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.toggle_inline_diagnostics(
+                                                            &ToggleInlineDiagnostics,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        },
+                                    );
+                                }
+                            }
+
+                            if supports_minimap {
+                                menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_minimap(
+                                                    &editor::actions::ToggleMinimap,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                },)
                             }
 
                             if has_edit_prediction_provider {

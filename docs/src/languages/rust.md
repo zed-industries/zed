@@ -127,7 +127,7 @@ This is enabled by default and can be configured as
 ```json
 "lsp": {
   "rust-analyzer": {
-    enable_lsp_tasks": true,
+    "enable_lsp_tasks": true,
   }
 }
 ```

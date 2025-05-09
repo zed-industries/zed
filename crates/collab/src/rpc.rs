@@ -166,19 +166,6 @@ impl Session {
         }
     }
 
-    pub async fn has_llm_subscription(
-        &self,
-        db: &MutexGuard<'_, DbHandle>,
-    ) -> anyhow::Result<bool> {
-        if self.is_staff() {
-            return Ok(true);
-        }
-
-        let user_id = self.user_id();
-
-        Ok(db.has_active_billing_subscription(user_id).await?)
-    }
-
     pub async fn current_plan(&self, db: &MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
         if self.is_staff() {
             return Ok(proto::Plan::ZedPro);
@@ -2709,7 +2696,7 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
     let billing_customer = db.get_billing_customer_by_user_id(user_id).await?;
     let billing_preferences = db.get_billing_preferences(user_id).await?;
 
-    let usage = if let Some(llm_db) = session.app_state.llm_db.clone() {
+    let (subscription_period, usage) = if let Some(llm_db) = session.app_state.llm_db.clone() {
         let subscription = db.get_active_billing_subscription(user_id).await?;
 
         let subscription_period = crate::db::billing_subscription::Model::current_period(
@@ -2717,15 +2704,17 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
             session.is_staff(),
         );
 
-        if let Some((period_start_at, period_end_at)) = subscription_period {
+        let usage = if let Some((period_start_at, period_end_at)) = subscription_period {
             llm_db
                 .get_subscription_usage_for_period(user_id, period_start_at, period_end_at)
                 .await?
         } else {
             None
-        }
+        };
+
+        (subscription_period, usage)
     } else {
-        None
+        (None, None)
     };
 
     session
@@ -2743,6 +2732,12 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
                     billing_preferences
                         .map(|preferences| preferences.model_request_overages_enabled)
                 },
+                subscription_period: subscription_period.map(|(started_at, ended_at)| {
+                    proto::SubscriptionPeriod {
+                        started_at: started_at.timestamp() as u64,
+                        ended_at: ended_at.timestamp() as u64,
+                    }
+                }),
                 usage: usage.map(|usage| {
                     let plan = match plan {
                         proto::Plan::Free => zed_llm_client::Plan::Free,
@@ -3992,11 +3987,6 @@ async fn get_llm_api_token(
     let db = session.db().await;
 
     let flags = db.get_user_flags(session.user_id()).await?;
-    let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
-
-    if !session.is_staff() && !has_language_models_feature_flag {
-        Err(anyhow!("permission denied"))?
-    }
 
     let user_id = session.user_id();
     let user = db
@@ -4008,7 +3998,6 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let has_legacy_llm_subscription = session.has_llm_subscription(&db).await?;
     let billing_subscription = db.get_active_billing_subscription(user.id).await?;
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
@@ -4017,7 +4006,6 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         &flags,
-        has_legacy_llm_subscription,
         billing_subscription,
         session.system_id.clone(),
         &session.app_state.config,

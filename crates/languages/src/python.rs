@@ -1209,7 +1209,7 @@ mod tests {
             append(&mut buffer, "foo(\n1)", cx);
             assert_eq!(
                 buffer.text(),
-                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n      1)"
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    1)"
             );
 
             // dedent the closing paren if it is shifted to the beginning of the line
@@ -1255,7 +1255,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
 
             buffer
         });

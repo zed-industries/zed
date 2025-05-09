@@ -3530,7 +3530,7 @@ impl LspStore {
             )
             .detach();
         } else {
-            log::info!("No extension events global found. Skipping JSON schema auto-reload setup");
+            log::debug!("No extension events global found. Skipping JSON schema auto-reload setup");
         }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
