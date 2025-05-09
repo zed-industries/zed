@@ -2340,7 +2340,7 @@ impl Fs for FakeFs {
 fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
     rope.chunks().flat_map(move |chunk| {
         let mut newline = false;
-        let end_with_newline = chunk.ends_with('\n').then_some("\r\n");
+        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
         chunk
             .lines()
             .flat_map(move |line| {
