@@ -7,7 +7,7 @@ use new_session_modal::NewSessionModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
 use session::DebugSession;
 use settings::Settings;
-use stack_frame_editor::StackFrameViewer;
+use stack_frame_viewer::StackFrameViewer;
 use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
@@ -16,7 +16,7 @@ pub mod debugger_panel;
 mod new_session_modal;
 mod persistence;
 pub(crate) mod session;
-mod stack_frame_editor;
+mod stack_frame_viewer;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;

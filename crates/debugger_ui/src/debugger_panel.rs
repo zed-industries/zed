@@ -1,6 +1,6 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
-use crate::stack_frame_editor::StackFrameViewer;
+use crate::stack_frame_viewer::StackFrameViewer;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, ExpandStackFrames, FocusBreakpointList, FocusConsole,
     FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,

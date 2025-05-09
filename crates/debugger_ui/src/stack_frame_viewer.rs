@@ -1,11 +1,11 @@
 use std::any::{Any, TypeId};
 
+use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
-    Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowHighlightOptions,
-    ToPoint,
+    Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
+    RowHighlightOptions, ToPoint,
 };
-use futures::SinkExt;
 use gpui::{
     AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, WeakEntity, Window,
@@ -20,7 +20,10 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-use crate::session::{DebugSession, running::stack_frame_list::StackFrameList};
+use crate::session::{
+    DebugSession,
+    running::stack_frame_list::{StackFrameList, StackFrameListEvent},
+};
 use anyhow::Result;
 
 pub(crate) struct StackFrameViewer {
@@ -30,6 +33,7 @@ pub(crate) struct StackFrameViewer {
     project: Entity<Project>,
     active_session: Option<Entity<DebugSession>>,
     selected_stack_frame_id: Option<StackFrameId>,
+    excerpt_for_frames: collections::HashMap<ExcerptId, StackFrameId>,
     refresh_task: Option<Task<Result<()>>>,
     _subscription: Option<Subscription>,
 }
@@ -49,11 +53,41 @@ impl StackFrameViewer {
             editor
         });
 
+        cx.subscribe_in(&editor, window, |this, editor, event, window, cx| {
+            if let EditorEvent::SelectionsChanged { local: true } = event {
+                let excerpt_id = editor.update(cx, |editor, cx| {
+                    let position: Point = editor.selections.newest(cx).head();
+
+                    editor
+                        .snapshot(window, cx)
+                        .buffer_snapshot
+                        .excerpt_containing(position..position)
+                        .map(|excerpt| excerpt.id())
+                });
+
+                if let Some((stack_frame_id, session)) = excerpt_id
+                    .and_then(|id| this.excerpt_for_frames.get(&id))
+                    .filter(|id| Some(**id) != this.selected_stack_frame_id)
+                    .zip(this.active_session.as_ref())
+                {
+                    session.update(cx, |session, cx| {
+                        session.running_state().update(cx, |state, cx| {
+                            state.stack_frame_list().update(cx, |list, cx| {
+                                list.select_stack_frame_id(*stack_frame_id, window, cx);
+                            });
+                        })
+                    })
+                }
+            }
+        })
+        .detach();
+
         Self {
             editor,
             multibuffer,
             workspace,
             project,
+            excerpt_for_frames: HashMap::default(),
             active_session: None,
             selected_stack_frame_id: None,
             refresh_task: None,
@@ -78,15 +112,22 @@ impl StackFrameViewer {
         let subscription = cx.subscribe_in(
             &stack_frame_list,
             window,
-            |this, stack_frame_list, _, window, cx| {
-                this.selected_stack_frame_id = stack_frame_list.read(cx).selected_stack_frame_id();
-                this.update_excerpts(window, cx);
+            |this, stack_frame_list, event, window, cx| match event {
+                StackFrameListEvent::BuiltEntries => {
+                    this.selected_stack_frame_id =
+                        stack_frame_list.read(cx).selected_stack_frame_id();
+                    this.update_excerpts(window, cx);
+                }
+                StackFrameListEvent::SelectedStackFrameChanged(frame_id) => {
+                    this.selected_stack_frame_id = Some(*frame_id);
+                }
             },
         );
 
         self._subscription = Some(subscription);
         self.active_session = Some(session);
         self.selected_stack_frame_id = stack_frame_id;
+        self.excerpt_for_frames.clear();
         self.update_excerpts(window, cx);
     }
 
@@ -111,7 +152,7 @@ impl StackFrameViewer {
             return;
         };
 
-        let mut stack_frames = session.update(cx, |session, cx| {
+        let stack_frames = session.update(cx, |session, cx| {
             session.running_state().update(cx, |state, cx| {
                 state
                     .session()
@@ -119,18 +160,20 @@ impl StackFrameViewer {
             })
         });
 
-        if let Some(idx) = self.selected_stack_frame_id.and_then(|id| {
-            stack_frames.iter().enumerate().find_map(|(idx, frame)| {
-                if frame.dap.id == id { Some(idx) } else { None }
+        let active_idx = self
+            .selected_stack_frame_id
+            .and_then(|id| {
+                stack_frames.iter().enumerate().find_map(|(idx, frame)| {
+                    if frame.dap.id == id { Some(idx) } else { None }
+                })
             })
-        }) {
-            stack_frames.drain(0..idx);
-        }
+            .unwrap_or(0);
 
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
             .filter_map(|frame| {
                 Some((
+                    frame.dap.id,
                     frame.dap.line as u32 - 1,
                     StackFrameList::abs_path_from_stack_frame(&frame.dap)?,
                 ))
@@ -143,7 +186,7 @@ impl StackFrameViewer {
         let task = cx.spawn_in(window, async move |this, cx| {
             let mut to_highlights = Vec::default();
 
-            for (line, abs_path) in frames_to_open {
+            for (stack_frame_id, line, abs_path) in frames_to_open {
                 let (worktree, relative_path) = this
                     .update(cx, |this, cx| {
                         this.workspace.update(cx, |workspace, cx| {
@@ -180,6 +223,8 @@ impl StackFrameViewer {
                                 multi_buffer.buffer_point_to_anchor(&buffer, line_point, cx);
 
                             if let Some(line_anchor) = line_anchor {
+                                this.excerpt_for_frames
+                                    .insert(line_anchor.excerpt_id, stack_frame_id);
                                 to_highlights.push(line_anchor);
                             }
                         });
@@ -197,7 +242,7 @@ impl StackFrameViewer {
                         .editor_debugger_active_line_background
                         .opacity(0.5);
 
-                    for highlight in to_highlights.iter().skip(1) {
+                    for highlight in to_highlights.iter().skip(active_idx + 1) {
                         let position = highlight.to_point(&snapshot.buffer_snapshot);
 
                         let start = snapshot
@@ -225,7 +270,7 @@ impl StackFrameViewer {
 }
 
 impl Render for StackFrameViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.editor.clone())
     }
 }
@@ -288,18 +333,6 @@ impl Item for StackFrameViewer {
         self.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
         });
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<workspace::WorkspaceId>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<Self>>
-    where
-        Self: Sized,
-    {
-        None
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

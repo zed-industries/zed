@@ -110,6 +110,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 

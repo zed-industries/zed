@@ -24,6 +24,7 @@ use super::RunningState;
 #[derive(Debug)]
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
+    BuiltEntries,
 }
 
 pub struct StackFrameList {
@@ -138,6 +139,30 @@ impl StackFrameList {
         self.selected_stack_frame_id
     }
 
+    pub(crate) fn select_stack_frame_id(
+        &mut self,
+        id: StackFrameId,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .entries
+            .iter()
+            .find(|entry| match entry {
+                StackFrameEntry::Normal(entry) => entry.id == id,
+                StackFrameEntry::Collapsed(stack_frames) => {
+                    stack_frames.iter().any(|frame| frame.id == id)
+                }
+            })
+            .is_some()
+        {
+            return;
+        }
+
+        self.selected_stack_frame_id = Some(id);
+        self.go_to_selected_stack_frame(window, cx);
+    }
+
     pub(super) fn schedule_refresh(
         &mut self,
         select_first: bool,
@@ -208,6 +233,7 @@ impl StackFrameList {
                 .detach_and_log_err(cx);
         }
 
+        cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
 
