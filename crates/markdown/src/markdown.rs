@@ -223,6 +223,7 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
+        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
         let count = s
             .bytes()
             .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
@@ -1047,7 +1048,6 @@ impl Element for MarkdownElement {
                             copy_button: true, ..
                         } = &self.code_block_renderer
                         {
-                            builder.flush_text();
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
                                     parsed_markdown.source()[range.clone()].trim(),

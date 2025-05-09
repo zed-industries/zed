@@ -490,7 +490,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
@@ -543,6 +543,15 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
+    pub fn stop_mouse_events_except_scroll(&mut self) {
+        self.on_any_mouse_down(|_, _, cx| cx.stop_propagation());
+        self.on_any_mouse_up(|_, _, cx| cx.stop_propagation());
+        self.on_click(|_, _, cx| cx.stop_propagation());
+        self.on_hover(|_, _, cx| cx.stop_propagation());
     }
 }
 
@@ -919,10 +928,16 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    /// Stops propagation of left mouse down event.
     fn block_mouse_down(mut self) -> Self {
         self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
+    fn stop_mouse_events_except_scroll(mut self) -> Self {
+        self.interactivity().stop_mouse_events_except_scroll();
+        self
     }
 }
 
