@@ -308,6 +308,59 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_keystroke_binding_disabled() {
+        let bindings = [
+            KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new("space w w", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        let space = || Keystroke::parse("space").unwrap();
+        let w = || Keystroke::parse("w").unwrap();
+
+        let space_w = [space(), w()];
+        let space_w_w = [space(), w(), w()];
+
+        let workspace_context = || [KeyContext::parse("workspace").unwrap()];
+
+        let editor_workspace_context = || {
+            [
+                KeyContext::parse("workspace").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ]
+        };
+
+        // Ensure `space` results in pending input on the workspace, but not editor
+        let space_workspace = keymap.bindings_for_input(&[space()], &workspace_context());
+        assert!(space_workspace.0.is_empty());
+        assert_eq!(space_workspace.1, true);
+
+        let space_editor = keymap.bindings_for_input(&[space()], &editor_workspace_context());
+        assert!(space_editor.0.is_empty());
+        assert_eq!(space_editor.1, false);
+
+        // Ensure `space w` results in pending input on the workspace, but not editor
+        let space_w_workspace = keymap.bindings_for_input(&space_w, &workspace_context());
+        assert!(space_w_workspace.0.is_empty());
+        assert_eq!(space_w_workspace.1, true);
+
+        let space_w_editor = keymap.bindings_for_input(&space_w, &editor_workspace_context());
+        assert!(space_w_editor.0.is_empty());
+        assert_eq!(space_w_editor.1, false);
+
+        // Ensure `space w w` results in the binding in the workspace, but not in the editor
+        let space_w_w_workspace = keymap.bindings_for_input(&space_w_w, &workspace_context());
+        assert!(!space_w_w_workspace.0.is_empty());
+        assert_eq!(space_w_w_workspace.1, false);
+
+        let space_w_w_editor = keymap.bindings_for_input(&space_w_w, &editor_workspace_context());
+        assert!(space_w_w_editor.0.is_empty());
+        assert_eq!(space_w_w_editor.1, false);
+    }
+
+    #[test]
     fn test_bindings_for_action() {
         let bindings = [
             KeyBinding::new("ctrl-a", ActionAlpha {}, Some("pane")),
