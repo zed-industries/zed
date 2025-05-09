@@ -104,7 +104,7 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     #[serde(default)]
-    pub ignore_system_version: Option<bool>,
+    pub ignore_system_version: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
