@@ -2045,7 +2045,7 @@ dependencies = [
  "libloading",
  "log",
  "mint",
- "naga 25.0.1",
+ "naga",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -6222,7 +6222,7 @@ dependencies = [
  "lyon",
  "media",
  "metal",
- "naga 25.0.1",
+ "naga",
  "num_cpus",
  "objc",
  "objc2",
@@ -8915,27 +8915,6 @@ name = "multimap"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
-
-[[package]]
-name = "naga"
-version = "23.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "364f94bc34f61332abebe8cad6f6cd82a5b65cff22c828d05d0968911462ca4f"
-dependencies = [
- "arrayvec",
- "bit-set 0.8.0",
- "bitflags 2.9.0",
- "cfg_aliases 0.1.1",
- "codespan-reporting 0.11.1",
- "hexf-parse",
- "indexmap",
- "log",
- "rustc-hash 1.1.0",
- "spirv",
- "termcolor",
- "thiserror 1.0.69",
- "unicode-xid",
-]
 
 [[package]]
 name = "naga"
@@ -18078,6 +18057,7 @@ dependencies = [
  "base64ct",
  "bigdecimal",
  "bit-set 0.8.0",
+ "bit-vec 0.8.0",
  "bitflags 2.9.0",
  "bstr",
  "bytemuck",
@@ -18089,6 +18069,7 @@ dependencies = [
  "clang-sys",
  "clap",
  "clap_builder",
+ "codespan-reporting 0.12.0",
  "concurrent-queue",
  "core-foundation 0.9.4",
  "core-foundation-sys",
@@ -18117,6 +18098,7 @@ dependencies = [
  "getrandom 0.2.15",
  "getrandom 0.3.2",
  "gimli",
+ "half",
  "handlebars 4.5.0",
  "hashbrown 0.14.5",
  "hashbrown 0.15.2",
@@ -18127,6 +18109,7 @@ dependencies = [
  "idna",
  "indexmap",
  "inout",
+ "itertools 0.12.1",
  "itertools 0.13.0",
  "lazy_static",
  "libc",
@@ -18140,7 +18123,7 @@ dependencies = [
  "memchr",
  "miniz_oxide",
  "mio",
- "naga 23.1.0",
+ "naga",
  "nix 0.29.0",
  "nom",
  "num-bigint",
@@ -18149,6 +18132,9 @@ dependencies = [
  "num-iter",
  "num-rational",
  "num-traits",
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
  "object",
  "once_cell",
  "percent-encoding",
@@ -18167,6 +18153,7 @@ dependencies = [
  "regex-syntax 0.8.5",
  "ring",
  "rust_decimal",
+ "rustc-hash 1.1.0",
  "rustix 0.38.44",
  "rustix 1.0.5",
  "rustls 0.23.26",
