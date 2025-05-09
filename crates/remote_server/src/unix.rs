@@ -796,7 +796,7 @@ fn initialize_settings(
         let settings = &ProjectSettings::get_global(cx).node;
         log::info!("Got new node settings: {:?}", settings);
         let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+            allow_path_lookup: !settings.ignore_system_version,
             // TODO: Implement this setting
             allow_binary_download: true,
             use_paths: settings.path.as_ref().map(|node_path| {
