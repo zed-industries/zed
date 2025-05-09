@@ -80,6 +80,7 @@ pub struct MessageEditor {
 const MAX_EDITOR_LINES: usize = 8;
 
 pub(crate) fn create_editor(
+    max_lines: usize,
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     thread_store: WeakEntity<ThreadStore>,
@@ -99,9 +100,7 @@ pub(crate) fn create_editor(
         let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let mut editor = Editor::new(
-            editor::EditorMode::AutoHeight {
-                max_lines: MAX_EDITOR_LINES,
-            },
+            EditorMode::AutoHeight { max_lines },
             buffer,
             None,
             window,
@@ -159,6 +158,7 @@ impl MessageEditor {
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let editor = create_editor(
+            MAX_EDITOR_LINES,
             workspace.clone(),
             context_store.downgrade(),
             thread_store.clone(),

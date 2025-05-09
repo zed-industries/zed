@@ -18,7 +18,7 @@ use assistant_tool::ToolUseStatus;
 use collections::{HashMap, HashSet, hash_map::Entry};
 use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer};
+use editor::{Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
@@ -1641,6 +1641,7 @@ impl ActiveThread {
                 let message_text = message_text.clone();
 
                 let editor = crate::message_editor::create_editor(
+                    usize::MAX, // XXX
                     self.workspace.clone(),
                     self.context_store.downgrade(),
                     self.thread_store.downgrade(),
