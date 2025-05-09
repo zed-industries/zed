@@ -478,7 +478,12 @@ impl<D: PickerDelegate> Picker<D> {
         self.select_next(&Default::default(), window, cx);
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(0, Some(Direction::Down), true, window, cx);
