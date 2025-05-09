@@ -291,7 +291,7 @@ impl DebugPanel {
 
         let (debug_session, workspace) = this.update_in(cx, |this, window, cx| {
             this.sessions.retain(|session| {
-                session
+                !session
                     .read(cx)
                     .running_state()
                     .read(cx)
