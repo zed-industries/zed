@@ -79,6 +79,10 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
+                .register_action(ContextEditor::quote_selection)
+                .register_action(ContextEditor::insert_selection)
+                .register_action(ContextEditor::copy_code)
+                .register_action(ContextEditor::handle_insert_dragged_files)
                 .register_action(|workspace, action: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
