@@ -101,7 +101,7 @@ impl ProfileSelector {
         profile_id: AgentProfileId,
         profile: &AgentProfile,
         settings: &AssistantSettings,
-        cx: &App,
+        _cx: &App,
     ) -> ContextMenuEntry {
         let documentation = match profile.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
@@ -110,12 +110,8 @@ impl ProfileSelector {
             _ => None,
         };
 
-        let current_profile_id = self.thread.read(cx).configured_profile_id();
-
-        let entry = ContextMenuEntry::new(profile.name.clone()).toggleable(
-            IconPosition::End,
-            Some(profile_id.clone()) == current_profile_id,
-        );
+        let entry = ContextMenuEntry::new(profile.name.clone())
+            .toggleable(IconPosition::End, profile_id == settings.default_profile);
 
         let entry = if let Some(doc_text) = documentation {
             entry.documentation_aside(documentation_side(settings.dock), move |_| {
@@ -129,13 +125,7 @@ impl ProfileSelector {
             let fs = self.fs.clone();
             let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
-            let thread = self.thread.clone();
-
             move |_window, cx| {
-                thread.update(cx, |thread, cx| {
-                    thread.set_configured_profile_id(Some(profile_id.clone()), cx);
-                });
-
                 update_settings_file::<AssistantSettings>(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
@@ -156,12 +146,8 @@ impl ProfileSelector {
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AssistantSettings::get_global(cx);
-        let profile_id = self
-            .thread
-            .read(cx)
-            .configured_profile_id()
-            .unwrap_or(settings.default_profile.clone());
-        let profile = settings.profiles.get(&profile_id).cloned();
+        let profile_id = &settings.default_profile;
+        let profile = settings.profiles.get(profile_id);
 
         let selected_profile = profile
             .map(|profile| profile.name.clone())
