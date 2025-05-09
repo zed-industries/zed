@@ -323,7 +323,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         })
                         .collect()
                 } else {
-                    fuzzy::match_strings(
+                    let mut matches = fuzzy::match_strings(
                         &candidates,
                         &query,
                         true,
@@ -331,7 +331,20 @@ impl PickerDelegate for CommandPaletteDelegate {
                         &Default::default(),
                         executor,
                     )
-                    .await
+                    .await;
+
+                    // Boost scores of frequently used commands
+                    for match_item in &mut matches {
+                        let command_name = &commands[match_item.candidate_id].name;
+                        if let Some(hit_count) = hit_counts.get(command_name) {
+                            match_item.score += (*hit_count as f64) * 0.01;
+                        }
+                    }
+
+                    // Re-sort by adjusted score
+                    matches.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+                    matches
                 };
 
                 tx.send((commands, matches)).await.log_err();
