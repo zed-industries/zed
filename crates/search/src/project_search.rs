@@ -988,6 +988,12 @@ impl ProjectSearchView {
             if let Some(query) = query {
                 search.set_query(&query, window, cx);
             }
+            if let Some(included_files) = action.included_files.as_deref() {
+                search
+                    .included_files_editor
+                    .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
+                search.filters_enabled = true;
+            }
             search.focus_query_editor(window, cx)
         });
     }
