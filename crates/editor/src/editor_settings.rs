@@ -132,6 +132,13 @@ impl Minimap {
     pub fn minimap_enabled(&self) -> bool {
         self.show != ShowMinimap::Never
     }
+
+    pub fn with_show_override(self) -> Self {
+        Self {
+            show: ShowMinimap::Always,
+            ..self
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
