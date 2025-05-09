@@ -1274,7 +1274,7 @@ async fn get_current_usage(
             subscription
                 .kind
                 .map(Into::into)
-                .unwrap_or(zed_llm_client::Plan::Free)
+                .unwrap_or(zed_llm_client::Plan::ZedFree)
         });
 
     let model_requests_limit = match plan.model_requests_limit() {

@@ -2740,7 +2740,7 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
                 }),
                 usage: usage.map(|usage| {
                     let plan = match plan {
-                        proto::Plan::Free => zed_llm_client::Plan::Free,
+                        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
                         proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
                         proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
                     };

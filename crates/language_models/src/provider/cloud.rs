@@ -611,7 +611,7 @@ impl CloudLanguageModel {
                         .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
                     {
                         let plan = match plan {
-                            zed_llm_client::Plan::Free => Plan::Free,
+                            zed_llm_client::Plan::ZedFree => Plan::Free,
                             zed_llm_client::Plan::ZedPro => Plan::ZedPro,
                             zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
                         };
