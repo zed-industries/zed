@@ -38,7 +38,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenBrowser, ToggleRecent, ToggleRemote};
 
 pub use onboarding_banner::restore_banner;
 
@@ -417,14 +417,14 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
-                        Some(&OpenRemote),
+                        Some(&ToggleRemote),
                         meta.clone(),
                         window,
                         cx,
                     )
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
+                    window.dispatch_action(ToggleRemote.boxed_clone(), cx);
                 })
                 .into_any_element(),
         )
@@ -499,7 +499,7 @@ impl TitleBar {
             .tooltip(move |window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &zed_actions::OpenRecent {
+                    &zed_actions::ToggleRecent {
                         create_new_window: false,
                     },
                     window,
@@ -508,7 +508,7 @@ impl TitleBar {
             })
             .on_click(cx.listener(move |_, _, window, cx| {
                 window.dispatch_action(
-                    OpenRecent {
+                    ToggleRecent {
                         create_new_window: false,
                     }
                     .boxed_clone(),
