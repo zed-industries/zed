@@ -52,7 +52,7 @@ mod breakpoints_in_file {
         }
     }
 
-    #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+    #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
     pub struct BreakpointSessionState {
         /// Session-specific identifier for the breakpoint, as assigned by Debug Adapter.
         pub id: u64,
@@ -554,8 +554,13 @@ impl BreakpointStore {
         range: Option<Range<text::Anchor>>,
         buffer_snapshot: &'a BufferSnapshot,
         cx: &App,
-    ) -> impl Iterator<Item = &'a BreakpointWithPosition> + 'a {
+    ) -> impl Iterator<Item = (&'a BreakpointWithPosition, Option<BreakpointSessionState>)> + 'a
+    {
         let abs_path = Self::abs_path_from_buffer(buffer, cx);
+        let active_session_id = self
+            .active_stack_frame
+            .as_ref()
+            .map(|frame| frame.session_id);
         abs_path
             .and_then(|path| self.breakpoints.get(&path))
             .into_iter()
@@ -570,8 +575,10 @@ impl BreakpointStore {
                                 return None;
                             }
                         }
-
-                        Some(&bp.bp)
+                        let session_state = active_session_id
+                            .and_then(|id| bp.session_state.get(&id))
+                            .copied();
+                        Some((&bp.bp, session_state))
                     }
                 })
             })

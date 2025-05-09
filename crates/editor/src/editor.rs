@@ -125,7 +125,8 @@ use project::{
     BreakpointWithPosition, ProjectPath,
     debugger::{
         breakpoint_store::{
-            BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+            BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
+            BreakpointStoreEvent,
         },
         session::{Session, SessionEvent},
     },
@@ -6775,7 +6776,7 @@ impl Editor {
         range: Range<DisplayRow>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> HashMap<DisplayRow, (Anchor, Breakpoint)> {
+    ) -> HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)> {
         let mut breakpoint_display_points = HashMap::default();
 
         let Some(breakpoint_store) = self.breakpoint_store.clone() else {
@@ -6809,19 +6810,17 @@ impl Editor {
                 buffer_snapshot,
                 cx,
             );
-            for BreakpointWithPosition {
-                position: anchor,
-                bp: breakpoint,
-            } in breakpoints
-            {
+            for (breakpoint, state) in breakpoints {
                 let multi_buffer_anchor =
-                    Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), *anchor);
+                    Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), breakpoint.position);
                 let position = multi_buffer_anchor
                     .to_point(&multi_buffer_snapshot)
                     .to_display_point(&snapshot);
 
-                breakpoint_display_points
-                    .insert(position.row(), (multi_buffer_anchor, breakpoint.clone()));
+                breakpoint_display_points.insert(
+                    position.row(),
+                    (multi_buffer_anchor, breakpoint.bp.clone(), state),
+                );
             }
         }
 
@@ -6996,6 +6995,7 @@ impl Editor {
         position: Anchor,
         row: DisplayRow,
         breakpoint: &Breakpoint,
+        state: Option<BreakpointSessionState>,
         cx: &mut Context<Self>,
     ) -> IconButton {
         // Is it a breakpoint that shows up when hovering over gutter?
@@ -7023,6 +7023,8 @@ impl Editor {
 
             let color = if is_phantom {
                 Color::Hint
+            } else if let Some(state) = state.filter(|s| !s.verified) {
+                Color::Accent
             } else {
                 Color::Debugger
             };
@@ -7231,11 +7233,11 @@ impl Editor {
         _style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
-        breakpoint: Option<(Anchor, Breakpoint)>,
+        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
         let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
+        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
 
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
@@ -9407,7 +9409,7 @@ impl Editor {
                         cx,
                     )
                     .next()
-                    .and_then(|bp| {
+                    .and_then(|(bp, _)| {
                         let breakpoint_row = buffer_snapshot
                             .summary_for_anchor::<text::PointUtf16>(&bp.position)
                             .row;

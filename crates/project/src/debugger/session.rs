@@ -220,13 +220,16 @@ impl LocalMode {
         breakpoint_store: &Entity<BreakpointStore>,
         cx: &mut App,
     ) -> Task<()> {
-        let breakpoints = breakpoint_store
-            .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
-            .into_iter()
-            .filter(|bp| bp.state.is_enabled())
-            .chain(self.tmp_breakpoint.clone())
-            .map(Into::into)
-            .collect();
+        let breakpoints =
+            breakpoint_store
+                .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
+                .into_iter()
+                .filter(|bp| bp.state.is_enabled())
+                .chain(self.tmp_breakpoint.iter().filter_map(|breakpoint| {
+                    breakpoint.path.eq(&abs_path).then(|| breakpoint.clone())
+                }))
+                .map(Into::into)
+                .collect();
 
         let task = self.request(dap_command::SetBreakpoints {
             source: client_source(&abs_path),
@@ -275,7 +278,7 @@ impl LocalMode {
         let mut breakpoint_tasks = Vec::new();
         let breakpoints =
             breakpoint_store.read_with(cx, |store, cx| store.all_source_breakpoints(cx));
-        let mut raw_breakpoints = breakpoint_store.read_with(cx, |this, cx| this.all_breakpoints());
+        let mut raw_breakpoints = breakpoint_store.read_with(cx, |this, _| this.all_breakpoints());
         debug_assert_eq!(raw_breakpoints.len(), breakpoints.len());
         let session_id = self.client.id();
         for (path, breakpoints) in breakpoints {
