@@ -755,7 +755,7 @@ mod tests {
             false
         }
 
-        fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
             false
         }
 
