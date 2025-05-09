@@ -199,11 +199,21 @@ impl MessageEditor {
             )
         });
 
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(
+                fs,
+                thread.clone(),
+                thread_store,
+                editor.focus_handle(cx),
+                cx,
+            )
+        });
+
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             user_store,
-            thread: thread.clone(),
+            thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
             context_store,
@@ -215,9 +225,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx.new(|cx| {
-                ProfileSelector::new(fs, thread_store, thread, editor.focus_handle(cx), cx)
-            }),
+            profile_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,

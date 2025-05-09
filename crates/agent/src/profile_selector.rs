@@ -29,8 +29,8 @@ pub struct ProfileSelector {
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
-        thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
+        thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -41,8 +41,8 @@ impl ProfileSelector {
         Self {
             profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
             fs,
-            thread_store,
             thread,
+            thread_store,
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
             _subscriptions: vec![settings_subscription],
