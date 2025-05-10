@@ -153,7 +153,6 @@ impl AgentConfiguration {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_center()
                             .child(
                                 Icon::new(provider.icon())
                                     .size(IconSize::Small)
@@ -163,7 +162,6 @@ impl AgentConfiguration {
                             .when(provider.is_authenticated(cx), |parent| {
                                 parent.child(
                                     h_flex()
-                                        .items_center()
                                         .child(
                                             Icon::new(IconName::Check)
                                                 .size(IconSize::Medium)
