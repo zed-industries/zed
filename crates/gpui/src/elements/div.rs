@@ -928,11 +928,6 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Stops propagation of left mouse down event.
-    fn block_mouse_down(mut self) -> Self {
-        self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    }
-
     /// Registers event handles that stop propagation of mouse events for non-scroll events.
     /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
     fn stop_mouse_events_except_scroll(mut self) -> Self {

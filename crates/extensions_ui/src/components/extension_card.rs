@@ -48,7 +48,7 @@ impl RenderOnce for ExtensionCard {
                             .absolute()
                             .top_0()
                             .left_0()
-                            .block_mouse_down()
+                            .stop_mouse_events_except_scroll()
                             .cursor_default()
                             .size_full()
                             .items_center()
