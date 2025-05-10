@@ -71,17 +71,6 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::linux::{
-    LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
-    wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
-        cursor::Cursor,
-        serial::{SerialKind, SerialTracker},
-        window::WaylandWindow,
-    },
-    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-};
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
@@ -90,6 +79,20 @@ use crate::{
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
     ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+};
+use crate::{
+    Capslock,
+    platform::linux::{
+        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
+        reveal_path_internal,
+        wayland::{
+            clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+            cursor::Cursor,
+            serial::{SerialKind, SerialTracker},
+            window::WaylandWindow,
+        },
+        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+    },
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -211,6 +214,7 @@ pub(crate) struct WaylandClientState {
     click: ClickState,
     repeat: KeyRepeat,
     pub modifiers: Modifiers,
+    pub capslock: Capslock,
     axis_source: AxisSource,
     pub mouse_location: Option<Point<Pixels>>,
     continuous_scroll_delta: Option<Point<Pixels>>,
@@ -559,6 +563,7 @@ impl WaylandClient {
                 function: false,
                 platform: false,
             },
+            capslock: Capslock { on: false },
             scroll_event_received: false,
             axis_source: AxisSource::Wheel,
             mouse_location: None,
@@ -1225,6 +1230,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+                let keymap_state = state.keymap_state.as_mut().unwrap();
+                state.capslock = Capslock::from_xkb(keymap_state);
 
                 if group != old_layout {
                     if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
@@ -1242,6 +1249,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
+                    capslock: state.capslock,
                 });
 
                 drop(state);

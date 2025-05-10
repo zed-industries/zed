@@ -1214,6 +1214,17 @@ impl PlatformWindow for X11Window {
             .unwrap_or_default()
     }
 
+    fn capslock(&self) -> crate::Capslock {
+        self.0
+            .state
+            .borrow()
+            .client
+            .0
+            .upgrade()
+            .map(|ref_cell| ref_cell.borrow().capslock)
+            .unwrap_or_default()
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
