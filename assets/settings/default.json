@@ -95,7 +95,10 @@
     "left_padding": 0.2,
     // The relative width of the right padding of the central pane from the
     // workspace when the centered layout is used.
-    "right_padding": 0.2
+    "right_padding": 0.2,
+    // Whether to show the borders of the padding areas when the centered
+    // layout is used.
+    "show_border": true
   },
   // All settings related to the image viewer.
   "image_viewer": {

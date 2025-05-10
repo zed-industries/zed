@@ -409,6 +409,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 "centered_layout": {
   "left_padding": 0.2,
   "right_padding": 0.2,
+  "show_border": true,
 }
 ```
 
