@@ -17,14 +17,14 @@ eval = []
 [dependencies]
 aho-corasick.workspace = true
 anyhow.workspace = true
-assistant_tool.workspace = true
 assistant_settings.workspace = true
+assistant_tool.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
 component.workspace = true
-editor.workspace = true
 derive_more.workspace = true
+editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -36,7 +36,11 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 linkme.workspace = true
+log.workspace = true
+markdown.workspace = true
 open.workspace = true
+paths.workspace = true
+portable-pty.workspace = true
 project.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
@@ -54,6 +58,7 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 web_search.workspace = true
+which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
@@ -75,6 +80,8 @@ reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
+theme.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
+zlog.workspace = true

@@ -30,6 +30,11 @@ pub struct PaneGroup {
     pub root: Member,
 }
 
+pub struct PaneRenderResult {
+    pub element: gpui::AnyElement,
+    pub contains_active_pane: bool,
+}
+
 impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
         Self { root }
@@ -128,7 +133,7 @@ impl PaneGroup {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        self.root.render(0, zoomed, render_cx, window, cx)
+        self.root.render(0, zoomed, render_cx, window, cx).element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -175,6 +180,10 @@ impl PaneGroup {
             }
         };
         self.pane_at_pixel_position(target)
+    }
+
+    pub fn invert_axies(&mut self) {
+        self.root.invert_pane_axies();
     }
 }
 
@@ -394,40 +403,45 @@ impl Member {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
+    ) -> PaneRenderResult {
         match self {
             Member::Pane(pane) => {
                 if zoomed == Some(&pane.downgrade().into()) {
-                    return div().into_any();
+                    return PaneRenderResult {
+                        element: div().into_any(),
+                        contains_active_pane: false,
+                    };
                 }
 
                 let decoration = render_cx.decorate(pane, cx);
+                let is_active = pane == render_cx.active_pane();
 
-                div()
-                    .relative()
-                    .flex_1()
-                    .size_full()
-                    .child(
-                        AnyView::from(pane.clone())
-                            .cached(StyleRefinement::default().v_flex().size_full()),
-                    )
-                    .when_some(decoration.border, |this, color| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .size_full()
-                                .left_0()
-                                .top_0()
-                                .border_2()
-                                .border_color(color),
+                PaneRenderResult {
+                    element: div()
+                        .relative()
+                        .flex_1()
+                        .size_full()
+                        .child(
+                            AnyView::from(pane.clone())
+                                .cached(StyleRefinement::default().v_flex().size_full()),
                         )
-                    })
-                    .children(decoration.status_box)
-                    .into_any()
+                        .when_some(decoration.border, |this, color| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .left_0()
+                                    .top_0()
+                                    .border_2()
+                                    .border_color(color),
+                            )
+                        })
+                        .children(decoration.status_box)
+                        .into_any(),
+                    contains_active_pane: is_active,
+                }
             }
-            Member::Axis(axis) => axis
-                .render(basis + 1, zoomed, render_cx, window, cx)
-                .into_any(),
+            Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
         }
     }
 
@@ -439,6 +453,18 @@ impl Member {
                 }
             }
             Member::Pane(pane) => panes.push(pane),
+        }
+    }
+
+    fn invert_pane_axies(&mut self) {
+        match self {
+            Self::Axis(axis) => {
+                axis.axis = axis.axis.invert();
+                for member in axis.members.iter_mut() {
+                    member.invert_pane_axies();
+                }
+            }
+            Self::Pane(_) => {}
         }
     }
 }
@@ -736,27 +762,54 @@ impl PaneAxis {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> gpui::AnyElement {
+    ) -> PaneRenderResult {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
+        let mut contains_active_pane = false;
+        let mut is_leaf_pane = vec![false; self.members.len()];
 
-        pane_axis(
+        let rendered_children = self
+            .members
+            .iter()
+            .enumerate()
+            .map(|(ix, member)| {
+                match member {
+                    Member::Pane(pane) => {
+                        is_leaf_pane[ix] = true;
+                        if pane == render_cx.active_pane() {
+                            active_pane_ix = Some(ix);
+                            contains_active_pane = true;
+                        }
+                    }
+                    Member::Axis(_) => {
+                        is_leaf_pane[ix] = false;
+                    }
+                }
+
+                let result = member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
+                if result.contains_active_pane {
+                    contains_active_pane = true;
+                }
+                result.element.into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let element = pane_axis(
             self.axis,
             basis,
             self.flexes.clone(),
             self.bounding_boxes.clone(),
             render_cx.workspace().clone(),
         )
-        .children(self.members.iter().enumerate().map(|(ix, member)| {
-            if matches!(member, Member::Pane(pane) if pane == render_cx.active_pane()) {
-                active_pane_ix = Some(ix);
-            }
-            member
-                .render((basis + ix) * 10, zoomed, render_cx, window, cx)
-                .into_any_element()
-        }))
+        .with_is_leaf_pane_mask(is_leaf_pane)
+        .children(rendered_children)
         .with_active_pane(active_pane_ix)
-        .into_any_element()
+        .into_any_element();
+
+        PaneRenderResult {
+            element,
+            contains_active_pane,
+        }
     }
 }
 
@@ -883,6 +936,7 @@ mod element {
             children: SmallVec::new(),
             active_pane_ix: None,
             workspace,
+            is_leaf_pane_mask: Vec::new(),
         }
     }
 
@@ -894,6 +948,8 @@ mod element {
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakEntity<Workspace>,
+        // Track which children are leaf panes (Member::Pane) vs axes (Member::Axis)
+        is_leaf_pane_mask: Vec<bool>,
     }
 
     pub struct PaneAxisLayout {
@@ -905,6 +961,7 @@ mod element {
         bounds: Bounds<Pixels>,
         element: AnyElement,
         handle: Option<PaneAxisHandleLayout>,
+        is_leaf_pane: bool,
     }
 
     struct PaneAxisHandleLayout {
@@ -915,6 +972,11 @@ mod element {
     impl PaneAxisElement {
         pub fn with_active_pane(mut self, active_pane_ix: Option<usize>) -> Self {
             self.active_pane_ix = active_pane_ix;
+            self
+        }
+
+        pub fn with_is_leaf_pane_mask(mut self, mask: Vec<bool>) -> Self {
+            self.is_leaf_pane_mask = mask;
             self
         }
 
@@ -1134,10 +1196,14 @@ mod element {
                 child.prepaint_at(origin, window, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
+
+                let is_leaf_pane = self.is_leaf_pane_mask.get(ix).copied().unwrap_or(true);
+
                 layout.children.push(PaneAxisChildLayout {
                     bounds: child_bounds,
                     element: child,
                     handle: None,
+                    is_leaf_pane,
                 })
             }
 
@@ -1199,12 +1265,15 @@ mod element {
                             .apply_along(Axis::Horizontal, |val| val - Pixels(1.)),
                     };
 
-                    if overlay_opacity.is_some() && self.active_pane_ix != Some(ix) {
+                    if overlay_opacity.is_some()
+                        && child.is_leaf_pane
+                        && self.active_pane_ix != Some(ix)
+                    {
                         window.paint_quad(gpui::fill(overlay_bounds, overlay_background));
                     }
 
                     if let Some(border) = overlay_border {
-                        if self.active_pane_ix == Some(ix) {
+                        if self.active_pane_ix == Some(ix) && child.is_leaf_pane {
                             window.paint_quad(gpui::quad(
                                 overlay_bounds,
                                 0.,

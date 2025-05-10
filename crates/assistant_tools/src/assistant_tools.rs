@@ -1,6 +1,5 @@
 mod copy_path_tool;
 mod create_directory_tool;
-mod create_file_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_agent;
@@ -13,9 +12,7 @@ mod move_path_tool;
 mod now_tool;
 mod open_tool;
 mod read_file_tool;
-mod replace;
 mod schema;
-mod streaming_edit_file_tool;
 mod templates;
 mod terminal_tool;
 mod thinking_tool;
@@ -24,15 +21,12 @@ mod web_search_tool;
 
 use std::sync::Arc;
 
-use assistant_settings::AssistantSettings;
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
-use feature_flags::{AgentStreamEditsFeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
-use settings::{Settings, SettingsStore};
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
@@ -40,28 +34,25 @@ pub(crate) use templates::*;
 use crate::create_directory_tool::CreateDirectoryTool;
 use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
+use crate::edit_file_tool::EditFileTool;
 use crate::fetch_tool::FetchTool;
 use crate::find_path_tool::FindPathTool;
 use crate::grep_tool::GrepTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
-use crate::read_file_tool::ReadFileTool;
-use crate::streaming_edit_file_tool::StreamingEditFileTool;
 use crate::thinking_tool::ThinkingTool;
 
-pub use create_file_tool::{CreateFileTool, CreateFileToolInput};
-pub use edit_file_tool::{EditFileTool, EditFileToolInput};
+pub use edit_file_tool::EditFileToolInput;
 pub use find_path_tool::FindPathToolInput;
 pub use open_tool::OpenTool;
-pub use read_file_tool::ReadFileToolInput;
-pub use streaming_edit_file_tool::StreamingEditFileToolInput;
+pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use terminal_tool::TerminalTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
-    registry.register_tool(TerminalTool);
+    registry.register_tool(TerminalTool::new(cx));
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
@@ -75,12 +66,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(GrepTool);
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
-
-    register_edit_file_tool(cx);
-    cx.observe_flag::<AgentStreamEditsFeatureFlag, _>(|_, cx| register_edit_file_tool(cx))
-        .detach();
-    cx.observe_global::<SettingsStore>(register_edit_file_tool)
-        .detach();
+    registry.register_tool(EditFileTool);
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
@@ -107,29 +93,16 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
     }
 }
 
-fn register_edit_file_tool(cx: &mut App) {
-    let registry = ToolRegistry::global(cx);
-
-    registry.unregister_tool(CreateFileTool);
-    registry.unregister_tool(EditFileTool);
-    registry.unregister_tool(StreamingEditFileTool);
-
-    if AssistantSettings::get_global(cx).stream_edits(cx) {
-        registry.register_tool(StreamingEditFileTool);
-    } else {
-        registry.register_tool(CreateFileTool);
-        registry.register_tool(EditFileTool);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use assistant_settings::AssistantSettings;
     use client::Client;
     use clock::FakeSystemClock;
     use http_client::FakeHttpClient;
     use schemars::JsonSchema;
     use serde::Serialize;
+    use settings::Settings;
 
     #[test]
     fn test_json_schema() {

@@ -1537,6 +1537,17 @@ impl App {
         self.active_drag.is_some()
     }
 
+    /// Stops active drag and clears any related effects.
+    pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
+        if self.active_drag.is_some() {
+            self.active_drag = None;
+            window.refresh();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Set the prompt renderer for GPUI. This will replace the default or platform specific
     /// prompts with this custom implementation.
     pub fn set_prompt_builder(

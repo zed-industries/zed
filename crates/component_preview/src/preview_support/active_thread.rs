@@ -2,31 +2,47 @@ use languages::LanguageRegistry;
 use project::Project;
 use std::sync::Arc;
 
-use agent::{ActiveThread, ContextStore, MessageSegment, ThreadStore};
+use agent::{ActiveThread, ContextStore, MessageSegment, TextThreadStore, ThreadStore};
+use anyhow::{Result, anyhow};
 use assistant_tool::ToolWorkingSet;
 use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
 use prompt_store::PromptBuilder;
 use ui::{App, Window};
 use workspace::Workspace;
 
-pub async fn load_preview_thread_store(
+pub fn load_preview_thread_store(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     cx: &mut AsyncApp,
-) -> Task<anyhow::Result<Entity<ThreadStore>>> {
-    cx.spawn(async move |cx| {
-        workspace
-            .update(cx, |_, cx| {
-                ThreadStore::load(
-                    project.clone(),
-                    cx.new(|_| ToolWorkingSet::default()),
-                    None,
-                    Arc::new(PromptBuilder::new(None).unwrap()),
-                    cx,
-                )
-            })?
-            .await
-    })
+) -> Task<Result<Entity<ThreadStore>>> {
+    workspace
+        .update(cx, |_, cx| {
+            ThreadStore::load(
+                project.clone(),
+                cx.new(|_| ToolWorkingSet::default()),
+                None,
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                cx,
+            )
+        })
+        .unwrap_or(Task::ready(Err(anyhow!("workspace dropped"))))
+}
+
+pub fn load_preview_text_thread_store(
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Task<Result<Entity<TextThreadStore>>> {
+    workspace
+        .update(cx, |_, cx| {
+            TextThreadStore::new(
+                project.clone(),
+                Arc::new(PromptBuilder::new(None).unwrap()),
+                Default::default(),
+                cx,
+            )
+        })
+        .unwrap_or(Task::ready(Err(anyhow!("workspace dropped"))))
 }
 
 pub fn static_active_thread(
@@ -34,6 +50,7 @@ pub fn static_active_thread(
     project: Entity<Project>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
+    text_thread_store: Entity<TextThreadStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ActiveThread> {
@@ -59,6 +76,7 @@ pub fn static_active_thread(
         ActiveThread::new(
             thread,
             thread_store,
+            text_thread_store,
             context_store,
             language_registry,
             workspace.clone(),
