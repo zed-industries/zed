@@ -2882,8 +2882,7 @@ impl EditorElement {
         text_x: Pixels,
         rows: &Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
-        gutter_dimensions: &GutterDimensions,
-        right_margin: Pixels,
+        editor_margins: &EditorMargins,
         line_height: Pixels,
         em_width: Pixels,
         text_hitbox: &Hitbox,
@@ -2943,11 +2942,6 @@ impl EditorElement {
                     })
                     .is_ok();
 
-                let margins = EditorMargins {
-                    gutter: *gutter_dimensions,
-                    right: right_margin,
-                };
-
                 div()
                     .size_full()
                     .children(
@@ -2956,7 +2950,7 @@ impl EditorElement {
                                 window,
                                 app: cx,
                                 anchor_x,
-                                margins: &margins,
+                                margins: editor_margins,
                                 line_height,
                                 em_width,
                                 block_id,
@@ -2975,7 +2969,7 @@ impl EditorElement {
                 ..
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
-                let result = v_flex().id(block_id).w_full();
+                let result = v_flex().id(block_id).w_full().pr(editor_margins.right);
 
                 let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
                 result
@@ -3006,8 +3000,10 @@ impl EditorElement {
                     if sticky_header_excerpt_id != Some(excerpt.id) {
                         let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
-                        result = result.child(self.render_buffer_header(
-                            excerpt, false, selected, false, jump_data, window, cx,
+                        result = result.child(div().pr(editor_margins.right).child(
+                            self.render_buffer_header(
+                                excerpt, false, selected, false, jump_data, window, cx,
+                            ),
                         ));
                     } else {
                         result =
@@ -3054,7 +3050,7 @@ impl EditorElement {
                     if let Some((x_target, line_width)) = x_position {
                         let margin = em_width * 2;
                         if line_width + final_size.width + margin
-                            < editor_width + gutter_dimensions.full_width()
+                            < editor_width + editor_margins.gutter.full_width()
                             && !row_block_types.contains_key(&(row - 1))
                             && element_height_in_lines == 1
                         {
@@ -3064,10 +3060,10 @@ impl EditorElement {
                             element_height_in_lines = 0;
                             row_block_types.insert(row, is_block);
                         } else {
-                            let max_offset =
-                                editor_width + gutter_dimensions.full_width() - final_size.width;
+                            let max_offset = editor_width + editor_margins.gutter.full_width()
+                                - final_size.width;
                             let min_offset = (x_target + em_width - final_size.width)
-                                .max(gutter_dimensions.full_width());
+                                .max(editor_margins.gutter.full_width());
                             x_offset = x_target.min(max_offset).max(min_offset);
                         }
                     }
@@ -3283,8 +3279,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         editor_width: Pixels,
         scroll_width: &mut Pixels,
-        gutter_dimensions: &GutterDimensions,
-        right_margin: Pixels,
+        editor_margins: &EditorMargins,
         em_width: Pixels,
         text_x: Pixels,
         line_height: Pixels,
@@ -3324,8 +3319,7 @@ impl EditorElement {
                 text_x,
                 &rows,
                 line_layouts,
-                gutter_dimensions,
-                right_margin,
+                editor_margins,
                 line_height,
                 em_width,
                 text_hitbox,
@@ -3363,7 +3357,7 @@ impl EditorElement {
                     .size
                     .width
                     .max(fixed_block_max_width)
-                    .max(gutter_dimensions.width + *scroll_width)
+                    .max(editor_margins.gutter.width + *scroll_width)
                     .into(),
                 (BlockStyle::Fixed, _) => unreachable!(),
             };
@@ -3382,8 +3376,7 @@ impl EditorElement {
                 text_x,
                 &rows,
                 line_layouts,
-                gutter_dimensions,
-                right_margin,
+                editor_margins,
                 line_height,
                 em_width,
                 text_hitbox,
@@ -3423,7 +3416,7 @@ impl EditorElement {
                                     .size
                                     .width
                                     .max(fixed_block_max_width)
-                                    .max(gutter_dimensions.width + *scroll_width),
+                                    .max(editor_margins.gutter.width + *scroll_width),
                             ),
                             BlockStyle::Sticky => AvailableSpace::Definite(hitbox.size.width),
                         };
@@ -3437,8 +3430,7 @@ impl EditorElement {
                             text_x,
                             &rows,
                             line_layouts,
-                            gutter_dimensions,
-                            right_margin,
+                            editor_margins,
                             line_height,
                             em_width,
                             text_hitbox,
@@ -3470,7 +3462,8 @@ impl EditorElement {
         }
 
         if resized_blocks.is_empty() {
-            *scroll_width = (*scroll_width).max(fixed_block_max_width - gutter_dimensions.width);
+            *scroll_width =
+                (*scroll_width).max(fixed_block_max_width - editor_margins.gutter.width);
             Ok((blocks, row_block_types))
         } else {
             Err(resized_blocks)
@@ -3523,6 +3516,7 @@ impl EditorElement {
         StickyHeaderExcerpt { excerpt }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
         line_height: Pixels,
+        right_margin: Pixels,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
         selected_buffer_ids: &Vec<BufferId>,
@@ -3541,11 +3535,13 @@ impl EditorElement {
 
         let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
 
+        let available_width = hitbox.bounds.size.width - right_margin;
+
         let mut header = v_flex()
             .relative()
             .child(
                 div()
-                    .w(hitbox.bounds.size.width)
+                    .w(available_width)
                     .h(FILE_HEADER_HEIGHT as f32 * line_height)
                     .bg(linear_gradient(
                         0.,
@@ -3582,7 +3578,7 @@ impl EditorElement {
         }
 
         let size = size(
-            AvailableSpace::Definite(hitbox.size.width),
+            AvailableSpace::Definite(available_width),
             AvailableSpace::MinContent,
         );
 
@@ -7177,9 +7173,14 @@ impl Element for EditorElement {
                     let editor_width =
                         text_width - gutter_dimensions.margin - 2 * em_width - right_margin;
 
+                    let editor_margins = EditorMargins {
+                        gutter: gutter_dimensions,
+                        right: right_margin,
+                    };
+
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
-                    let content_offset = point(gutter_dimensions.margin, Pixels::ZERO);
+                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
 
                     let editor_content_width = editor_width - content_offset.x;
 
@@ -7635,8 +7636,7 @@ impl Element for EditorElement {
                             &text_hitbox,
                             editor_width,
                             &mut scroll_width,
-                            &gutter_dimensions,
-                            right_margin,
+                            &editor_margins,
                             em_width,
                             gutter_dimensions.full_width(),
                             line_height,
@@ -7665,6 +7665,7 @@ impl Element for EditorElement {
                                 sticky_header_excerpt,
                                 scroll_position.y,
                                 line_height,
+                                right_margin,
                                 &snapshot,
                                 &hitbox,
                                 &selected_buffer_ids,
