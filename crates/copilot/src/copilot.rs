@@ -5,7 +5,7 @@ mod sign_in;
 
 use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
@@ -531,11 +531,15 @@ impl Copilot {
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
                 })
-                .await?;
+                .await
+                .into_response()
+                .context("copilot: check status")?;
 
             server
                 .request::<request::SetEditorInfo>(editor_info)
-                .await?;
+                .await
+                .into_response()
+                .context("copilot: set editor info")?;
 
             anyhow::Ok((server, status))
         };
@@ -581,7 +585,9 @@ impl Copilot {
                                     .request::<request::SignInInitiate>(
                                         request::SignInInitiateParams {},
                                     )
-                                    .await?;
+                                    .await
+                                    .into_response()
+                                    .context("copilot sign-in")?;
                                 match sign_in {
                                     request::SignInInitiateResult::AlreadySignedIn { user } => {
                                         Ok(request::SignInStatus::Ok { user: Some(user) })
@@ -609,7 +615,9 @@ impl Copilot {
                                                     user_code: flow.user_code,
                                                 },
                                             )
-                                            .await?;
+                                            .await
+                                            .into_response()
+                                            .context("copilot: sign in confirm")?;
                                         Ok(response)
                                     }
                                 }
@@ -656,7 +664,9 @@ impl Copilot {
                 cx.background_spawn(async move {
                     server
                         .request::<request::SignOut>(request::SignOutParams {})
-                        .await?;
+                        .await
+                        .into_response()
+                        .context("copilot: sign in confirm")?;
                     anyhow::Ok(())
                 })
             }
@@ -873,7 +883,10 @@ impl Copilot {
                     uuid: completion.uuid.clone(),
                 });
         cx.background_spawn(async move {
-            request.await?;
+            request
+                .await
+                .into_response()
+                .context("copilot: notify accepted")?;
             Ok(())
         })
     }
@@ -897,7 +910,10 @@ impl Copilot {
                         .collect(),
                 });
         cx.background_spawn(async move {
-            request.await?;
+            request
+                .await
+                .into_response()
+                .context("copilot: notify rejected")?;
             Ok(())
         })
     }
@@ -957,7 +973,9 @@ impl Copilot {
                         version: version.try_into().unwrap(),
                     },
                 })
-                .await?;
+                .await
+                .into_response()
+                .context("copilot: get completions")?;
             let completions = result
                 .completions
                 .into_iter()

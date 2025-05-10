@@ -5,7 +5,12 @@ pub use lsp_types::*;
 
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{AsyncRead, AsyncWrite, Future, FutureExt, channel::oneshot, io::BufWriter, select};
+use futures::{
+    AsyncRead, AsyncWrite, Future, FutureExt,
+    channel::oneshot::{self, Canceled},
+    io::BufWriter,
+    select,
+};
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
@@ -259,7 +264,30 @@ struct Error {
     message: String,
 }
 
-pub trait LspRequestFuture<O>: Future<Output = O> {
+#[derive(Debug)]
+pub enum LspResponseResult<O> {
+    Timeout,
+    ConnectionReset,
+    Result(anyhow::Result<O>),
+}
+
+impl<O> LspResponseResult<O> {
+    pub fn into_response(self) -> anyhow::Result<O> {
+        match self {
+            LspResponseResult::Timeout => anyhow::bail!("Request timed out"),
+            LspResponseResult::ConnectionReset => anyhow::bail!("Server reset the connection"),
+            LspResponseResult::Result(r) => r,
+        }
+    }
+}
+
+impl<O> From<anyhow::Result<O>> for LspResponseResult<O> {
+    fn from(result: anyhow::Result<O>) -> Self {
+        LspResponseResult::Result(result)
+    }
+}
+
+pub trait LspRequestFuture<O>: Future<Output = LspResponseResult<O>> {
     fn id(&self) -> i32;
 }
 
@@ -284,7 +312,10 @@ impl<F: Future> Future for LspRequest<F> {
     }
 }
 
-impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
+impl<F, O> LspRequestFuture<O> for LspRequest<F>
+where
+    F: Future<Output = LspResponseResult<O>>,
+{
     fn id(&self) -> i32 {
         self.id
     }
@@ -824,7 +855,17 @@ impl LanguageServer {
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         cx.spawn(async move |_| {
-            let response = self.request::<request::Initialize>(params).await?;
+            let response = self
+                .request::<request::Initialize>(params)
+                .await
+                .into_response()
+                .with_context(|| {
+                    format!(
+                        "initializing server {}, id {}",
+                        self.name(),
+                        self.server_id()
+                    )
+                })?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
@@ -863,7 +904,13 @@ impl LanguageServer {
 
                     select! {
                         request_result = shutdown_request.fuse() => {
-                            request_result?;
+                            match request_result {
+                                LspResponseResult::Timeout => {
+                                    log::warn!("timeout waiting for language server {name} to shutdown");
+                                },
+                                LspResponseResult::ConnectionReset => {},
+                                LspResponseResult::Result(r) => r?,
+                            }
                         }
 
                         _ = timer => {
@@ -1084,7 +1131,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
+    ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
     {
@@ -1097,15 +1144,18 @@ impl LanguageServer {
         )
     }
 
-    fn request_internal<T: request::Request>(
+    fn request_internal<T>(
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
+    ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
+        T: request::Request,
+        // TODO kb
+        // <T as lsp_types::request::Request>::Result: LspResponseResult,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
@@ -1120,7 +1170,7 @@ impl LanguageServer {
         let handle_response = response_handlers
             .lock()
             .as_mut()
-            .ok_or_else(|| anyhow!("server shut down"))
+            .context("server shut down")
             .map(|handlers| {
                 let executor = executor.clone();
                 handlers.insert(
@@ -1153,8 +1203,12 @@ impl LanguageServer {
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
         LspRequest::new(id, async move {
-            handle_response?;
-            send?;
+            if let Err(e) = handle_response {
+                return LspResponseResult::Result(Err(e));
+            }
+            if let Err(e) = send {
+                return LspResponseResult::Result(Err(e));
+            }
 
             let cancel_on_drop = util::defer(move || {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
@@ -1174,12 +1228,18 @@ impl LanguageServer {
                     let elapsed = started.elapsed();
                     log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     cancel_on_drop.abort();
-                    response?
+                    match response {
+                        Ok(response_result) => LspResponseResult::Result(response_result),
+                        Err(Canceled) => {
+                            log::error!("Server reset connection for a request {method:?} id {id}");
+                            LspResponseResult::ConnectionReset
+                        },
+                    }
                 }
 
                 _ = timeout => {
                     log::error!("Cancelled LSP request task for {method:?} id {id} which took over {LSP_REQUEST_TIMEOUT:?}");
-                    anyhow::bail!("LSP request timeout");
+                    LspResponseResult::Timeout
                 }
             }
         })
@@ -1506,7 +1566,7 @@ impl FakeLanguageServer {
     }
 
     /// See [`LanguageServer::request`].
-    pub async fn request<T>(&self, params: T::Params) -> Result<T::Result>
+    pub async fn request<T>(&self, params: T::Params) -> LspResponseResult<T::Result>
     where
         T: request::Request,
         T::Result: 'static + Send,
@@ -1608,6 +1668,7 @@ impl FakeLanguageServer {
             token: NumberOrString::String(token.clone()),
         })
         .await
+        .into_response()
         .unwrap();
         self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token),

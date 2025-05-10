@@ -4317,6 +4317,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         })
         .await
+        .into_response()
         .unwrap();
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
