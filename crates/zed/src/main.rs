@@ -44,7 +44,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
@@ -612,9 +612,17 @@ fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| authenticate(client, &cx).await
+            async move |cx| match authenticate(client, &cx).await {
+                ConnectionResult::Timeout => log::error!("Timeout during initial auth"),
+                ConnectionResult::ConnectionReset => {
+                    log::error!("Connection reset during initial auth")
+                }
+                ConnectionResult::Result(r) => {
+                    r.log_err();
+                }
+            }
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         let urls: Vec<_> = args
             .paths_or_urls
@@ -727,7 +735,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                authenticate(client, &cx).await.log_err();
+                match authenticate(client, &cx).await {
+                    ConnectionResult::Timeout => {
+                        log::error!("Timeout during open request handling")
+                    }
+                    ConnectionResult::ConnectionReset => {
+                        log::error!("Connection reset during open request handling")
+                    }
+                    ConnectionResult::Result(r) => r?,
+                };
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -777,17 +793,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> ConnectionResult<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, cx).await?;
+            return client.authenticate_and_connect(false, cx).await;
         } else if client.has_credentials(cx).await {
-            client.authenticate_and_connect(true, cx).await?;
+            return client.authenticate_and_connect(true, cx).await;
         }
     } else if client.has_credentials(cx).await {
-        client.authenticate_and_connect(true, cx).await?;
+        return client.authenticate_and_connect(true, cx).await;
     }
-    Ok::<_, anyhow::Error>(())
+
+    ConnectionResult::Result(Ok(()))
 }
 
 async fn system_id() -> Result<IdType> {

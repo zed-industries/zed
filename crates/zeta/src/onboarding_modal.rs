@@ -139,7 +139,10 @@ impl ZedPredictModal {
         self.sign_in_status = SignInStatus::Waiting;
 
         cx.spawn(async move |this, cx| {
-            let result = client.authenticate_and_connect(true, &cx).await;
+            let result = client
+                .authenticate_and_connect(true, &cx)
+                .await
+                .into_response();
 
             let status = match result {
                 Ok(_) => SignInStatus::SignedIn,
