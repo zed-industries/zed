@@ -750,6 +750,8 @@
     "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
+    // When enabled, show voting thumbs for feedback on agent edits.
+    "enable_feedback": true,
     "default_profile": "write",
     "profiles": {
       "write": {
