@@ -8,6 +8,7 @@ pub struct TitleBarSettings {
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
+    pub show_sign_in: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -24,6 +25,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_user_picture: Option<bool>,
+    /// Whether to show the sign in button in the title bar.
+    ///
+    /// Default: true
+    pub show_sign_in: Option<bool>,
 }
 
 impl Settings for TitleBarSettings {
