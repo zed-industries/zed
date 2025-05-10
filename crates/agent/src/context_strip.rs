@@ -84,6 +84,12 @@ impl ContextStrip {
         }
     }
 
+    /// Whether or not the context strip has items to display
+    pub fn has_context_items(&self, cx: &App) -> bool {
+        self.context_store.read(cx).context().next().is_some()
+            || self.suggested_context(cx).is_some()
+    }
+
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
         if let Some(workspace) = self.workspace.upgrade() {
             let project = workspace.read(cx).project().read(cx);
@@ -104,14 +110,14 @@ impl ContextStrip {
         }
     }
 
-    fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_context(&self, cx: &App) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
             SuggestContextKind::File => self.suggested_file(cx),
             SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
-    fn suggested_file(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_file(&self, cx: &App) -> Option<SuggestedContext> {
         let workspace = self.workspace.upgrade()?;
         let active_item = workspace.read(cx).active_item(cx)?;
 
@@ -138,7 +144,7 @@ impl ContextStrip {
         })
     }
 
-    fn suggested_thread(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_thread(&self, cx: &App) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
         }
