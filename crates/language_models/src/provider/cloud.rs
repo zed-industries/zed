@@ -180,9 +180,12 @@ impl State {
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            client.authenticate_and_connect(true, &cx).await?;
-            this.update(cx, |_, cx| cx.notify())
+        cx.spawn(async move |state, cx| {
+            client
+                .authenticate_and_connect(true, &cx)
+                .await
+                .into_response()?;
+            state.update(cx, |_, cx| cx.notify())
         })
     }
 

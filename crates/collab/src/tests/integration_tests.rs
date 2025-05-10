@@ -1253,6 +1253,7 @@ async fn test_calls_on_multiple_connections(
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
+        .into_response()
         .unwrap();
 
     // User B hangs up, and user A calls them again.
@@ -1633,6 +1634,7 @@ async fn test_project_reconnect(
     client_a
         .authenticate_and_connect(false, &cx_a.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1761,6 +1763,7 @@ async fn test_project_reconnect(
     client_b
         .authenticate_and_connect(false, &cx_b.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -5700,6 +5703,7 @@ async fn test_contacts(
     client_c
         .authenticate_and_connect(false, &cx_c.to_async())
         .await
+        .into_response()
         .unwrap();
 
     executor.run_until_parked();
@@ -6230,6 +6234,7 @@ async fn test_contact_requests(
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
     }
 }
