@@ -1116,7 +1116,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     while let Ok(output) = rx.recv() {
         match output {
             Ok(output) => {
-                cumulative_parser_metrics += output.sample.edit_output._parser_metrics.clone();
+                cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
                 eval_outputs.push(output.clone());
                 if output.assertion.score < 80 {
                     failed_count += 1;
@@ -1197,9 +1197,9 @@ impl Display for EvalOutput {
         writeln!(
             f,
             "Parser Metrics:\n{:#?}",
-            self.sample.edit_output._parser_metrics
+            self.sample.edit_output.parser_metrics
         )?;
-        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output._raw_edits)?;
+        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output.raw_edits)?;
         Ok(())
     }
 }

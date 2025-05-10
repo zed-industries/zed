@@ -540,13 +540,9 @@ impl CloudLanguageModel {
         let mut retry_delay = Duration::from_secs(1);
 
         loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
-            {
-                request_builder.uri(completions_url)
-            } else {
-                request_builder.uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
-            };
+            let request_builder = http_client::Request::builder()
+                .method(Method::POST)
+                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
             let request_builder = if let Some(app_version) = app_version {
                 request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
             } else {
@@ -615,7 +611,7 @@ impl CloudLanguageModel {
                         .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
                     {
                         let plan = match plan {
-                            zed_llm_client::Plan::Free => Plan::Free,
+                            zed_llm_client::Plan::ZedFree => Plan::Free,
                             zed_llm_client::Plan::ZedPro => Plan::ZedPro,
                             zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
                         };
@@ -743,17 +739,6 @@ impl LanguageModel for CloudLanguageModel {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
 
-                    let request_builder = http_client::Request::builder().method(Method::POST);
-                    let request_builder =
-                        if let Ok(completions_url) = std::env::var("ZED_COUNT_TOKENS_URL") {
-                            request_builder.uri(completions_url)
-                        } else {
-                            request_builder.uri(
-                                http_client
-                                    .build_zed_llm_url("/count_tokens", &[])?
-                                    .as_ref(),
-                            )
-                        };
                     let request_body = CountTokensBody {
                         provider: zed_llm_client::LanguageModelProvider::Google,
                         model: model_id,
@@ -761,7 +746,13 @@ impl LanguageModel for CloudLanguageModel {
                             generate_content_request,
                         })?,
                     };
-                    let request = request_builder
+                    let request = http_client::Request::builder()
+                        .method(Method::POST)
+                        .uri(
+                            http_client
+                                .build_zed_llm_url("/count_tokens", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "application/json")
                         .header("Authorization", format!("Bearer {token}"))
                         .body(serde_json::to_string(&request_body)?.into())?;
