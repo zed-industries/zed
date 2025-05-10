@@ -98,6 +98,7 @@ impl AgentConfiguration {
 
     fn remove_provider_configuration_view(&mut self, provider_id: &LanguageModelProviderId) {
         self.configuration_views_by_provider.remove(provider_id);
+        self.expanded_provider_configurations.remove(provider_id);
     }
 
     fn add_provider_configuration_view(
