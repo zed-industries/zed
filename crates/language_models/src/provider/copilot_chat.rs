@@ -5,8 +5,8 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, CopilotChat, Model as CopilotChatModel, Request as CopilotChatRequest,
-    ResponseEvent, Tool, ToolCall,
+    ChatMessage, CopilotChat, Model as CopilotChatModel, ModelVendor,
+    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
@@ -20,12 +20,11 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
-use strum::IntoEnumIterator;
 use ui::prelude::*;
 
 use super::anthropic::count_anthropic_tokens;
@@ -100,17 +99,26 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         IconName::Copilot
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(CopilotChatModel::default()))
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let models = CopilotChat::global(cx).and_then(|m| m.read(cx).models())?;
+        models
+            .first()
+            .map(|model| self.create_language_model(model.clone()))
     }
 
-    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(CopilotChatModel::default_fast()))
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        // The default model should be Copilot Chat's 'base model', which is likely a relatively fast
+        // model (e.g. 4o) and a sensible choice when considering premium requests
+        self.default_model(cx)
     }
 
-    fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        CopilotChatModel::iter()
-            .map(|model| self.create_language_model(model))
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let Some(models) = CopilotChat::global(cx).and_then(|m| m.read(cx).models()) else {
+            return Vec::new();
+        };
+        models
+            .iter()
+            .map(|model| self.create_language_model(model.clone()))
             .collect()
     }
 
@@ -187,13 +195,15 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        match self.model {
-            CopilotChatModel::Gpt4o
-            | CopilotChatModel::Gpt4_1
-            | CopilotChatModel::O4Mini
-            | CopilotChatModel::Claude3_5Sonnet
-            | CopilotChatModel::Claude3_7Sonnet => true,
-            _ => false,
+        self.model.supports_tools()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        match self.model.vendor() {
+            ModelVendor::OpenAI | ModelVendor::Anthropic => {
+                LanguageModelToolSchemaFormat::JsonSchema
+            }
+            ModelVendor::Google => LanguageModelToolSchemaFormat::JsonSchemaSubset,
         }
     }
 
@@ -218,25 +228,13 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        match self.model {
-            CopilotChatModel::Claude3_5Sonnet
-            | CopilotChatModel::Claude3_7Sonnet
-            | CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
-                count_google_tokens(request, cx)
+        match self.model.vendor() {
+            ModelVendor::Anthropic => count_anthropic_tokens(request, cx),
+            ModelVendor::Google => count_google_tokens(request, cx),
+            ModelVendor::OpenAI => {
+                let model = open_ai::Model::from_id(self.model.id()).unwrap_or_default();
+                count_open_ai_tokens(request, model, cx)
             }
-            CopilotChatModel::Gpt4o => count_open_ai_tokens(request, open_ai::Model::FourOmni, cx),
-            CopilotChatModel::Gpt4 => count_open_ai_tokens(request, open_ai::Model::Four, cx),
-            CopilotChatModel::Gpt4_1 => {
-                count_open_ai_tokens(request, open_ai::Model::FourPointOne, cx)
-            }
-            CopilotChatModel::Gpt3_5Turbo => {
-                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
-            }
-            CopilotChatModel::O1 => count_open_ai_tokens(request, open_ai::Model::O1, cx),
-            CopilotChatModel::O3Mini => count_open_ai_tokens(request, open_ai::Model::O3Mini, cx),
-            CopilotChatModel::O3 => count_open_ai_tokens(request, open_ai::Model::O3, cx),
-            CopilotChatModel::O4Mini => count_open_ai_tokens(request, open_ai::Model::O4Mini, cx),
         }
     }
 
@@ -430,8 +428,6 @@ impl CopilotChatLanguageModel {
         &self,
         request: LanguageModelRequest,
     ) -> Result<CopilotChatRequest> {
-        let model = self.model.clone();
-
         let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
         for message in request.messages {
             if let Some(last_message) = request_messages.last_mut() {
@@ -545,9 +541,9 @@ impl CopilotChatLanguageModel {
         Ok(CopilotChatRequest {
             intent: true,
             n: 1,
-            stream: model.uses_streaming(),
+            stream: self.model.uses_streaming(),
             temperature: 0.1,
-            model,
+            model: self.model.id().to_string(),
             messages,
             tools,
             tool_choice: request.tool_choice.map(|choice| match choice {
