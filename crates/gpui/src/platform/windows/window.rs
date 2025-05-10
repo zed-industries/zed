@@ -589,6 +589,10 @@ impl PlatformWindow for WindowsWindow {
         current_modifiers()
     }
 
+    fn capslock(&self) -> Capslock {
+        current_capslock()
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.state.borrow_mut().input_handler = Some(input_handler);
     }
