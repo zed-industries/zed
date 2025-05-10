@@ -59,8 +59,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, SplitButton,
-    Tooltip, prelude::*,
+    Checkbox, CheckboxWithLabel, ContextMenu, ElevationIndex, Label, LabelSize, PopoverMenu,
+    Scrollbar, ScrollbarState, SplitButton, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::AppState;
@@ -341,6 +341,7 @@ pub struct GitPanel {
     pending: Vec<PendingOperation>,
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
+    signoff: bool,
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
@@ -505,6 +506,7 @@ impl GitPanel {
             pending: Vec::new(),
             pending_commit: None,
             amend_pending: false,
+            signoff: false,
             pending_serialization: Task::ready(None),
             single_staged_entry: None,
             single_tracked_entry: None,
@@ -1413,7 +1415,14 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             telemetry::event!("Git Committed", source = "Git Panel");
-            self.commit_changes(CommitOptions { amend: false }, window, cx)
+            self.commit_changes(
+                CommitOptions {
+                    amend: false,
+                    signoff: self.signoff(),
+                },
+                window,
+                cx,
+            )
         } else {
             cx.propagate();
         }
@@ -1437,7 +1446,14 @@ impl GitPanel {
                 } else {
                     telemetry::event!("Git Amended", source = "Git Panel");
                     self.set_amend_pending(false, cx);
-                    self.commit_changes(CommitOptions { amend: true }, window, cx);
+                    self.commit_changes(
+                        CommitOptions {
+                            amend: true,
+                            signoff: self.signoff(),
+                        },
+                        window,
+                        cx,
+                    );
                 }
             }
         } else {
@@ -1568,6 +1584,7 @@ impl GitPanel {
                     Ok(()) => {
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
+                        this.set_signoff(false, cx);
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }
@@ -3045,6 +3062,7 @@ impl GitPanel {
                                 h_flex()
                                     .gap_0p5()
                                     .children(enable_coauthors)
+                                    .child(self.render_signoff_checkbox(cx))
                                     .child(self.render_commit_button(has_previous_commit, cx)),
                             ),
                     )
@@ -3102,6 +3120,7 @@ impl GitPanel {
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let title = self.commit_button_title();
         let commit_tooltip_focus_handle = self.commit_editor.focus_handle(cx);
+        let signoff = self.signoff();
         div()
             .id("commit-wrapper")
             .on_hover(cx.listener(move |this, hovered, _, cx| {
@@ -3154,7 +3173,10 @@ impl GitPanel {
                                             .update(cx, |git_panel, cx| {
                                                 git_panel.set_amend_pending(false, cx);
                                                 git_panel.commit_changes(
-                                                    CommitOptions { amend: true },
+                                                    CommitOptions {
+                                                        amend: true,
+                                                        signoff,
+                                                    },
                                                     window,
                                                     cx,
                                                 );
@@ -3185,7 +3207,10 @@ impl GitPanel {
                                 git_panel
                                     .update(cx, |git_panel, cx| {
                                         git_panel.commit_changes(
-                                            CommitOptions { amend: false },
+                                            CommitOptions {
+                                                amend: false,
+                                                signoff,
+                                            },
                                             window,
                                             cx,
                                         );
@@ -3243,7 +3268,10 @@ impl GitPanel {
                                     git_panel
                                         .update(cx, |git_panel, cx| {
                                             git_panel.commit_changes(
-                                                CommitOptions { amend: false },
+                                                CommitOptions {
+                                                    amend: false,
+                                                    signoff,
+                                                },
                                                 window,
                                                 cx,
                                             );
@@ -3254,6 +3282,27 @@ impl GitPanel {
                     )
                 })
             })
+    }
+
+    pub(crate) fn render_signoff_checkbox(&self, cx: &mut Context<Self>) -> AnyElement {
+        let enabled = self.signoff();
+        h_flex()
+            .id("signoff")
+            .cursor_pointer()
+            .tooltip(move |_, cx| {
+                Tooltip::simple("Add a Signed-off-by trailer by the committer at the end of the commit log message.", cx)
+            })
+            .child(CheckboxWithLabel::new(
+                "commit-signoff",
+                Label::new("signoff").size(LabelSize::Small),
+                if enabled {
+                    ui::ToggleState::Selected
+                } else {
+                    ui::ToggleState::Unselected
+                },
+                cx.listener(Self::toggle_signoff),
+            ))
+            .into_any_element()
     }
 
     fn render_pending_amend(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4043,6 +4092,31 @@ impl GitPanel {
 
     fn has_write_access(&self, cx: &App) -> bool {
         !self.project.read(cx).is_read_only(cx)
+    }
+
+    pub fn signoff(&self) -> bool {
+        self.signoff
+    }
+
+    fn set_signoff(&mut self, value: bool, cx: &mut Context<Self>) {
+        self.signoff = value;
+        cx.notify();
+    }
+
+    fn toggle_signoff(
+        &mut self,
+        selection: &ToggleState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_signoff(
+            match selection {
+                ToggleState::Unselected => false,
+                ToggleState::Selected => true,
+                ToggleState::Indeterminate => return,
+            },
+            cx,
+        );
     }
 
     pub fn amend_pending(&self) -> bool {
