@@ -53,7 +53,11 @@
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
       "f3": "editor::FindNextMatch",
-      "shift-f3": "editor::FindPreviousMatch"
+      "shift-f3": "editor::FindPreviousMatch",
+      "ctrl-right": "editor::MoveToNextSubwordEnd",
+      "ctrl-left": "editor::MoveToPreviousSubwordStart",
+      "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-shift-left": "editor::SelectToPreviousSubwordStart"
     }
   },
   {
