@@ -752,9 +752,9 @@ mod tests {
         match task.output.await {
             Ok(result) => {
                 if cfg!(windows) {
-                    result.content.replace("root\\", "root/")
+                    result.content.as_str().unwrap().replace("root\\", "root/")
                 } else {
-                    result.content
+                    result.content.as_str().unwrap().to_string()
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),

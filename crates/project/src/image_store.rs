@@ -229,6 +229,27 @@ pub fn is_image_file(project: &Entity<Project>, path: &ProjectPath, cx: &App) ->
     }
 }
 
+pub fn image_extension(project: &Entity<Project>, path: &ProjectPath, cx: &App) -> Option<String> {
+    let worktree_abs_path = project
+        .read(cx)
+        .worktree_for_id(path.worktree_id, cx)?
+        .read(cx)
+        .abs_path();
+
+    path.path
+        .extension()
+        .or_else(|| worktree_abs_path.extension())
+        .and_then(OsStr::to_str)
+        .map(str::to_lowercase)
+        .and_then(|ext| {
+            if !ext.contains("svg") && Img::extensions().contains(&ext.as_str()) {
+                Some(ext)
+            } else {
+                None
+            }
+        })
+}
+
 impl ProjectItem for ImageItem {
     fn try_open(
         project: &Entity<Project>,

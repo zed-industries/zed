@@ -10,8 +10,8 @@ use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext};
 use indoc::{formatdoc, indoc};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId,
+    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId,
 };
 use project::Project;
 use rand::prelude::*;
@@ -951,7 +951,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: result.into(),
+        content: LanguageModelToolResultContent::Text(result.into()),
         output: None,
     })
 }

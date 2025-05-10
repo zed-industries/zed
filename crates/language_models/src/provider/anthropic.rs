@@ -1,6 +1,9 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
-use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
+use anthropic::{
+    AnthropicError, AnthropicModelMode, ContentDelta, Event, MaybeTaggedToolResultContent,
+    ResponseContent, ToolResultContent, Usage,
+};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -15,8 +18,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, MessageContent,
-    RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -346,9 +349,14 @@ pub fn count_anthropic_tokens(
                     MessageContent::ToolUse(_tool_use) => {
                         // TODO: Estimate token usage from tool uses.
                     }
-                    MessageContent::ToolResult(tool_result) => {
-                        string_contents.push_str(&tool_result.content);
-                    }
+                    MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                        LanguageModelToolResultContent::Text(txt) => {
+                            string_contents.push_str(txt);
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                    },
                 }
             }
 
@@ -415,6 +423,10 @@ impl LanguageModel for AnthropicModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn image_extensions_accepted(&self) -> &'static [&'static str] {
+        &["png"]
     }
 
     fn supports_tools(&self) -> bool {
@@ -575,7 +587,22 @@ pub fn into_anthropic(
                             Some(anthropic::RequestContent::ToolResult {
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content.to_string(),
+                                content: match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        MaybeTaggedToolResultContent::Untagged(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        MaybeTaggedToolResultContent::Tagged(vec![
+                                            ToolResultContent::Image {
+                                                source: anthropic::ImageSource {
+                                                    source_type: "base64".to_string(),
+                                                    media_type: "image/png".to_string(),
+                                                    data: image.source.to_string(),
+                                                },
+                                            },
+                                        ])
+                                    }
+                                },
                                 cache_control,
                             })
                         }

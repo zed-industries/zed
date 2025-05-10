@@ -12,7 +12,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -392,8 +393,16 @@ pub fn into_open_ai(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
+                    let content = match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => text.to_string(),
+                        LanguageModelToolResultContent::Image(_) => {
+                            // TODO: Open AI image support
+                            "[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()
+                        }
+                    };
+
                     messages.push(open_ai::RequestMessage::Tool {
-                        content: tool_result.content.to_string(),
+                        content,
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }

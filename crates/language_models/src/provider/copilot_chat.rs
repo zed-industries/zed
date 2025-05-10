@@ -20,8 +20,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -469,9 +469,17 @@ impl CopilotChatLanguageModel {
                 Role::User => {
                     for content in &message.content {
                         if let MessageContent::ToolResult(tool_result) = content {
+                            let content = match &tool_result.content {
+                                LanguageModelToolResultContent::Text(text) => text.to_string(),
+                                LanguageModelToolResultContent::Image(_) => {
+                                    // TODO: Copilot Chat image support
+                                    "[Tool responded with an image, but Zed doesn't support these in Copilot Chat models yet]".to_string()
+                                }
+                            };
+
                             messages.push(ChatMessage::Tool {
                                 tool_call_id: tool_result.tool_use_id.to_string(),
-                                content: tool_result.content.to_string(),
+                                content,
                             });
                         }
                     }
