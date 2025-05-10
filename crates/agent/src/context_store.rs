@@ -58,9 +58,10 @@ impl ContextStore {
         self.context_set.iter().map(|entry| entry.as_ref())
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.context_set.clear();
         self.context_thread_ids.clear();
+        cx.notify();
     }
 
     pub fn new_context_for_thread(
