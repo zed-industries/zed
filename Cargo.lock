@@ -3999,6 +3999,7 @@ dependencies = [
  "async-pipe",
  "async-tar",
  "async-trait",
+ "async_zip",
  "client",
  "collections",
  "dap-types",
