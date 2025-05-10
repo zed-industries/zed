@@ -608,9 +608,10 @@ impl ToolCard for TerminalToolCard {
                         .code_block_renderer(
                             markdown::CodeBlockRenderer::Default {
                                 copy_button: false,
-                                border: true,
+                                copy_button_on_hover: true,
+                                border: false,
                             },
-                        )
+                        ),
                     ),
             )
             .when(self.preview_expanded && !should_hide_terminal, |this| {

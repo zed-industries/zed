@@ -2395,6 +2395,7 @@ impl ActiveThread {
                                 markdown_element.code_block_renderer(
                                     markdown::CodeBlockRenderer::Default {
                                         copy_button: false,
+                                        copy_button_on_hover: false,
                                         border: true,
                                     },
                                 )
@@ -2714,6 +2715,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click({
@@ -2744,6 +2746,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click({
