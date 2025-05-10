@@ -720,12 +720,15 @@ fn in_word(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        |left, right, _| classifier.kind(left) != classifier.kind(right),
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        classifier.kind(left) != classifier.kind(right)
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        |left, right, _index| classifier.kind(left) != classifier.kind(right),
+    );
 
     Some(start..end)
 }
@@ -758,7 +761,7 @@ fn in_subword(
             map,
             right(map, relative_to, 1),
             movement::FindRange::SingleLine,
-            |left, right| {
+            |left, right, _| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
                 let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
                     || left == '_' && right != '_'
@@ -767,7 +770,7 @@ fn in_subword(
             },
         )
     } else {
-        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right, _| {
             let is_word_start = classifier.kind(left) != classifier.kind(right);
             let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
                 || left == '_' && right != '_'
@@ -776,7 +779,7 @@ fn in_subword(
         })
     };
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right, _| {
         let is_word_end = classifier.kind(left) != classifier.kind(right);
         let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
             || left != '_' && right == '_'
@@ -912,7 +915,7 @@ fn around_subword(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| {
+        |left, right, _| {
             let is_word_start = classifier.kind(left) != classifier.kind(right);
             let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
                 || left != '_' && right == '_'
@@ -921,7 +924,7 @@ fn around_subword(
         },
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right, _| {
         let is_word_end = classifier.kind(left) != classifier.kind(right);
         let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
             || left != '_' && right == '_'
@@ -972,11 +975,11 @@ fn around_next_word(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        |left, right, _| classifier.kind(left) != classifier.kind(right),
     );
 
     let mut word_found = false;
-    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
+    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right, _| {
         let left_kind = classifier.kind(left);
         let right_kind = classifier.kind(right);
 

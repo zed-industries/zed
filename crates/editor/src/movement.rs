@@ -264,7 +264,10 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
-    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right, index| {
+        if cfg!(target_os = "macos") && index == 0 && classifier.is_punctuation(right) {
+            return false;
+        }
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
     })
@@ -276,11 +279,16 @@ pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
-    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
-            || left == '\n'
-            || right == '\n'
-    })
+    find_preceding_boundary_display_point(
+        map,
+        point,
+        FindRange::MultiLine,
+        |left, right, _index| {
+            (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
+                || left == '\n'
+                || right == '\n'
+        },
+    )
 }
 
 /// Returns a position of the previous subword boundary, where a subword is defined as a run of
@@ -290,14 +298,19 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
-    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        let is_word_start =
-            classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
-        let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-            || left == '_' && right != '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_start || is_subword_start || left == '\n'
-    })
+    find_preceding_boundary_display_point(
+        map,
+        point,
+        FindRange::MultiLine,
+        |left, right, _index| {
+            let is_word_start =
+                classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
+            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+                || left == '_' && right != '_'
+                || left.is_lowercase() && right.is_uppercase();
+            is_word_start || is_subword_start || left == '\n'
+        },
+    )
 }
 
 /// Returns a position of the next word boundary, where a word character is defined as either
@@ -306,7 +319,10 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
-    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+    find_boundary(map, point, FindRange::MultiLine, |left, right, index| {
+        if cfg!(target_os = "macos") && index == 0 && classifier.is_punctuation(left) {
+            return false;
+        }
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
             || right == '\n'
     })
@@ -319,7 +335,7 @@ pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> D
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     let mut on_starting_row = true;
-    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+    find_boundary(map, point, FindRange::MultiLine, |left, right, _index| {
         if left == '\n' {
             on_starting_row = false;
         }
@@ -337,7 +353,7 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
-    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+    find_boundary(map, point, FindRange::MultiLine, |left, right, _index| {
         let is_word_end =
             (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
         let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
@@ -478,19 +494,21 @@ pub fn find_preceding_boundary_point(
     buffer_snapshot: &MultiBufferSnapshot,
     from: Point,
     find_range: FindRange,
-    mut is_boundary: impl FnMut(char, char) -> bool,
+    mut is_boundary: impl FnMut(char, char, usize) -> bool,
 ) -> Point {
     let mut prev_ch = None;
     let mut offset = from.to_offset(buffer_snapshot);
-
+    let mut index = 0;
     for ch in buffer_snapshot.reversed_chars_at(offset) {
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
+
         if let Some(prev_ch) = prev_ch {
-            if is_boundary(ch, prev_ch) {
+            if is_boundary(ch, prev_ch, index) {
                 break;
             }
+            index += 1;
         }
 
         offset -= ch.len_utf8();
@@ -508,7 +526,7 @@ pub fn find_preceding_boundary_display_point(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     find_range: FindRange,
-    is_boundary: impl FnMut(char, char) -> bool,
+    is_boundary: impl FnMut(char, char, usize) -> bool,
 ) -> DisplayPoint {
     let result = find_preceding_boundary_point(
         &map.buffer_snapshot,
@@ -518,7 +536,6 @@ pub fn find_preceding_boundary_display_point(
     );
     map.clip_point(result.to_display_point(map), Bias::Left)
 }
-
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the
 /// given predicate returning true. The predicate is called with the character to the left and right
 /// of the candidate boundary location, and will be called with `\n` characters indicating the start
@@ -528,25 +545,26 @@ pub fn find_boundary_point(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     find_range: FindRange,
-    mut is_boundary: impl FnMut(char, char) -> bool,
+    mut is_boundary: impl FnMut(char, char, usize) -> bool,
     return_point_before_boundary: bool,
 ) -> DisplayPoint {
     let mut offset = from.to_offset(map, Bias::Right);
     let mut prev_offset = offset;
     let mut prev_ch = None;
-
+    let mut index = 0;
     for ch in map.buffer_snapshot.chars_at(offset) {
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
         if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
+            if is_boundary(prev_ch, ch, index) {
                 if return_point_before_boundary {
                     return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
                 } else {
                     break;
                 }
             }
+            index += 1;
         }
         prev_offset = offset;
         offset += ch.len_utf8();
@@ -654,7 +672,7 @@ pub fn find_boundary(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     find_range: FindRange,
-    is_boundary: impl FnMut(char, char) -> bool,
+    is_boundary: impl FnMut(char, char, usize) -> bool,
 ) -> DisplayPoint {
     find_boundary_point(map, from, find_range, is_boundary, false)
 }
@@ -663,7 +681,7 @@ pub fn find_boundary_exclusive(
     map: &DisplaySnapshot,
     from: DisplayPoint,
     find_range: FindRange,
-    is_boundary: impl FnMut(char, char) -> bool,
+    is_boundary: impl FnMut(char, char, usize) -> bool,
 ) -> DisplayPoint {
     find_boundary_point(map, from, find_range, is_boundary, true)
 }
@@ -846,7 +864,7 @@ mod tests {
         fn assert(
             marked_text: &str,
             cx: &mut gpui::App,
-            is_boundary: impl FnMut(char, char) -> bool,
+            is_boundary: impl FnMut(char, char, usize) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -860,14 +878,14 @@ mod tests {
             );
         }
 
-        assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
+        assert("abcˇdef\ngh\nijˇk", cx, |left, right, _| {
             left == 'c' && right == 'd'
         });
-        assert("abcdef\nˇgh\nijˇk", cx, |left, right| {
+        assert("abcdef\nˇgh\nijˇk", cx, |left, right, _| {
             left == '\n' && right == 'g'
         });
         let mut line_count = 0;
-        assert("abcdef\nˇgh\nijˇk", cx, |left, _| {
+        assert("abcdef\nˇgh\nijˇk", cx, |left, _, _| {
             if left == '\n' {
                 line_count += 1;
                 line_count == 2
@@ -939,7 +957,7 @@ mod tests {
                 &snapshot,
                 buffer_snapshot.len().to_display_point(&snapshot),
                 FindRange::MultiLine,
-                |left, _| left == 'e',
+                |left, _, _index| left == 'e',
             ),
             snapshot
                 .buffer_snapshot
@@ -1015,7 +1033,7 @@ mod tests {
         fn assert(
             marked_text: &str,
             cx: &mut gpui::App,
-            is_boundary: impl FnMut(char, char) -> bool,
+            is_boundary: impl FnMut(char, char, usize) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
@@ -1029,14 +1047,14 @@ mod tests {
             );
         }
 
-        assert("abcˇdef\ngh\nijˇk", cx, |left, right| {
+        assert("abcˇdef\ngh\nijˇk", cx, |left, right, _index| {
             left == 'j' && right == 'k'
         });
-        assert("abˇcdef\ngh\nˇijk", cx, |left, right| {
+        assert("abˇcdef\ngh\nˇijk", cx, |left, right, _index| {
             left == '\n' && right == 'i'
         });
         let mut line_count = 0;
-        assert("abcˇdef\ngh\nˇijk", cx, |left, _| {
+        assert("abcˇdef\ngh\nˇijk", cx, |left, _, _| {
             if left == '\n' {
                 line_count += 1;
                 line_count == 2
