@@ -279,4 +279,10 @@ impl ReplStore {
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
     }
+
+    #[cfg(test)]
+    pub fn set_kernel_specs_for_testing(&mut self, specs: Vec<KernelSpecification>, cx: &mut Context<Self>) {
+        self.kernel_specifications = specs;
+        cx.notify();
+    }
 }

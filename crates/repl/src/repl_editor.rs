@@ -635,6 +635,49 @@ mod tests {
 
     #[gpui::test]
     fn test_markdown_code_blocks(cx: &mut App) {
+        use crate::kernels::LocalKernelSpecification;
+        use jupyter_protocol::JupyterKernelspec;
+
+        // Initialize settings
+        settings::init(cx);
+        editor::init(cx);
+
+        // Initialize the ReplStore with a fake filesystem
+        let fs = Arc::new(project::RealFs::new(None, cx.background_executor().clone()));
+        ReplStore::init(fs, cx);
+
+        // Add mock kernel specifications for TypeScript and Python
+        let store = ReplStore::global(cx);
+        store.update(cx, |store, cx| {
+            let typescript_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
+                name: "typescript".into(),
+                kernelspec: JupyterKernelspec {
+                    argv: vec![],
+                    display_name: "TypeScript".into(),
+                    language: "typescript".into(),
+                    interrupt_mode: None,
+                    metadata: None,
+                    env: None,
+                },
+                path: std::path::PathBuf::new(),
+            });
+
+            let python_spec = KernelSpecification::Jupyter(LocalKernelSpecification {
+                name: "python".into(),
+                kernelspec: JupyterKernelspec {
+                    argv: vec![],
+                    display_name: "Python".into(),
+                    language: "python".into(),
+                    interrupt_mode: None,
+                    metadata: None,
+                    env: None,
+                },
+                path: std::path::PathBuf::new(),
+            });
+
+            store.set_kernel_specs_for_testing(vec![typescript_spec, python_spec], cx);
+        });
+
         let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
         let typescript = languages::language(
             "typescript",
