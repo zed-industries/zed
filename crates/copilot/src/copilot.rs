@@ -23,7 +23,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use request::StatusNotification;
+use request::DidChangeStatus;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::{
@@ -471,6 +471,7 @@ impl Copilot {
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
     ) {
+        let _ = cx;
         let start_language_server = async {
             let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
@@ -500,14 +501,93 @@ impl Copilot {
             )?;
 
             server
-                .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
+                .on_notification::<DidChangeStatus, _>({
+                    let this = this.clone();
+                    move |params, cx| {
+                        // Convert didChangeStatus to appropriate SignInStatus
+                        let sign_in_status = match params.kind.as_str() {
+                            "Error" => Some(request::SignInStatus::NotAuthorized {
+                                user: String::new(),
+                            }),
+                            "Normal" => Some(request::SignInStatus::AlreadySignedIn {
+                                user: String::new(),
+                            }),
+                            "Inactive" | "Warning" => None, // Don't change auth status for these
+                            _ => None,
+                        };
+
+                        if let Some(status) = sign_in_status {
+                            this.update(cx, |this, cx| {
+                                // Check current status before deciding to update
+                                if let CopilotServer::Running(server) = &this.server {
+                                    let should_update = match (&server.sign_in_status, &status) {
+                                        // If currently signing in, only update if receiving Authorized status
+                                        (
+                                            SignInStatus::SigningIn { .. },
+                                            request::SignInStatus::AlreadySignedIn { .. },
+                                        )
+                                        | (
+                                            SignInStatus::SigningIn { .. },
+                                            request::SignInStatus::Ok { user: Some(_) },
+                                        )
+                                        | (
+                                            SignInStatus::SigningIn { .. },
+                                            request::SignInStatus::MaybeOk { .. },
+                                        ) => true,
+
+                                        // Don't interrupt sign-in flow with an error
+                                        (SignInStatus::SigningIn { .. }, _) => false,
+
+                                        // Avoid redundant transitions between signed-out states
+                                        (
+                                            SignInStatus::SignedOut { .. },
+                                            request::SignInStatus::NotSignedIn,
+                                        )
+                                        | (
+                                            SignInStatus::SignedOut { .. },
+                                            request::SignInStatus::Ok { user: None },
+                                        ) => false,
+
+                                        // Avoid redundant transitions between authorized states
+                                        (
+                                            SignInStatus::Authorized,
+                                            request::SignInStatus::AlreadySignedIn { .. },
+                                        )
+                                        | (
+                                            SignInStatus::Authorized,
+                                            request::SignInStatus::MaybeOk { .. },
+                                        )
+                                        | (
+                                            SignInStatus::Authorized,
+                                            request::SignInStatus::Ok { user: Some(_) },
+                                        ) => false,
+
+                                        // Avoid redundant transitions between unauthorized states
+                                        (
+                                            SignInStatus::Unauthorized,
+                                            request::SignInStatus::NotAuthorized { .. },
+                                        ) => false,
+
+                                        // Allow all other transitions
+                                        _ => true,
+                                    };
+
+                                    if should_update {
+                                        this.update_sign_in_status(status, cx);
+                                    }
+                                }
+                            })
+                            .ok();
+                        }
+                    }
+                })
                 .detach();
 
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
 
-            let editor_info = request::SetEditorInfoParams {
+            let initialization_options = request::InitializationOptions {
                 editor_info: request::EditorInfo {
                     name: "zed".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
@@ -517,12 +597,12 @@ impl Copilot {
                     version: "0.0.1".into(),
                 },
             };
-            let editor_info_json = serde_json::to_value(&editor_info)?;
+            let init_options_json = serde_json::to_value(&initialization_options)?;
 
             let server = cx
                 .update(|cx| {
                     let mut params = server.default_initialize_params(cx);
-                    params.initialization_options = Some(editor_info_json);
+                    params.initialization_options = Some(init_options_json);
                     server.initialize(params, configuration.into(), cx)
                 })?
                 .await?;
@@ -531,10 +611,6 @@ impl Copilot {
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
                 })
-                .await?;
-
-            server
-                .request::<request::SetEditorInfo>(editor_info)
                 .await?;
 
             anyhow::Ok((server, status))
@@ -578,15 +654,13 @@ impl Copilot {
                         .spawn(async move |this, cx| {
                             let sign_in = async {
                                 let sign_in = lsp
-                                    .request::<request::SignInInitiate>(
-                                        request::SignInInitiateParams {},
-                                    )
+                                    .request::<request::SignIn>(request::SignInParams {})
                                     .await?;
                                 match sign_in {
-                                    request::SignInInitiateResult::AlreadySignedIn { user } => {
-                                        Ok(request::SignInStatus::Ok { user: Some(user) })
+                                    request::SignInResult::AlreadySignedIn {} => {
+                                        Ok(request::SignInStatus::Ok { user: None })
                                     }
-                                    request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
+                                    request::SignInResult::PromptUserDeviceFlow(flow) => {
                                         this.update(cx, |this, cx| {
                                             if let CopilotServer::Running(RunningCopilotServer {
                                                 sign_in_status: status,
@@ -842,7 +916,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        self.request_completions::<request::GetCompletions, _>(buffer, position, cx)
+        self.request_completions::<request::TextDocumentInlineCompletion, _>(buffer, position, cx)
     }
 
     pub fn completions_cycling<T>(
@@ -854,7 +928,7 @@ impl Copilot {
     where
         T: ToPointUtf16,
     {
-        self.request_completions::<request::GetCompletionsCycling, _>(buffer, position, cx)
+        self.request_completions::<request::TextDocumentInlineCompletion, _>(buffer, position, cx)
     }
 
     pub fn accept_completion(
@@ -866,12 +940,15 @@ impl Copilot {
             Ok(server) => server,
             Err(error) => return Task::ready(Err(error)),
         };
-        let request =
-            server
-                .lsp
-                .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
-                    uuid: completion.uuid.clone(),
-                });
+        let request = server
+            .lsp
+            .request::<lsp::ExecuteCommand>(lsp::ExecuteCommandParams {
+                command: "github.copilot.didAcceptCompletionItem".into(),
+                arguments: vec![serde_json::Value::String(completion.uuid.clone())],
+                work_done_progress_params: lsp::WorkDoneProgressParams {
+                    work_done_token: None,
+                },
+            });
         cx.background_spawn(async move {
             request.await?;
             Ok(())
@@ -911,8 +988,8 @@ impl Copilot {
     where
         R: 'static
             + lsp::request::Request<
-                Params = request::GetCompletionsParams,
-                Result = request::GetCompletionsResult,
+                Params = request::TextDocumentInlineCompletionParams,
+                Result = request::TextDocumentInlineCompletionResult,
             >,
         T: ToPointUtf16,
     {
@@ -938,28 +1015,29 @@ impl Copilot {
         );
         let tab_size = settings.tab_size;
         let hard_tabs = settings.hard_tabs;
-        let relative_path = buffer
-            .file()
-            .map(|file| file.path().to_path_buf())
-            .unwrap_or_default();
+        // let relative_path = buffer
+        //     .file()
+        //     .map(|file| file.path().to_path_buf())
+        //     .unwrap_or_default();
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
-                .request::<R>(request::GetCompletionsParams {
-                    doc: request::GetCompletionsDocument {
-                        uri,
-                        tab_size: tab_size.into(),
-                        indent_size: 1,
-                        insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_string_lossy().into(),
-                        position: point_to_lsp(position),
+                .request::<R>(request::TextDocumentInlineCompletionParams {
+                    text_document: request::TextDocumentIdentifier {
+                        uri: uri.clone(),
                         version: version.try_into().unwrap(),
                     },
+                    formatting_options: request::FormattingOptions {
+                        tab_size: tab_size.into(),
+                        insert_spaces: !hard_tabs,
+                    },
+                    position: point_to_lsp(position),
+                    context: request::InlineCompletionContext { trigger_kind: 2 },
                 })
                 .await?;
             let completions = result
-                .completions
+                .items
                 .into_iter()
                 .map(|completion| {
                     let start = snapshot
@@ -967,9 +1045,16 @@ impl Copilot {
                     let end =
                         snapshot.clip_point_utf16(point_from_lsp(completion.range.end), Bias::Left);
                     Completion {
-                        uuid: completion.uuid,
+                        uuid: completion
+                            .command
+                            .arguments
+                            .as_ref()
+                            .and_then(|args| args.get(0))
+                            .and_then(|val| val.as_str())
+                            .map(String::from)
+                            .unwrap_or_default(),
                         range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
-                        text: completion.text,
+                        text: completion.insert_text,
                     }
                 })
                 .collect();
@@ -1208,10 +1293,8 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
-        lsp.set_request_handler::<request::SignInInitiate, _, _>(|_, _| async {
-            Ok(request::SignInInitiateResult::AlreadySignedIn {
-                user: "user-1".into(),
-            })
+        lsp.set_request_handler::<request::SignIn, _, _>(|_, _| async {
+            Ok(request::SignInResult::AlreadySignedIn {})
         });
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))
