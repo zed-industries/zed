@@ -395,8 +395,11 @@ fn handle_keydown_msg(
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
+        KeystrokeOrModifier::Modifier(modifiers, capslock) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
+            })
         }
     };
 
@@ -422,8 +425,11 @@ fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
 
     let event = match keystroke_or_modifier {
         KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyUp(KeyUpEvent { keystroke }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
+        KeystrokeOrModifier::Modifier(modifiers, capslock) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
+            })
         }
     };
 
@@ -1305,13 +1311,15 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
 
 enum KeystrokeOrModifier {
     Keystroke(Keystroke),
-    Modifier(Modifiers),
+    Modifier(Modifiers, Capslock),
 }
 
 fn parse_keystroke_from_vkey(wparam: WPARAM, is_keyup: bool) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
 
     let modifiers = current_modifiers();
+
+    let capslock = current_capslock();
 
     let key = match VIRTUAL_KEY(vk_code) {
         VK_BACK => "backspace",
@@ -1332,8 +1340,8 @@ fn parse_keystroke_from_vkey(wparam: WPARAM, is_keyup: bool) -> Option<Keystroke
         VK_DELETE => "delete",
         VK_APPS => "menu",
         _ => {
-            if is_modifier(VIRTUAL_KEY(vk_code)) {
-                return Some(KeystrokeOrModifier::Modifier(modifiers));
+            if is_modifier(VIRTUAL_KEY(vk_code)) || is_capslock(VIRTUAL_KEY(vk_code)) {
+                return Some(KeystrokeOrModifier::Modifier(modifiers, capslock));
             }
 
             if modifiers.control || modifiers.alt || is_keyup {
@@ -1471,6 +1479,10 @@ fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
     )
 }
 
+fn is_capslock(virtual_key: VIRTUAL_KEY) -> bool {
+    matches!(virtual_key, VK_CAPITAL)
+}
+
 #[inline]
 pub(crate) fn current_modifiers() -> Modifiers {
     Modifiers {
@@ -1480,6 +1492,12 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+#[inline]
+pub(crate) fn current_capslock() -> Capslock {
+    let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
+    Capslock { on: on }
 }
 
 fn get_client_area_insets(
