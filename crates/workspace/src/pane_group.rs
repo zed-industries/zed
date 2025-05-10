@@ -1176,7 +1176,7 @@ mod element {
                         if self.active_pane_ix == Some(ix) {
                             magnification
                         } else {
-                            1.
+                            total_flex / len as f32
                         }
                     })
                     .unwrap_or_else(|| flexes[ix]);
@@ -1230,7 +1230,8 @@ mod element {
             window: &mut Window,
             cx: &mut App,
         ) {
-            for child in &mut layout.children {
+            let children_len = layout.children.len();
+            for (_ix, child) in layout.children.iter_mut().enumerate() {
                 child.element.paint(window, cx);
             }
 
@@ -1250,7 +1251,23 @@ mod element {
                 .border_size
                 .and_then(|val| (val >= 0.).then_some(val));
 
-            for (ix, child) in &mut layout.children.iter_mut().enumerate() {
+            for (ix, child) in layout.children.iter_mut().enumerate() {
+                if ix < children_len - 1 {
+                    let divider_bounds = Bounds {
+                        origin: child.bounds.origin.apply_along(self.axis, |origin| {
+                            origin + child.bounds.size.along(self.axis)
+                        }),
+                        size: child
+                            .bounds
+                            .size
+                            .apply_along(self.axis, |_| px(DIVIDER_SIZE)),
+                    };
+                    window.paint_quad(gpui::fill(
+                        divider_bounds,
+                        cx.theme().colors().pane_group_border,
+                    ));
+                }
+
                 if overlay_opacity.is_some() || overlay_border.is_some() {
                     // the overlay has to be painted in origin+1px with size width-1px
                     // in order to accommodate the divider between panels
