@@ -8754,16 +8754,13 @@ impl Editor {
         let rows_iter = selections.iter().map(|s| s.head().row);
         let suggested_indents = snapshot.suggested_indents(rows_iter, cx);
 
-        let is_any_cursor_at_word_boundary = selections
+        let has_some_cursor_in_whitespace = selections
             .iter()
             .filter(|selection| selection.is_empty())
             .any(|selection| {
                 let cursor = selection.head();
                 let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
-                let final_column_in_line = snapshot
-                    .buffer_line_for_row(MultiBufferRow(cursor.row))
-                    .map_or(0, |(_, range)| range.end.column);
-                cursor.column == current_indent.len && final_column_in_line != cursor.column
+                cursor.column < current_indent.len
             });
 
         let mut edits = Vec::new();
@@ -8782,13 +8779,22 @@ impl Editor {
                 continue;
             }
 
-            // If the selection is empty and the cursor is in the leading whitespace before the
-            // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
+                // Don't do anything if already at suggested indent
+                // and there is any other cursor which is not
+                if has_some_cursor_in_whitespace
+                    && cursor.column == current_indent.len
+                    && current_indent.len == suggested_indent.len
+                {
+                    continue;
+                }
+
+                // Adjust line and move cursor to suggested indent
+                // if cursor is not at suggested indent
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
@@ -8801,15 +8807,17 @@ impl Editor {
                             current_indent,
                             suggested_indent,
                         ));
-                        if is_any_cursor_at_word_boundary {
-                            row_delta = suggested_indent.len - cursor.column;
-                        } else {
-                            row_delta = suggested_indent.len - current_indent.len;
-                        }
+                        row_delta = suggested_indent.len - current_indent.len;
                     }
-                    if !is_any_cursor_at_word_boundary {
-                        continue;
-                    }
+                    continue;
+                }
+
+                // If current indent is more than suggested indent
+                // only move cursor to current indent and skip indent
+                if cursor.column < current_indent.len && current_indent.len > suggested_indent.len {
+                    selection.start = Point::new(cursor.row, current_indent.len);
+                    selection.end = selection.start;
+                    continue;
                 }
             }
 
