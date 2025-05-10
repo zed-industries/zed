@@ -2955,7 +2955,8 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     );
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // when all cursors are to the left of the suggested indent, then auto-indent all.
+    // test when all cursors are not at suggested indent
+    // then simply move to their suggested indent location
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -2972,9 +2973,8 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         );
     "});
 
-    // cursors that are already at the suggested indent level do not move
-    // until other cursors that are to the left of the suggested indent
-    // auto-indent.
+    // test cursor already at suggested indent not moving when
+    // other cursors are yet to reach their suggested indents
     cx.set_state(indoc! {"
         ˇ
         const a: B = (
@@ -2998,8 +2998,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
             ˇ)
         );
     "});
-    // once all multi-cursors are at the suggested
-    // indent level, they all insert a soft tab together.
+    // test when all cursors are at suggested indent then tab is inserted
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.assert_editor_state(indoc! {"
             ˇ
@@ -3010,6 +3009,112 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
                 )
                     ˇ
                 ˇ)
+        );
+    "});
+
+    // test when current indent is less than suggested indent,
+    // we adjust line to match suggested indent and move cursor to it
+    //
+    // when no other cursor is at word boundary, all of them should move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ   )
+        ˇ   )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                ˇ)
+            ˇ)
+        );
+    "});
+
+    // test when current indent is less than suggested indent,
+    // we adjust line to match suggested indent and move cursor to it
+    //
+    // when some other cursor is at word boundary, it should not move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ   )
+           ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                ˇ)
+            ˇ)
+        );
+    "});
+
+    // test when current indent is more than suggested indent,
+    // we just move cursor to current indent instead of suggested indent
+    //
+    // when no other cursor is at word boundary, all of them should move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ                )
+        ˇ   )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                        ˇ)
+            ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                        ˇ
+                            ˇ)
+                ˇ)
+        );
+    "});
+
+    // test when current indent is more than suggested indent,
+    // we just move cursor to current indent instead of suggested indent
+    //
+    // when some other cursor is at word boundary, it doesn't move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ                )
+            ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                        ˇ)
+            ˇ)
         );
     "});
 
@@ -8984,6 +9089,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         },
                     })
                     .await
+                    .into_response()
                     .unwrap();
                 Ok(Some(json!(null)))
             }
@@ -19246,6 +19352,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                             },
                         )
                         .await
+                        .into_response()
                         .unwrap();
                     Ok(Some(json!(null)))
                 }

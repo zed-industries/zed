@@ -5093,27 +5093,19 @@ impl Editor {
         let snippet;
         let new_text;
         if completion.is_snippet() {
-            // lsp returns function definition with placeholders in "new_text"
-            // when configured from language server, even when renaming a function
-            //
-            // in such cases, we use the label instead
-            // https://github.com/zed-industries/zed/issues/29982
-            let snippet_source = completion
-                .label()
-                .filter(|label| {
-                    completion.kind() == Some(CompletionItemKind::FUNCTION)
-                        && label != &completion.new_text
-                })
-                .and_then(|label| {
-                    let cursor_offset = newest_anchor.head().to_offset(&snapshot);
-                    let next_char_is_not_whitespace = snapshot
-                        .chars_at(cursor_offset)
-                        .next()
-                        .map_or(true, |ch| !ch.is_whitespace());
-                    next_char_is_not_whitespace.then_some(label)
-                })
-                .unwrap_or(completion.new_text.clone());
-
+            let mut snippet_source = completion.new_text.clone();
+            if let Some(scope) = snapshot.language_scope_at(newest_anchor.head()) {
+                if scope.prefers_label_for_snippet_in_completion() {
+                    if let Some(label) = completion.label() {
+                        if matches!(
+                            completion.kind(),
+                            Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
+                        ) {
+                            snippet_source = label;
+                        }
+                    }
+                }
+            }
             snippet = Some(Snippet::parse(&snippet_source).log_err()?);
             new_text = snippet.as_ref().unwrap().text.clone();
         } else {
@@ -8829,15 +8821,13 @@ impl Editor {
                 continue;
             }
 
-            // If the selection is empty and the cursor is in the leading whitespace before the
-            // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
-                // If there exist any empty selection in the leading whitespace, then skip
-                // indent for selections at the boundary.
+                // Don't do anything if already at suggested indent
+                // and there is any other cursor which is not
                 if has_some_cursor_in_whitespace
                     && cursor.column == current_indent.len
                     && current_indent.len == suggested_indent.len
@@ -8845,6 +8835,8 @@ impl Editor {
                     continue;
                 }
 
+                // Adjust line and move cursor to suggested indent
+                // if cursor is not at suggested indent
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
@@ -8859,6 +8851,14 @@ impl Editor {
                         ));
                         row_delta = suggested_indent.len - current_indent.len;
                     }
+                    continue;
+                }
+
+                // If current indent is more than suggested indent
+                // only move cursor to current indent and skip indent
+                if cursor.column < current_indent.len && current_indent.len > suggested_indent.len {
+                    selection.start = Point::new(cursor.row, current_indent.len);
+                    selection.end = selection.start;
                     continue;
                 }
             }

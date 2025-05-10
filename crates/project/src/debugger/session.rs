@@ -1172,8 +1172,7 @@ impl Session {
                 self.clear_active_debug_line(cx);
             }
             Events::Terminated(_) => {
-                self.is_session_terminated = true;
-                self.clear_active_debug_line(cx);
+                self.shutdown(cx).detach();
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);

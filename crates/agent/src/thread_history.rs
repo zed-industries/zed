@@ -2,12 +2,11 @@ use std::fmt::Display;
 use std::ops::Range;
 use std::sync::Arc;
 
-use assistant_context_editor::SavedContextMetadata;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, ClickEvent, Empty, Entity, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use time::{OffsetDateTime, UtcOffset};
@@ -18,7 +17,6 @@ use ui::{
 use util::ResultExt;
 
 use crate::history_store::{HistoryEntry, HistoryStore};
-use crate::thread_store::SerializedThreadMetadata;
 use crate::{AgentPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
@@ -26,11 +24,12 @@ pub struct ThreadHistory {
     history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
+    hovered_index: Option<usize>,
     search_editor: Entity<Editor>,
     all_entries: Arc<Vec<HistoryEntry>>,
     // When the search is empty, we display date separators between history entries
     // This vector contains an enum of either a separator or an actual entry
-    separated_items: Vec<HistoryListItem>,
+    separated_items: Vec<ListItemType>,
     // Maps entry indexes to list item indexes
     separated_item_indexes: Vec<u32>,
     _separated_items_task: Option<Task<()>>,
@@ -52,7 +51,7 @@ enum SearchState {
     },
 }
 
-enum HistoryListItem {
+enum ListItemType {
     BucketSeparator(TimeBucket),
     Entry {
         index: usize,
@@ -60,11 +59,11 @@ enum HistoryListItem {
     },
 }
 
-impl HistoryListItem {
+impl ListItemType {
     fn entry_index(&self) -> Option<usize> {
         match self {
-            HistoryListItem::BucketSeparator(_) => None,
-            HistoryListItem::Entry { index, .. } => Some(*index),
+            ListItemType::BucketSeparator(_) => None,
+            ListItemType::Entry { index, .. } => Some(*index),
         }
     }
 }
@@ -102,6 +101,7 @@ impl ThreadHistory {
             history_store,
             scroll_handle,
             selected_index: 0,
+            hovered_index: None,
             search_state: SearchState::Empty,
             all_entries: Default::default(),
             separated_items: Default::default(),
@@ -117,40 +117,21 @@ impl ThreadHistory {
     }
 
     fn update_all_entries(&mut self, cx: &mut Context<Self>) {
-        self.all_entries = self
+        let new_entries: Arc<Vec<HistoryEntry>> = self
             .history_store
             .update(cx, |store, cx| store.entries(cx))
             .into();
 
-        self.set_selected_entry_index(0, cx);
-        self.update_separated_items(cx);
-
-        match &self.search_state {
-            SearchState::Empty => {}
-            SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
-                self.search(query.clone(), cx);
-            }
-        }
-        cx.notify();
-    }
-
-    fn update_separated_items(&mut self, cx: &mut Context<Self>) {
         self._separated_items_task.take();
-        let all_entries = self.all_entries.clone();
 
-        let mut items = std::mem::take(&mut self.separated_items);
-        let mut indexes = std::mem::take(&mut self.separated_item_indexes);
-        items.clear();
-        indexes.clear();
-        // We know there's going to be at least one bucket separator
-        items.reserve(all_entries.len() + 1);
-        indexes.reserve(all_entries.len() + 1);
+        let mut items = Vec::with_capacity(new_entries.len() + 1);
+        let mut indexes = Vec::with_capacity(new_entries.len() + 1);
 
         let bg_task = cx.background_spawn(async move {
             let mut bucket = None;
             let today = Local::now().naive_local().date();
 
-            for (index, entry) in all_entries.iter().enumerate() {
+            for (index, entry) in new_entries.iter().enumerate() {
                 let entry_date = entry
                     .updated_at()
                     .with_timezone(&Local)
@@ -160,23 +141,50 @@ impl ThreadHistory {
 
                 if Some(entry_bucket) != bucket {
                     bucket = Some(entry_bucket);
-                    items.push(HistoryListItem::BucketSeparator(entry_bucket));
+                    items.push(ListItemType::BucketSeparator(entry_bucket));
                 }
 
                 indexes.push(items.len() as u32);
-                items.push(HistoryListItem::Entry {
+                items.push(ListItemType::Entry {
                     index,
                     format: entry_bucket.into(),
                 });
             }
-            (items, indexes)
+            (new_entries, items, indexes)
         });
 
         let task = cx.spawn(async move |this, cx| {
-            let (items, indexes) = bg_task.await;
+            let (new_entries, items, indexes) = bg_task.await;
             this.update(cx, |this, cx| {
+                let previously_selected_entry =
+                    this.all_entries.get(this.selected_index).map(|e| e.id());
+
+                this.all_entries = new_entries;
                 this.separated_items = items;
                 this.separated_item_indexes = indexes;
+
+                match &this.search_state {
+                    SearchState::Empty => {
+                        if this.selected_index >= this.all_entries.len() {
+                            this.set_selected_entry_index(
+                                this.all_entries.len().saturating_sub(1),
+                                cx,
+                            );
+                        } else if let Some(prev_id) = previously_selected_entry {
+                            if let Some(new_ix) = this
+                                .all_entries
+                                .iter()
+                                .position(|probe| probe.id() == prev_id)
+                            {
+                                this.set_selected_entry_index(new_ix, cx);
+                            }
+                        }
+                    }
+                    SearchState::Searching { query, .. } | SearchState::Searched { query, .. } => {
+                        this.search(query.clone(), cx);
+                    }
+                }
+
                 cx.notify();
             })
             .log_err();
@@ -467,7 +475,7 @@ impl ThreadHistory {
                 .map(|(ix, m)| {
                     self.render_list_item(
                         Some(range_start + ix),
-                        &HistoryListItem::Entry {
+                        &ListItemType::Entry {
                             index: m.candidate_id,
                             format: EntryTimeFormat::DateAndTime,
                         },
@@ -485,25 +493,36 @@ impl ThreadHistory {
     fn render_list_item(
         &self,
         list_entry_ix: Option<usize>,
-        item: &HistoryListItem,
+        item: &ListItemType,
         highlight_positions: Vec<usize>,
-        cx: &App,
+        cx: &Context<Self>,
     ) -> AnyElement {
         match item {
-            HistoryListItem::Entry { index, format } => match self.all_entries.get(*index) {
+            ListItemType::Entry { index, format } => match self.all_entries.get(*index) {
                 Some(entry) => h_flex()
                     .w_full()
                     .pb_1()
-                    .child(self.render_history_entry(
-                        entry,
-                        list_entry_ix == Some(self.selected_index),
-                        highlight_positions,
-                        *format,
-                    ))
+                    .child(
+                        HistoryEntryElement::new(entry.clone(), self.agent_panel.clone())
+                            .highlight_positions(highlight_positions)
+                            .timestamp_format(*format)
+                            .selected(list_entry_ix == Some(self.selected_index))
+                            .hovered(list_entry_ix == self.hovered_index)
+                            .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                                if *is_hovered {
+                                    this.hovered_index = list_entry_ix;
+                                } else if this.hovered_index == list_entry_ix {
+                                    this.hovered_index = None;
+                                }
+
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    )
                     .into_any(),
                 None => Empty.into_any_element(),
             },
-            HistoryListItem::BucketSeparator(bucket) => div()
+            ListItemType::BucketSeparator(bucket) => div()
                 .px(DynamicSpacing::Base06.rems(cx))
                 .pt_2()
                 .pb_1()
@@ -513,33 +532,6 @@ impl ThreadHistory {
                         .color(Color::Muted),
                 )
                 .into_any_element(),
-        }
-    }
-
-    fn render_history_entry(
-        &self,
-        entry: &HistoryEntry,
-        is_active: bool,
-        highlight_positions: Vec<usize>,
-        format: EntryTimeFormat,
-    ) -> AnyElement {
-        match entry {
-            HistoryEntry::Thread(thread) => PastThread::new(
-                thread.clone(),
-                self.agent_panel.clone(),
-                is_active,
-                highlight_positions,
-                format,
-            )
-            .into_any_element(),
-            HistoryEntry::Context(context) => PastContext::new(
-                context.clone(),
-                self.agent_panel.clone(),
-                is_active,
-                highlight_positions,
-                format,
-            )
-            .into_any_element(),
         }
     }
 }
@@ -623,155 +615,97 @@ impl Render for ThreadHistory {
 }
 
 #[derive(IntoElement)]
-pub struct PastThread {
-    thread: SerializedThreadMetadata,
+pub struct HistoryEntryElement {
+    entry: HistoryEntry,
     agent_panel: WeakEntity<AgentPanel>,
     selected: bool,
+    hovered: bool,
     highlight_positions: Vec<usize>,
     timestamp_format: EntryTimeFormat,
+    on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
 }
 
-impl PastThread {
-    pub fn new(
-        thread: SerializedThreadMetadata,
-        agent_panel: WeakEntity<AgentPanel>,
-        selected: bool,
-        highlight_positions: Vec<usize>,
-        timestamp_format: EntryTimeFormat,
-    ) -> Self {
+impl HistoryEntryElement {
+    pub fn new(entry: HistoryEntry, agent_panel: WeakEntity<AgentPanel>) -> Self {
         Self {
-            thread,
+            entry,
             agent_panel,
-            selected,
-            highlight_positions,
-            timestamp_format,
+            selected: false,
+            hovered: false,
+            highlight_positions: vec![],
+            timestamp_format: EntryTimeFormat::DateAndTime,
+            on_hover: Box::new(|_, _, _| {}),
         }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn hovered(mut self, hovered: bool) -> Self {
+        self.hovered = hovered;
+        self
+    }
+
+    pub fn highlight_positions(mut self, positions: Vec<usize>) -> Self {
+        self.highlight_positions = positions;
+        self
+    }
+
+    pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_hover = Box::new(on_hover);
+        self
+    }
+
+    pub fn timestamp_format(mut self, format: EntryTimeFormat) -> Self {
+        self.timestamp_format = format;
+        self
     }
 }
 
-impl RenderOnce for PastThread {
+impl RenderOnce for HistoryEntryElement {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let summary = self.thread.summary;
+        let (id, summary, timestamp) = match &self.entry {
+            HistoryEntry::Thread(thread) => (
+                thread.id.to_string(),
+                thread.summary.clone(),
+                thread.updated_at.timestamp(),
+            ),
+            HistoryEntry::Context(context) => (
+                context.path.to_string_lossy().to_string(),
+                context.title.clone().into(),
+                context.mtime.timestamp(),
+            ),
+        };
 
-        let thread_timestamp = self.timestamp_format.format_timestamp(
-            &self.agent_panel,
-            self.thread.updated_at.timestamp(),
-            cx,
-        );
+        let thread_timestamp =
+            self.timestamp_format
+                .format_timestamp(&self.agent_panel, timestamp, cx);
 
-        ListItem::new(SharedString::from(self.thread.id.to_string()))
+        ListItem::new(SharedString::from(id))
             .rounded()
             .toggle_state(self.selected)
             .spacing(ListItemSpacing::Sparse)
             .start_slot(
-                div().max_w_4_5().child(
-                    HighlightedLabel::new(summary, self.highlight_positions)
-                        .size(LabelSize::Small)
-                        .truncate(),
-                ),
-            )
-            .end_slot(
                 h_flex()
-                    .gap_1p5()
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(
+                        HighlightedLabel::new(summary, self.highlight_positions)
+                            .size(LabelSize::Small)
+                            .truncate(),
+                    )
                     .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
                             .size(LabelSize::XSmall),
-                    )
-                    .child(
-                        IconButton::new("delete", IconName::TrashAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .tooltip(move |window, cx| {
-                                Tooltip::for_action("Delete", &RemoveSelectedThread, window, cx)
-                            })
-                            .on_click({
-                                let agent_panel = self.agent_panel.clone();
-                                let id = self.thread.id.clone();
-                                move |_event, _window, cx| {
-                                    agent_panel
-                                        .update(cx, |this, cx| {
-                                            this.delete_thread(&id, cx).detach_and_log_err(cx);
-                                        })
-                                        .ok();
-                                }
-                            }),
                     ),
             )
-            .on_click({
-                let agent_panel = self.agent_panel.clone();
-                let id = self.thread.id.clone();
-                move |_event, window, cx| {
-                    agent_panel
-                        .update(cx, |this, cx| {
-                            this.open_thread_by_id(&id, window, cx)
-                                .detach_and_log_err(cx);
-                        })
-                        .ok();
-                }
-            })
-    }
-}
-
-#[derive(IntoElement)]
-pub struct PastContext {
-    context: SavedContextMetadata,
-    agent_panel: WeakEntity<AgentPanel>,
-    selected: bool,
-    highlight_positions: Vec<usize>,
-    timestamp_format: EntryTimeFormat,
-}
-
-impl PastContext {
-    pub fn new(
-        context: SavedContextMetadata,
-        agent_panel: WeakEntity<AgentPanel>,
-        selected: bool,
-        highlight_positions: Vec<usize>,
-        timestamp_format: EntryTimeFormat,
-    ) -> Self {
-        Self {
-            context,
-            agent_panel,
-            selected,
-            highlight_positions,
-            timestamp_format,
-        }
-    }
-}
-
-impl RenderOnce for PastContext {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let summary = self.context.title;
-        let context_timestamp = self.timestamp_format.format_timestamp(
-            &self.agent_panel,
-            self.context.mtime.timestamp(),
-            cx,
-        );
-
-        ListItem::new(SharedString::from(
-            self.context.path.to_string_lossy().to_string(),
-        ))
-        .rounded()
-        .toggle_state(self.selected)
-        .spacing(ListItemSpacing::Sparse)
-        .start_slot(
-            div().max_w_4_5().child(
-                HighlightedLabel::new(summary, self.highlight_positions)
-                    .size(LabelSize::Small)
-                    .truncate(),
-            ),
-        )
-        .end_slot(
-            h_flex()
-                .gap_1p5()
-                .child(
-                    Label::new(context_timestamp)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-                .child(
+            .on_hover(self.on_hover)
+            .end_slot::<IconButton>(if self.hovered || self.selected {
+                Some(
                     IconButton::new("delete", IconName::TrashAlt)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
@@ -781,30 +715,70 @@ impl RenderOnce for PastContext {
                         })
                         .on_click({
                             let agent_panel = self.agent_panel.clone();
-                            let path = self.context.path.clone();
-                            move |_event, _window, cx| {
-                                agent_panel
-                                    .update(cx, |this, cx| {
-                                        this.delete_context(path.clone(), cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
-                            }
+
+                            let f: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> =
+                                match &self.entry {
+                                    HistoryEntry::Thread(thread) => {
+                                        let id = thread.id.clone();
+
+                                        Box::new(move |_event, _window, cx| {
+                                            agent_panel
+                                                .update(cx, |this, cx| {
+                                                    this.delete_thread(&id, cx)
+                                                        .detach_and_log_err(cx);
+                                                })
+                                                .ok();
+                                        })
+                                    }
+                                    HistoryEntry::Context(context) => {
+                                        let path = context.path.clone();
+
+                                        Box::new(move |_event, _window, cx| {
+                                            agent_panel
+                                                .update(cx, |this, cx| {
+                                                    this.delete_context(path.clone(), cx)
+                                                        .detach_and_log_err(cx);
+                                                })
+                                                .ok();
+                                        })
+                                    }
+                                };
+                            f
                         }),
-                ),
-        )
-        .on_click({
-            let agent_panel = self.agent_panel.clone();
-            let path = self.context.path.clone();
-            move |_event, window, cx| {
-                agent_panel
-                    .update(cx, |this, cx| {
-                        this.open_saved_prompt_editor(path.clone(), window, cx)
-                            .detach_and_log_err(cx);
-                    })
-                    .ok();
-            }
-        })
+                )
+            } else {
+                None
+            })
+            .on_click({
+                let agent_panel = self.agent_panel.clone();
+
+                let f: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> = match &self.entry
+                {
+                    HistoryEntry::Thread(thread) => {
+                        let id = thread.id.clone();
+                        Box::new(move |_event, window, cx| {
+                            agent_panel
+                                .update(cx, |this, cx| {
+                                    this.open_thread_by_id(&id, window, cx)
+                                        .detach_and_log_err(cx);
+                                })
+                                .ok();
+                        })
+                    }
+                    HistoryEntry::Context(context) => {
+                        let path = context.path.clone();
+                        Box::new(move |_event, window, cx| {
+                            agent_panel
+                                .update(cx, |this, cx| {
+                                    this.open_saved_prompt_editor(path.clone(), window, cx)
+                                        .detach_and_log_err(cx);
+                                })
+                                .ok();
+                        })
+                    }
+                };
+                f
+            })
     }
 }
 

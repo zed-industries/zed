@@ -1137,6 +1137,12 @@ async fn handle_customer_subscription_event(
             .await?;
     }
 
+    // When the user's subscription changes, push down any changes to their plan.
+    rpc_server
+        .update_plan_for_user(billing_customer.user_id)
+        .await
+        .trace_err();
+
     // When the user's subscription changes, we want to refresh their LLM tokens
     // to either grant/revoke access.
     rpc_server
@@ -1274,7 +1280,7 @@ async fn get_current_usage(
             subscription
                 .kind
                 .map(Into::into)
-                .unwrap_or(zed_llm_client::Plan::Free)
+                .unwrap_or(zed_llm_client::Plan::ZedFree)
         });
 
     let model_requests_limit = match plan.model_requests_limit() {

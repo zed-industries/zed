@@ -2227,6 +2227,7 @@ impl CollabPanel {
                                     client
                                         .authenticate_and_connect(true, &cx)
                                         .await
+                                        .into_response()
                                         .notify_async_err(cx);
                                 })
                                 .detach()

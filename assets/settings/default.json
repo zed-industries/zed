@@ -1297,21 +1297,22 @@
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
-  // By default use a recent system version of node, or install our own.
-  // You can override this to use a version of node that is not in $PATH with:
-  // {
-  //   "node": {
-  //     "path": "/path/to/node"
-  //     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
-  //   }
-  // }
-  // or to ensure Zed always downloads and installs an isolated version of node:
-  // {
-  //   "node": {
-  //     "ignore_system_version": true,
-  //   }
-  // NOTE: changing this setting currently requires restarting Zed.
-  "node": {},
+  // Settings for which version of Node.js and NPM to use when installing
+  // language servers and Copilot.
+  //
+  // Note: changing this setting currently requires restarting Zed.
+  "node": {
+    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
+    // existing executables if their version is recent enough. Set this to `true`
+    // to prevent this, and force Zed to always download and install its own
+    // version of Node.
+    "ignore_system_version": false,
+    // You can also specify alternative paths to Node and NPM. If you specify
+    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
+    // `${path}/../npm`.
+    "path": null,
+    "npm_path": null
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings

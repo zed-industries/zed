@@ -248,6 +248,8 @@ impl StripeBilling {
 
         let mut params = stripe::CreateCheckoutSession::new();
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);
+        params.payment_method_collection =
+            Some(stripe::CheckoutSessionPaymentMethodCollection::IfRequired);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {

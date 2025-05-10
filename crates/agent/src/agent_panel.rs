@@ -55,10 +55,10 @@ use zed_llm_client::UsageLimit;
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
+use crate::history_store::{HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
-use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
+use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
@@ -356,6 +356,7 @@ pub struct AgentPanel {
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
+    hovered_recent_history_item: Option<usize>,
     assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
@@ -696,6 +697,7 @@ impl AgentPanel {
             previous_view: None,
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
+            hovered_recent_history_item: None,
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu: None,
@@ -2212,7 +2214,7 @@ impl AgentPanel {
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
-                                Label::new("Past Interactions")
+                                Label::new("Recent")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -2237,18 +2239,20 @@ impl AgentPanel {
                         v_flex()
                             .gap_1()
                             .children(
-                                recent_history.into_iter().map(|entry| {
+                                recent_history.into_iter().enumerate().map(|(index, entry)| {
                                     // TODO: Add keyboard navigation.
-                                    match entry {
-                                        HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                        HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                    }
+                                    let is_hovered = self.hovered_recent_history_item == Some(index);
+                                    HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
+                                        .hovered(is_hovered)
+                                        .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                                            if *is_hovered {
+                                                this.hovered_recent_history_item = Some(index);
+                                            } else if this.hovered_recent_history_item == Some(index) {
+                                                this.hovered_recent_history_item = None;
+                                            }
+                                            cx.notify();
+                                        }))
+                                        .into_any_element()
                                 }),
                             )
                     )

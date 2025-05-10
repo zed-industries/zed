@@ -1224,7 +1224,10 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        client.authenticate_and_connect(true, &cx).await?;
+        client
+            .authenticate_and_connect(true, &cx)
+            .await
+            .into_response()?;
 
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
