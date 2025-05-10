@@ -49,10 +49,9 @@ And here's the section to rewrite based on that prompt again for reference:
 </rewrite_this>
 
 {{#if diagnostic_errors}}
-{{#each diagnostic_errors}}
-
 Below are the diagnostic errors visible to the user.  If the user requests problems to be fixed, use this information, but do not try to fix these errors if the user hasn't asked you to.
 
+{{#each diagnostic_errors}}
 <diagnostic_error>
     <line_number>{{line_number}}</line_number>
     <error_message>{{error_message}}</error_message>
