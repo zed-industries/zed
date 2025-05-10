@@ -2915,13 +2915,14 @@ impl Editor {
 
     fn select(&mut self, phase: SelectPhase, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_context_menu(window, cx);
+        let is_vim = vim_enabled(cx);
 
         match phase {
             SelectPhase::Begin {
                 position,
                 add,
                 click_count,
-            } => self.begin_selection(position, add, click_count, window, cx),
+            } => self.begin_selection(position, is_vim, add, click_count, window, cx),
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
@@ -2949,8 +2950,7 @@ impl Editor {
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self.selections.newest::<usize>(cx).tail();
-        self.begin_selection(position, false, click_count, window, cx);
-
+        self.begin_selection(position, false, false, click_count, window, cx);
         let position = position.to_offset(&display_map, Bias::Left);
         let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
 
@@ -2979,6 +2979,7 @@ impl Editor {
     fn begin_selection(
         &mut self,
         position: DisplayPoint,
+        vim_mode: bool,
         add: bool,
         click_count: usize,
         window: &mut Window,
@@ -3056,23 +3057,48 @@ impl Editor {
 
         let selections_count = self.selections.count();
 
-        self.change_selections(auto_scroll.then(Autoscroll::newest), window, cx, |s| {
-            if let Some(point_to_delete) = point_to_delete {
-                s.delete(point_to_delete);
+        if !vim_mode {
+            self.change_selections(auto_scroll.then(Autoscroll::newest), window, cx, |s| {
+                if let Some(point_to_delete) = point_to_delete {
+                    s.delete(point_to_delete);
 
-                if selections_count == 1 {
+                    if selections_count == 1 {
+                        s.set_pending_anchor_range(start..end, mode);
+                    }
+                } else {
+                    if !add {
+                        s.clear_disjoint();
+                    } else if click_count > 1 {
+                        s.delete(newest_selection.id)
+                    }
+
                     s.set_pending_anchor_range(start..end, mode);
                 }
-            } else {
-                if !add {
-                    s.clear_disjoint();
-                } else if click_count > 1 {
-                    s.delete(newest_selection.id)
-                }
+            });
+        } else {
+            self.change_selections_without_nav(
+                auto_scroll.then(Autoscroll::newest),
+                window,
+                cx,
+                |s| {
+                    if let Some(point_to_delete) = point_to_delete {
+                        s.delete(point_to_delete);
 
-                s.set_pending_anchor_range(start..end, mode);
-            }
-        });
+                        if selections_count == 1 {
+                            s.set_pending_anchor_range(start..end, mode);
+                        }
+                    } else {
+                        if !add {
+                            s.clear_disjoint();
+                        } else if click_count > 1 {
+                            s.delete(newest_selection.id)
+                        }
+
+                        s.set_pending_anchor_range(start..end, mode);
+                    }
+                },
+            );
+        }
     }
 
     fn begin_columnar_selection(

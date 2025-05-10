@@ -371,7 +371,14 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(2), 2),
+            false,
+            false,
+            1,
+            window,
+            cx,
+        );
     });
     assert_eq!(
         editor
@@ -433,7 +440,14 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(3), 3), true, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(3), 3),
+            false,
+            true,
+            1,
+            window,
+            cx,
+        );
         editor.update_selection(
             DisplayPoint::new(DisplayRow(0), 0),
             0,
@@ -475,7 +489,14 @@ fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(2), 1), false, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(2), 1),
+            false,
+            false,
+            1,
+            window,
+            cx,
+        );
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -483,7 +504,14 @@ fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(3), 2), true, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(3), 2),
+            false,
+            true,
+            1,
+            window,
+            cx,
+        );
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -501,7 +529,14 @@ fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
     );
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(2), 1), true, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(2), 1),
+            false,
+            true,
+            1,
+            window,
+            cx,
+        );
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -526,7 +561,14 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(2), 2),
+            false,
+            false,
+            1,
+            window,
+            cx,
+        );
         assert_eq!(
             editor.selections.display_ranges(cx),
             [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
@@ -573,7 +615,14 @@ fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(2), 2),
+            false,
+            false,
+            1,
+            window,
+            cx,
+        );
         assert_eq!(
             editor.selections.display_ranges(cx),
             [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
@@ -585,7 +634,14 @@ fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
             [DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 2)]
         );
 
-        editor.begin_selection(DisplayPoint::new(DisplayRow(2), 2), false, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(2), 2),
+            false,
+            false,
+            1,
+            window,
+            cx,
+        );
         assert_eq!(
             editor.selections.display_ranges(cx),
             [DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)]
@@ -736,7 +792,14 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
-            editor.begin_selection(DisplayPoint::new(DisplayRow(5), 0), false, 1, window, cx);
+            editor.begin_selection(
+                DisplayPoint::new(DisplayRow(5), 0),
+                false,
+                false,
+                1,
+                window,
+                cx,
+            );
             editor.end_selection(window, cx);
             assert_eq!(
                 editor.selections.display_ranges(cx),
@@ -746,7 +809,14 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
-            editor.begin_selection(DisplayPoint::new(DisplayRow(15), 0), false, 1, window, cx);
+            editor.begin_selection(
+                DisplayPoint::new(DisplayRow(15), 0),
+                false,
+                false,
+                1,
+                window,
+                cx,
+            );
             editor.end_selection(window, cx);
             assert_eq!(
                 editor.selections.display_ranges(cx),
@@ -815,7 +885,14 @@ fn test_cancel(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.begin_selection(DisplayPoint::new(DisplayRow(3), 4), false, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(3), 4),
+            false,
+            false,
+            1,
+            window,
+            cx,
+        );
         editor.update_selection(
             DisplayPoint::new(DisplayRow(1), 1),
             0,
@@ -825,7 +902,14 @@ fn test_cancel(cx: &mut TestAppContext) {
         );
         editor.end_selection(window, cx);
 
-        editor.begin_selection(DisplayPoint::new(DisplayRow(0), 1), true, 1, window, cx);
+        editor.begin_selection(
+            DisplayPoint::new(DisplayRow(0), 1),
+            false,
+            true,
+            1,
+            window,
+            cx,
+        );
         editor.update_selection(
             DisplayPoint::new(DisplayRow(0), 3),
             0,
@@ -12154,6 +12238,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
         });
         editor.begin_selection(
             Point::new(2, 1).to_display_point(&snapshot),
+            false,
             true,
             1,
             window,
@@ -12236,6 +12321,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
         let snapshot = editor.snapshot(window, cx);
         editor.begin_selection(
             Point::new(1, 3).to_display_point(&snapshot),
+            false,
             false,
             1,
             window,
@@ -12569,7 +12655,14 @@ async fn test_following(cx: &mut TestAppContext) {
     // Creating a pending selection that precedes another selection
     _ = leader.update(cx, |leader, window, cx| {
         leader.change_selections(None, window, cx, |s| s.select_ranges([1..1]));
-        leader.begin_selection(DisplayPoint::new(DisplayRow(0), 0), true, 1, window, cx);
+        leader.begin_selection(
+            DisplayPoint::new(DisplayRow(0), 0),
+            false,
+            true,
+            1,
+            window,
+            cx,
+        );
     });
     follower
         .update(cx, |follower, window, cx| {

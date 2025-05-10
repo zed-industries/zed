@@ -101,8 +101,6 @@ fn scroll_editor(
 
     let top_anchor = editor.scroll_manager.anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
-    //change selections has push to nav history
-    //TODO disable push to nav history when scroll on vim
     if dont_push_to_scroll_to_nav_history {
         editor.change_selections_without_nav(None, window, cx, |s| {
             s.move_with(|map, selection| {

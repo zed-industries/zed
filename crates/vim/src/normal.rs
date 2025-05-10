@@ -358,13 +358,50 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
-                    motion
-                        .move_point(map, cursor, goal, times, &text_layout_details)
-                        .unwrap_or((cursor, goal))
-                })
-            })
+
+            match motion {
+                Motion::Down {
+                    display_lines: false,
+                } => {
+                    editor.change_selections_without_nav(
+                        Some(Autoscroll::fit()),
+                        window,
+                        cx,
+                        |s| {
+                            s.move_cursors_with(|map, cursor, goal| {
+                                motion
+                                    .move_point(map, cursor, goal, times, &text_layout_details)
+                                    .unwrap_or((cursor, goal))
+                            })
+                        },
+                    );
+                }
+                Motion::Up {
+                    display_lines: false,
+                } => {
+                    editor.change_selections_without_nav(
+                        Some(Autoscroll::fit()),
+                        window,
+                        cx,
+                        |s| {
+                            s.move_cursors_with(|map, cursor, goal| {
+                                motion
+                                    .move_point(map, cursor, goal, times, &text_layout_details)
+                                    .unwrap_or((cursor, goal))
+                            })
+                        },
+                    );
+                }
+                _ => {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.move_cursors_with(|map, cursor, goal| {
+                            motion
+                                .move_point(map, cursor, goal, times, &text_layout_details)
+                                .unwrap_or((cursor, goal))
+                        })
+                    });
+                }
+            }
         });
     }
 
