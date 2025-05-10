@@ -32,6 +32,7 @@ pub struct ImportVsCodeSettings {
 }
 
 impl_actions!(zed, [ImportVsCodeSettings]);
+actions!(zed, [ImportVsCodeShortcuts]);
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
@@ -104,6 +105,97 @@ pub fn init(cx: &mut App) {
                         log::info!("Imported settings from VsCode");
                     })
                     .ok();
+                })
+                .detach();
+        });
+
+        workspace.register_action(|_, _: &ImportVsCodeShortcuts, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    let vscode =
+                        match settings::VsCodeShortcuts::load_user_shortcuts(fs.clone()).await {
+                            Ok(vscode) => vscode,
+                            Err(err) => {
+                                println!(
+                                    "Failed to load VsCode shortcuts: {}\nLoading VsCode settings from path: {:?}",
+                                    err,
+                                    paths::vscode_shortcuts_file(),
+                                );
+
+                                let _ = cx.prompt(
+                                    gpui::PromptLevel::Info,
+                                    "Could not find or load a VsCode shortcuts file",
+                                    None,
+                                    &["Ok"],
+                                );
+                                return;
+                            }
+                        };
+                    let Some(new_content) = cx
+                        .update(|_, cx| {
+                            let keyboard_mapper = cx.keyboard_mapper();
+                            vscode.parse_shortcuts(keyboard_mapper)
+                        })
+                        .inspect_err(|err| {
+                            log::error!("Failed to call cx.update while parsing shortcuts: {}", err)
+                        })
+                        .ok()
+                    else {
+                        return;
+                    };
+
+                    let prompt = {
+                        let prompt = cx.prompt(
+                            gpui::PromptLevel::Warning,
+                            "Importing settings may overwrite your existing settings",
+                            None,
+                            &["Ok", "Cancel"],
+                        );
+                        cx.spawn(async move |_| prompt.await.ok())
+                    };
+                    if prompt.await != Some(0) {
+                        return;
+                    }
+
+                    cx.background_executor()
+                        .spawn(async move {
+                            let keymap_file = paths::keymap_file().as_path();
+                            if fs.is_file(keymap_file).await {
+                                if let Some(resolved_path) = fs
+                                .canonicalize(keymap_file)
+                                .await
+                                .inspect_err(|err| {
+                                    log::error!(
+                                        "Failed to canonicalize uer keymap path {:?}, error: {}",
+                                        keymap_file,
+                                        err
+                                    )
+                                })
+                                .ok() {
+                                    fs.atomic_write(resolved_path.clone(), new_content).await
+                                    .inspect_err(|err| {
+                                        log::error!(
+                                            "Failed to write user keymap file {:?}, error: {}",
+                                            resolved_path,
+                                            err
+                                        )
+                                    }).ok();
+                                }
+                            } else {
+                                fs.atomic_write(keymap_file.to_path_buf(), new_content)
+                                    .await
+                                    .inspect_err(|err| {
+                                        log::error!(
+                                            "Failed to write user keymap file {:?}, error: {}",
+                                            keymap_file,
+                                            err
+                                        )
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
                 })
                 .detach();
         });

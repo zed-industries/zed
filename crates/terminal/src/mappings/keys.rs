@@ -284,18 +284,19 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 
 #[cfg(test)]
 mod test {
-    use gpui::Modifiers;
+    use gpui::{Modifiers, TestKeyboardMapper};
 
     use super::*;
 
     #[test]
     fn test_scroll_keys() {
+        let mapper = TestKeyboardMapper::new();
         //These keys should be handled by the scrolling element directly
         //Need to signify this by returning 'None'
-        let shift_pageup = Keystroke::parse("shift-pageup").unwrap();
-        let shift_pagedown = Keystroke::parse("shift-pagedown").unwrap();
-        let shift_home = Keystroke::parse("shift-home").unwrap();
-        let shift_end = Keystroke::parse("shift-end").unwrap();
+        let shift_pageup = Keystroke::parse("shift-pageup", &mapper).unwrap();
+        let shift_pagedown = Keystroke::parse("shift-pagedown", &mapper).unwrap();
+        let shift_home = Keystroke::parse("shift-home", &mapper).unwrap();
+        let shift_end = Keystroke::parse("shift-end", &mapper).unwrap();
 
         let none = TermMode::NONE;
         assert_eq!(to_esc_str(&shift_pageup, &none, false), None);
@@ -321,8 +322,8 @@ mod test {
             Some("\x1b[1;2F".to_string())
         );
 
-        let pageup = Keystroke::parse("pageup").unwrap();
-        let pagedown = Keystroke::parse("pagedown").unwrap();
+        let pageup = Keystroke::parse("pageup", &mapper).unwrap();
+        let pagedown = Keystroke::parse("pagedown", &mapper).unwrap();
         let any = TermMode::ANY;
 
         assert_eq!(
@@ -353,13 +354,14 @@ mod test {
 
     #[test]
     fn test_application_mode() {
+        let mapper = TestKeyboardMapper::new();
         let app_cursor = TermMode::APP_CURSOR;
         let none = TermMode::NONE;
 
-        let up = Keystroke::parse("up").unwrap();
-        let down = Keystroke::parse("down").unwrap();
-        let left = Keystroke::parse("left").unwrap();
-        let right = Keystroke::parse("right").unwrap();
+        let up = Keystroke::parse("up", &mapper).unwrap();
+        let down = Keystroke::parse("down", &mapper).unwrap();
+        let left = Keystroke::parse("left", &mapper).unwrap();
+        let right = Keystroke::parse("right", &mapper).unwrap();
 
         assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".to_string()));
         assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".to_string()));
@@ -386,6 +388,7 @@ mod test {
 
     #[test]
     fn test_ctrl_codes() {
+        let mapper = TestKeyboardMapper::new();
         let letters_lower = 'a'..='z';
         let letters_upper = 'A'..='Z';
         let mode = TermMode::ANY;
@@ -393,12 +396,12 @@ mod test {
         for (lower, upper) in letters_lower.zip(letters_upper) {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-shift-{}", lower)).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-shift-{}", lower), &mapper).unwrap(),
                     &mode,
                     false
                 ),
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-{}", upper)).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-{}", upper), &mapper).unwrap(),
                     &mode,
                     false
                 ),
@@ -411,11 +414,12 @@ mod test {
 
     #[test]
     fn alt_is_meta() {
+        let mapper = TestKeyboardMapper::new();
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
+                    &Keystroke::parse(&format!("alt-{}", character), &mapper).unwrap(),
                     &TermMode::NONE,
                     true
                 )
@@ -433,7 +437,7 @@ mod test {
         for key in gpui_keys {
             assert_ne!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", key)).unwrap(),
+                    &Keystroke::parse(&format!("alt-{}", key), &mapper).unwrap(),
                     &TermMode::NONE,
                     true
                 )
@@ -445,6 +449,7 @@ mod test {
 
     #[test]
     fn test_modifier_code_calc() {
+        let mapper = TestKeyboardMapper::new();
         //   Code     Modifiers
         // ---------+---------------------------
         //    2     | Shift
@@ -456,15 +461,33 @@ mod test {
         //    8     | Shift + Alt + Control
         // ---------+---------------------------
         // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-        assert_eq!(2, modifier_code(&Keystroke::parse("shift-a").unwrap()));
-        assert_eq!(3, modifier_code(&Keystroke::parse("alt-a").unwrap()));
-        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-a").unwrap()));
-        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-a").unwrap()));
-        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-a").unwrap()));
-        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-a").unwrap()));
+        assert_eq!(
+            2,
+            modifier_code(&Keystroke::parse("shift-a", &mapper).unwrap())
+        );
+        assert_eq!(
+            3,
+            modifier_code(&Keystroke::parse("alt-a", &mapper).unwrap())
+        );
+        assert_eq!(
+            4,
+            modifier_code(&Keystroke::parse("shift-alt-a", &mapper).unwrap())
+        );
+        assert_eq!(
+            5,
+            modifier_code(&Keystroke::parse("ctrl-a", &mapper).unwrap())
+        );
+        assert_eq!(
+            6,
+            modifier_code(&Keystroke::parse("shift-ctrl-a", &mapper).unwrap())
+        );
+        assert_eq!(
+            7,
+            modifier_code(&Keystroke::parse("alt-ctrl-a", &mapper).unwrap())
+        );
         assert_eq!(
             8,
-            modifier_code(&Keystroke::parse("shift-ctrl-alt-a").unwrap())
+            modifier_code(&Keystroke::parse("shift-ctrl-alt-a", &mapper).unwrap())
         );
     }
 }

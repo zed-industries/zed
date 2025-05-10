@@ -2,7 +2,9 @@ use std::rc::Rc;
 
 use collections::HashMap;
 
-use crate::{Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke};
+use crate::{
+    Action, InvalidKeystrokeError, KeyBindingContextPredicate, Keystroke, PlatformKeyboardMapper,
+};
 use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
@@ -30,7 +32,14 @@ impl KeyBinding {
         } else {
             None
         };
-        Self::load(keystrokes, Box::new(action), context_predicate, None).unwrap()
+        Self::load(
+            keystrokes,
+            Box::new(action),
+            context_predicate,
+            None,
+            &crate::EmptyKeyboardMapper,
+        )
+        .unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -39,10 +48,11 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(|source| Keystroke::parse(source, keyboard_mapper))
             .collect::<std::result::Result<_, _>>()?;
 
         if let Some(equivalents) = key_equivalents {

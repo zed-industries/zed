@@ -297,6 +297,10 @@ impl Platform for WindowsPlatform {
         self.text_system.clone()
     }
 
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        Box::new(WindowsKeyboardMapper::new())
+    }
+
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(
             WindowsKeyboardLayout::new()
