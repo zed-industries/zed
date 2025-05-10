@@ -637,7 +637,7 @@ impl ToolCard for EditFileToolCard {
                 .p_3()
                 .gap_1()
                 .border_t_1()
-                .rounded_md()
+                .rounded_b_md()
                 .border_color(border_color)
                 .bg(cx.theme().colors().editor_background);
 
