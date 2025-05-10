@@ -3185,33 +3185,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "component_preview"
-version = "0.1.0"
-dependencies = [
- "agent",
- "anyhow",
- "assistant_tool",
- "client",
- "collections",
- "component",
- "db",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "languages",
- "log",
- "notifications",
- "project",
- "prompt_store",
- "serde",
- "ui",
- "ui_input",
- "util",
- "workspace",
- "workspace-hack",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18564,6 +18537,7 @@ dependencies = [
  "assets",
  "assistant_context_editor",
  "assistant_settings",
+ "assistant_tool",
  "assistant_tools",
  "async-watch",
  "audio",
@@ -18580,7 +18554,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
- "component_preview",
+ "component",
  "copilot",
  "dap",
  "dap_adapters",
@@ -18606,6 +18580,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "image_viewer",
+ "indoc",
  "inline_completion_button",
  "install_cli",
  "journal",
@@ -18669,6 +18644,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
+ "ui_input",
  "ui_prompt",
  "url",
  "urlencoding",
