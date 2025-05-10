@@ -30,81 +30,12 @@ message ToggleBreakpoint {
     Breakpoint breakpoint = 3;
 }
 
-enum DebuggerThreadItem {
-    Console = 0;
-    LoadedSource = 1;
-    Modules = 2;
-    Variables = 3;
-}
-
-message DebuggerSetVariableState {
-    string name = 1;
-    DapScope scope = 2;
-    string value = 3;
-    uint64 stack_frame_id = 4;
-    optional string evaluate_name = 5;
-    uint64 parent_variables_reference = 6;
-}
-
-message VariableListOpenEntry {
-    oneof entry {
-        DebuggerOpenEntryScope scope = 1;
-        DebuggerOpenEntryVariable variable = 2;
-    }
-}
-
-message DebuggerOpenEntryScope {
-    string name = 1;
-}
-
-message DebuggerOpenEntryVariable {
-    string scope_name = 1;
-    string name = 2;
-    uint64 depth = 3;
-}
-
-message VariableListEntrySetState {
-    uint64 depth = 1;
-    DebuggerSetVariableState state = 2;
-}
-
-message VariableListEntryVariable {
-    uint64 depth = 1;
-    DapScope scope = 2;
-    DapVariable variable = 3;
-    bool has_children = 4;
-    uint64 container_reference = 5;
-}
-
-message DebuggerScopeVariableIndex {
-    repeated uint64 fetched_ids = 1;
-    repeated DebuggerVariableContainer variables = 2;
-}
-
-message DebuggerVariableContainer {
-    uint64 container_reference = 1;
-    DapVariable variable = 2;
-    uint64 depth = 3;
-}
-
 enum DapThreadStatus {
     Running = 0;
     Stopped = 1;
     Exited = 2;
     Ended = 3;
 }
-
-message VariableListScopes {
-    uint64 stack_frame_id = 1;
-    repeated DapScope scopes = 2;
-}
-
-message VariableListVariables {
-    uint64 stack_frame_id = 1;
-    uint64 scope_id = 2;
-    DebuggerScopeVariableIndex variables = 3;
-}
-
 
 enum VariablesArgumentsFilter {
     Indexed = 0;
