@@ -1003,16 +1003,20 @@ mod tests {
             .unwrap();
 
         let mut copilot_requests = copilot_lsp
-            .set_request_handler::<crate::request::GetCompletions, _, _>(
+            .set_request_handler::<crate::request::TextDocumentInlineCompletion, _, _>(
                 move |_params, _cx| async move {
-                    Ok(crate::request::GetCompletionsResult {
-                        completions: vec![crate::request::Completion {
-                            text: "next line".into(),
+                    Ok(crate::request::TextDocumentInlineCompletionResult {
+                        items: vec![crate::request::InlineCompletionItem {
+                            insert_text: "next line".into(),
                             range: lsp::Range::new(
                                 lsp::Position::new(1, 0),
                                 lsp::Position::new(1, 0),
                             ),
-                            ..Default::default()
+                            command: lsp::Command {
+                                command: "github.copilot.didAcceptCompletionItem".into(),
+                                arguments: Some(vec!["uuid".into()]),
+                                title: "Copilot".to_string(),
+                            },
                         }],
                     })
                 },
@@ -1044,20 +1048,44 @@ mod tests {
         completions: Vec<crate::request::Completion>,
         completions_cycling: Vec<crate::request::Completion>,
     ) {
-        lsp.set_request_handler::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
-            let completions = completions.clone();
-            async move {
-                Ok(crate::request::GetCompletionsResult {
-                    completions: completions.clone(),
-                })
-            }
-        });
-        lsp.set_request_handler::<crate::request::GetCompletionsCycling, _, _>(
+        lsp.set_request_handler::<crate::request::TextDocumentInlineCompletion, _, _>(
             move |_params, _cx| {
-                let completions_cycling = completions_cycling.clone();
+                let completions = completions
+                    .clone()
+                    .into_iter()
+                    .map(|completion| crate::request::InlineCompletionItem {
+                        insert_text: completion.text.clone(),
+                        range: completion.range.clone(),
+                        command: lsp::Command {
+                            command: "github.copilot.didAcceptCompletionItem".into(),
+                            arguments: Some(vec![json!(completion.uuid.to_string())]),
+                            title: "Copilot".to_string(),
+                        },
+                    })
+                    .collect::<Vec<_>>();
                 async move {
-                    Ok(crate::request::GetCompletionsResult {
-                        completions: completions_cycling.clone(),
+                    Ok(crate::request::TextDocumentInlineCompletionResult { items: completions })
+                }
+            },
+        );
+        lsp.set_request_handler::<crate::request::TextDocumentInlineCompletion, _, _>(
+            move |_params, _cx| {
+                let completions_cycling = completions_cycling
+                    .clone()
+                    .into_iter()
+                    .map(|completion| crate::request::InlineCompletionItem {
+                        insert_text: completion.text.clone(),
+                        range: completion.range.clone(),
+                        command: lsp::Command {
+                            command: "github.copilot.didAcceptCompletionItem".into(),
+                            arguments: Some(vec![json!(completion.uuid.to_string())]),
+                            title: "Copilot".to_string(),
+                        },
+                    })
+                    .collect::<Vec<_>>();
+                async move {
+                    Ok(crate::request::TextDocumentInlineCompletionResult {
+                        items: completions_cycling,
                     })
                 }
             },

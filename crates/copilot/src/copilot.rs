@@ -585,12 +585,12 @@ impl Copilot {
 
             server
                 .on_notification::<WindowShowMessageRequest, _>({
-                    let this_ = this.clone();
+                    let _this = this.clone();
                     move |params, _| {
                         // TODO: Display the message in Zed's UI
 
                         // Log the message
-                        log::info!("Copilot {}: {}", params.type_.as_str(), params.message);
+                        log::info!("Copilot {}: {:?}", params.type_.as_str(), params.message);
                     }
                 })
                 .detach();
@@ -669,8 +669,8 @@ impl Copilot {
                                     .request::<request::SignIn>(request::SignInParams {})
                                     .await?;
                                 match sign_in {
-                                    request::SignInResult::AlreadySignedIn { user } => {
-                                        Ok(request::SignInStatus::Ok { user: Some(user) })
+                                    request::SignInResult::AlreadySignedIn {} => {
+                                        Ok(request::SignInStatus::Ok { user: None })
                                     }
                                     request::SignInResult::PromptUserDeviceFlow(flow) => {
                                         this.update(cx, |this, cx| {
@@ -798,7 +798,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if (!matches!(status, SignInStatus::Authorized { .. })) {
+            if !matches!(status, SignInStatus::Authorized { .. }) {
                 return;
             }
 
@@ -1045,7 +1045,7 @@ impl Copilot {
                         insert_spaces: !hard_tabs,
                     },
                     position: point_to_lsp(position),
-                    context: request::InlineCompletionContext { trigger_kind: 1 },
+                    context: request::InlineCompletionContext { trigger_kind: 2 },
                 })
                 .await?;
             let completions = result
@@ -1306,9 +1306,7 @@ mod tests {
 
         // Ensure all previously-registered buffers are re-opened when signing in.
         lsp.set_request_handler::<request::SignIn, _, _>(|_, _| async {
-            Ok(request::SignInResult::AlreadySignedIn {
-                user: "user-1".into(),
-            })
+            Ok(request::SignInResult::AlreadySignedIn {})
         });
         copilot
             .update(cx, |copilot, cx| copilot.sign_in(cx))

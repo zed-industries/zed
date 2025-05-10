@@ -1,31 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub enum GetCompletions {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetCompletionsParams {
-    pub doc: GetCompletionsDocument,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetCompletionsDocument {
-    pub tab_size: u32,
-    pub indent_size: u32,
-    pub insert_spaces: bool,
-    pub uri: lsp::Url,
-    pub relative_path: String,
-    pub position: lsp::Position,
-    pub version: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetCompletionsResult {
-    pub completions: Vec<Completion>,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Completion {
@@ -35,37 +9,6 @@ pub struct Completion {
     pub range: lsp::Range,
     pub display_text: String,
 }
-
-impl lsp::request::Request for GetCompletions {
-    type Params = GetCompletionsParams;
-    type Result = GetCompletionsResult;
-    const METHOD: &'static str = "getCompletions";
-}
-
-pub enum GetCompletionsCycling {}
-
-impl lsp::request::Request for GetCompletionsCycling {
-    type Params = GetCompletionsParams;
-    type Result = GetCompletionsResult;
-    const METHOD: &'static str = "getCompletionsCycling";
-}
-
-pub enum LogMessage {}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LogMessageParams {
-    pub level: u8,
-    pub message: String,
-    pub metadata_str: String,
-    pub extra: Vec<String>,
-}
-
-impl lsp::notification::Notification for LogMessage {
-    type Params = LogMessageParams;
-    const METHOD: &'static str = "LogMessage";
-}
-
 pub enum NotifyAccepted {}
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -120,7 +63,7 @@ pub struct SignInParams {}
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "status")]
 pub enum SignInResult {
-    AlreadySignedIn { user: String },
+    AlreadySignedIn {},
     PromptUserDeviceFlow(PromptUserDeviceFlow),
 }
 
@@ -129,6 +72,10 @@ pub enum SignInResult {
 pub struct PromptUserDeviceFlow {
     pub user_code: String,
     pub verification_uri: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u32>,
 }
 
 impl lsp::request::Request for SignIn {
@@ -232,8 +179,8 @@ pub struct ShowMessageParams {
     /// The message type. See {@link MessageType}
     #[serde(rename = "type")]
     pub type_: MessageType,
-    /// The actual message
-    pub message: String,
+
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -267,6 +214,7 @@ impl lsp::notification::Notification for WindowShowMessageRequest {
 pub enum TextDocumentInlineCompletion {}
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TextDocumentInlineCompletionParams {
     pub text_document: TextDocumentIdentifier,
     pub position: lsp::Position,
@@ -282,6 +230,7 @@ pub struct TextDocumentIdentifier {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InlineCompletionContext {
     pub trigger_kind: u32,
 }
