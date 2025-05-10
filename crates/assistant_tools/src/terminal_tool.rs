@@ -420,7 +420,6 @@ struct TerminalToolCard {
     preview_expanded: bool,
     start_instant: Instant,
     elapsed_time: Option<Duration>,
-    // command_markdown: Entity<Markdown>,
 }
 
 impl TerminalToolCard {
@@ -594,9 +593,26 @@ impl ToolCard for TerminalToolCard {
             .border_color(border_color)
             .rounded_lg()
             .overflow_hidden()
-            .child(v_flex().p_2().gap_0p5().bg(header_bg).child(header).child(
-                MarkdownElement::new(self.input_command.clone(), markdown_style(window, cx)),
-            ))
+            .child(
+                v_flex()
+                    .p_2()
+                    .gap_0p5()
+                    .bg(header_bg)
+                    .text_xs()
+                    .child(header)
+                    .child(
+                        MarkdownElement::new(
+                            self.input_command.clone(),
+                            markdown_style(window, cx),
+                        )
+                        .code_block_renderer(
+                            markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                                border: true,
+                            },
+                        )
+                    ),
+            )
             .when(self.preview_expanded && !should_hide_terminal, |this| {
                 this.child(
                     div()
@@ -616,18 +632,21 @@ impl ToolCard for TerminalToolCard {
 
 fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
+    let buffer_font_size = TextSize::Default.rems(cx);
     let mut text_style = window.text_style();
 
     text_style.refine(&TextStyleRefinement {
         font_family: Some(theme_settings.buffer_font.family.clone()),
         font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
         font_features: Some(theme_settings.buffer_font.features.clone()),
-        font_size: Some(TextSize::XSmall.rems(cx).into()),
+        font_size: Some(buffer_font_size.into()),
         color: Some(cx.theme().colors().text),
         ..Default::default()
     });
 
     MarkdownStyle {
+        base_text_style: text_style.clone(),
+        selection_background_color: cx.theme().players().local().selection,
         ..Default::default()
     }
 }
