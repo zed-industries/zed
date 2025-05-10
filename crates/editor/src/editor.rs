@@ -2579,6 +2579,7 @@ impl Editor {
     fn selections_did_change(
         &mut self,
         local: bool,
+        push_to_nav_history: bool,
         old_cursor_position: &Anchor,
         show_completions: bool,
         window: &mut Window,
@@ -2633,13 +2634,14 @@ impl Editor {
         self.take_rename(false, window, cx);
 
         let new_cursor_position = self.selections.newest_anchor().head();
-
-        self.push_to_nav_history(
-            *old_cursor_position,
-            Some(new_cursor_position.to_point(buffer)),
-            false,
-            cx,
-        );
+        if push_to_nav_history {
+            self.push_to_nav_history(
+                *old_cursor_position,
+                Some(new_cursor_position.to_point(buffer)),
+                false,
+                cx,
+            );
+        }
 
         if local {
             let new_cursor_position = self.selections.newest_anchor().head();
@@ -2897,13 +2899,24 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        self.change_selections_inner(autoscroll, true, window, cx, change)
+        self.change_selections_inner(autoscroll, true, true, window, cx, change)
+    }
+
+    pub fn change_selections_without_nav<R>(
+        &mut self,
+        autoscroll: Option<Autoscroll>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
+        self.change_selections_inner(autoscroll, true, false, window, cx, change)
     }
 
     fn change_selections_inner<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
         request_completions: bool,
+        push_to_nav_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
@@ -2912,12 +2925,18 @@ impl Editor {
         self.push_to_selection_history();
 
         let (changed, result) = self.selections.change_with(cx, change);
-
         if changed {
             if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, request_completions, window, cx);
+            self.selections_did_change(
+                true,
+                push_to_nav_history,
+                &old_cursor_position,
+                request_completions,
+                window,
+                cx,
+            );
 
             if self.should_open_signature_help_automatically(
                 &old_cursor_position,
@@ -2988,13 +3007,14 @@ impl Editor {
 
     fn select(&mut self, phase: SelectPhase, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_context_menu(window, cx);
+        let is_vim = vim_enabled(cx);
 
         match phase {
             SelectPhase::Begin {
                 position,
                 add,
                 click_count,
-            } => self.begin_selection(position, add, click_count, window, cx),
+            } => self.begin_selection(position, is_vim, add, click_count, window, cx),
             SelectPhase::BeginColumnar {
                 position,
                 goal_column,
@@ -3022,8 +3042,7 @@ impl Editor {
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let tail = self.selections.newest::<usize>(cx).tail();
-        self.begin_selection(position, false, click_count, window, cx);
-
+        self.begin_selection(position, false, false, click_count, window, cx);
         let position = position.to_offset(&display_map, Bias::Left);
         let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
 
@@ -3054,6 +3073,7 @@ impl Editor {
     fn begin_selection(
         &mut self,
         position: DisplayPoint,
+        vim_mode: bool,
         add: bool,
         click_count: usize,
         window: &mut Window,
@@ -3130,21 +3150,44 @@ impl Editor {
 
         let selections_count = self.selections.count();
 
-        self.change_selections(auto_scroll.then(Autoscroll::newest), window, cx, |s| {
-            if let Some(point_to_delete) = point_to_delete {
-                s.delete(point_to_delete);
+        if !vim_mode {
+            self.change_selections(auto_scroll.then(Autoscroll::newest), window, cx, |s| {
+                if let Some(point_to_delete) = point_to_delete {
+                    s.delete(point_to_delete);
 
-                if selections_count == 1 {
+                    if selections_count == 1 {
+                        s.set_pending_anchor_range(start..end, mode);
+                    }
+                } else {
+                    if !add {
+                        s.clear_disjoint();
+                    }
+
                     s.set_pending_anchor_range(start..end, mode);
                 }
-            } else {
-                if !add {
-                    s.clear_disjoint();
-                }
+            });
+        } else {
+            self.change_selections_without_nav(
+                auto_scroll.then(Autoscroll::newest),
+                window,
+                cx,
+                |s| {
+                    if let Some(point_to_delete) = point_to_delete {
+                        s.delete(point_to_delete);
 
-                s.set_pending_anchor_range(start..end, mode);
-            }
-        });
+                        if selections_count == 1 {
+                            s.set_pending_anchor_range(start..end, mode);
+                        }
+                    } else {
+                        if !add {
+                            s.clear_disjoint();
+                        }
+
+                        s.set_pending_anchor_range(start..end, mode);
+                    }
+                },
+            );
+        }
     }
 
     fn begin_columnar_selection(
@@ -3813,7 +3856,7 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_inner(Some(Autoscroll::fit()), false, window, cx, |s| {
+            this.change_selections_inner(Some(Autoscroll::fit()), false, true, window, cx, |s| {
                 s.select(new_selections)
             });
 
@@ -12000,7 +12043,6 @@ impl Editor {
                     return;
                 }
             }
-
             nav_history.push(
                 Some(NavigationData {
                     cursor_anchor,
@@ -15314,7 +15356,7 @@ impl Editor {
                 s.clear_pending();
             }
         });
-        self.selections_did_change(false, &old_cursor_position, true, window, cx);
+        self.selections_did_change(false, false, &old_cursor_position, true, window, cx);
     }
 
     fn push_to_selection_history(&mut self) {

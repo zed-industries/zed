@@ -599,7 +599,7 @@ pub(crate) fn handle_from(
                     })
                     .collect::<Vec<_>>();
                 this.update_in(cx, |this, window, cx| {
-                    this.change_selections_inner(None, false, window, cx, |s| {
+                    this.change_selections_inner(None, false, true, window, cx, |s| {
                         s.select(base_selections);
                     });
                 })
