@@ -35,6 +35,8 @@ smol.workspace = true
 take-until.workspace = true
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
+unicode-script.workspace = true
+unicode-segmentation.workspace = true
 util_macros = { workspace = true, optional = true }
 workspace-hack.workspace = true
 

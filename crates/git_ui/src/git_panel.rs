@@ -35,6 +35,7 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, percentage, uniform_list,
 };
 use itertools::Itertools;
+use language::language_settings::SoftWrap;
 use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
@@ -54,6 +55,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -62,7 +64,7 @@ use ui::{
     Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, SplitButton,
     Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe, wrap_with_prefix};
 use workspace::AppState;
 
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -382,7 +384,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_hard_wrap(Some(72), cx);
+    commit_editor.set_soft_wrap_mode(SoftWrap::Bounded, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -1484,8 +1486,22 @@ impl GitPanel {
 
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
         let message = self.commit_editor.read(cx).text(cx);
+        let width = self
+            .commit_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .language_settings(cx)
+            .preferred_line_length as usize;
 
         if !message.trim().is_empty() {
+            let message = wrap_with_prefix(
+                String::new(),
+                message,
+                width,
+                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when no prefix
+                false,
+            );
             return Some(message);
         }
 

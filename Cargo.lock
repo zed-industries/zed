@@ -4690,7 +4690,6 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
- "unicode-script",
  "unicode-segmentation",
  "unindent",
  "url",
@@ -15963,6 +15962,8 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
+ "unicode-script",
+ "unicode-segmentation",
  "util_macros",
  "workspace-hack",
 ]

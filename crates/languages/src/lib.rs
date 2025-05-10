@@ -28,24 +28,24 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-/// A shared grammar for plain text, exposed for reuse by downstream crates.
-#[cfg(feature = "tree-sitter-gitcommit")]
-pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
-    std::sync::LazyLock::new(|| {
-        Arc::new(Language::new(
-            LanguageConfig {
-                name: "Git Commit".into(),
-                soft_wrap: Some(language::language_settings::SoftWrap::EditorWidth),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
-                    first_line_pattern: None,
-                },
-                line_comments: vec![Arc::from("#")],
-                ..LanguageConfig::default()
-            },
-            Some(tree_sitter_gitcommit::LANGUAGE.into()),
-        ))
-    });
+// /// A shared grammar for plain text, exposed for reuse by downstream crates.
+// #[cfg(feature = "tree-sitter-gitcommit")]
+// pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
+//     std::sync::LazyLock::new(|| {
+//         Arc::new(Language::new(
+//             LanguageConfig {
+//                 name: "Git Commit".into(),
+//                 soft_wrap: Some(language::language_settings::SoftWrap::EditorWidth),
+//                 matcher: LanguageMatcher {
+//                     path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
+//                     first_line_pattern: None,
+//                 },
+//                 line_comments: vec![Arc::from("#")],
+//                 ..LanguageConfig::default()
+//             },
+//             Some(tree_sitter_gitcommit::LANGUAGE.into()),
+//         ))
+//     });
 
 pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
