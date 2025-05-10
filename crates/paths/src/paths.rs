@@ -191,6 +191,12 @@ pub fn settings_file() -> &'static PathBuf {
     SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
 }
 
+/// Returns the path to the global settings file.
+pub fn global_settings_file() -> &'static PathBuf {
+    static GLOBAL_SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    GLOBAL_SETTINGS_FILE.get_or_init(|| config_dir().join("global_settings.json"))
+}
+
 /// Returns the path to the `settings_backup.json` file.
 pub fn settings_backup_file() -> &'static PathBuf {
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
