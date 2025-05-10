@@ -3161,16 +3161,19 @@ impl Editor {
                 } else {
                     if !add {
                         s.clear_disjoint();
-                    } else if click_count > 1 {
-                        s.delete(newest_selection.id)
                     }
 
                     s.set_pending_anchor_range(start..end, mode);
                 }
-            } else {
-                if !add {
-                    s.clear_disjoint();
-                }
+            });
+        } else {
+            self.change_selections_without_nav(
+                auto_scroll.then(Autoscroll::newest),
+                window,
+                cx,
+                |s| {
+                    if let Some(point_to_delete) = point_to_delete {
+                        s.delete(point_to_delete);
 
                         if selections_count == 1 {
                             s.set_pending_anchor_range(start..end, mode);
@@ -3178,8 +3181,6 @@ impl Editor {
                     } else {
                         if !add {
                             s.clear_disjoint();
-                        } else if click_count > 1 {
-                            s.delete(newest_selection.id)
                         }
 
                         s.set_pending_anchor_range(start..end, mode);
