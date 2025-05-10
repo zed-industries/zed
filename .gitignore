@@ -2,6 +2,7 @@
 **/cargo-target
 **/target
 **/venv
+**/.direnv
 *.wasm
 *.xcodeproj
 .DS_Store
