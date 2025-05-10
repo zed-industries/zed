@@ -364,12 +364,16 @@ pub async fn download_adapter_from_github(
             futures::io::copy(response.body_mut(), &mut file).await?;
 
             // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
+            #[cfg(not(target_os = "windows"))]
             util::command::new_smol_command("unzip")
                 .arg(&zip_path)
                 .arg("-d")
                 .arg(&version_path)
                 .output()
                 .await?;
+                
+            #[cfg(target_os = "windows")]
+            extract_zip(&zip_path, &version_path).await?;
 
             util::fs::remove_matching(&adapter_path, |entry| {
                 entry
@@ -387,6 +391,54 @@ pub async fn download_adapter_from_github(
     .await;
 
     Ok(version_path)
+}
+
+#[cfg(target_os = "windows")]
+async fn extract_zip(zip_path: &Path, target_dir: &Path) -> Result<()> {
+    use async_zip::base::read::mem::ZipFileReader;
+    use futures::io::AsyncReadExt;
+    
+    log::debug!("Extracting zip: {} -> {}", zip_path.display(), target_dir.display());
+    
+    // Ensure target directory exists
+    std::fs::create_dir_all(target_dir)?;
+    
+    // Read zip file into memory
+    let mut file = smol::fs::File::open(zip_path).await?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).await?;
+    
+    // Create zip reader
+    let reader = ZipFileReader::new(buffer).await?;
+    
+    // Extract each file
+    for i in 0..reader.file().entries().len() {
+        let entry = reader.file().entries().get(i).unwrap();
+        let entry_path = entry.filename().as_str()?;
+        let outpath = target_dir.join(entry_path);
+        
+        if entry_path.ends_with('/') {
+            // Create directory
+            smol::fs::create_dir_all(&outpath).await?;
+        } else {
+            // Ensure parent directory exists
+            if let Some(parent) = outpath.parent() {
+                if !parent.exists() {
+                    smol::fs::create_dir_all(parent).await?;
+                }
+            }
+            
+            // Read file content and write
+            let mut entry_reader = reader.reader_with_entry(i).await?;
+            let mut content = Vec::new();
+            entry_reader.read_to_end(&mut content).await?;
+            
+            let mut outfile = smol::fs::File::create(&outpath).await?;
+            futures::io::copy(&mut content.as_slice(), &mut outfile).await?;
+        }
+    }
+    
+    Ok(())
 }
 
 pub async fn fetch_latest_adapter_version_from_github(

@@ -49,6 +49,7 @@ smol.workspace = true
 task.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
+async_zip.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true
