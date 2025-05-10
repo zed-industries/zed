@@ -60,6 +60,20 @@ pub enum Model {
     Gemini25Pro,
 }
 
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(tag = "type")]
+pub enum ChatMessageContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+pub struct ImageUrl {
+    pub url: String,
+}
+
 impl Model {
     pub fn default_fast() -> Self {
         Self::Claude3_7Sonnet
@@ -152,6 +166,21 @@ impl Model {
             Self::Gemini25Pro => 128_000,
         }
     }
+
+    pub fn supports_vision(&self) -> bool {
+        match self {
+            Self::Gpt4o
+            | Self::Gpt4_1
+            | Self::O3
+            | Self::O4Mini
+            | Self::Gemini20Flash
+            | Self::Gemini25Pro
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -198,7 +227,7 @@ pub enum ChatMessage {
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: Vec<ChatMessageContent>,
     },
     System {
         content: String,
@@ -472,7 +501,8 @@ async fn stream_completion(
         )
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat");
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Copilot-Vision-Request", "true");
 
     let is_streaming = request.stream;
 
