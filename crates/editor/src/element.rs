@@ -537,6 +537,8 @@ impl EditorElement {
         register_action(editor, window, Editor::context_menu_prev);
         register_action(editor, window, Editor::context_menu_next);
         register_action(editor, window, Editor::context_menu_last);
+        register_action(editor, window, Editor::signature_help_prev);
+        register_action(editor, window, Editor::signature_help_next);
         register_action(editor, window, Editor::display_cursor_names);
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
@@ -4414,9 +4416,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if !self.editor.focus_handle(cx).is_focused(window) {
-            return;
-        }
         let Some(newest_selection_head) = newest_selection_head else {
             return;
         };
@@ -4432,7 +4431,7 @@ impl EditorElement {
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
             if let Some(popover) = editor.signature_help_state.popover_mut() {
-                let element = popover.render(max_size, cx);
+                let element = popover.render(max_size, window, cx);
                 Some(element)
             } else {
                 None
