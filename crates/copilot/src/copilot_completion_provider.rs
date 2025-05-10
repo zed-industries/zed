@@ -1055,7 +1055,7 @@ mod tests {
                     .into_iter()
                     .map(|completion| crate::request::InlineCompletionItem {
                         insert_text: completion.text.clone(),
-                        range: completion.range.clone(),
+                        range: completion.range,
                         command: lsp::Command {
                             command: "github.copilot.didAcceptCompletionItem".into(),
                             arguments: Some(vec![json!(completion.uuid.to_string())]),
@@ -1075,7 +1075,7 @@ mod tests {
                     .into_iter()
                     .map(|completion| crate::request::InlineCompletionItem {
                         insert_text: completion.text.clone(),
-                        range: completion.range.clone(),
+                        range: completion.range,
                         command: lsp::Command {
                             command: "github.copilot.didAcceptCompletionItem".into(),
                             arguments: Some(vec![json!(completion.uuid.to_string())]),

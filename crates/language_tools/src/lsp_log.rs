@@ -27,7 +27,6 @@ const MAX_STORED_LOG_ENTRIES: usize = 2000;
 pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
-    copilot_log_subscription: Option<lsp::Subscription>,
     _copilot_subscription: Option<gpui::Subscription>,
     io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String)>,
 }
@@ -241,23 +240,6 @@ impl LogStore {
             cx.subscribe(copilot, |this, copilot, inline_completion_event, cx| {
                 if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
                     if let Some(server) = copilot.read(cx).language_server() {
-                        let server_id = server.server_id();
-                        let weak_this = cx.weak_entity();
-                        this.copilot_log_subscription =
-                            Some(server.on_notification::<copilot::request::LogMessage, _>(
-                                move |params, cx| {
-                                    weak_this
-                                        .update(cx, |this, cx| {
-                                            this.add_language_server_log(
-                                                server_id,
-                                                MessageType::LOG,
-                                                &params.message,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                },
-                            ));
                         let name = LanguageServerName::new_static("copilot");
                         this.add_language_server(
                             LanguageServerKind::Global,
@@ -273,7 +255,6 @@ impl LogStore {
         });
 
         let this = Self {
-            copilot_log_subscription: None,
             _copilot_subscription: copilot_subscription,
             projects: HashMap::default(),
             language_servers: HashMap::default(),

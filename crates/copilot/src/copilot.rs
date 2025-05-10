@@ -23,7 +23,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use request::{DidChangeStatus, WindowShowMessageRequest};
+use request::DidChangeStatus;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::{
@@ -579,18 +579,6 @@ impl Copilot {
                             })
                             .ok();
                         }
-                    }
-                })
-                .detach();
-
-            server
-                .on_notification::<WindowShowMessageRequest, _>({
-                    let _this = this.clone();
-                    move |params, _| {
-                        // TODO: Display the message in Zed's UI
-
-                        // Log the message
-                        log::info!("Copilot {}: {:?}", params.type_.as_str(), params.message);
                     }
                 })
                 .detach();

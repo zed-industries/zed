@@ -171,45 +171,6 @@ impl lsp::notification::Notification for DidChangeStatus {
     const METHOD: &'static str = "didChangeStatus";
 }
 
-// Standard LSP window/showMessageRequest request
-pub enum WindowShowMessageRequest {}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ShowMessageParams {
-    /// The message type. See {@link MessageType}
-    #[serde(rename = "type")]
-    pub type_: MessageType,
-
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-#[repr(i32)]
-pub enum MessageType {
-    Error = 1,
-    Warning = 2,
-    Info = 3,
-    Log = 4,
-    Debug = 5,
-}
-
-impl MessageType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            MessageType::Error => "Error",
-            MessageType::Warning => "Warning",
-            MessageType::Info => "Info",
-            MessageType::Log => "Log",
-            MessageType::Debug => "Debug",
-        }
-    }
-}
-
-impl lsp::notification::Notification for WindowShowMessageRequest {
-    type Params = ShowMessageParams;
-    const METHOD: &'static str = "window/showMessageRequest";
-}
-
 // Inline Completions
 pub enum TextDocumentInlineCompletion {}
 
