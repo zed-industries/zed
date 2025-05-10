@@ -394,7 +394,7 @@ impl SettingsStore {
         &self.raw_user_settings
     }
 
-    /// Access the raw JSON value of the user settings.
+    /// Access the raw JSON value of the global settings.
     pub fn raw_global_settings(&self) -> Option<&Value> {
         self.raw_global_settings.as_ref()
     }
