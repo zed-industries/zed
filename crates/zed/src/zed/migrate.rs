@@ -2,12 +2,14 @@ use anyhow::{Context as _, Result};
 use editor::Editor;
 use fs::Fs;
 use migrator::{migrate_keymap, migrate_settings};
-use settings::{KeymapFile, SettingsStore};
+use settings::{KeymapFile, Settings, SettingsStore};
 use util::ResultExt;
 
 use std::sync::Arc;
 
-use gpui::{Entity, EventEmitter, Global, Task};
+use gpui::{Entity, EventEmitter, Global, Task, TextStyle, TextStyleRefinement};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::ItemHandle;
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
@@ -21,6 +23,7 @@ pub enum MigrationType {
 pub struct MigrationBanner {
     migration_type: Option<MigrationType>,
     should_migrate_task: Option<Task<()>>,
+    markdown_entity: Option<Entity<Markdown>>,
 }
 
 pub enum MigrationEvent {
@@ -63,6 +66,7 @@ impl MigrationBanner {
         Self {
             migration_type: None,
             should_migrate_task: None,
+            markdown_entity: None,
         }
     }
 
@@ -100,6 +104,26 @@ impl MigrationBanner {
             }
         }
     }
+
+    fn update_banner_text(&mut self, cx: &mut Context<Self>) {
+        let file_type = match self.migration_type {
+            Some(MigrationType::Keymap) => "keymap",
+            Some(MigrationType::Settings) => "settings",
+            None => return,
+        };
+
+        let backup_file_name = self.backup_file_name();
+        let migration_text = format!(
+            "Your {} file uses deprecated settings which can be \
+            automatically updated. A backup will be saved to `{}`",
+            file_type, backup_file_name
+        );
+
+        self.markdown_entity =
+            Some(cx.new(|cx| Markdown::new(migration_text.into(), None, None, cx)));
+
+        cx.notify();
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for MigrationBanner {}
@@ -126,7 +150,8 @@ impl ToolbarItemView for MigrationBanner {
             let should_migrate = should_migrate_keymap(fs);
             self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
-                    this.update(cx, |_, cx| {
+                    this.update(cx, |this, cx| {
+                        this.update_banner_text(cx);
                         cx.emit(ToolbarItemEvent::ChangeLocation(
                             ToolbarItemLocation::Secondary,
                         ));
@@ -137,6 +162,7 @@ impl ToolbarItemView for MigrationBanner {
             }));
         } else if &target == paths::settings_file() {
             self.migration_type = Some(MigrationType::Settings);
+            self.update_banner_text(cx);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_settings(fs);
             self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -159,54 +185,53 @@ impl ToolbarItemView for MigrationBanner {
 impl Render for MigrationBanner {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let migration_type = self.migration_type;
-        let file_type = match migration_type {
-            Some(MigrationType::Keymap) => "keymap",
-            Some(MigrationType::Settings) => "settings",
-            None => "",
-        };
-        let backup_file_name = self.backup_file_name();
+        let settings = ThemeSettings::get_global(cx);
+        let ui_font_family = settings.ui_font.family.clone();
 
         h_flex()
             .py_1()
             .pl_2()
             .pr_1()
-            .flex_wrap()
             .justify_between()
             .bg(cx.theme().status().info_background.opacity(0.6))
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_sm()
-            .overflow_hidden()
             .child(
                 h_flex()
                     .gap_2()
+                    .overflow_hidden()
                     .child(
                         Icon::new(IconName::Warning)
                             .size(IconSize::XSmall)
                             .color(Color::Warning),
                     )
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(
-                                Label::new(format!(
-                                    "Your {} file uses deprecated settings which can be \
-                                    automatically updated. A backup will be saved to",
-                                    file_type
-                                ))
-                                .color(Color::Default),
-                            )
-                            .child(
-                                div()
-                                    .px_1()
-                                    .bg(cx.theme().colors().background)
-                                    .rounded_xs()
-                                    .child(
-                                        Label::new(backup_file_name)
-                                            .buffer_font(cx)
-                                            .size(LabelSize::Small),
-                                    ),
-                            ),
+                        div()
+                            .overflow_hidden()
+                            .text_size(TextSize::Default.rems(cx))
+                            .when_some(self.markdown_entity.as_ref(), |parent, markdown_entity| {
+                                parent.child(
+                                    MarkdownElement::new(
+                                        markdown_entity.clone(),
+                                        MarkdownStyle {
+                                            base_text_style: TextStyle {
+                                                color: cx.theme().colors().text,
+                                                font_family: ui_font_family,
+                                                ..Default::default()
+                                            },
+                                            inline_code: TextStyleRefinement {
+                                                background_color: Some(
+                                                    cx.theme().colors().background,
+                                                ),
+                                                ..Default::default()
+                                            },
+                                            ..Default::default()
+                                        },
+                                    )
+                                    .into_any_element(),
+                                )
+                            }),
                     ),
             )
             .child(
