@@ -646,10 +646,20 @@ impl Render for NotificationPanel {
                                             let client = client.clone();
                                             window
                                                 .spawn(cx, async move |cx| {
-                                                    client
+                                                    match client
                                                         .authenticate_and_connect(true, &cx)
-                                                        .log_err()
-                                                        .await;
+                                                        .await
+                                                    {
+                                                        util::ConnectionResult::Timeout => {
+                                                            log::error!("Connection timeout");
+                                                        }
+                                                        util::ConnectionResult::ConnectionReset => {
+                                                            log::error!("Connection reset");
+                                                        }
+                                                        util::ConnectionResult::Result(r) => {
+                                                            r.log_err();
+                                                        }
+                                                    }
                                                 })
                                                 .detach()
                                         }
