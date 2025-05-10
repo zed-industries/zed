@@ -159,7 +159,7 @@ impl AgentConfiguration {
                                     .color(Color::Muted),
                             )
                             .child(Label::new(provider_name.clone()).size(LabelSize::Large))
-                            .when(provider.is_authenticated(cx), |parent| {
+                            .when(provider.is_authenticated(cx) && !is_expanded, |parent| {
                                 parent.child(
                                     h_flex()
                                         .child(
