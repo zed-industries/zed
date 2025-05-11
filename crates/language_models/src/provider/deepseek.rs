@@ -290,11 +290,15 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        true
+        self.model == deepseek::Model::Chat
     }
 
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::None => true,
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -345,11 +349,7 @@ impl LanguageModel for DeepSeekLanguageModel {
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
         >,
     > {
-        let request = into_deepseek(
-            request,
-            self.model.id().to_string(),
-            self.max_output_tokens(),
-        );
+        let request = into_deepseek(request, &self.model, self.max_output_tokens());
         let stream = self.stream_completion(request, cx);
 
         async move {
@@ -362,10 +362,10 @@ impl LanguageModel for DeepSeekLanguageModel {
 
 pub fn into_deepseek(
     request: LanguageModelRequest,
-    model: String,
+    model: &deepseek::Model,
     max_output_tokens: Option<u32>,
 ) -> deepseek::Request {
-    let is_reasoner = model == "deepseek-reasoner";
+    let is_reasoner = *model == deepseek::Model::Reasoner;
 
     let messages = if is_reasoner {
         let len = request.messages.len();
@@ -470,7 +470,7 @@ pub fn into_deepseek(
     };
 
     deepseek::Request {
-        model,
+        model: model.id().to_string(),
         messages,
         stream: true,
         max_tokens: max_output_tokens,
