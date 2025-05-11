@@ -11,7 +11,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use open_router::{Model, ResponseStreamEvent, get_models, stream_completion};
 use schemars::JsonSchema;
@@ -387,6 +387,14 @@ impl LanguageModel for OpenRouterLanguageModel {
         async move { Ok(map_to_language_model_completion_events(completions.await?).boxed()) }
             .boxed()
     }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::None => true,
+        }
+    }
 }
 
 pub fn into_open_router(
@@ -466,7 +474,11 @@ pub fn into_open_router(
                 },
             })
             .collect(),
-        tool_choice: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => open_router::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
+            LanguageModelToolChoice::None => open_router::ToolChoice::None,
+        }),
         http_referer: Some("zed.dev".to_string()),
         http_user_agent: Some("Zed Editor".to_string()),
     }
