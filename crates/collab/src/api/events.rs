@@ -4,12 +4,12 @@ use crate::{AppState, Error, Result, api::slack};
 use anyhow::anyhow;
 use aws_sdk_s3::primitives::ByteStream;
 use axum::{
-    Extension, Router, TypedHeader,
+    Extension, Router,
     body::Bytes,
-    headers::Header,
     http::{HeaderMap, HeaderName, StatusCode},
     routing::post,
 };
+use axum_extra::{TypedHeader, headers::Header};
 use chrono::Duration;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
@@ -38,18 +38,18 @@ impl Header for ZedChecksumHeader {
         ZED_CHECKSUM_HEADER.get_or_init(|| HeaderName::from_static("x-zed-checksum"))
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let checksum = values
             .next()
-            .ok_or_else(axum::headers::Error::invalid)?
+            .ok_or_else(axum_extra::headers::Error::invalid)?
             .to_str()
-            .map_err(|_| axum::headers::Error::invalid())?;
+            .map_err(|_| axum_extra::headers::Error::invalid())?;
 
-        let bytes = hex::decode(checksum).map_err(|_| axum::headers::Error::invalid())?;
+        let bytes = hex::decode(checksum).map_err(|_| axum_extra::headers::Error::invalid())?;
         Ok(Self(bytes))
     }
 

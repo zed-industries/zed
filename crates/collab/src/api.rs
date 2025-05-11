@@ -13,15 +13,13 @@ use crate::{
 use anyhow::anyhow;
 use axum::{
     Extension, Json, Router,
-    body::Body,
-    extract::{Path, Query},
-    headers::Header,
-    http::{self, HeaderName, Request, StatusCode},
+    extract::{Path, Query, Request},
+    http::{self, HeaderName, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
 };
-use axum_extra::response::ErasedJson;
+use axum_extra::{headers::Header, response::ErasedJson};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, OnceLock};
 use tower::ServiceBuilder;
@@ -36,16 +34,16 @@ impl Header for CloudflareIpCountryHeader {
         CLOUDFLARE_IP_COUNTRY_HEADER.get_or_init(|| HeaderName::from_static("cf-ipcountry"))
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let country_code = values
             .next()
-            .ok_or_else(axum::headers::Error::invalid)?
+            .ok_or_else(axum_extra::headers::Error::invalid)?
             .to_str()
-            .map_err(|_| axum::headers::Error::invalid())?;
+            .map_err(|_| axum_extra::headers::Error::invalid())?;
 
         Ok(Self(country_code.to_string()))
     }
@@ -69,16 +67,16 @@ impl Header for SystemIdHeader {
         SYSTEM_ID_HEADER.get_or_init(|| HeaderName::from_static("x-zed-system-id"))
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let system_id = values
             .next()
-            .ok_or_else(axum::headers::Error::invalid)?
+            .ok_or_else(axum_extra::headers::Error::invalid)?
             .to_str()
-            .map_err(|_| axum::headers::Error::invalid())?;
+            .map_err(|_| axum_extra::headers::Error::invalid())?;
 
         Ok(Self(system_id.to_string()))
     }
@@ -94,7 +92,7 @@ impl std::fmt::Display for SystemIdHeader {
     }
 }
 
-pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
+pub fn routes(rpc_server: Arc<rpc::Server>) -> Router {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
@@ -108,7 +106,7 @@ pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
         )
 }
 
-pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoResponse {
+pub async fn validate_api_token(req: Request, next: Next) -> impl IntoResponse {
     let token = req
         .headers()
         .get(http::header::AUTHORIZATION)

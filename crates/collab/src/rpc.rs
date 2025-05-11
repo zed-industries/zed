@@ -18,19 +18,20 @@ use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
     Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
+use axum::http::HeaderName;
 use axum::{
-    Extension, Router, TypedHeader,
-    body::Body,
+    Extension, Router,
     extract::{
         ConnectInfo, WebSocketUpgrade,
         ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage},
     },
-    headers::{Header, HeaderName},
     http::StatusCode,
     middleware,
     response::IntoResponse,
     routing::get,
 };
+use axum_extra::TypedHeader;
+use axum_extra::headers::Header;
 use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
@@ -1022,18 +1023,18 @@ impl Header for ProtocolVersion {
         ZED_PROTOCOL_VERSION.get_or_init(|| HeaderName::from_static("x-zed-protocol-version"))
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let version = values
             .next()
-            .ok_or_else(axum::headers::Error::invalid)?
+            .ok_or_else(axum_extra::headers::Error::invalid)?
             .to_str()
-            .map_err(|_| axum::headers::Error::invalid())?
+            .map_err(|_| axum_extra::headers::Error::invalid())?
             .parse()
-            .map_err(|_| axum::headers::Error::invalid())?;
+            .map_err(|_| axum_extra::headers::Error::invalid())?;
         Ok(Self(version))
     }
 
@@ -1049,18 +1050,18 @@ impl Header for AppVersionHeader {
         ZED_APP_VERSION.get_or_init(|| HeaderName::from_static("x-zed-app-version"))
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum_extra::headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let version = values
             .next()
-            .ok_or_else(axum::headers::Error::invalid)?
+            .ok_or_else(axum_extra::headers::Error::invalid)?
             .to_str()
-            .map_err(|_| axum::headers::Error::invalid())?
+            .map_err(|_| axum_extra::headers::Error::invalid())?
             .parse()
-            .map_err(|_| axum::headers::Error::invalid())?;
+            .map_err(|_| axum_extra::headers::Error::invalid())?;
         Ok(Self(version))
     }
 
@@ -1069,7 +1070,7 @@ impl Header for AppVersionHeader {
     }
 }
 
-pub fn routes(server: Arc<Server>) -> Router<(), Body> {
+pub fn routes(server: Arc<Server>) -> Router {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
         .layer(
@@ -4042,13 +4043,13 @@ async fn get_llm_api_token(
 
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
     let message = match message {
-        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.to_string().into()),
         TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
         TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
-        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
+        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload),
         TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
             code: frame.code.into(),
-            reason: frame.reason.as_str().to_owned().into(),
+            reason: frame.reason.to_string().into(),
         })),
         // We should never receive a frame while reading the message, according
         // to the `tungstenite` maintainers:
@@ -4068,14 +4069,14 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     match message {
-        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.into()),
+        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.to_string().into()),
         AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
         AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload.into()),
         AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload.into()),
         AxumMessage::Close(frame) => {
             TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
                 code: frame.code.into(),
-                reason: frame.reason.as_ref().into(),
+                reason: frame.reason.to_string().into(),
             }))
         }
     }

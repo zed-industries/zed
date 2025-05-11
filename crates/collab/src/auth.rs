@@ -5,7 +5,8 @@ use crate::{
 };
 use anyhow::{Context as _, anyhow};
 use axum::{
-    http::{self, Request, StatusCode},
+    extract::Request,
+    http::{self, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
@@ -27,7 +28,7 @@ use subtle::ConstantTimeEq;
 ///   <token> can be an access_token attached to that user, or an access token of an admin
 ///   or (in development) the string ADMIN:<config.api_token>.
 /// Authorization: "dev-server-token" <token>
-pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl IntoResponse {
+pub async fn validate_header(mut req: Request, next: Next) -> impl IntoResponse {
     let mut auth_header = req
         .headers()
         .get(http::header::AUTHORIZATION)

@@ -1,11 +1,11 @@
 use anyhow::anyhow;
-use axum::headers::HeaderMapExt;
 use axum::{
     Extension, Router,
     extract::MatchedPath,
     http::{Request, Response},
     routing::get,
 };
+use axum_extra::headers::HeaderMapExt;
 
 use collab::api::CloudflareIpCountryHeader;
 use collab::api::billing::sync_llm_request_usage_with_stripe_periodically;
@@ -18,13 +18,8 @@ use collab::{
 };
 use collab::{ServiceMode, api::billing::poll_stripe_events_periodically};
 use db::Database;
-use std::{
-    env::args,
-    net::{SocketAddr, TcpListener},
-    path::Path,
-    sync::Arc,
-    time::Duration,
-};
+use std::{env::args, net::SocketAddr, path::Path, sync::Arc, time::Duration};
+use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::signal::unix::SignalKind;
 use tower_http::trace::TraceLayer;
@@ -92,6 +87,7 @@ async fn main() -> Result<()> {
                 .layer(Extension(mode));
 
             let listener = TcpListener::bind(format!("0.0.0.0:{}", config.http_port))
+                .await
                 .expect("failed to bind TCP listener");
 
             let mut on_shutdown = None;
@@ -227,19 +223,20 @@ async fn main() -> Result<()> {
                 futures::future::select(ctrl_break, ctrl_c).await;
             };
 
-            axum::Server::from_tcp(listener)
-                .map_err(|e| anyhow!(e))?
-                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-                .with_graceful_shutdown(async move {
-                    signal.await;
-                    tracing::info!("Received interrupt signal");
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(async move {
+                signal.await;
+                tracing::info!("Received interrupt signal");
 
-                    if let Some(on_shutdown) = on_shutdown {
-                        on_shutdown();
-                    }
-                })
-                .await
-                .map_err(|e| anyhow!(e))?;
+                if let Some(on_shutdown) = on_shutdown {
+                    on_shutdown();
+                }
+            })
+            .await
+            .map_err(|e| anyhow!(e))?;
         }
         _ => {
             Err(anyhow!(
