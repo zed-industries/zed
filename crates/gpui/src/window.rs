@@ -3830,6 +3830,12 @@ impl Window {
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
     }
+
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
