@@ -195,7 +195,6 @@ impl Render for MigrationBanner {
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_sm()
-            .max_h_16()
             .child(
                 h_flex()
                     .gap_2()
@@ -209,6 +208,7 @@ impl Render for MigrationBanner {
                         div()
                             .overflow_hidden()
                             .text_size(TextSize::Default.rems(cx))
+                            .max_h_16()
                             .when_some(self.markdown.as_ref(), |this, markdown| {
                                 this.child(
                                     MarkdownElement::new(
