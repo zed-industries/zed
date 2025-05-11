@@ -46,7 +46,9 @@ use ui::{
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
+use workspace::{
+    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+};
 use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
@@ -362,6 +364,7 @@ pub struct AgentPanel {
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     hide_trial_upsell: bool,
     _trial_markdown: Entity<Markdown>,
@@ -703,6 +706,7 @@ impl AgentPanel {
             assistant_navigation_menu: None,
             width: None,
             height: None,
+            zoomed: false,
             pending_serialization: None,
             hide_trial_upsell: false,
             _trial_markdown: trial_markdown,
@@ -1144,6 +1148,17 @@ impl AgentPanel {
         }
     }
 
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zoomed {
+            cx.emit(PanelEvent::ZoomOut);
+        } else {
+            if !self.focus_handle(cx).contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(PanelEvent::ZoomIn);
+        }
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -1415,6 +1430,15 @@ impl Panel for AgentPanel {
 
     fn enabled(&self, cx: &App) -> bool {
         AssistantSettings::get_global(cx).enabled
+    }
+
+    fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
+        self.zoomed
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
     }
 }
 
@@ -2780,6 +2804,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::toggle_zoom))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
             .map(|parent| match &self.active_view {
