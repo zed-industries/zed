@@ -46,7 +46,9 @@ use ui::{
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
+use workspace::{
+    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+};
 use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
@@ -55,10 +57,10 @@ use zed_llm_client::UsageLimit;
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
+use crate::history_store::{HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
-use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
+use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
@@ -356,11 +358,13 @@ pub struct AgentPanel {
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
+    hovered_recent_history_item: Option<usize>,
     assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     hide_trial_upsell: bool,
     _trial_markdown: Entity<Markdown>,
@@ -696,11 +700,13 @@ impl AgentPanel {
             previous_view: None,
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
+            hovered_recent_history_item: None,
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu: None,
             width: None,
             height: None,
+            zoomed: false,
             pending_serialization: None,
             hide_trial_upsell: false,
             _trial_markdown: trial_markdown,
@@ -1142,6 +1148,17 @@ impl AgentPanel {
         }
     }
 
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zoomed {
+            cx.emit(PanelEvent::ZoomOut);
+        } else {
+            if !self.focus_handle(cx).contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(PanelEvent::ZoomIn);
+        }
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -1413,6 +1430,15 @@ impl Panel for AgentPanel {
 
     fn enabled(&self, cx: &App) -> bool {
         AssistantSettings::get_global(cx).enabled
+    }
+
+    fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
+        self.zoomed
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
     }
 }
 
@@ -2212,7 +2238,7 @@ impl AgentPanel {
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
-                                Label::new("Past Interactions")
+                                Label::new("Recent")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -2237,18 +2263,20 @@ impl AgentPanel {
                         v_flex()
                             .gap_1()
                             .children(
-                                recent_history.into_iter().map(|entry| {
+                                recent_history.into_iter().enumerate().map(|(index, entry)| {
                                     // TODO: Add keyboard navigation.
-                                    match entry {
-                                        HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                        HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                    }
+                                    let is_hovered = self.hovered_recent_history_item == Some(index);
+                                    HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
+                                        .hovered(is_hovered)
+                                        .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                                            if *is_hovered {
+                                                this.hovered_recent_history_item = Some(index);
+                                            } else if this.hovered_recent_history_item == Some(index) {
+                                                this.hovered_recent_history_item = None;
+                                            }
+                                            cx.notify();
+                                        }))
+                                        .into_any_element()
                                 }),
                             )
                     )
@@ -2744,42 +2772,16 @@ impl AgentPanel {
 
 impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match &self.active_view {
-            ActiveView::Thread { .. } => v_flex()
-                .relative()
-                .justify_between()
-                .size_full()
-                .child(self.render_active_thread_or_empty_state(window, cx))
-                .children(self.render_tool_use_limit_reached(cx))
-                .child(h_flex().child(self.message_editor.clone()))
-                .children(self.render_last_error(cx))
-                .child(self.render_drag_target(cx))
-                .into_any(),
-            ActiveView::History => self.history.clone().into_any_element(),
-            ActiveView::PromptEditor {
-                context_editor,
-                buffer_search_bar,
-                ..
-            } => self
-                .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
-                .into_any(),
-            ActiveView::Configuration => v_flex()
-                .size_full()
-                .children(self.configuration.clone())
-                .into_any(),
-        };
-
-        let content = match self.active_view.which_font_size_used() {
-            WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
-                    .size_full()
-                    .child(content)
-                    .into_any()
-            }
-            _ => content,
-        };
-
-        v_flex()
+        // WARNING: Changes to this element hierarchy can have
+        // non-obvious implications to the layout of children.
+        //
+        // If you need to change it, please confirm:
+        // - The message editor expands (⌘esc) correctly
+        // - When expanded, the buttons at the bottom of the panel are displayed correctly
+        // - Font size works as expected and can be changed with ⌘+/⌘-
+        // - Scrolling in all views works as expected
+        // - Files can be dropped into the panel
+        let content = v_flex()
             .key_context(self.key_context())
             .justify_between()
             .size_full()
@@ -2802,9 +2804,40 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::toggle_zoom))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
-            .child(content)
+            .map(|parent| match &self.active_view {
+                ActiveView::Thread { .. } => parent
+                    .relative()
+                    .child(self.render_active_thread_or_empty_state(window, cx))
+                    .children(self.render_tool_use_limit_reached(cx))
+                    .child(h_flex().child(self.message_editor.clone()))
+                    .children(self.render_last_error(cx))
+                    .child(self.render_drag_target(cx)),
+                ActiveView::History => parent.child(self.history.clone()),
+                ActiveView::PromptEditor {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => parent.child(self.render_prompt_editor(
+                    context_editor,
+                    buffer_search_bar,
+                    window,
+                    cx,
+                )),
+                ActiveView::Configuration => parent.children(self.configuration.clone()),
+            });
+
+        match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                    .size_full()
+                    .child(content)
+                    .into_any()
+            }
+            _ => content.into_any(),
+        }
     }
 }
 

@@ -218,6 +218,23 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // Which level to use to filter out diagnostics displayed in the editor.
+  //
+  // Affects the editor rendering only, and does not interrupt
+  // the functionality of diagnostics fetching and project diagnostics editor.
+  // Which files containing diagnostic errors/warnings to mark in the tabs.
+  // Diagnostics are only shown when file icons are also active.
+  // This setting only works when can take the following three values:
+  //
+  // Which diagnostic indicators to show in the scrollbar, their level should be more or equal to the specified severity level.
+  // Possible values:
+  //  - "off" — no diagnostics are allowed
+  //  - "error"
+  //  - "warning" (default)
+  //  - "info"
+  //  - "hint"
+  //  - null — allow all diagnostics
+  "diagnostics_max_severity": "warning",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -393,11 +410,7 @@
     // 1. `null` to inherit the editor `current_line_highlight` setting (default)
     // 2. "line" or "all" to highlight the current line in the minimap.
     // 3. "gutter" or "none" to not highlight the current line in the minimap.
-    "current_line_highlight": null,
-    // The width of the minimap in pixels.
-    "width": 100,
-    // The font size of the minimap in pixels.
-    "font_size": 2
+    "current_line_highlight": null
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
@@ -1006,7 +1019,7 @@
       // longer than this value will still push diagnostics further to the right.
       "min_column": 0,
       // The minimum severity of the diagnostics to show inline.
-      // Shows all diagnostics when not specified.
+      // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
     },
     "cargo": {
@@ -1284,21 +1297,22 @@
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
-  // By default use a recent system version of node, or install our own.
-  // You can override this to use a version of node that is not in $PATH with:
-  // {
-  //   "node": {
-  //     "path": "/path/to/node"
-  //     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
-  //   }
-  // }
-  // or to ensure Zed always downloads and installs an isolated version of node:
-  // {
-  //   "node": {
-  //     "ignore_system_version": true,
-  //   }
-  // NOTE: changing this setting currently requires restarting Zed.
-  "node": {},
+  // Settings for which version of Node.js and NPM to use when installing
+  // language servers and Copilot.
+  //
+  // Note: changing this setting currently requires restarting Zed.
+  "node": {
+    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
+    // existing executables if their version is recent enough. Set this to `true`
+    // to prevent this, and force Zed to always download and install its own
+    // version of Node.
+    "ignore_system_version": false,
+    // You can also specify alternative paths to Node and NPM. If you specify
+    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
+    // `${path}/../npm`.
+    "path": null,
+    "npm_path": null
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings

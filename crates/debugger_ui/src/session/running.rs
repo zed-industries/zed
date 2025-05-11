@@ -352,6 +352,13 @@ pub(crate) fn new_debugger_pane(
                     .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .on_action(|_: &menu::Cancel, window, cx| {
+                        if cx.stop_active_drag(window) {
+                            return;
+                        } else {
+                            cx.propagate();
+                        }
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -864,7 +871,7 @@ impl RunningState {
 
                     dap::DebugRequest::Launch(new_launch_request)
                 }
-                request @ dap::DebugRequest::Attach(_) => request,
+                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
             };
             Ok(DebugTaskDefinition {
                 label,

@@ -160,6 +160,7 @@ actions!(
         ActivatePreviousWindow,
         AddFolderToProject,
         ClearAllNotifications,
+        CloseActiveDock,
         CloseAllDocks,
         CloseWindow,
         Feedback,
@@ -2736,6 +2737,20 @@ impl Workspace {
         self.serialize_workspace(window, cx);
     }
 
+    fn active_dock(&self, window: &Window, cx: &Context<Self>) -> Option<&Entity<Dock>> {
+        self.all_docks().into_iter().find(|&dock| {
+            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
+        })
+    }
+
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dock) = self.active_dock(window, cx) {
+            dock.update(cx, |dock, cx| {
+                dock.set_open(false, window, cx);
+            });
+        }
+    }
+
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
@@ -5296,6 +5311,11 @@ impl Workspace {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
+                    workspace.close_active_dock(window, cx);
+                },
+            ))
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, window, cx| {
                     workspace.close_all_docks(window, cx);
@@ -5491,14 +5511,15 @@ impl Workspace {
             .ok();
     }
 
-    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((notification_id, _)) = self.notifications.pop() {
-            dismiss_app_notification(&notification_id, cx);
+    pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
             return;
+        } else if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+        } else {
+            cx.emit(Event::ClearActivityIndicator);
+            cx.propagate();
         }
-
-        cx.emit(Event::ClearActivityIndicator);
-        cx.propagate();
     }
 }
 
@@ -5729,6 +5750,11 @@ impl Render for Workspace {
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
+        let notification_entities = self
+            .notifications
+            .iter()
+            .map(|(_, notification)| notification.entity_id())
+            .collect::<Vec<_>>();
 
         client_side_decorations(
             self.actions(div(), window, cx)
@@ -5744,6 +5770,11 @@ impl Render for Workspace {
                 .text_color(colors.text)
                 .overflow_hidden()
                 .children(self.titlebar_item.clone())
+                .on_modifiers_changed(move |_, _, cx| {
+                    for &id in &notification_entities {
+                        cx.notify(id);
+                    }
+                })
                 .child(
                     div()
                         .size_full()

@@ -141,7 +141,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [
-                            schema_file_match(paths::debug_tasks_file()),
+                            schema_file_match(paths::debug_scenarios_file()),
                             paths::local_debug_file_relative_path()
                         ],
                         "schema": debug_schema,

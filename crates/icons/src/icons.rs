@@ -155,6 +155,7 @@ pub enum IconName {
     ListCollapse,
     ListTree,
     ListX,
+    LoadCircle,
     LockOutlined,
     MagnifyingGlass,
     MailOpen,
