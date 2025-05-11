@@ -4,13 +4,13 @@ use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
     Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
-    RowHighlightOptions, ToPoint,
+    RowHighlightOptions, ToPoint, scroll::Autoscroll,
 };
 use gpui::{
     AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, WeakEntity, Window,
 };
-use language::{Capability, Point};
+use language::{Capability, Point, Selection, SelectionGoal};
 use project::{Project, ProjectPath};
 use ui::{ActiveTheme as _, Context, ParentElement as _, Styled as _, div};
 use util::ResultExt as _;
@@ -120,9 +120,39 @@ impl StackFrameViewer {
                         stack_frame_list.read(cx).selected_stack_frame_id();
                     this.update_excerpts(window, cx);
                 }
-                StackFrameListEvent::SelectedStackFrameChanged(frame_id) => {
-                    this.selected_stack_frame_id = Some(*frame_id);
+                StackFrameListEvent::SelectedStackFrameChanged(selected_frame_id) => {
+                    this.selected_stack_frame_id = Some(*selected_frame_id);
                     this.update_highlights(window, cx);
+
+                    if let Some(frame_anchor) = this
+                        .highlights
+                        .iter()
+                        .find(|(frame_id, _)| frame_id == selected_frame_id)
+                        .map(|highlight| highlight.1)
+                    {
+                        this.editor.update(cx, |editor, cx| {
+                            if frame_anchor.excerpt_id
+                                != editor.selections.newest_anchor().head().excerpt_id
+                            {
+                                let auto_scroll =
+                                    Some(Autoscroll::center().for_anchor(frame_anchor));
+
+                                editor.change_selections(auto_scroll, window, cx, |selections| {
+                                    let selection_id = selections.new_selection_id();
+
+                                    let selection = Selection {
+                                        id: selection_id,
+                                        start: frame_anchor,
+                                        end: frame_anchor,
+                                        goal: SelectionGoal::None,
+                                        reversed: false,
+                                    };
+
+                                    selections.select_anchors(vec![selection]);
+                                })
+                            }
+                        });
+                    }
                 }
             },
         );
