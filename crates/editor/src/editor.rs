@@ -17885,9 +17885,7 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
-            return;
-        };
+
         if !self.inline_value_cache.enabled {
             let inlays = std::mem::take(&mut self.inline_value_cache.inlays);
             self.splice_inlays(&inlays, Vec::new(), cx);
@@ -17905,15 +17903,24 @@ impl Editor {
                 .ok()?;
 
             let inline_values = editor
-                .update(cx, |_, cx| {
+                .update(cx, |editor, cx| {
                     let Some(current_execution_position) = current_execution_position else {
                         return Some(Task::ready(Ok(Vec::new())));
                     };
 
-                    // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
-                    // anchor is in the same buffer
+                    let buffer = editor.buffer.read_with(cx, |buffer, cx| {
+                        let snapshot = buffer.snapshot(cx);
+
+                        let excerpt = snapshot.excerpt_containing(
+                            current_execution_position..current_execution_position,
+                        )?;
+
+                        editor.buffer.read(cx).buffer(excerpt.buffer_id())
+                    })?;
+
                     let range =
                         buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
+
                     project.inline_values(buffer, range, cx)
                 })
                 .ok()
