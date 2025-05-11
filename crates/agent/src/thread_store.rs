@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -28,6 +28,7 @@ use prompt_store::{
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use ui::Window;
 use util::ResultExt as _;
 
 use crate::context_server_tool::ContextServerTool;
@@ -388,18 +389,20 @@ impl ThreadStore {
     pub fn open_thread(
         &self,
         id: &ThreadId,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(async move |this, cx| {
+        let this = cx.weak_entity();
+        window.spawn(cx, async move |cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
-            let thread = this.update(cx, |this, cx| {
+            let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {
                     Thread::deserialize(
                         id.clone(),
@@ -408,6 +411,7 @@ impl ThreadStore {
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),
+                        window,
                         cx,
                     )
                 })
@@ -651,6 +655,8 @@ pub struct SerializedThread {
     pub exceeded_window_error: Option<ExceededWindowError>,
     #[serde(default)]
     pub model: Option<SerializedLanguageModel>,
+    #[serde(default)]
+    pub completion_mode: Option<CompletionMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -770,6 +776,7 @@ pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: Arc<str>,
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -794,6 +801,7 @@ impl LegacySerializedThread {
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
             model: None,
+            completion_mode: None,
         }
     }
 }

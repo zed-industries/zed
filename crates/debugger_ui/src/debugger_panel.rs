@@ -1,20 +1,19 @@
 use crate::persistence::DebuggerPaneItem;
+use crate::session::DebugSession;
 use crate::{
-    ClearAllBreakpoints, Continue, CreateDebuggingSession, Disconnect, FocusBreakpointList,
-    FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
-    Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    persistence,
+    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
+    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
 };
-use crate::{new_session_modal::NewSessionModal, session::DebugSession};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
+use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
 };
-use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
@@ -55,12 +54,11 @@ pub enum DebugPanelEvent {
 }
 
 actions!(debug_panel, [ToggleFocus]);
+
 pub struct DebugPanel {
     size: Pixels,
     sessions: Vec<Entity<DebugSession>>,
     active_session: Option<Entity<DebugSession>>,
-    /// This represents the last debug definition that was created in the new session modal
-    pub(crate) past_debug_definition: Option<DebugTaskDefinition>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -81,7 +79,6 @@ impl DebugPanel {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                past_debug_definition: None,
                 focus_handle: cx.focus_handle(),
                 project,
                 workspace: workspace.weak_handle(),
@@ -110,7 +107,7 @@ impl DebugPanel {
 
         let filter = CommandPaletteFilter::global_mut(cx);
         let debugger_action_types = [
-            TypeId::of::<Disconnect>(),
+            TypeId::of::<Detach>(),
             TypeId::of::<Stop>(),
             TypeId::of::<ToggleIgnoreBreakpoints>(),
         ];
@@ -213,7 +210,6 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         let dap_store = self.project.read(cx).dap_store();
-        let workspace = self.workspace.clone();
         let session = dap_store.update(cx, |dap_store, cx| {
             dap_store.new_session(
                 scenario.label.clone(),
@@ -252,14 +248,14 @@ impl DebugPanel {
 
         cx.spawn(async move |_, cx| {
             if let Err(error) = task.await {
-                log::error!("{:?}", error);
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.show_error(&error, cx);
-                    })
-                    .ok();
                 session
-                    .update(cx, |session, cx| session.shutdown(cx))?
+                    .update(cx, |session, cx| {
+                        session
+                            .console_output(cx)
+                            .unbounded_send(format!("error: {}", error))
+                            .ok();
+                        session.shutdown(cx)
+                    })?
                     .await;
             }
             anyhow::Ok(())
@@ -295,7 +291,7 @@ impl DebugPanel {
 
         let (debug_session, workspace) = this.update_in(cx, |this, window, cx| {
             this.sessions.retain(|session| {
-                session
+                !session
                     .read(cx)
                     .running_state()
                     .read(cx)
@@ -609,40 +605,19 @@ impl DebugPanel {
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
         let div = if is_side { v_flex() } else { h_flex() };
-        let weak_panel = cx.weak_entity();
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
                 .icon_size(IconSize::Small)
                 .on_click({
-                    let workspace = self.workspace.clone();
-                    let weak_panel = weak_panel.clone();
-                    let past_debug_definition = self.past_debug_definition.clone();
-                    move |_, window, cx| {
-                        let weak_panel = weak_panel.clone();
-                        let past_debug_definition = past_debug_definition.clone();
-
-                        let _ = workspace.update(cx, |this, cx| {
-                            let workspace = cx.weak_entity();
-                            this.toggle_modal(window, cx, |window, cx| {
-                                NewSessionModal::new(
-                                    past_debug_definition,
-                                    weak_panel,
-                                    workspace,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            });
-                        });
-                    }
+                    move |_, window, cx| window.dispatch_action(crate::Start.boxed_clone(), cx)
                 })
                 .tooltip({
                     let focus_handle = focus_handle.clone();
                     move |window, cx| {
                         Tooltip::for_action_in(
-                            "New Debug Session",
-                            &CreateDebuggingSession,
+                            "Start Debug Session",
+                            &crate::Start,
                             &focus_handle,
                             window,
                             cx,
@@ -908,6 +883,28 @@ impl DebugPanel {
                                                 }
                                             }),
                                     )
+                                    .child(
+                                        IconButton::new("debug-disconnect", IconName::DebugDetach)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(window.listener_for(
+                                                &running_session,
+                                                |this, _, _, cx| {
+                                                    this.detach_client(cx);
+                                                },
+                                            ))
+                                            .tooltip({
+                                                let focus_handle = focus_handle.clone();
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Detach",
+                                                        &Detach,
+                                                        &focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            }),
+                                    )
                                 },
                             ),
                         )
@@ -992,6 +989,69 @@ impl DebugPanel {
         });
         self.active_session = Some(session_item);
         cx.notify();
+    }
+
+    pub(crate) fn save_scenario(
+        &self,
+        scenario: &DebugScenario,
+        worktree_id: WorktreeId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
+                    return Task::ready(Err(anyhow!("Couldn't get worktree path")));
+                };
+
+                let serialized_scenario = serde_json::to_value(scenario);
+
+                path.push(paths::local_debug_file_relative_path());
+
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let serialized_scenario = serialized_scenario?;
+                    let path = path.as_path();
+                    let fs =
+                        workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+
+                    if !fs.is_file(path).await {
+                        let content =
+                            serde_json::to_string_pretty(&serde_json::Value::Array(vec![
+                                serialized_scenario,
+                            ]))?;
+
+                        fs.create_file(path, Default::default()).await?;
+                        fs.save(path, &content.into(), Default::default()).await?;
+                    } else {
+                        let content = fs.load(path).await?;
+                        let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&content)?;
+                        values.push(serialized_scenario);
+                        fs.save(
+                            path,
+                            &serde_json::to_string_pretty(&values).map(Into::into)?,
+                            Default::default(),
+                        )
+                        .await?;
+                    }
+
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        if let Some(project_path) = workspace
+                            .project()
+                            .read(cx)
+                            .project_path_for_absolute_path(&path, cx)
+                        {
+                            workspace.open_path(project_path, None, true, window, cx)
+                        } else {
+                            Task::ready(Err(anyhow!(
+                                "Couldn't get project path for .zed/debug.json in active worktree"
+                            )))
+                        }
+                    })?.await?;
+
+                    anyhow::Ok(())
+                })
+            })
+            .unwrap_or_else(|err| Task::ready(Err(err)))
     }
 }
 
@@ -1258,10 +1318,7 @@ impl Render for DebugPanel {
                                     Button::new("spawn-new-session-empty-state", "New Session")
                                         .size(ButtonSize::Large)
                                         .on_click(|_, window, cx| {
-                                            window.dispatch_action(
-                                                CreateDebuggingSession.boxed_clone(),
-                                                cx,
-                                            );
+                                            window.dispatch_action(crate::Start.boxed_clone(), cx);
                                         }),
                                 ),
                             ),

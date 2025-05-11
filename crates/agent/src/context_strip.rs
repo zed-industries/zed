@@ -22,7 +22,7 @@ use crate::thread::Thread;
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
-    AcceptSuggestedContext, AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
+    AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
     RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
 };
 
@@ -144,7 +144,7 @@ impl ContextStrip {
         }
 
         let workspace = self.workspace.upgrade()?;
-        let panel = workspace.read(cx).panel::<AssistantPanel>(cx)?.read(cx);
+        let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
         if let Some(active_thread) = panel.active_thread() {
             let weak_active_thread = active_thread.downgrade();
@@ -420,12 +420,25 @@ impl Render for ContextStrip {
             })
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |window, cx| {
-                        context_picker.update(cx, |this, cx| {
-                            this.init(window, cx);
-                        });
+                    .menu({
+                        let context_picker = context_picker.clone();
+                        move |window, cx| {
+                            context_picker.update(cx, |this, cx| {
+                                this.init(window, cx);
+                            });
 
-                        Some(context_picker.clone())
+                            Some(context_picker.clone())
+                        }
+                    })
+                    .on_open({
+                        let context_picker = context_picker.downgrade();
+                        Rc::new(move |window, cx| {
+                            context_picker
+                                .update(cx, |context_picker, cx| {
+                                    context_picker.select_first(window, cx);
+                                })
+                                .ok();
+                        })
                     })
                     .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)

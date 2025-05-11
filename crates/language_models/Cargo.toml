@@ -42,6 +42,7 @@ open_router = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
 project.workspace = true
 proto.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

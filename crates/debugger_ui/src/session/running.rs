@@ -38,15 +38,16 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    DebugScenario, LaunchRequest, TaskContext, substitute_variables_in_map,
-    substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, LaunchRequest, ShellBuilder, SpawnInTerminal, TaskContext,
+    substitute_variables_in_map, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
-    DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div,
+    h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -351,6 +352,13 @@ pub(crate) fn new_debugger_pane(
                     .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .on_action(|_: &menu::Cancel, window, cx| {
+                        if cx.stop_active_drag(window) {
+                            return;
+                        } else {
+                            cx.propagate();
+                        }
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -696,6 +704,7 @@ impl RunningState {
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
+        let is_local = project.read(cx).is_local();
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
@@ -706,27 +715,75 @@ impl RunningState {
                 tcp_connection,
                 stop_on_entry,
             } = scenario;
-            let request = if let Some(request) = request {
-                request
-            } else if let Some(build) = build {
-                let Some(task) = task_store.update(cx, |this, cx| {
-                    this.task_inventory().and_then(|inventory| {
-                        inventory
-                            .read(cx)
-                            .task_template_by_label(buffer, worktree_id, &build, cx)
-                    })
-                })?
-                else {
-                    anyhow::bail!("Couldn't find task template for {:?}", build)
+            let build_output = if let Some(build) = build {
+                let (task, locator_name) = match build {
+                    BuildTaskDefinition::Template {
+                        task_template,
+                        locator_name,
+                    } => (task_template, locator_name),
+                    BuildTaskDefinition::ByName(ref label) => {
+                        let Some(task) = task_store.update(cx, |this, cx| {
+                            this.task_inventory().and_then(|inventory| {
+                                inventory.read(cx).task_template_by_label(
+                                    buffer,
+                                    worktree_id,
+                                    &label,
+                                    cx,
+                                )
+                            })
+                        })?
+                        else {
+                            anyhow::bail!("Couldn't find task template for {:?}", build)
+                        };
+                        (task, None)
+                    }
                 };
                 let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
+                let locator_name = if let Some(locator_name) = locator_name {
+                    debug_assert!(request.is_none());
+                    Some(locator_name)
+                } else if request.is_none() {
+                    dap_store
+                        .update(cx, |this, cx| {
+                            this.debug_scenario_for_build_task(
+                                task.original_task().clone(),
+                                adapter.clone().into(),
+                                task.display_label().to_owned().into(),
+                                cx,
+                            )
+                            .and_then(|scenario| {
+                                match scenario.build {
+                                    Some(BuildTaskDefinition::Template {
+                                        locator_name, ..
+                                    }) => locator_name,
+                                    _ => None,
+                                }
+                            })
+                        })
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+
+                let builder = ShellBuilder::new(is_local, &task.resolved.shell);
+                let command_label = builder.command_label(&task.resolved.command_label);
+                let (command, args) =
+                    builder.build(task.resolved.command.clone(), &task.resolved.args);
+
+                let task_with_shell = SpawnInTerminal {
+                    command_label,
+                    command,
+                    args,
+                    ..task.resolved.clone()
+                };
                 let terminal = project
                     .update_in(cx, |project, window, cx| {
                         project.create_terminal(
-                            TerminalKind::Task(task.resolved.clone()),
+                            TerminalKind::Task(task_with_shell.clone()),
                             window.window_handle(),
                             cx,
                         )
@@ -761,9 +818,19 @@ impl RunningState {
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
                 }
-
+                Some((task.resolved.clone(), locator_name))
+            } else {
+                None
+            };
+            let request = if let Some(request) = request {
+                request
+            } else if let Some((task, locator_name)) = build_output {
+                let locator_name = locator_name
+                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
                 dap_store
-                    .update(cx, |this, cx| this.run_debug_locator(task.resolved, cx))?
+                    .update(cx, |this, cx| {
+                        this.run_debug_locator(&locator_name, task, cx)
+                    })?
                     .await?
             } else {
                 return Err(anyhow!("No request or build provided"));
@@ -804,7 +871,7 @@ impl RunningState {
 
                     dap::DebugRequest::Launch(new_launch_request)
                 }
-                request @ dap::DebugRequest::Attach(_) => request,
+                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
             };
             Ok(DebugTaskDefinition {
                 label,
@@ -1368,11 +1435,7 @@ impl RunningState {
         });
     }
 
-    #[expect(
-        unused,
-        reason = "Support for disconnecting a client is not wired through yet"
-    )]
-    pub fn disconnect_client(&self, cx: &mut Context<Self>) {
+    pub fn detach_client(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.disconnect_client(cx);
         });
@@ -1390,6 +1453,7 @@ impl RunningState {
         cx: &mut Context<'_, RunningState>,
     ) -> DropdownMenu {
         let state = cx.entity();
+        let session_terminated = self.session.read(cx).is_terminated();
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
         let selected_thread_name = threads
             .iter()
@@ -1412,6 +1476,7 @@ impl RunningState {
                 this
             }),
         )
+        .disabled(session_terminated)
     }
 
     fn default_pane_layout(

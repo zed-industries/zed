@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
 
+use crate::TaskTemplate;
+
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct TcpArgumentsTemplate {
@@ -171,6 +173,18 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum BuildTaskDefinition {
+    ByName(SharedString),
+    Template {
+        #[serde(flatten)]
+        task_template: TaskTemplate,
+        #[serde(skip)]
+        locator_name: Option<SharedString>,
+    },
+}
 /// This struct represent a user created debug task
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -179,22 +193,22 @@ pub struct DebugScenario {
     /// Name of the debug task
     pub label: SharedString,
     /// A task to run prior to spawning the debuggee.
-    #[serde(default)]
-    pub build: Option<SharedString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildTaskDefinition>,
     #[serde(flatten)]
     pub request: Option<DebugRequest>,
     /// Additional initialization arguments to be sent on DAP initialization
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initialize_args: Option<serde_json::Value>,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_connection: Option<TcpArgumentsTemplate>,
     /// Whether to tell the debug adapter to stop on entry
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_on_entry: Option<bool>,
 }
 

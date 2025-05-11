@@ -2,13 +2,18 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
-use gpui::{AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, WeakEntity, Window};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
+    WeakEntity, Window,
+};
 use language::LineEnding;
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     env,
     path::{Path, PathBuf},
@@ -17,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal_view::TerminalView;
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::{
     get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
@@ -107,9 +113,10 @@ impl Tool for TerminalTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -178,7 +185,7 @@ impl Tool for TerminalTool {
                 let exit_status = child.wait()?;
                 let (processed_content, _) =
                     process_content(content, &input.command, Some(exit_status));
-                Ok(processed_content)
+                Ok(processed_content.into())
             });
             return ToolResult {
                 output: task,
@@ -210,8 +217,21 @@ impl Tool for TerminalTool {
             }
         });
 
+        let command_markdown = cx.new(|cx| {
+            Markdown::new(
+                format!("```bash\n{}\n```", input.command).into(),
+                None,
+                None,
+                cx,
+            )
+        });
+
         let card = cx.new(|cx| {
-            TerminalToolCard::new(input.command.clone(), working_dir.clone(), cx.entity_id())
+            TerminalToolCard::new(
+                command_markdown.clone(),
+                working_dir.clone(),
+                cx.entity_id(),
+            )
         });
 
         let output = cx.spawn({
@@ -266,7 +286,7 @@ impl Tool for TerminalTool {
                     card.elapsed_time = Some(card.start_instant.elapsed());
                 });
 
-                Ok(processed_content)
+                Ok(processed_content.into())
             }
         });
 
@@ -387,7 +407,7 @@ fn working_dir(
 }
 
 struct TerminalToolCard {
-    input_command: String,
+    input_command: Entity<Markdown>,
     working_dir: Option<PathBuf>,
     entity_id: EntityId,
     exit_status: Option<ExitStatus>,
@@ -403,7 +423,11 @@ struct TerminalToolCard {
 }
 
 impl TerminalToolCard {
-    pub fn new(input_command: String, working_dir: Option<PathBuf>, entity_id: EntityId) -> Self {
+    pub fn new(
+        input_command: Entity<Markdown>,
+        working_dir: Option<PathBuf>,
+        entity_id: EntityId,
+    ) -> Self {
         Self {
             input_command,
             working_dir,
@@ -426,7 +450,7 @@ impl ToolCard for TerminalToolCard {
     fn render(
         &mut self,
         status: &ToolUseStatus,
-        _window: &mut Window,
+        window: &mut Window,
         _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -570,11 +594,25 @@ impl ToolCard for TerminalToolCard {
             .rounded_lg()
             .overflow_hidden()
             .child(
-                v_flex().p_2().gap_0p5().bg(header_bg).child(header).child(
-                    Label::new(self.input_command.clone())
-                        .buffer_font(cx)
-                        .size(LabelSize::Small),
-                ),
+                v_flex()
+                    .p_2()
+                    .gap_0p5()
+                    .bg(header_bg)
+                    .text_xs()
+                    .child(header)
+                    .child(
+                        MarkdownElement::new(
+                            self.input_command.clone(),
+                            markdown_style(window, cx),
+                        )
+                        .code_block_renderer(
+                            markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                                copy_button_on_hover: true,
+                                border: false,
+                            },
+                        ),
+                    ),
             )
             .when(self.preview_expanded && !should_hide_terminal, |this| {
                 this.child(
@@ -593,11 +631,33 @@ impl ToolCard for TerminalToolCard {
     }
 }
 
+fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let buffer_font_size = TextSize::Default.rems(cx);
+    let mut text_style = window.text_style();
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.buffer_font.family.clone()),
+        font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+        font_features: Some(theme_settings.buffer_font.features.clone()),
+        font_size: Some(buffer_font_size.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style: text_style.clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use editor::EditorSettings;
     use fs::RealFs;
     use gpui::{BackgroundExecutor, TestAppContext};
+    use language_model::fake_provider::FakeLanguageModel;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
@@ -639,6 +699,7 @@ mod tests {
         let project: Entity<Project> =
             Project::test(fs, [tree.path().join("project").as_path()], cx).await;
         let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let input = TerminalToolInput {
             command: "cat".to_owned(),
@@ -653,15 +714,16 @@ mod tests {
             TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
-                &[],
+                Arc::default(),
                 project.clone(),
                 action_log.clone(),
+                model,
                 None,
                 cx,
             )
         });
 
-        let output = result.output.await.log_err();
+        let output = result.output.await.log_err().map(|output| output.content);
         assert_eq!(output, Some("Command executed successfully.".into()));
     }
 
@@ -681,19 +743,25 @@ mod tests {
         let project: Entity<Project> =
             Project::test(fs, [tree.path().join("project").as_path()], cx).await;
         let action_log = cx.update(|cx| cx.new(|_| ActionLog::new(project.clone())));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
                 Arc::new(TerminalTool::new(cx)),
                 serde_json::to_value(input).unwrap(),
-                &[],
+                Arc::default(),
                 project.clone(),
                 action_log.clone(),
+                model.clone(),
                 None,
                 cx,
             );
             cx.spawn(async move |_| {
-                let output = headless_result.output.await.log_err();
+                let output = headless_result
+                    .output
+                    .await
+                    .log_err()
+                    .map(|output| output.content);
                 assert_eq!(output, expected);
             })
         };
