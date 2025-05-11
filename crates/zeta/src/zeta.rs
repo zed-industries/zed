@@ -64,6 +64,7 @@ const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
+pub const ZED_PREDICT_PROVIDER_NAME: &str = "zed-predict";
 
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
@@ -1383,7 +1384,7 @@ impl ZetaInlineCompletionProvider {
 
 impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
-        "zed-predict"
+        ZED_PREDICT_PROVIDER_NAME
     }
 
     fn display_name() -> &'static str {

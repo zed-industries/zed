@@ -408,7 +408,7 @@ impl InlineCompletionButton {
         if let Some(provider) = self
             .edit_prediction_provider
             .as_ref()
-            .filter(|p| p.name() == "zed-predict")
+            .filter(|p| p.name() == zeta::ZED_PREDICT_PROVIDER_NAME)
         {
             let usage = provider.usage(cx).or_else(|| {
                 let user_store = self.user_store.read(cx);
